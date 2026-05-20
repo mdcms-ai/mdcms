@@ -244,7 +244,9 @@ Allowed context:
 - Nearby editor context needed to produce a coherent replacement.
 - Registered MDX component catalog metadata supplied through the Studio host
   bridge and normalized into serializable component names, prop schemas, prop
-  hints, and child-content rules.
+  hints, built-in provenance, and child-content rules. The catalog includes
+  MDCMS built-ins (`Box`, `Text`, `Image`, `Link`) even when the host app does
+  not register them.
 - Action-specific instructions for copy, SEO, MDX component insertion, or
   document creation workflows.
 
@@ -457,6 +459,12 @@ Rules:
   passthrough props.
 - Wrapper components must follow their declared child-content rules.
 - Studio must show validation failures before the user can accept a proposal.
+- Built-in components marked with `builtIn: true` are valid output. The flag
+  does not create different validation semantics; it only distinguishes
+  MDCMS-provided components from host-registered components for Studio
+  discoverability.
+- Inline styles are valid only through first-class `style` props. Style values
+  must be flat objects whose values are strings or numbers.
 
 The chat request carries the active catalog as a serializable `mdxCatalog`
 snapshot. The server uses that snapshot as validation input for proposals in
@@ -464,6 +472,16 @@ the same turn; it must not persist the catalog as backend-owned project state.
 
 Invalid MDX proposals are never silently repaired on apply. The user may request
 another proposal or edit manually.
+
+Valid inline style example:
+
+```mdx
+<Box style={{ padding: "24px", backgroundColor: "#fff" }}>Content</Box>
+```
+
+AI must not generate `className`, CSS strings, nested style objects, hover
+styles, responsive breakpoints, selectors, event handlers, or JavaScript
+functions in MDX props.
 
 ## SEO Assistance
 

@@ -167,6 +167,7 @@ export type MdxComponentCatalogEntry = {
   name: string;
   importPath: string;
   description?: string;
+  builtIn?: true;
   propHints?: Record<string, MdxPropHint>;
   propsEditor?: string;
   extractedProps?: MdxExtractedProps;
@@ -192,6 +193,8 @@ export type MdxComponentCatalog = {
   components: MdxComponentCatalogEntry[];
 };
 
+export type MdcmsInlineStyle = Record<string, string | number>;
+
 export type MdxExtractedProps = Record<string, MdxExtractedProp>;
 
 export type MdxExtractedProp =
@@ -201,6 +204,7 @@ export type MdxExtractedProp =
   | { type: "date"; required: boolean }
   | { type: "enum"; required: boolean; values: string[] }
   | { type: "array"; required: boolean; items: "string" | "number" }
+  | { type: "style"; required: boolean }
   | { type: "json"; required: boolean }
   | { type: "rich-text"; required: boolean };
 
@@ -224,6 +228,46 @@ In practice these are host-local React components resolved inside the embedding 
 URL intent is not a widget override. It is carried on extracted string props as
 `format: "url"` and maps to a URL input with validation in the auto-generated
 form contract.
+
+#### Built-In MDX Components
+
+MDCMS provides a small set of built-in MDX components for AI-authored and
+manual MDX composition. These components are part of the local MDX catalog even
+when the host app does not declare them in `mdcms.config.ts`:
+
+- `Box` renders a `div` and accepts `style?: MdcmsInlineStyle` and `children`.
+- `Text` renders a `span` and accepts `style?: MdcmsInlineStyle` and
+  `children`.
+- `Image` renders an `img` and accepts required `src`, required `alt`, and
+  optional `style?: MdcmsInlineStyle`.
+- `Link` renders an `a` and accepts required `href`, optional
+  `style?: MdcmsInlineStyle`, and `children`.
+
+Built-ins are catalog entries with `builtIn: true`. This flag is provenance and
+Studio discoverability metadata only: parsing, serialization, preview
+rendering, AI validation, and production rendering treat built-ins and
+host-registered components through the same component-name and prop-schema
+contracts.
+
+Built-in names are reserved. Host config preparation must fail with a
+deterministic error when `config.components` declares `Box`, `Text`, `Image`, or
+`Link`. Host components can support inline styling only by exposing their own
+`style` prop in the extracted catalog; built-in support does not imply a
+universal wrapper or style injection layer for host components.
+
+The current toolbar Insert Component menu and `/` slash menu list only
+host-registered components. Built-ins remain hidden from those visual insertion
+surfaces until the dedicated visual composition UI is specified, but manual MDX
+editing and AI proposals may use them.
+
+Built-in React source lives in an internal private workspace package and is
+bundled into published consumers. App authors do not install that workspace
+package directly. Public application code may import built-ins from the SDK's
+browser-safe React primitive subpath:
+
+```typescript
+import { Box, Text, Image, Link } from "@mdcms/sdk/react-primitives";
+```
 
 The embedded Studio runtime never performs TypeScript analysis in the browser.
 When auto-generated props editing is needed, the host app prepares the local MDX
@@ -290,6 +334,8 @@ Extraction is deterministic and fail-closed:
 - A prop may normalize to `type: 'json'` only when the developer explicitly
   opts that prop into the `json` widget hint and the declared TypeScript shape
   is JSON-serializable.
+- A prop may normalize to `type: 'style'` only when it is a React inline style
+  object shape that can be represented as `MdcmsInlineStyle`.
 - A string prop may additionally carry `format: 'url'` when `propHints.<propName>.format = 'url'`; this maps to a URL input with validation and is not a widget.
 - `children` and props typed as `ReactNode` normalize to `type: 'rich-text'`.
 - A prop is omitted from `extractedProps` when it cannot be normalized
@@ -304,6 +350,8 @@ extracted schema:
 - React elements/components other than `children` / `ReactNode`
 - object, record, map, set, tuple, and class-instance shapes without an
   explicit `json` hint
+- CSS rule objects, responsive style objects, pseudo-state styles, functions,
+  arrays, and nested style values
 - mixed or non-literal unions, intersections, unresolved generics, and arrays
   of unsupported item types
 - any shape that is not JSON-serializable or cannot be normalized
@@ -325,6 +373,7 @@ Auto-detected prop types map to form controls as follows:
 | `number[]`                                 | Repeatable number input   | Add/remove number values |
 | `Date`                                     | Date picker               |                          |
 | `string` with `format: "url"`              | URL input with validation | Not a widget             |
+| `MdcmsInlineStyle`                         | JSON object editor        | Flat inline style only   |
 | `ReactNode` / `children`                   | Nested rich text editor   | See §18.5                |
 | Function types                             | **Hidden**                | Not CMS-editable         |
 | Ref types                                  | **Hidden**                | Not CMS-editable         |
@@ -386,6 +435,8 @@ Widget validation rules:
 - `hidden` is valid for any prop and suppresses that prop from the CMS form.
 - `json` is valid only for JSON-serializable props and does not make function,
   ref, or other non-serializable shapes editable.
+- `style` props do not support widget overrides in this phase. They remain
+  flat inline style objects with string or number values.
 
 ### Custom Props Editors
 
@@ -471,7 +522,26 @@ Components that accept `children` (content between opening and closing tags) are
 </Callout>
 ```
 
-In the editor, the children area is a **nested TipTap rich text editor** within the component's node view. This means content editors can use full markdown formatting (bold, links, lists, etc.) inside component blocks, and it participates in the Yjs collaboration session.
+MDX children are nested document content. Markdown block syntax and nested MDX
+components are valid inside wrapper component children when written as normal
+MDX:
+
+```mdx
+<Box style={{"padding":"24px"}}>
+  ## Heading
+
+  <Text style={{"fontWeight":600}}>
+    [Styled link](/pricing)
+  </Text>
+</Box>
+```
+
+In the current editor, the children area is a nested TipTap rich text surface
+within the component's node view. This means content editors can use full
+markdown formatting (bold, links, lists, etc.) inside component blocks.
+Dedicated visual composition controls for inserting built-ins into another
+component's children are deferred; AI proposals and manual MDX editing may
+create this nested structure first.
 
 Wrapper component chrome and the props panel must make this distinction clear:
 top-level props remain in the side panel, while nested markdown content is

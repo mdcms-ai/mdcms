@@ -127,6 +127,13 @@ and `renderMdxPreview(...)`. The backend bootstrap/runtime publication model
 stays unchanged; it still serves the signed runtime bundle and does not publish
 the component catalog.
 
+MDCMS built-in MDX components defined by `SPEC-007` are injected by the Studio
+shell/runtime without host registration. Studio resolves their preview
+components from MDCMS-owned React code before falling back to host-registered
+component loaders. The host bridge remains the contract for host components;
+built-ins do not require host `load` callbacks and do not change the signed
+runtime bootstrap contract.
+
 The backend may live on a different origin from the host app. Cross-origin Studio embedding is a first-class path; a same-origin reverse proxy is optional, not required. Browser access to the backend follows the Studio origin allowlist and CORS contract defined in `SPEC-005`.
 
 Studio runtime publication selection is server-owned:
