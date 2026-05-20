@@ -8,6 +8,7 @@ import {
   createMdxComponentInsertContent,
   getMdxComponentAutoFormFields,
   getMdxComponentKind,
+  isMdxComponentVisibleInInsertUi,
 } from "./mdx-component-catalog.js";
 
 type MdxCatalogComponent = NonNullable<
@@ -47,6 +48,20 @@ test("getMdxComponentKind treats components without rich-text children as void",
   });
 
   assert.equal(getMdxComponentKind(component), "void");
+});
+
+test("isMdxComponentVisibleInInsertUi hides built-in components only", () => {
+  assert.equal(isMdxComponentVisibleInInsertUi(createComponent()), true);
+  assert.equal(
+    isMdxComponentVisibleInInsertUi(
+      createComponent({
+        name: "Box",
+        importPath: "@mdcms/sdk/react-primitives",
+        builtIn: true,
+      }),
+    ),
+    false,
+  );
 });
 
 test("getMdxComponentAutoFormFields omits nested rich-text children from props editing controls", () => {

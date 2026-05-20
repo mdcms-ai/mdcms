@@ -90,3 +90,21 @@ they can be reviewed later without replaying the conversation.
    with the current TypeScript/Nx setup, duplicate tiny generated wrapper files
    in `@mdcms/sdk` and `@mdcms/studio` as a fallback, while keeping the source of
    truth and tests in `packages/react-primitives`.
+
+6. During implementation review, `Image.src` and `Link.href` stayed plain
+   required string props in the built-in catalog. A reviewer suggested URL
+   `format` metadata, but the committed spec and implementation plan define
+   those props as strings only. URL-format validation can be added later as a
+   deliberate catalog contract change.
+
+7. The published SDK `@mdcms/sdk/react-primitives` subpath mirrors the four
+   primitive React components directly instead of re-exporting from
+   `@mdcms/react-primitives`. Current TypeScript/Nx package builds do not bundle
+   workspace imports, so a direct re-export would leak the private package as
+   a runtime dependency. The internal package remains an internal reference and
+   test package; published packages mirror the small implementation locally.
+
+8. Studio also mirrors the primitive components in its own source instead of
+   importing `@mdcms/react-primitives` from exported runtime/loader files. The
+   Studio package is published, and its TypeScript output is not bundled enough
+   to hide private workspace imports from consumers.

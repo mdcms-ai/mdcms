@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 
 import type { StudioMountContext } from "@mdcms/shared";
 
+import { isMdxComponentVisibleInInsertUi } from "./mdx-component-catalog.js";
 import { cn } from "../../lib/utils.js";
 
 type MdxCatalogComponent = NonNullable<
@@ -30,6 +31,7 @@ export function MdxComponentPicker({
   onHighlightedIndexChange,
 }: MdxComponentPickerProps) {
   const listRef = useRef<HTMLDivElement | null>(null);
+  const visibleComponents = components.filter(isMdxComponentVisibleInInsertUi);
 
   // Scroll the highlighted row into view when the user arrows past the
   // visible area of a tall component catalog. Declared before the empty-
@@ -44,7 +46,7 @@ export function MdxComponentPicker({
     item?.scrollIntoView({ block: "nearest" });
   }, [highlightedIndex]);
 
-  if (components.length === 0) {
+  if (visibleComponents.length === 0) {
     return (
       <section
         data-mdcms-mdx-picker="catalog"
@@ -57,7 +59,7 @@ export function MdxComponentPicker({
   }
 
   const normalizedQuery = query.trim().toLowerCase();
-  const filteredComponents = components.filter((component) => {
+  const filteredComponents = visibleComponents.filter((component) => {
     if (normalizedQuery.length === 0) {
       return true;
     }

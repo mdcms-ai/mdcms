@@ -13,6 +13,12 @@ export type MdxComponentKind = "void" | "wrapper";
 
 const MDX_CHILDREN_PROP_NAME = "children";
 
+export function isMdxComponentVisibleInInsertUi(
+  component: MdxCatalogComponent,
+): boolean {
+  return component.builtIn !== true;
+}
+
 export function getMdxComponentKind(
   component: MdxCatalogComponent,
 ): MdxComponentKind {

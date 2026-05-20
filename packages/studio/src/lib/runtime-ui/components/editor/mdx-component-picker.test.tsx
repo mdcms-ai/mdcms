@@ -60,6 +60,48 @@ test("MdxComponentPicker filters components by query", () => {
   assert.match(markup, /data-mdcms-mdx-picker-item="HeroBanner"/);
 });
 
+test("MdxComponentPicker hides built-in components from insert surfaces", () => {
+  const markup = renderToStaticMarkup(
+    createElement(MdxComponentPicker, {
+      components: [
+        {
+          name: "Box",
+          importPath: "@mdcms/sdk/react-primitives",
+          builtIn: true,
+          extractedProps: {
+            children: { type: "rich-text", required: false },
+          },
+        },
+        ...components,
+      ],
+      onSelect: () => {},
+    }),
+  );
+
+  assert.doesNotMatch(markup, /data-mdcms-mdx-picker-item="Box"/);
+  assert.match(markup, /data-mdcms-mdx-picker-item="Callout"/);
+});
+
+test("MdxComponentPicker renders empty when only built-in components exist", () => {
+  const markup = renderToStaticMarkup(
+    createElement(MdxComponentPicker, {
+      components: [
+        {
+          name: "Box",
+          importPath: "@mdcms/sdk/react-primitives",
+          builtIn: true,
+          extractedProps: {
+            children: { type: "rich-text", required: false },
+          },
+        },
+      ],
+      onSelect: () => {},
+    }),
+  );
+
+  assert.match(markup, /data-mdcms-mdx-picker-state="empty"/);
+});
+
 test("MdxComponentPicker renders empty and forbidden states deterministically", () => {
   const emptyMarkup = renderToStaticMarkup(
     createElement(MdxComponentPicker, {

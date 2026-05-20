@@ -912,6 +912,17 @@ function validateMdxPropValue(
         );
       }
       return undefined;
+    case "style": {
+      const styleValue = normalizeMdxStyleAttributeValue(attr);
+      return isValidMdxStyleValue(styleValue)
+        ? undefined
+        : invalidMdxPropType(
+            componentName,
+            propName,
+            "flat style object with string or number values",
+            jsKindOf(styleValue),
+          );
+    }
     case "json":
       return value !== undefined
         ? undefined
@@ -919,6 +930,127 @@ function validateMdxPropValue(
     case "rich-text":
       return undefined;
   }
+}
+
+function isValidMdxStyleValue(value: unknown): boolean {
+  if (value === null || Array.isArray(value) || typeof value !== "object") {
+    return false;
+  }
+
+  return Object.values(value).every(
+    (styleValue) =>
+      typeof styleValue === "string" ||
+      (typeof styleValue === "number" && Number.isFinite(styleValue)),
+  );
+}
+
+function normalizeMdxStyleAttributeValue(attr: MdxAttributeValue): unknown {
+  const normalized = normalizeMdxAttributeValue(attr);
+  if (isValidMdxStyleValue(normalized) || attr.kind !== "expression") {
+    return normalized;
+  }
+
+  return parseMdxStyleObjectLiteral(attr.value.trim());
+}
+
+function parseMdxStyleObjectLiteral(
+  expression: string,
+): Record<string, string | number> | undefined {
+  if (!expression.startsWith("{") || !expression.endsWith("}")) {
+    return undefined;
+  }
+
+  const style: Record<string, string | number> = {};
+  const source = expression.slice(1, -1);
+  let index = 0;
+
+  while (index < source.length) {
+    index = skipWhitespace(source, index);
+    if (index >= source.length) return style;
+
+    const key = readStyleObjectKey(source, index);
+    if (!key) return undefined;
+    index = skipWhitespace(source, key.nextIndex);
+
+    if (source[index] !== ":") return undefined;
+    index = skipWhitespace(source, index + 1);
+
+    const value = readStyleObjectValue(source, index);
+    if (!value) return undefined;
+    style[key.value] = value.value;
+    index = skipWhitespace(source, value.nextIndex);
+
+    if (index >= source.length) return style;
+    if (source[index] !== ",") return undefined;
+    index += 1;
+  }
+
+  return style;
+}
+
+function readStyleObjectKey(
+  source: string,
+  index: number,
+): { value: string; nextIndex: number } | undefined {
+  const first = source[index];
+  if (first === '"' || first === "'") {
+    return readQuotedStyleString(source, index);
+  }
+
+  const match = /^[$A-Z_a-z][$\w]*/.exec(source.slice(index));
+  if (!match) return undefined;
+
+  return {
+    value: match[0],
+    nextIndex: index + match[0].length,
+  };
+}
+
+function readStyleObjectValue(
+  source: string,
+  index: number,
+): { value: string | number; nextIndex: number } | undefined {
+  const first = source[index];
+  if (first === '"' || first === "'") {
+    return readQuotedStyleString(source, index);
+  }
+
+  const match = /^-?(?:(?:\d+\.?\d*)|(?:\.\d+))(?:[eE][+-]?\d+)?/.exec(
+    source.slice(index),
+  );
+  if (!match) return undefined;
+
+  return {
+    value: Number(match[0]),
+    nextIndex: index + match[0].length,
+  };
+}
+
+function readQuotedStyleString(
+  source: string,
+  index: number,
+): { value: string; nextIndex: number } | undefined {
+  const quote = source[index];
+  if (quote !== '"' && quote !== "'") return undefined;
+
+  let cursor = index + 1;
+  let value = "";
+  while (cursor < source.length) {
+    const char = source[cursor];
+    if (char === quote && source[cursor - 1] !== "\\") {
+      return { value, nextIndex: cursor + 1 };
+    }
+    value += char;
+    cursor += 1;
+  }
+
+  return undefined;
+}
+
+function skipWhitespace(source: string, index: number): number {
+  let cursor = index;
+  while (/\s/.test(source[cursor] ?? "")) cursor += 1;
+  return cursor;
 }
 
 function normalizeMdxAttributeValue(attr: MdxAttributeValue): unknown {

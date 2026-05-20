@@ -69,7 +69,10 @@ import {
 } from "./mdx-component-collapse.js";
 import { createEditorToolbarLayout } from "./editor-toolbar.js";
 import { MdxComponentNodeView } from "./mdx-component-node-view.js";
-import { createMdxComponentInsertContent } from "./mdx-component-catalog.js";
+import {
+  createMdxComponentInsertContent,
+  isMdxComponentVisibleInInsertUi,
+} from "./mdx-component-catalog.js";
 import { MdxComponentPicker } from "./mdx-component-picker.js";
 import { type MdxPropsPanelSelection } from "./mdx-props-panel.js";
 import {
@@ -436,6 +439,10 @@ export const TipTapEditor = forwardRef<TipTapEditorHandle, TipTapEditorProps>(
   ) {
     const toolbar = createEditorToolbarLayout();
     const catalogComponents = context?.mdx?.catalog.components ?? [];
+    const insertableCatalogComponents = useMemo(
+      () => catalogComponents.filter(isMdxComponentVisibleInInsertUi),
+      [catalogComponents],
+    );
     const isEditorReadOnly = readOnly || forbidden;
     const collapseController = useMdxComponentCollapseController();
     const [pickerSource, setPickerSource] = useState<
@@ -468,15 +475,15 @@ export const TipTapEditor = forwardRef<TipTapEditorHandle, TipTapEditorProps>(
     // MdxComponentPicker's internal filter so what the user sees is what
     // Enter inserts.
     const filteredSlashComponents = useMemo(() => {
-      if (!slashTrigger) return catalogComponents;
+      if (!slashTrigger) return insertableCatalogComponents;
       const normalizedQuery = slashTrigger.query.trim().toLowerCase();
-      if (normalizedQuery.length === 0) return catalogComponents;
-      return catalogComponents.filter((component) =>
+      if (normalizedQuery.length === 0) return insertableCatalogComponents;
+      return insertableCatalogComponents.filter((component) =>
         [component.name, component.description ?? ""].some((value) =>
           value.toLowerCase().includes(normalizedQuery),
         ),
       );
-    }, [catalogComponents, slashTrigger]);
+    }, [insertableCatalogComponents, slashTrigger]);
 
     // Refs so the editor's prosemirror handleKeyDown — which is captured
     // once when the editor is created — can read the latest filtered list,
@@ -1509,7 +1516,7 @@ export const TipTapEditor = forwardRef<TipTapEditorHandle, TipTapEditorProps>(
         className="z-50 overflow-y-auto"
       >
         <MdxComponentPicker
-          components={catalogComponents}
+          components={insertableCatalogComponents}
           query={slashTrigger.query}
           forbidden={isEditorReadOnly}
           onSelect={insertSelectedComponent}
@@ -1771,7 +1778,7 @@ export const TipTapEditor = forwardRef<TipTapEditorHandle, TipTapEditorProps>(
                 className="border-t border-border p-3"
               >
                 <MdxComponentPicker
-                  components={catalogComponents}
+                  components={insertableCatalogComponents}
                   query=""
                   forbidden={isEditorReadOnly}
                   onSelect={insertSelectedComponent}

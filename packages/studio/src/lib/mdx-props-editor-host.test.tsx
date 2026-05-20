@@ -271,6 +271,34 @@ test("MdxPropsEditorHost renders interactive auto-form controls for fallback pro
   assert.match(markup, /<select/);
 });
 
+test("MdxPropsEditorHost renders style props with the style auto-form control", () => {
+  const markup = renderToStaticMarkup(
+    createElement(MdxPropsEditorHost, {
+      component: createComponent({
+        name: "Box",
+        importPath: "@mdcms/sdk/react-primitives",
+        builtIn: true,
+        extractedProps: {
+          style: { type: "style", required: false },
+        },
+      }),
+      context: createContext(async () => null),
+      value: {
+        style: {
+          padding: "16px",
+          marginTop: 4,
+        },
+      },
+      onChange: () => {},
+    }),
+  );
+
+  assert.match(markup, /data-mdcms-mdx-auto-control="Box:style:style"/);
+  assert.match(markup, /data-mdcms-mdx-auto-field-hint="Box:style"/);
+  assert.match(markup, />style</);
+  assert.match(markup, /&quot;padding&quot;: &quot;16px&quot;/);
+});
+
 test("MdxPropsEditorHost renders compact type hints for generated auto-form fields", () => {
   const markup = renderToStaticMarkup(
     createElement(MdxPropsEditorHost, {

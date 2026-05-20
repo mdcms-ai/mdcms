@@ -15,6 +15,7 @@ import {
 } from "@mdcms/shared";
 
 import { buildStudioRuntimeArtifacts } from "./build-runtime.js";
+import { prepareStudioConfig } from "./studio.js";
 import {
   isPreparedDocumentRouteMetadata,
   loadStudioRuntime,
@@ -237,6 +238,11 @@ test("loadStudioRuntime fetches bootstrap, verifies runtime, and mounts the remo
       basePath: string;
       auth: { mode: string };
       hostBridge: HostBridgeV1;
+      mdx?: {
+        catalog: {
+          components: Array<{ name: string; builtIn?: true }>;
+        };
+      };
       documentRoute?: {
         project: string;
         initialEnvironment: string;
@@ -255,7 +261,14 @@ test("loadStudioRuntime fetches bootstrap, verifies runtime, and mounts the remo
     assert.equal(mountedContext.apiBaseUrl, "http://localhost:4000");
     assert.equal(mountedContext.basePath, "/admin");
     assert.deepEqual(mountedContext.auth, { mode: "cookie" });
-    assert.equal(mountedContext.hostBridge, validHostBridge);
+    assert.notEqual(mountedContext.hostBridge, validHostBridge);
+    assert.notEqual(mountedContext.hostBridge.resolveComponent("Box"), null);
+    assert.deepEqual(
+      mountedContext.mdx?.catalog.components
+        .filter((component) => component.builtIn === true)
+        .map((component) => component.name),
+      ["Box", "Text", "Image", "Link"],
+    );
     assert.deepEqual(mountedContext.documentRoute, {
       project: "marketing-site",
       initialEnvironment: "staging",
@@ -614,6 +627,7 @@ test("loadStudioRuntime derives a local mdx catalog and editor resolver from con
             propHints?: Record<string, unknown>;
             propsEditor?: string;
             extractedProps?: MdxExtractedProps;
+            builtIn?: true;
           }>;
         };
         resolvePropsEditor: (name: string) => Promise<unknown | null>;
@@ -621,6 +635,44 @@ test("loadStudioRuntime derives a local mdx catalog and editor resolver from con
     };
 
     assert.deepEqual(context.mdx?.catalog.components, [
+      {
+        name: "Box",
+        importPath: "@mdcms/sdk/react-primitives",
+        builtIn: true,
+        extractedProps: {
+          style: { type: "style", required: false },
+          children: { type: "rich-text", required: false },
+        },
+      },
+      {
+        name: "Text",
+        importPath: "@mdcms/sdk/react-primitives",
+        builtIn: true,
+        extractedProps: {
+          style: { type: "style", required: false },
+          children: { type: "rich-text", required: false },
+        },
+      },
+      {
+        name: "Image",
+        importPath: "@mdcms/sdk/react-primitives",
+        builtIn: true,
+        extractedProps: {
+          src: { type: "string", required: true },
+          alt: { type: "string", required: true },
+          style: { type: "style", required: false },
+        },
+      },
+      {
+        name: "Link",
+        importPath: "@mdcms/sdk/react-primitives",
+        builtIn: true,
+        extractedProps: {
+          href: { type: "string", required: true },
+          style: { type: "style", required: false },
+          children: { type: "rich-text", required: false },
+        },
+      },
       {
         name: "Chart",
         importPath: "@/components/mdx/Chart",
@@ -634,11 +686,89 @@ test("loadStudioRuntime derives a local mdx catalog and editor resolver from con
         },
       },
     ]);
+    assert.notEqual(context.hostBridge.resolveComponent("Box"), null);
     assert.equal(context.hostBridge.resolveComponent("Chart"), Chart);
     const chartEditorResult = context.mdx?.resolvePropsEditor("Chart");
     assert.ok(chartEditorResult instanceof Promise);
     assert.equal(await chartEditorResult, ChartEditor);
     assert.equal(await context.mdx?.resolvePropsEditor("Missing"), null);
+  });
+});
+
+test("loadStudioRuntime does not duplicate built-ins from prepared config", async () => {
+  await withTempDir("studio-loader-prepared-builtins-", async (directory) => {
+    const fixture = await createRuntimeFixture(directory);
+    const contexts: unknown[] = [];
+    const preparedConfig = await prepareStudioConfig(
+      {
+        project: "marketing-site",
+        environment: "staging",
+        serverUrl: "http://localhost:4000",
+      },
+      { cwd: directory },
+    );
+
+    await loadStudioRuntime({
+      config: preparedConfig,
+      basePath: "/admin",
+      container: {},
+      fetcher: async (input) => {
+        const url = String(input);
+
+        if (url === "http://localhost:4000/api/v1/studio/bootstrap") {
+          return new Response(
+            JSON.stringify(
+              createReadyBootstrapPayload({
+                manifest: fixture.manifest,
+              }),
+            ),
+            {
+              status: 200,
+              headers: {
+                "content-type": "application/json",
+              },
+            },
+          );
+        }
+
+        if (url === "http://localhost:4000" + fixture.manifest.entryUrl) {
+          return new Response(new Uint8Array(fixture.runtimeBytes), {
+            status: 200,
+            headers: {
+              "content-type": "text/javascript; charset=utf-8",
+            },
+          });
+        }
+
+        throw new Error(`Unexpected fetch URL: ${url}`);
+      },
+      loadRemoteModule: async () => ({
+        mount: (_target: unknown, context: unknown) => {
+          contexts.push(context);
+          return () => {};
+        },
+      }),
+    });
+
+    const context = contexts[0] as {
+      mdx?: {
+        catalog: {
+          components: Array<{ name: string; builtIn?: true }>;
+        };
+      };
+    };
+    const builtInNames =
+      context.mdx?.catalog.components
+        .filter((component) => component.builtIn === true)
+        .map((component) => component.name) ?? [];
+
+    assert.deepEqual(builtInNames, ["Box", "Text", "Image", "Link"]);
+    assert.equal(
+      context.mdx?.catalog.components.filter(
+        (component) => component.name === "Box",
+      ).length,
+      1,
+    );
   });
 });
 
@@ -957,9 +1087,14 @@ test("loadStudioRuntime composes a caller hostBridge with config-derived compone
     const contexts: unknown[] = [];
     const Chart = () => null;
     const Custom = () => null;
+    const CustomBox = () => null;
     const customHostBridge: HostBridgeV1 = {
       version: "1",
-      resolveComponent: (name) => (name === "Custom" ? Custom : null),
+      resolveComponent: (name) => {
+        if (name === "Custom") return Custom;
+        if (name === "Box") return CustomBox;
+        return null;
+      },
       renderMdxPreview: () => () => {},
     };
 
@@ -1021,6 +1156,8 @@ test("loadStudioRuntime composes a caller hostBridge with config-derived compone
 
     assert.equal(bridge.resolveComponent("Custom"), Custom);
     assert.equal(bridge.resolveComponent("Chart"), Chart);
+    assert.notEqual(bridge.resolveComponent("Box"), CustomBox);
+    assert.notEqual(bridge.resolveComponent("Box"), null);
   });
 });
 

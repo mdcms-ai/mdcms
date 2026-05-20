@@ -599,6 +599,7 @@ function AutoFormFieldControl(input: {
         />
       );
     case "json":
+    case "style":
       return (
         <textarea
           {...commonProps}
@@ -663,6 +664,8 @@ function formatAutoFormFieldTypeHint(field: MdxAutoFormField): string {
       return "date";
     case "json":
       return "JSON";
+    case "style":
+      return "style";
     case "rich-text":
       return "rich text";
     case "select":

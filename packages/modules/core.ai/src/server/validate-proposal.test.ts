@@ -568,6 +568,147 @@ describe("createMdxCatalogProposalValidator", () => {
     assert.equal(result.status, "valid");
   });
 
+  test("accepts built-in MDX components registered in the catalog", async () => {
+    const validator = createMdxCatalogProposalValidator({
+      validator: async () => ({ status: "valid" }),
+      catalog: {
+        components: [
+          {
+            name: "Box",
+            importPath: "@mdcms/sdk/react-primitives",
+            builtIn: true,
+            extractedProps: {
+              children: { type: "rich-text", required: false },
+              style: { type: "style", required: false },
+            },
+          },
+        ],
+      },
+    });
+    const result = await validator({
+      proposalId: "p1",
+      kind: "insert_block",
+      project: "demo",
+      environment: "draft",
+      type: "page",
+      locale: "en",
+      summary: "Insert built-in box",
+      operations: [
+        {
+          op: "insert_block",
+          bodyMdx:
+            '<Box style={{ padding: "24px", backgroundColor: "#fff", marginTop: 8, opacity: .5, translate: -.5, zIndex: 1e3 }}>Hi</Box>',
+        },
+      ],
+      expiresAt: "2026-05-15T00:05:00.000Z",
+      provider: {
+        providerId: "echo",
+        model: "echo-1",
+        promptTemplateId: "chat_tools.v1",
+      },
+    });
+
+    assert.equal(result.status, "valid");
+  });
+
+  test("rejects invalid style prop values", async () => {
+    const validator = createMdxCatalogProposalValidator({
+      validator: async () => ({ status: "valid" }),
+      catalog: {
+        components: [
+          {
+            name: "Box",
+            importPath: "@mdcms/sdk/react-primitives",
+            builtIn: true,
+            extractedProps: {
+              style: { type: "style", required: false },
+            },
+          },
+        ],
+      },
+    });
+
+    const cases = [
+      ['<Box style="color: red" />', "string"],
+      ['<Box style={{"color":{"nested":"red"}}} />', "nested object"],
+      ['<Box style={["color"]} />', "array"],
+      ["<Box style={true} />", "boolean"],
+      ["<Box style={null} />", "null"],
+      ["<Box style={theme.hero} />", "unparseable expression"],
+      ["<Box style={{ zIndex: 1e9999 }} />", "non-finite number"],
+    ] as const;
+
+    for (const [bodyMdx, label] of cases) {
+      const result = await validator({
+        proposalId: `p_${label.replaceAll(" ", "_")}`,
+        kind: "insert_block",
+        project: "demo",
+        environment: "draft",
+        type: "page",
+        locale: "en",
+        summary: `Insert invalid ${label} style`,
+        operations: [{ op: "insert_block", bodyMdx }],
+        expiresAt: "2026-05-15T00:05:00.000Z",
+        provider: {
+          providerId: "echo",
+          model: "echo-1",
+          promptTemplateId: "chat_tools.v1",
+        },
+      });
+
+      assert.equal(result.status, "invalid", label);
+      if (result.status === "invalid") {
+        assert.equal(result.errors[0]?.code, "MDX_INVALID_PROP_TYPE");
+        assert.equal(result.errors[0]?.path, "operations[0].bodyMdx");
+      }
+    }
+  });
+
+  test("rejects unknown props on built-in MDX components", async () => {
+    const validator = createMdxCatalogProposalValidator({
+      validator: async () => ({ status: "valid" }),
+      catalog: {
+        components: [
+          {
+            name: "Box",
+            importPath: "@mdcms/sdk/react-primitives",
+            builtIn: true,
+            extractedProps: {
+              style: { type: "style", required: false },
+            },
+          },
+        ],
+      },
+    });
+    const result = await validator({
+      proposalId: "p1",
+      kind: "insert_block",
+      project: "demo",
+      environment: "draft",
+      type: "page",
+      locale: "en",
+      summary: "Insert box",
+      operations: [
+        {
+          op: "insert_block",
+          bodyMdx: '<Box style={{"padding":12}} className="hero" />',
+        },
+      ],
+      expiresAt: "2026-05-15T00:05:00.000Z",
+      provider: {
+        providerId: "echo",
+        model: "echo-1",
+        promptTemplateId: "chat_tools.v1",
+      },
+    });
+
+    assert.equal(result.status, "invalid");
+    if (result.status === "invalid") {
+      assert.equal(result.errors[0]?.code, "MDX_UNKNOWN_PROP");
+      assert.equal(result.errors[0]?.path, "operations[0].bodyMdx");
+    }
+  });
+
   test("does not validate props when registered component props were not extracted", async () => {
     const validator = createMdxCatalogProposalValidator({
       validator: async () => ({ status: "valid" }),

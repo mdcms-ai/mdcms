@@ -34,6 +34,7 @@ export type MdxAutoFormField =
   | { name: string; control: "string-list"; required: boolean }
   | { name: string; control: "number-list"; required: boolean }
   | { name: string; control: "date"; required: boolean }
+  | { name: string; control: "style"; required: boolean }
   | { name: string; control: "json"; required: boolean }
   | { name: string; control: "rich-text"; required: boolean };
 
@@ -134,6 +135,9 @@ export function createMdxAutoFormFields(
         break;
       case "rich-text":
         fields.push({ name, control: "rich-text", required: prop.required });
+        break;
+      case "style":
+        fields.push({ name, control: "style", required: prop.required });
         break;
       case "json":
         break;

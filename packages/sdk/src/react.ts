@@ -3,6 +3,8 @@ import type { ContentDocumentResponse, MdcmsConfig } from "@mdcms/shared";
 import type { ReactNode } from "react";
 import * as runtime from "react/jsx-runtime";
 
+import { Box, Image, Link, Text } from "./react-primitives.js";
+
 export type MdcmsRendererErrorCode =
   | "MDCMS_RENDERER_SERVER_ONLY"
   | "MDCMS_RENDERER_COMPONENT_LOAD_FAILED"
@@ -66,7 +68,12 @@ function assertNoMdxEsm(document: ContentDocumentResponse): void {
 function toComponentMap(
   loadedComponents: Map<string, unknown>,
 ): Record<string, unknown> {
-  const components: Record<string, unknown> = {};
+  const components: Record<string, unknown> = {
+    Box,
+    Image,
+    Link,
+    Text,
+  };
 
   for (const [name, component] of loadedComponents) {
     components[name] = component;

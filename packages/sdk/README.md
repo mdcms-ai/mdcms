@@ -90,6 +90,14 @@ The React subpath is server-only. MDX `import` and `export` syntax is rejected;
 register components in `mdcms.config.ts` instead. Renderer failures throw
 `MdcmsRendererError`.
 
+Built-in MDX components `Box`, `Text`, `Image`, and `Link` are available during
+rendering without host registration. App-side React code can import the same
+built-ins from the browser-safe primitives subpath:
+
+```tsx
+import { Box, Text, Image, Link } from "@mdcms/sdk/react-primitives";
+```
+
 ### Error Handling
 
 - `MdcmsApiError` — thrown for API error envelopes (4xx/5xx responses)

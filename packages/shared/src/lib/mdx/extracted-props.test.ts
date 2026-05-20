@@ -411,6 +411,185 @@ test("extractMdxComponentProps keeps optional string-literal enums", async () =>
   });
 });
 
+test("extractMdxComponentProps extracts React inline style props", async () => {
+  await withTempDir("mdcms-extracted-props-", async (directory) => {
+    const filePath = await writeComponentFile(
+      directory,
+      "StyledBox.tsx",
+      `
+        declare namespace React {
+          export type CSSProperties = Record<string, string | number>;
+        }
+
+        export interface StyledBoxProps {
+          style?: React.CSSProperties;
+          label: string;
+        }
+
+        export function StyledBox(_props: StyledBoxProps) {
+          return null;
+        }
+      `,
+    );
+
+    assert.deepEqual(
+      extractMdxComponentProps({
+        filePath,
+        componentName: "StyledBox",
+      }),
+      {
+        style: { type: "style", required: false },
+        label: { type: "string", required: true },
+      },
+    );
+  });
+});
+
+test("extractMdxComponentProps extracts CSSProperties imported from React", async () => {
+  await withTempDir("mdcms-extracted-props-", async (directory) => {
+    const reactTypesPath = await writeComponentFile(
+      directory,
+      "react.d.ts",
+      `
+        declare module "react" {
+          export type CSSProperties = Record<string, string | number>;
+        }
+      `,
+    );
+    const filePath = await writeComponentFile(
+      directory,
+      "StyledText.tsx",
+      `
+        import type { CSSProperties } from "react";
+
+        export interface StyledTextProps {
+          style: CSSProperties;
+        }
+
+        export function StyledText(_props: StyledTextProps) {
+          return null;
+        }
+      `,
+    );
+    const tsconfigPath = join(directory, "tsconfig.json");
+
+    await writeFile(
+      tsconfigPath,
+      JSON.stringify(
+        {
+          compilerOptions: {
+            target: "ES2022",
+            module: "NodeNext",
+            moduleResolution: "NodeNext",
+            jsx: "react-jsx",
+            strict: true,
+          },
+          files: [reactTypesPath, filePath],
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    assert.deepEqual(
+      extractMdxComponentProps({
+        filePath,
+        componentName: "StyledText",
+        tsconfigPath,
+      }),
+      {
+        style: { type: "style", required: true },
+      },
+    );
+  });
+});
+
+test("extractMdxComponentProps extracts MdcmsInlineStyle props", async () => {
+  await withTempDir("mdcms-extracted-props-", async (directory) => {
+    const filePath = await writeComponentFile(
+      directory,
+      "MdcmsStyledBox.tsx",
+      `
+        type MdcmsInlineStyle = Record<string, string | number>;
+
+        export interface MdcmsStyledBoxProps {
+          style?: MdcmsInlineStyle;
+        }
+
+        export function MdcmsStyledBox(_props: MdcmsStyledBoxProps) {
+          return null;
+        }
+      `,
+    );
+
+    assert.deepEqual(
+      extractMdxComponentProps({
+        filePath,
+        componentName: "MdcmsStyledBox",
+      }),
+      {
+        style: { type: "style", required: false },
+      },
+    );
+  });
+});
+
+test("extractMdxComponentProps omits arbitrary style-shaped object props", async () => {
+  await withTempDir("mdcms-extracted-props-", async (directory) => {
+    const filePath = await writeComponentFile(
+      directory,
+      "StyledPanel.tsx",
+      `
+        export interface StyledPanelProps {
+          style?: Record<string, string | number>;
+          sx?: Record<string, string | number>;
+        }
+
+        export function StyledPanel(_props: StyledPanelProps) {
+          return null;
+        }
+      `,
+    );
+
+    assert.deepEqual(
+      extractMdxComponentProps({
+        filePath,
+        componentName: "StyledPanel",
+      }),
+      {},
+    );
+  });
+});
+
+test("extractMdxComponentProps omits incompatible MdcmsInlineStyle aliases", async () => {
+  await withTempDir("mdcms-extracted-props-", async (directory) => {
+    const filePath = await writeComponentFile(
+      directory,
+      "BrokenMdcmsStyledBox.tsx",
+      `
+        type MdcmsInlineStyle = Record<string, boolean>;
+
+        export interface BrokenMdcmsStyledBoxProps {
+          style?: MdcmsInlineStyle;
+        }
+
+        export function BrokenMdcmsStyledBox(_props: BrokenMdcmsStyledBoxProps) {
+          return null;
+        }
+      `,
+    );
+
+    assert.deepEqual(
+      extractMdxComponentProps({
+        filePath,
+        componentName: "BrokenMdcmsStyledBox",
+      }),
+      {},
+    );
+  });
+});
+
 test("extractMdxComponentProps reads props from exported class components", async () => {
   await withTempDir("mdcms-extracted-props-", async (directory) => {
     const filePath = await writeComponentFile(

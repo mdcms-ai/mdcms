@@ -86,6 +86,23 @@
         "tslib": "^2.3.0",
       },
     },
+    "packages/react-primitives": {
+      "name": "@mdcms/react-primitives",
+      "version": "0.0.0",
+      "dependencies": {
+        "@mdcms/shared": "workspace:*",
+        "tslib": "^2.3.0",
+      },
+      "devDependencies": {
+        "@types/react": "^19.0.12",
+        "@types/react-dom": "^19.0.5",
+        "react": "^19.2.0",
+        "react-dom": "^19.2.0",
+      },
+      "peerDependencies": {
+        "react": "^19.2.0",
+      },
+    },
     "packages/sdk": {
       "name": "@mdcms/sdk",
       "version": "0.1.3",
@@ -654,6 +671,8 @@
     "@mdcms/cli": ["@mdcms/cli@workspace:apps/cli"],
 
     "@mdcms/modules": ["@mdcms/modules@workspace:packages/modules"],
+
+    "@mdcms/react-primitives": ["@mdcms/react-primitives@workspace:packages/react-primitives"],
 
     "@mdcms/sdk": ["@mdcms/sdk@workspace:packages/sdk"],
 

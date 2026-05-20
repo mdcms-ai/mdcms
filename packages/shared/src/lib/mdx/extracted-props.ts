@@ -71,6 +71,7 @@ export function extractMdxComponentProps(input: {
     const normalizedProperty = normalizePropType({
       checker,
       propertyName,
+      propertyDeclaration,
       propertyType,
       required,
       propHint: propHints[propertyName],
@@ -293,13 +294,21 @@ function resolveClassComponentPropsType(
 function normalizePropType(input: {
   checker: ts.TypeChecker;
   propertyName: string;
+  propertyDeclaration: ts.Declaration;
   propertyType: ts.Type;
   required: boolean;
   propHint: unknown;
   seenTypes: Set<ts.Type>;
 }): MdxExtractedProp | undefined {
-  const { checker, propertyName, propertyType, required, propHint, seenTypes } =
-    input;
+  const {
+    checker,
+    propertyName,
+    propertyDeclaration,
+    propertyType,
+    required,
+    propHint,
+    seenTypes,
+  } = input;
 
   if (
     (propertyName === "children" &&
@@ -321,11 +330,23 @@ function normalizePropType(input: {
     return normalizePropType({
       checker,
       propertyName,
+      propertyDeclaration,
       propertyType: singleDefinedType,
       required,
       propHint,
       seenTypes,
     });
+  }
+
+  if (
+    isReactInlineStyleProp({
+      checker,
+      propertyName,
+      propertyDeclaration,
+      propertyType,
+    })
+  ) {
+    return { type: "style", required };
   }
 
   if (
@@ -660,6 +681,115 @@ function isBooleanType(type: ts.Type): boolean {
 
 function isDateType(type: ts.Type): boolean {
   return type.symbol?.getName() === "Date";
+}
+
+function isReactInlineStyleProp(input: {
+  checker: ts.TypeChecker;
+  propertyName: string;
+  propertyDeclaration: ts.Declaration;
+  propertyType: ts.Type;
+}): boolean {
+  const { checker, propertyName, propertyDeclaration, propertyType } = input;
+
+  if (propertyName !== "style") {
+    return false;
+  }
+
+  const typeNode = getDeclaredPropertyTypeNode(propertyDeclaration);
+  const typeText = typeNode?.getText(propertyDeclaration.getSourceFile());
+
+  if (typeText === "React.CSSProperties") {
+    return true;
+  }
+
+  if (typeText === "MdcmsInlineStyle") {
+    return isMdcmsInlineStyleType(propertyType, checker);
+  }
+
+  if (
+    typeText === "CSSProperties" &&
+    sourceImportsNamedReactType(
+      propertyDeclaration.getSourceFile(),
+      "CSSProperties",
+    )
+  ) {
+    return true;
+  }
+
+  const typeName =
+    propertyType.aliasSymbol?.getName() ??
+    propertyType.symbol?.getName() ??
+    checker.typeToString(propertyType);
+
+  return (
+    typeName === "MdcmsInlineStyle" &&
+    isMdcmsInlineStyleType(propertyType, checker)
+  );
+}
+
+function isMdcmsInlineStyleType(
+  type: ts.Type,
+  checker: ts.TypeChecker,
+): boolean {
+  const stringIndexType =
+    type.getStringIndexType() ??
+    checker.getIndexInfoOfType(type, ts.IndexKind.String)?.type;
+
+  return (
+    stringIndexType !== undefined && isInlineStyleValueType(stringIndexType)
+  );
+}
+
+function isInlineStyleValueType(type: ts.Type): boolean {
+  if (type.isUnion()) {
+    return type.types.every((candidate) => isInlineStyleValueType(candidate));
+  }
+
+  return (
+    (type.flags & (ts.TypeFlags.StringLike | ts.TypeFlags.NumberLike)) !== 0
+  );
+}
+
+function getDeclaredPropertyTypeNode(
+  declaration: ts.Declaration,
+): ts.TypeNode | undefined {
+  if (
+    ts.isPropertySignature(declaration) ||
+    ts.isPropertyDeclaration(declaration) ||
+    ts.isParameter(declaration)
+  ) {
+    return declaration.type;
+  }
+
+  return undefined;
+}
+
+function sourceImportsNamedReactType(
+  sourceFile: ts.SourceFile,
+  importedName: string,
+): boolean {
+  return sourceFile.statements.some((statement) => {
+    if (!ts.isImportDeclaration(statement)) {
+      return false;
+    }
+
+    if (
+      !ts.isStringLiteral(statement.moduleSpecifier) ||
+      statement.moduleSpecifier.text !== "react"
+    ) {
+      return false;
+    }
+
+    const namedBindings = statement.importClause?.namedBindings;
+
+    return (
+      namedBindings !== undefined &&
+      ts.isNamedImports(namedBindings) &&
+      namedBindings.elements.some(
+        (element) => element.name.text === importedName,
+      )
+    );
+  });
 }
 
 function isJsonHint(propHint: unknown): boolean {

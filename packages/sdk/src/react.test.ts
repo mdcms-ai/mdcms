@@ -110,6 +110,27 @@ test("createMdcmsRenderer renders MDX components loaded from config and caches l
   );
 });
 
+test("createMdcmsRenderer renders built-in MDX components without host registration", async () => {
+  const renderer = createMdcmsRenderer(createConfig());
+  const document = createDocument({
+    body: '<Box style={{padding: "16px", marginTop: 4}}><Text style={{color: "red"}}>Hello</Text><Image src="/hero.png" alt="Hero" style={{width: "100%"}} /><Link href="/about" style={{textDecoration: "none"}}>About</Link></Box>',
+  });
+
+  const node = await renderer.render(document);
+  const markup = renderToStaticMarkup(createElement("article", null, node));
+
+  assert.match(markup, /<article>/);
+  assert.match(markup, /<div style="[^"]*padding:16px/);
+  assert.match(markup, /margin-top:4px/);
+  assert.match(markup, /<span style="[^"]*color:red[^"]*">Hello<\/span>/);
+  assert.match(markup, /<img src="\/hero\.png" alt="Hero"/);
+  assert.match(markup, /width:100%/);
+  assert.match(
+    markup,
+    /<a href="\/about" style="[^"]*text-decoration:none[^"]*">About<\/a>/,
+  );
+});
+
 test("renderMdcmsContent rejects browser-like usage", async () => {
   const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
   Object.defineProperty(globalThis, "window", {
