@@ -460,6 +460,11 @@ function AdminLayoutInner({
     }
   }, [sessionState.status, pathname, router, isTokenMode]);
 
+  const mdxCatalog = useMemo<MdxComponentCatalog>(
+    () => context.mdx?.catalog ?? { components: [] },
+    [context.mdx?.catalog],
+  );
+
   if (sessionState.status === "loading" && typeof window !== "undefined") {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
@@ -549,10 +554,6 @@ function AdminLayoutInner({
           return response.schemaHash ?? null;
         }
       : undefined;
-  const mdxCatalog = useMemo<MdxComponentCatalog>(
-    () => context.mdx?.catalog ?? { components: [] },
-    [context.mdx?.catalog],
-  );
 
   return (
     <ToastProvider>
