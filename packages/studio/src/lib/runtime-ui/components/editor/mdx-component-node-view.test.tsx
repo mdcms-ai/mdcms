@@ -117,11 +117,19 @@ test("MdxComponentNodeFrame renders action buttons when callbacks are provided",
       previewState: "empty",
       onEditProps: () => {},
       onDelete: () => {},
+      onDuplicate: () => {},
+      onMoveUp: () => {},
+      onMoveDown: () => {},
+      onWrapInBox: () => {},
     }),
   );
 
   assert.match(markup, /aria-label="Edit Alert props"/);
   assert.match(markup, /aria-label="Delete Alert"/);
+  assert.match(markup, /aria-label="Duplicate Alert"/);
+  assert.match(markup, /aria-label="Move Alert up"/);
+  assert.match(markup, /aria-label="Move Alert down"/);
+  assert.match(markup, /aria-label="Wrap Alert in Box"/);
 });
 
 test("MdxComponentNodeFrame omits action buttons when callbacks are not provided", () => {
@@ -136,6 +144,43 @@ test("MdxComponentNodeFrame omits action buttons when callbacks are not provided
 
   assert.doesNotMatch(markup, /aria-label="Edit Alert props"/);
   assert.doesNotMatch(markup, /aria-label="Delete Alert"/);
+  assert.doesNotMatch(markup, /aria-label="Duplicate Alert"/);
+});
+
+test("MdxComponentNodeFrame exposes an inside drop target for structural wrappers", () => {
+  const markup = renderToStaticMarkup(
+    createElement(
+      MdxComponentNodeFrame,
+      {
+        componentName: "Callout",
+        isVoid: false,
+        propsSummary: "",
+        previewState: "empty",
+        canReceiveChildDrops: true,
+      },
+      createElement("div", { "data-test-slot": "children" }, "Body"),
+    ),
+  );
+
+  assert.match(markup, /data-mdcms-visual-drop-target="inside"/);
+});
+
+test("MdxComponentNodeFrame hides inside drop target for inline wrappers", () => {
+  const markup = renderToStaticMarkup(
+    createElement(
+      MdxComponentNodeFrame,
+      {
+        componentName: "Text",
+        isVoid: false,
+        propsSummary: "",
+        previewState: "empty",
+        canReceiveChildDrops: false,
+      },
+      createElement("div", { "data-test-slot": "children" }, "Body"),
+    ),
+  );
+
+  assert.doesNotMatch(markup, /data-mdcms-visual-drop-target="inside"/);
 });
 
 test("MdxComponentNodeFrame applies selected styles when selected", () => {

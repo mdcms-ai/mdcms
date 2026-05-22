@@ -13,9 +13,14 @@ import type { ReactNodeViewProps } from "@tiptap/react";
 import { NodeViewContent, NodeViewWrapper } from "@tiptap/react";
 
 import {
+  ArrowDown,
+  ArrowUp,
+  Box as BoxIcon,
   ChevronDown,
   ChevronRight,
+  Copy,
   GripVertical,
+  Scissors,
   Settings,
   Trash2,
 } from "lucide-react";
@@ -23,6 +28,12 @@ import {
 import { isMdxExpressionValue } from "../../../mdx-component-extension.js";
 import { cn } from "../../lib/utils.js";
 import { useMdxComponentCollapseSnapshot } from "./mdx-component-collapse.js";
+import {
+  duplicateSelectedMdxComponent,
+  moveSelectedVisualBlock,
+  unwrapSelectedMdxComponent,
+  wrapSelectedBlockInBox,
+} from "./visual-composition-commands.js";
 
 export function formatMdxComponentPropsSummary(
   props: Record<string, unknown> | undefined,
@@ -60,8 +71,14 @@ export function MdxComponentNodeFrame(props: {
   readOnly?: boolean;
   forbidden?: boolean;
   collapsed?: boolean;
+  canReceiveChildDrops?: boolean;
   onToggleCollapsed?: () => void;
   onEditProps?: () => void;
+  onDuplicate?: () => void;
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
+  onWrapInBox?: () => void;
+  onUnwrap?: () => void;
   onDelete?: () => void;
   children?: ReactNode;
 }) {
@@ -204,6 +221,61 @@ export function MdxComponentNodeFrame(props: {
               <Settings className="size-3.5" />
             </button>
           ) : null}
+          {props.onMoveUp ? (
+            <button
+              type="button"
+              onClick={props.onMoveUp}
+              aria-label={`Move ${props.componentName} up`}
+              title="Move up"
+              className="inline-flex size-6 items-center justify-center rounded text-foreground-muted hover:bg-background-subtle hover:text-foreground"
+            >
+              <ArrowUp className="size-3.5" />
+            </button>
+          ) : null}
+          {props.onMoveDown ? (
+            <button
+              type="button"
+              onClick={props.onMoveDown}
+              aria-label={`Move ${props.componentName} down`}
+              title="Move down"
+              className="inline-flex size-6 items-center justify-center rounded text-foreground-muted hover:bg-background-subtle hover:text-foreground"
+            >
+              <ArrowDown className="size-3.5" />
+            </button>
+          ) : null}
+          {props.onDuplicate ? (
+            <button
+              type="button"
+              onClick={props.onDuplicate}
+              aria-label={`Duplicate ${props.componentName}`}
+              title="Duplicate"
+              className="inline-flex size-6 items-center justify-center rounded text-foreground-muted hover:bg-background-subtle hover:text-foreground"
+            >
+              <Copy className="size-3.5" />
+            </button>
+          ) : null}
+          {props.onWrapInBox ? (
+            <button
+              type="button"
+              onClick={props.onWrapInBox}
+              aria-label={`Wrap ${props.componentName} in Box`}
+              title="Wrap in Box"
+              className="inline-flex size-6 items-center justify-center rounded text-foreground-muted hover:bg-background-subtle hover:text-foreground"
+            >
+              <BoxIcon className="size-3.5" />
+            </button>
+          ) : null}
+          {props.onUnwrap ? (
+            <button
+              type="button"
+              onClick={props.onUnwrap}
+              aria-label={`Unwrap ${props.componentName}`}
+              title="Unwrap"
+              className="inline-flex size-6 items-center justify-center rounded text-foreground-muted hover:bg-background-subtle hover:text-foreground"
+            >
+              <Scissors className="size-3.5" />
+            </button>
+          ) : null}
           {props.onDelete ? (
             <button
               type="button"
@@ -252,6 +324,16 @@ export function MdxComponentNodeFrame(props: {
                 : undefined
             }
           >
+            {props.canReceiveChildDrops ? (
+              <div
+                data-mdcms-visual-drop-target="inside"
+                contentEditable={false}
+                suppressContentEditableWarning
+                className="mb-2 rounded-sm border border-dashed border-primary/30 bg-primary/5 px-2 py-1 text-center font-mono text-[10px] uppercase tracking-[0.08em] text-primary/80 opacity-0 transition-opacity duration-150 group-hover/mdx-block:opacity-100"
+              >
+                Drop inside
+              </div>
+            ) : null}
             {props.children}
           </div>
         )}
@@ -408,6 +490,16 @@ export function MdxComponentNodeView(
     }
   };
 
+  const selectThisNode = (): number | null => {
+    const pos = props.getPos();
+    if (typeof pos !== "number") {
+      return null;
+    }
+
+    props.editor.commands.setNodeSelection(pos);
+    return pos;
+  };
+
   const handleDelete = () => {
     props.deleteNode();
   };
@@ -417,6 +509,28 @@ export function MdxComponentNodeView(
   };
 
   const isEditable = !props.readOnly && !props.forbidden;
+  const boxComponent = props.context?.mdx?.catalog.components.find(
+    (component) => component.name === "Box",
+  );
+  const nodePos = props.getPos();
+  const canMoveUp =
+    isEditable &&
+    typeof nodePos === "number" &&
+    canMoveNodeAtPosition(props.editor, nodePos, "up");
+  const canMoveDown =
+    isEditable &&
+    typeof nodePos === "number" &&
+    canMoveNodeAtPosition(props.editor, nodePos, "down");
+  const canReceiveChildDrops =
+    !isVoid && componentName !== "Text" && componentName !== "Link";
+
+  const runSelectedAction = (action: () => boolean) => {
+    if (selectThisNode() === null) {
+      return;
+    }
+
+    action();
+  };
 
   return (
     <NodeViewWrapper as="div">
@@ -427,8 +541,49 @@ export function MdxComponentNodeView(
         previewState={previewState}
         selected={props.selected}
         collapsed={collapsed}
+        canReceiveChildDrops={canReceiveChildDrops}
         onToggleCollapsed={handleToggleCollapsed}
         onEditProps={isEditable ? handleEditProps : undefined}
+        onMoveUp={
+          canMoveUp
+            ? () =>
+                runSelectedAction(() =>
+                  moveSelectedVisualBlock(props.editor, "up"),
+                )
+            : undefined
+        }
+        onMoveDown={
+          canMoveDown
+            ? () =>
+                runSelectedAction(() =>
+                  moveSelectedVisualBlock(props.editor, "down"),
+                )
+            : undefined
+        }
+        onDuplicate={
+          isEditable
+            ? () =>
+                runSelectedAction(() =>
+                  duplicateSelectedMdxComponent(props.editor),
+                )
+            : undefined
+        }
+        onWrapInBox={
+          isEditable && boxComponent
+            ? () =>
+                runSelectedAction(() =>
+                  wrapSelectedBlockInBox(props.editor, boxComponent),
+                )
+            : undefined
+        }
+        onUnwrap={
+          isEditable && !isVoid
+            ? () =>
+                runSelectedAction(() =>
+                  unwrapSelectedMdxComponent(props.editor),
+                )
+            : undefined
+        }
         onDelete={isEditable ? handleDelete : undefined}
         previewSurface={
           <div
@@ -464,4 +619,16 @@ export function MdxComponentNodeView(
       </MdxComponentNodeFrame>
     </NodeViewWrapper>
   );
+}
+
+function canMoveNodeAtPosition(
+  editor: ReactNodeViewProps["editor"],
+  pos: number,
+  direction: "up" | "down",
+): boolean {
+  const resolved = editor.state.doc.resolve(pos);
+  const index = resolved.index();
+  const parent = resolved.parent;
+
+  return direction === "up" ? index > 0 : index < parent.childCount - 1;
 }

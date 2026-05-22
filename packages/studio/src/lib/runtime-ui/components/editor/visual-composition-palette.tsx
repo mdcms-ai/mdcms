@@ -166,6 +166,14 @@ export function readVisualCompositionDragPayload(
   }
 }
 
+export function hasVisualCompositionDragPayload(
+  event: DragEvent<HTMLElement>,
+): boolean {
+  return Array.from(event.dataTransfer.types).includes(
+    VISUAL_COMPOSITION_DRAG_MIME,
+  );
+}
+
 function getFilteredPaletteGroups(
   groups: readonly VisualCompositionPaletteGroup[],
   query: string,

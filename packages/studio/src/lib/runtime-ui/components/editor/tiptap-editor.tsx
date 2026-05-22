@@ -16,6 +16,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type DragEvent,
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
@@ -75,6 +76,21 @@ import {
 } from "./mdx-component-catalog.js";
 import { MdxComponentPicker } from "./mdx-component-picker.js";
 import { type MdxPropsPanelSelection } from "./mdx-props-panel.js";
+import {
+  createVisualCompositionPaletteGroups,
+  getRequiredMdxComponentPropNames,
+  insertVisualCompositionBlock,
+} from "./visual-composition-commands.js";
+import { VisualCompositionInsertionDialog } from "./visual-composition-insertion-dialog.js";
+import {
+  hasVisualCompositionDragPayload,
+  readVisualCompositionDragPayload,
+  VisualCompositionPalette,
+} from "./visual-composition-palette.js";
+import type {
+  VisualCompositionBlock,
+  VisualCompositionInsertion,
+} from "./visual-composition-types.js";
 import {
   createPublishedMdxComponentSelectionSnapshot,
   hasPublishedMdxComponentSelectionChanged,
@@ -422,6 +438,22 @@ export function resolveSlashPickerCoordsForEditor(input: {
   }
 }
 
+export function resolveVisualDropPosition(
+  editor: TipTapEditorInstance,
+  event: Pick<DragEvent<HTMLElement>, "clientX" | "clientY">,
+): number | undefined {
+  try {
+    return (
+      editor.view.posAtCoords({
+        left: event.clientX,
+        top: event.clientY,
+      })?.pos ?? undefined
+    );
+  } catch {
+    return undefined;
+  }
+}
+
 export const TipTapEditor = forwardRef<TipTapEditorHandle, TipTapEditorProps>(
   function TipTapEditor(
     {
@@ -443,8 +475,18 @@ export const TipTapEditor = forwardRef<TipTapEditorHandle, TipTapEditorProps>(
       () => catalogComponents.filter(isMdxComponentVisibleInInsertUi),
       [catalogComponents],
     );
+    const visualCompositionPaletteGroups = useMemo(
+      () => createVisualCompositionPaletteGroups(catalogComponents),
+      [catalogComponents],
+    );
     const isEditorReadOnly = readOnly || forbidden;
     const collapseController = useMdxComponentCollapseController();
+    const [visualPaletteQuery, setVisualPaletteQuery] = useState("");
+    const [pendingVisualInsertion, setPendingVisualInsertion] =
+      useState<VisualCompositionInsertion | null>(null);
+    const [pendingVisualProps, setPendingVisualProps] = useState<
+      Record<string, unknown>
+    >({});
     const [pickerSource, setPickerSource] = useState<
       "toolbar" | "slash" | null
     >(null);
@@ -1470,6 +1512,100 @@ export const TipTapEditor = forwardRef<TipTapEditorHandle, TipTapEditorProps>(
       }
     };
 
+    const commitVisualInsertion = (
+      insertion: VisualCompositionInsertion,
+      props: Record<string, unknown> = {},
+    ) => {
+      if (!editor || isEditorReadOnly) {
+        return false;
+      }
+
+      const didInsert = insertVisualCompositionBlock(editor, {
+        ...insertion,
+        props,
+      });
+
+      if (!didInsert) {
+        return false;
+      }
+
+      if (insertion.block.kind === "mdx-component") {
+        selectAdjacentMdxComponent(editor);
+        publishSelectedMdxComponent(editor);
+      }
+
+      handleEditorUpdate(editor);
+      syncSlashTrigger(editor);
+
+      return true;
+    };
+
+    const requestVisualInsertion = (
+      block: VisualCompositionBlock,
+      position?: number,
+    ) => {
+      if (!editor || isEditorReadOnly) {
+        return;
+      }
+
+      const insertion: VisualCompositionInsertion = {
+        block,
+        ...(typeof position === "number" ? { position } : {}),
+      };
+
+      if (
+        block.kind === "mdx-component" &&
+        getRequiredMdxComponentPropNames(block.component).length > 0
+      ) {
+        setPendingVisualInsertion(insertion);
+        setPendingVisualProps({});
+        return;
+      }
+
+      commitVisualInsertion(insertion);
+    };
+
+    const confirmPendingVisualInsertion = () => {
+      if (!pendingVisualInsertion) {
+        return;
+      }
+
+      if (commitVisualInsertion(pendingVisualInsertion, pendingVisualProps)) {
+        setPendingVisualInsertion(null);
+        setPendingVisualProps({});
+      }
+    };
+
+    const cancelPendingVisualInsertion = () => {
+      setPendingVisualInsertion(null);
+      setPendingVisualProps({});
+    };
+
+    const handleVisualDragOver = (event: DragEvent<HTMLDivElement>) => {
+      if (isEditorReadOnly || !hasVisualCompositionDragPayload(event)) {
+        return;
+      }
+
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
+    };
+
+    const handleVisualDrop = (event: DragEvent<HTMLDivElement>) => {
+      if (isEditorReadOnly) {
+        return;
+      }
+
+      const block = readVisualCompositionDragPayload(event);
+
+      if (!block || !editor) {
+        return;
+      }
+
+      event.preventDefault();
+      const position = resolveVisualDropPosition(editor, event);
+      requestVisualInsertion(block, position);
+    };
+
     const insertSelectedComponent = (
       component: (typeof catalogComponents)[number],
     ) => {
@@ -1787,17 +1923,44 @@ export const TipTapEditor = forwardRef<TipTapEditorHandle, TipTapEditorProps>(
             ) : null}
           </div>
 
-          <div className="flex-1 overflow-y-auto">
-            <div className="mx-auto max-w-[880px] px-6 pb-24 pt-4 lg:px-10 lg:pt-5">
-              {canvasHeader}
-              <MdxComponentCollapseProvider
-                snapshot={collapseController.snapshot}
-              >
-                <EditorContent editor={editor} />
-              </MdxComponentCollapseProvider>
+          <div
+            data-mdcms-visual-composition-layout="true"
+            className="flex min-h-0 flex-1 bg-background"
+          >
+            <VisualCompositionPalette
+              groups={visualCompositionPaletteGroups}
+              query={visualPaletteQuery}
+              readOnly={isEditorReadOnly}
+              onQueryChange={setVisualPaletteQuery}
+              onInsert={requestVisualInsertion}
+            />
+            <div
+              className="min-w-0 flex-1 overflow-y-auto"
+              onDragOver={handleVisualDragOver}
+              onDrop={handleVisualDrop}
+            >
+              <div className="mx-auto max-w-[880px] px-6 pb-24 pt-4 lg:px-10 lg:pt-5">
+                {canvasHeader}
+                <MdxComponentCollapseProvider
+                  snapshot={collapseController.snapshot}
+                >
+                  <EditorContent editor={editor} />
+                </MdxComponentCollapseProvider>
+              </div>
             </div>
           </div>
         </div>
+
+        {context ? (
+          <VisualCompositionInsertionDialog
+            context={context}
+            pendingInsertion={pendingVisualInsertion}
+            value={pendingVisualProps}
+            onValueChange={setPendingVisualProps}
+            onCancel={cancelPendingVisualInsertion}
+            onConfirm={confirmPendingVisualInsertion}
+          />
+        ) : null}
 
         {slashPicker && typeof document !== "undefined"
           ? createPortal(slashPicker, document.body)
