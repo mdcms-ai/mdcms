@@ -70,15 +70,15 @@ test("SDK content detail page clearly identifies the SDK data source", async () 
   });
   const markup = renderToStaticMarkup(element);
 
-  assert.match(markup, /SDK Content Document/i);
-  assert.match(markup, /Data source:\s*<strong>@mdcms\/sdk<\/strong>/i);
+  assert.match(markup, /SDK detail/i);
+  assert.match(markup, /@mdcms\/sdk/i);
   assert.match(markup, /\/demo\/sdk-content/i);
   assert.match(markup, /\/demo\/content/i);
   assert.match(markup, /\/preview\/post\/hello-world/i);
   assert.match(markup, /Hello World/);
-  assert.match(markup, /Rendered body/i);
   assert.match(markup, /<h1>Hello <strong>rendered<\/strong><\/h1>/i);
-  assert.match(markup, /body \(raw\):/i);
+  assert.doesNotMatch(markup, /body \(raw\):/i);
+  assert.doesNotMatch(markup, /frontmatter \(raw JSON\):/i);
 
   globalThis.fetch = originalFetch;
   delete process.env.MDCMS_DEMO_API_KEY;

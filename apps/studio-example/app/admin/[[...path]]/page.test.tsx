@@ -37,7 +37,15 @@ test("admin catch-all page prepares studio config with local MDX metadata", asyn
   const chart = components.find((component) => component.name === "Chart");
   const callout = components.find((component) => component.name === "Callout");
 
-  assert.deepEqual(names, ["Chart", "Callout", "PricingTable"]);
+  assert.deepEqual(names, [
+    "Box",
+    "Text",
+    "Image",
+    "Link",
+    "Chart",
+    "Callout",
+    "PricingTable",
+  ]);
   assert.deepEqual(chart?.extractedProps?.data, {
     type: "array",
     items: "number",

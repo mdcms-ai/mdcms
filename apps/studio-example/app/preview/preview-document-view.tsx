@@ -1,15 +1,32 @@
 import Link from "next/link";
+import type { ReactNode } from "react";
+
+import { createMdcmsRenderer } from "@mdcms/sdk/react";
 
 import type { PreviewDocumentResult } from "../../lib/preview-content";
-import { RenderedContent } from "../../lib/rendered-content";
+import config from "../../mdcms.config";
 
-export function PreviewDocumentView({
+const previewRenderer = createMdcmsRenderer(config);
+
+async function renderPreviewBody(
+  result: PreviewDocumentResult,
+): Promise<ReactNode> {
+  if (!result.ok) {
+    return null;
+  }
+
+  return previewRenderer.render(result.document);
+}
+
+export async function PreviewDocumentView({
   heading,
   result,
 }: {
   heading: string;
   result: PreviewDocumentResult;
 }) {
+  const renderedBody = await renderPreviewBody(result);
+
   return (
     <main
       style={{
@@ -86,7 +103,7 @@ export function PreviewDocumentView({
                 Open in Studio
               </Link>
             </div>
-            <RenderedContent body={result.document.body} />
+            {renderedBody}
           </article>
         )}
       </div>

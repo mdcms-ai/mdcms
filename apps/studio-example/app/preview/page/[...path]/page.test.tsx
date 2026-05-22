@@ -43,7 +43,13 @@ test("page preview route renders draft content by content path", async () => {
             frontmatter: {
               title: "About Demo",
             },
-            body: '# About Demo\n\n<Callout tone="info">Rendered page content.</Callout>',
+            body: [
+              "# About Demo",
+              "",
+              '<Callout tone="info">Rendered page content.</Callout>',
+              "",
+              '<Link href="/contact" style={{color:"#176f5d"}}>Contact us</Link>',
+            ].join("\n"),
             createdBy: "33333333-3333-3333-3333-333333333333",
             createdAt: "2026-03-27T08:00:00.000Z",
             updatedAt: "2026-03-27T09:00:00.000Z",
@@ -74,6 +80,8 @@ test("page preview route renders draft content by content path", async () => {
   assert.match(markup, /Page Preview/);
   assert.match(markup, /About Demo/);
   assert.match(markup, /Rendered page content/);
+  assert.match(markup, /href="\/contact"/);
+  assert.match(markup, /Contact us/);
   assert.match(
     markup,
     /\/admin\/content\/page\/44444444-4444-4444-4444-444444444444/,

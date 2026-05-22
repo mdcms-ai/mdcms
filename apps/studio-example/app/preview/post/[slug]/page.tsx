@@ -13,5 +13,5 @@ export default async function PostPreviewPage({
   const { slug } = await params;
   const result = await fetchPreviewPostBySlug(slug);
 
-  return <PreviewDocumentView heading="Post Preview" result={result} />;
+  return await PreviewDocumentView({ heading: "Post Preview", result });
 }

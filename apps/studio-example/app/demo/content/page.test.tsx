@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import { renderToStaticMarkup } from "react-dom/server";
 
-test("raw content list page clearly identifies the raw API data source", async () => {
+test("direct API content list page renders diagnostic previews", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () =>
     new Response(
@@ -28,8 +28,8 @@ test("raw content list page clearly identifies the raw API data source", async (
   const element = await module.default();
   const markup = renderToStaticMarkup(element);
 
-  assert.match(markup, /Raw Content API Demo/i);
-  assert.match(markup, /Data source:\s*<strong>Direct API fetch<\/strong>/i);
+  assert.match(markup, /Direct API/i);
+  assert.match(markup, /Rendered documents from the content API/i);
   assert.match(markup, /\/demo\/sdk-content/i);
 
   globalThis.fetch = originalFetch;

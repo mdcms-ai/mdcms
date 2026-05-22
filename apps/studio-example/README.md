@@ -5,21 +5,22 @@ Example Next.js host app demonstrating how to embed `@mdcms/studio` at a catch-a
 ## Purpose
 
 - Show the recommended host-app integration pattern for Studio
-- Provide a working reference for `<Studio />` embedding, content demo pages, and MDX component registration
+- Provide a working reference for `<Studio />` embedding, SDK-rendered content pages, and MDX component registration
 - Serve as the local development host app for the monorepo
 
 ## Routes
 
-| Route                           | Description                                              |
-| ------------------------------- | -------------------------------------------------------- |
-| `/`                             | Host app home page                                       |
-| `/admin/*`                      | Embedded Studio UI (catch-all)                           |
-| `/demo/content`                 | Raw content API demo (draft scope)                       |
-| `/demo/content/:documentId`     | Raw content detail                                       |
-| `/demo/sdk-content`             | SDK-backed content demo (`@mdcms/sdk`)                   |
-| `/demo/sdk-content/:documentId` | SDK-backed content detail with `@mdcms/sdk/react` output |
-| `/preview/post/:slug`           | Rendered draft preview for `post`                        |
-| `/preview/page/:path`           | Rendered draft preview for `page`                        |
+| Route                           | Description                                                            |
+| ------------------------------- | ---------------------------------------------------------------------- |
+| `/`                             | CMS-backed landing page rendered from `content/pages/home`             |
+| `/pages`                        | Unified rendered index for pages, posts, and configured document types |
+| `/admin/*`                      | Embedded Studio UI (catch-all)                                         |
+| `/demo/content`                 | Direct content API diagnostic view with rendered previews              |
+| `/demo/content/:documentId`     | Direct content API detail with rendered body                           |
+| `/demo/sdk-content`             | SDK-backed rendered content library (`@mdcms/sdk`)                     |
+| `/demo/sdk-content/:documentId` | SDK-backed content detail with `@mdcms/sdk/react` output               |
+| `/preview/post/:slug`           | Rendered draft preview for `post`                                      |
+| `/preview/page/:path`           | Rendered draft preview for `page`                                      |
 
 ## Local Run
 

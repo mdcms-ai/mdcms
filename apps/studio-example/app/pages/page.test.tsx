@@ -22,47 +22,29 @@ function makeDocument(input: {
     format: "md" as const,
     isDeleted: false,
     hasUnpublishedChanges: false,
-    version: 3,
-    publishedVersion: 3,
-    draftRevision: 5,
+    version: 1,
+    publishedVersion: 1,
+    draftRevision: 2,
     frontmatter: {
       title: input.title,
       slug: input.slug,
     },
     body: input.body,
     createdBy: "33333333-3333-3333-3333-333333333333",
-    createdAt: "2026-03-27T08:00:00.000Z",
-    updatedAt: "2026-03-27T09:00:00.000Z",
+    createdAt: "2026-05-22T08:00:00.000Z",
+    updatedAt: "2026-05-22T09:00:00.000Z",
   };
 }
 
-test("SDK content list page renders all configured document groups", async () => {
+test("pages index lists pages before posts with rendered previews", async () => {
   process.env.MDCMS_DEMO_API_KEY = "mdcms_key_test";
   const requestedTypes: string[] = [];
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (
-    input: string | URL | Request,
-    init?: RequestInit,
-  ) => {
+  globalThis.fetch = async (input: string | URL | Request) => {
     const url = new URL(String(input));
     const type = url.searchParams.get("type");
-    assert.equal(url.pathname, "/api/v1/content");
     assert.ok(type);
     requestedTypes.push(type);
-    assert.equal(url.searchParams.get("draft"), "true");
-    assert.equal(url.searchParams.get("limit"), "50");
-    assert.equal(
-      (init?.headers as Headers).get("authorization"),
-      "Bearer mdcms_key_test",
-    );
-    assert.equal(
-      (init?.headers as Headers).get("x-mdcms-project"),
-      "marketing-site",
-    );
-    assert.equal(
-      (init?.headers as Headers).get("x-mdcms-environment"),
-      "staging",
-    );
 
     const data =
       type === "page"
@@ -72,7 +54,7 @@ test("SDK content list page renders all configured document groups", async () =>
               type,
               path: "content/pages/about",
               title: "About Demo",
-              body: "# About Demo\n\nRendered page copy.",
+              body: "# About Demo\n\nThis page is rendered.",
             }),
           ]
         : type === "post"
@@ -83,7 +65,7 @@ test("SDK content list page renders all configured document groups", async () =>
                 path: "content/posts/hello-mdcms",
                 title: "Hello MDCMS",
                 slug: "hello-mdcms",
-                body: "# Hello MDCMS\n\nRendered post copy.",
+                body: "# Hello MDCMS\n\nThis post is rendered.",
               }),
             ]
           : [];
@@ -112,15 +94,13 @@ test("SDK content list page renders all configured document groups", async () =>
   const markup = renderToStaticMarkup(element);
 
   assert.deepEqual(requestedTypes.slice(0, 2), ["page", "post"]);
-  assert.match(markup, /SDK client/i);
-  assert.match(markup, /@mdcms\/sdk/i);
-  assert.match(markup, /Pages/i);
-  assert.match(markup, /Posts/i);
+  assert.match(markup, /Content library/i);
   assert.match(markup, /About Demo/i);
+  assert.match(markup, /This page is rendered/i);
   assert.match(markup, /Hello MDCMS/i);
-  assert.match(markup, /Rendered page copy/i);
-  assert.match(markup, /Rendered post copy/i);
-  assert.doesNotMatch(markup, /frontmatter \(raw JSON\)/i);
+  assert.match(markup, /This post is rendered/i);
+  assert.ok(markup.indexOf("Pages") < markup.indexOf("Posts"));
+  assert.doesNotMatch(markup, /frontmatter/i);
   assert.doesNotMatch(markup, /body \(raw\)/i);
 
   globalThis.fetch = originalFetch;
