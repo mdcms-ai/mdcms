@@ -1,9 +1,11 @@
 # CMS-245 Visual Composition UI Decision Log
 
-This draft records UI decisions as they are made during brainstorming. It will
-be folded into the final design spec after the design is reviewed.
+This draft records UI decisions made during brainstorming. Manual decisions were
+chosen directly in conversation. Offline recommended decisions were filled in
+after the user asked to proceed with recommended choices so the design could be
+completed without losing momentum.
 
-## Locked Decisions
+## Manual Decisions
 
 1. The visual composition UI is canvas-first. Editors should be able to compose
    and edit MDX document structure visually without needing to author raw MDX.
@@ -147,6 +149,8 @@ be folded into the final design spec after the design is reviewed.
 
 40. Delete is immediate and relies on the normal undo/redo stack for recovery.
     V1 does not show delete confirmation dialogs for blocks.
+
+## Offline Recommended Decisions
 
 41. Dragging a palette block with required props opens a small insertion
     configuration dialog before committing the node. The node is inserted only
