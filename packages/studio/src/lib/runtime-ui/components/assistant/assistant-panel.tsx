@@ -500,7 +500,7 @@ function AssistantProgressTimeline({
 // prose + proposal cards. The fixed gutter keeps proposals aligned to
 // a consistent left edge across an entire turn instead of just the
 // first prose paragraph.
-function AssistantBubble({
+export function AssistantBubble({
   message,
   proposalsById,
   documentPathById,
@@ -549,7 +549,7 @@ function AssistantBubble({
   const isMultiTurn = proposals.length > 1;
   return (
     <div className="mb-6 flex items-start gap-0">
-      <div className="w-6 shrink-0 pt-0.5 text-primary" aria-hidden="true">
+      <div className="w-6 shrink-0 pt-2 text-primary" aria-hidden="true">
         <SparkleMark size={14} />
       </div>
       <div className="flex min-w-0 flex-1 flex-col gap-2">
