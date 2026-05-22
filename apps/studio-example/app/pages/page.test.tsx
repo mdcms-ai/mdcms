@@ -19,7 +19,7 @@ function makeDocument(input: {
     path: input.path,
     type: input.type,
     locale: "en",
-    format: "md" as const,
+    format: "mdx" as const,
     isDeleted: false,
     hasUnpublishedChanges: false,
     version: 1,
@@ -50,11 +50,45 @@ test("pages index lists pages before posts with rendered previews", async () => 
       type === "page"
         ? [
             makeDocument({
+              documentId: "66666666-6666-6666-6666-666666666666",
+              type,
+              path: "content/pages/case-studies",
+              title: "Case Studies",
+              body: [
+                "# Case Studies",
+                "",
+                "<Box style={{ padding: '1rem' }}>",
+                '  <Text children="Raw component text" />',
+                "</Box>",
+                "",
+                "Plain summary after component.",
+              ].join("\n"),
+            }),
+            makeDocument({
               documentId: "11111111-1111-1111-1111-111111111111",
               type,
               path: "content/pages/about",
               title: "About Demo",
               body: "# About Demo\n\nThis page is rendered.",
+            }),
+            makeDocument({
+              documentId: "55555555-5555-5555-5555-555555555555",
+              type,
+              path: "content/pages/custom-carousel",
+              title: "Image Carousel Demo",
+              body: [
+                "# Image Carousel Demo",
+                "",
+                "This page has unsupported raw browser script.",
+                "",
+                "<style>",
+                ".carousel { position: relative; overflow: hidden; }",
+                "</style>",
+                "",
+                "<script>",
+                "const slides = document.querySelectorAll('.carousel-slide');",
+                "</script>",
+              ].join("\n"),
             }),
           ]
         : type === "post"
@@ -95,10 +129,16 @@ test("pages index lists pages before posts with rendered previews", async () => 
 
   assert.deepEqual(requestedTypes.slice(0, 2), ["page", "post"]);
   assert.match(markup, /Content library/i);
+  assert.match(markup, /Case Studies/i);
+  assert.match(markup, /Plain summary after component/i);
+  assert.doesNotMatch(markup, /&lt;Box/i);
   assert.match(markup, /About Demo/i);
   assert.match(markup, /This page is rendered/i);
+  assert.match(markup, /Image Carousel Demo/i);
+  assert.match(markup, /Preview could not be rendered/i);
   assert.match(markup, /Hello MDCMS/i);
   assert.match(markup, /This post is rendered/i);
+  assert.doesNotMatch(markup, /Documents could not be loaded/i);
   assert.ok(markup.indexOf("Pages") < markup.indexOf("Posts"));
   assert.doesNotMatch(markup, /frontmatter/i);
   assert.doesNotMatch(markup, /body \(raw\)/i);

@@ -27,6 +27,7 @@ export type RenderedExampleDocument = {
   summary: string | undefined;
   previewHref: string | undefined;
   renderedBody: ReactNode;
+  renderError: DocumentRenderError | undefined;
 };
 
 export type ExampleDocumentLibraryResult =
@@ -51,6 +52,11 @@ export type RenderedHomePageResult =
   | ({
       ok: false;
     } & DemoRequestFailure);
+
+export type DocumentRenderError = {
+  code: string;
+  message: string;
+};
 
 function titleizeType(type: string): string {
   return `${type.slice(0, 1).toUpperCase()}${type.slice(1)}s`;
@@ -95,12 +101,57 @@ export function getDocumentSummary(
       (line) =>
         line.length > 0 &&
         !line.startsWith("#") &&
+        !line.startsWith("<") &&
         !line.startsWith("-") &&
+        line !== "---" &&
         !/^\d+\./.test(line),
     );
 }
 
+function toDocumentRenderError(error: unknown): DocumentRenderError {
+  const code =
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof error.code === "string"
+      ? error.code
+      : "RENDER_ERROR";
+
+  return {
+    code,
+    message:
+      error instanceof Error
+        ? error.message
+        : "This document preview could not be rendered.",
+  };
+}
+
 async function renderDocument(
+  document: ContentDocumentResponse,
+): Promise<RenderedExampleDocument> {
+  const baseDocument = {
+    document,
+    title: getDocumentTitle(document),
+    summary: getDocumentSummary(document),
+    previewHref: getPreviewHrefForDocument(document),
+  };
+
+  try {
+    return {
+      ...baseDocument,
+      renderedBody: await documentRenderer.render(document),
+      renderError: undefined,
+    };
+  } catch (error) {
+    return {
+      ...baseDocument,
+      renderedBody: null,
+      renderError: toDocumentRenderError(error),
+    };
+  }
+}
+
+async function renderRequiredDocument(
   document: ContentDocumentResponse,
 ): Promise<RenderedExampleDocument> {
   return {
@@ -109,6 +160,7 @@ async function renderDocument(
     summary: getDocumentSummary(document),
     previewHref: getPreviewHrefForDocument(document),
     renderedBody: await documentRenderer.render(document),
+    renderError: undefined,
   };
 }
 
@@ -140,7 +192,7 @@ export async function fetchRenderedHomePage(): Promise<RenderedHomePageResult> {
     }
 
     const document = result.data[0]!;
-    const rendered = await renderDocument(document);
+    const rendered = await renderRequiredDocument(document);
 
     return {
       ok: true,

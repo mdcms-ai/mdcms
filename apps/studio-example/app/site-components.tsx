@@ -122,10 +122,26 @@ export function DocumentCard({
         <p className="document-summary">{document.summary}</p>
       ) : null}
       <div
-        className="rendered-preview"
-        aria-label={`${document.title} preview`}
+        aria-label={
+          document.renderError
+            ? `${document.title} preview unavailable`
+            : `${document.title} preview`
+        }
+        className={
+          document.renderError
+            ? "rendered-preview rendered-preview-error"
+            : "rendered-preview"
+        }
       >
-        {document.renderedBody}
+        {document.renderError ? (
+          <>
+            <p className="eyebrow">Preview unavailable</p>
+            <strong>Preview could not be rendered</strong>
+            <span>{document.renderError.message}</span>
+          </>
+        ) : (
+          document.renderedBody
+        )}
       </div>
       <div className="document-actions">
         {document.previewHref ? (

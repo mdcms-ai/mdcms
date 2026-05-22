@@ -455,6 +455,31 @@ a {
   font-size: 20px;
 }
 
+.rendered-preview-error {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-color: #f2c6c6;
+  background: #fff8f8;
+}
+
+.rendered-preview-error .eyebrow {
+  margin: 0;
+  color: #9d3131;
+  font-size: 12px;
+}
+
+.rendered-preview-error strong {
+  color: #121826;
+  font-size: 17px;
+}
+
+.rendered-preview-error span {
+  color: #6a4a4a;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
 .rendered-surface > .rendered-preview {
   max-height: none;
   margin: 22px 0 0;
