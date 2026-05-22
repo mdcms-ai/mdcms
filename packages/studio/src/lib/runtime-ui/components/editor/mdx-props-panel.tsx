@@ -7,10 +7,13 @@ import {
   type PropsEditorChangeHandler,
   type PropsEditorValue,
 } from "../../../mdx-props-editor-host.js";
+import { VisualStyleInspector } from "./visual-style-inspector.js";
 
 type MdxCatalogComponent = NonNullable<
   StudioMountContext["mdx"]
 >["catalog"]["components"][number];
+
+const COMPONENT_PANEL_HIDDEN_PROP_FIELDS = ["style"] as const;
 
 export type MdxPropsPanelSelection = {
   component: MdxCatalogComponent | undefined;
@@ -88,8 +91,16 @@ export function MdxPropsPanel({
           onChange={selection.onPropsChange}
           readOnly={selection.readOnly}
           forbidden={selection.forbidden}
+          hiddenFieldNames={COMPONENT_PANEL_HIDDEN_PROP_FIELDS}
         />
       </div>
+
+      <VisualStyleInspector
+        component={component}
+        value={selection.props}
+        onChange={selection.onPropsChange}
+        readOnly={selection.readOnly || selection.forbidden}
+      />
     </section>
   );
 }

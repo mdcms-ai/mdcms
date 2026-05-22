@@ -98,3 +98,29 @@ test("MdxPropsPanel renders an unresolved state when the selected component is m
   assert.match(markup, /data-mdcms-mdx-props-panel="unregistered"/);
   assert.match(markup, /UnknownWidget/);
 });
+
+test("MdxPropsPanel renders visual style controls for selected components with a style prop", () => {
+  const component = createContext().mdx!.catalog.components[0]!;
+  const styledComponent = {
+    ...component,
+    extractedProps: {
+      ...component.extractedProps,
+      style: { type: "style" as const, required: false },
+    },
+  };
+  const context = createContext();
+  context.mdx!.catalog.components = [styledComponent];
+
+  const markup = renderToStaticMarkup(
+    createElement(MdxPropsPanel, {
+      context,
+      selection: createSelection({
+        component: styledComponent,
+        props: { title: "Launch", style: { padding: "16px" } },
+      }),
+    }),
+  );
+
+  assert.match(markup, /data-mdcms-visual-style-inspector="HeroBanner"/);
+  assert.doesNotMatch(markup, /HeroBanner:style:style/);
+});

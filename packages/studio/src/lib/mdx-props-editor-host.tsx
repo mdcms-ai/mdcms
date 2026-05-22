@@ -31,6 +31,7 @@ export type PropsEditorComponent<TValue extends object = PropsEditorValue> = (
 ) => ReactNode;
 
 const MDX_CHILDREN_PROP_NAME = "children";
+const EMPTY_HIDDEN_FIELD_NAMES: readonly string[] = [];
 
 export type MdxPropsEditorHostState =
   | { status: "loading" }
@@ -46,6 +47,7 @@ type MdxPropsEditorHostStateInput = {
   context: StudioMountContext;
   readOnly: boolean;
   forbidden?: boolean;
+  hiddenFieldNames?: readonly string[];
 };
 
 type PropsEditorRenderBoundaryProps = {
@@ -103,6 +105,7 @@ export type MdxPropsEditorHostProps = {
   onChange?: PropsEditorChangeHandler;
   readOnly?: boolean;
   forbidden?: boolean;
+  hiddenFieldNames?: readonly string[];
 };
 
 export function createMdxPropsEditorBindings(input: {
@@ -131,7 +134,7 @@ export function createInitialMdxPropsEditorHostState(
   }
 
   if (!input.component.propsEditor || !input.context.mdx) {
-    return createFallbackState(input.component);
+    return createFallbackState(input.component, input.hiddenFieldNames);
   }
 
   return { status: "loading" };
@@ -152,7 +155,7 @@ export async function resolveMdxPropsEditorHostState(
     );
 
     if (!resolvedEditor) {
-      return createFallbackState(input.component);
+      return createFallbackState(input.component, input.hiddenFieldNames);
     }
 
     if (typeof resolvedEditor !== "function") {
@@ -182,6 +185,7 @@ export function MdxPropsEditorHost({
   onChange,
   readOnly = false,
   forbidden = false,
+  hiddenFieldNames = EMPTY_HIDDEN_FIELD_NAMES,
 }: MdxPropsEditorHostProps) {
   const [state, setState] = useState<MdxPropsEditorHostState>(() =>
     createInitialMdxPropsEditorHostState({
@@ -189,6 +193,7 @@ export function MdxPropsEditorHost({
       context,
       readOnly,
       forbidden,
+      hiddenFieldNames,
     }),
   );
   const [uncontrolledValue, setUncontrolledValue] = useState<PropsEditorValue>(
@@ -212,6 +217,7 @@ export function MdxPropsEditorHost({
       context,
       readOnly,
       forbidden,
+      hiddenFieldNames,
     };
     const initialState = createInitialMdxPropsEditorHostState(input);
 
@@ -230,7 +236,7 @@ export function MdxPropsEditorHost({
     return () => {
       cancelled = true;
     };
-  }, [component, context, forbidden, readOnly]);
+  }, [component, context, forbidden, hiddenFieldNames, readOnly]);
 
   switch (state.status) {
     case "loading":
@@ -296,13 +302,16 @@ export function MdxPropsEditorHost({
 
 function createFallbackState(
   component: MdxCatalogComponent,
+  hiddenFieldNames: readonly string[] = [],
 ): MdxPropsEditorHostState {
+  const hiddenFieldNameSet = new Set(hiddenFieldNames);
   const fields = createMdxAutoFormFields(
     component.extractedProps,
     component.propHints,
   ).filter((field) => {
-    return !(
-      field.name === MDX_CHILDREN_PROP_NAME && field.control === "rich-text"
+    return (
+      !hiddenFieldNameSet.has(field.name) &&
+      !(field.name === MDX_CHILDREN_PROP_NAME && field.control === "rich-text")
     );
   });
 
