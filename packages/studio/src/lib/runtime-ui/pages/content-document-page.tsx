@@ -2694,7 +2694,7 @@ export function resolveActiveDocumentRouteContext(
 export function ContentDocumentPageView({
   state,
   context,
-  sidebarOpen = true,
+  sidebarOpen = false,
   activeMdxComponent = null,
   onDraftChange,
   onFrontmatterFieldChange,
@@ -3332,19 +3332,20 @@ export default function ContentDocumentPage({
           message: "Studio document route context is unavailable.",
         }),
   );
-  // When the global assistant opens it claims the right-side column.
-  // Collapse Properties to the handle so the editor body isn't squeezed
-  // between two persistent panels. When the assistant closes, restore
-  // the docked Properties column. Manual user toggles still work; this
-  // only fires on the assistant.isOpen transition itself.
+  // The document inspector starts collapsed for a focused editor canvas. When
+  // the global assistant opens it claims the right-side column, so collapse
+  // Properties to the handle. Closing the assistant does not auto-open the
+  // inspector; the user's explicit toggle owns that state.
   const assistant = useAssistant();
   const assistantOpen = assistant.isOpen;
-  const [sidebarOpen, setSidebarOpen] = useState(!assistantOpen);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const prevAssistantOpenRef = useRef(assistantOpen);
   useEffect(() => {
     if (prevAssistantOpenRef.current === assistantOpen) return;
     prevAssistantOpenRef.current = assistantOpen;
-    setSidebarOpen(!assistantOpen);
+    if (assistantOpen) {
+      setSidebarOpen(false);
+    }
   }, [assistantOpen]);
   // Esc dismisses the slide-over (only meaningful when Properties is
   // overlaying the canvas — i.e. the assistant is open). Skip when

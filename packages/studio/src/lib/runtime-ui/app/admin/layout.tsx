@@ -62,6 +62,62 @@ type AdminLayoutTokenErrorState = Extract<
   { status: "token-error" }
 >;
 
+const ADMIN_SIDEBAR_STORAGE_KEY = "sidebar-collapsed";
+const DOCUMENT_EDITOR_ADMIN_SIDEBAR_STORAGE_KEY =
+  "sidebar-collapsed:document-editor";
+
+export function isDocumentEditorPathname(
+  pathname: string,
+  basePath?: string,
+): boolean {
+  const routePath = stripStudioBasePath(pathname, basePath);
+  const adminRelativePath = routePath.startsWith("/admin/")
+    ? routePath.slice("/admin".length)
+    : routePath;
+  const segments = adminRelativePath.split("/").filter(Boolean);
+
+  return segments[0] === "content" && segments.length >= 3;
+}
+
+export function getDefaultAdminSidebarCollapsed(
+  pathname: string,
+  basePath?: string,
+): boolean {
+  return isDocumentEditorPathname(pathname, basePath);
+}
+
+export function getAdminSidebarStorageKey(
+  pathname: string,
+  basePath?: string,
+): string {
+  return isDocumentEditorPathname(pathname, basePath)
+    ? DOCUMENT_EDITOR_ADMIN_SIDEBAR_STORAGE_KEY
+    : ADMIN_SIDEBAR_STORAGE_KEY;
+}
+
+function stripStudioBasePath(pathname: string, basePath?: string): string {
+  const normalizedPathname = normalizePathname(pathname);
+  const normalizedBasePath = normalizePathname(basePath ?? "");
+
+  if (
+    normalizedBasePath !== "/" &&
+    (normalizedPathname === normalizedBasePath ||
+      normalizedPathname.startsWith(`${normalizedBasePath}/`))
+  ) {
+    return normalizedPathname.slice(normalizedBasePath.length) || "/";
+  }
+
+  return normalizedPathname;
+}
+
+function normalizePathname(pathname: string): string {
+  const trimmed = pathname.trim();
+  const withLeadingSlash = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+  const withoutTrailingSlash = withLeadingSlash.replace(/\/+$/, "");
+
+  return withoutTrailingSlash.length > 0 ? withoutTrailingSlash : "/";
+}
+
 export function createAdminLayoutCapabilitiesLoadInput(
   context: StudioMountContext,
 ): AdminLayoutCapabilitiesLoadInput | null {
@@ -239,7 +295,19 @@ function AdminLayoutInner({
   children: React.ReactNode;
   context: StudioMountContext;
 }) {
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const pathname = usePathname();
+  const router = useRouter();
+  const sidebarStorageKey = getAdminSidebarStorageKey(
+    pathname,
+    context.basePath,
+  );
+  const sidebarDefaultCollapsed = getDefaultAdminSidebarCollapsed(
+    pathname,
+    context.basePath,
+  );
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(
+    sidebarDefaultCollapsed,
+  );
   const [activeEnvironment, setActiveEnvironmentRaw] = useState<string | null>(
     () => {
       if (typeof window !== "undefined") {
@@ -261,13 +329,14 @@ function AdminLayoutInner({
     }
   }, []);
 
-  // Persist sidebar state
+  // Persist sidebar state. Document editor routes use their own key so the
+  // focused collapsed default does not overwrite the normal admin default.
   useEffect(() => {
-    const stored = localStorage.getItem("sidebar-collapsed");
-    if (stored !== null) {
-      setSidebarCollapsed(stored === "true");
-    }
-  }, []);
+    const stored = localStorage.getItem(sidebarStorageKey);
+    setSidebarCollapsed(
+      stored !== null ? stored === "true" : sidebarDefaultCollapsed,
+    );
+  }, [sidebarDefaultCollapsed, sidebarStorageKey]);
 
   // Re-fetch auth-scoped studio queries when the host rotates the bearer
   // token. The token is intentionally not part of query keys (matches the
@@ -445,9 +514,6 @@ function AdminLayoutInner({
 
   const environments = environmentsQuery.data?.data ?? [];
 
-  const pathname = usePathname();
-  const router = useRouter();
-
   // Auth gate: redirect only truly unauthenticated cookie-mode users to login.
   // Token-mode embeds must never redirect to the login screen — token auth
   // failures are shown inline via the "token-error" session state.
@@ -505,7 +571,7 @@ function AdminLayoutInner({
   const handleToggle = () => {
     const newState = !sidebarCollapsed;
     setSidebarCollapsed(newState);
-    localStorage.setItem("sidebar-collapsed", String(newState));
+    localStorage.setItem(sidebarStorageKey, String(newState));
   };
 
   const mountInfo = {

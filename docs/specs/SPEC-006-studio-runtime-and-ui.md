@@ -393,6 +393,11 @@ Normative behavior:
   the left of the canvas. The palette is part of the body editor surface and
   follows the MDX visual composition behavior owned by SPEC-007. It must be
   hidden on narrow screens where touch/mobile composition is not supported.
+- The document editor route starts in a focused editing layout on desktop:
+  the global Studio navigation sidebar is collapsed by default for this route,
+  and the document's right sidebar is also collapsed by default. Both sidebars
+  remain available through their existing expand/collapse controls, and manual
+  user toggles must not require a page reload.
 - The editor topbar exposes, in order from leading edge: a breadcrumb trail
   (`Content` → routed type label → document label), an `UNPUBLISHED CHANGES`
   status pill that is rendered only while the document has unpublished

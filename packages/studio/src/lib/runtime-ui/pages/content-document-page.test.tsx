@@ -492,11 +492,26 @@ test("ContentDocumentPageView keeps the dedicated Component tab hidden until an 
 
   const markup = renderPageMarkup(state, {
     context: createMdxMountContext(),
+    sidebarOpen: true,
   });
 
   assert.doesNotMatch(markup, /data-mdcms-sidebar-tab="component"/);
   assert.match(markup, /data-mdcms-property-field="title"/);
   assert.doesNotMatch(markup, /data-mdcms-mdx-props-panel="PricingTable"/);
+});
+
+test("ContentDocumentPageView starts with the right document sidebar collapsed by default", () => {
+  const markup = renderPageMarkup(createReadyState());
+
+  assert.match(markup, /data-mdcms-document-properties-handle="true"/);
+  assert.doesNotMatch(
+    markup,
+    /data-mdcms-document-properties-overlay="docked"/,
+  );
+  assert.doesNotMatch(
+    markup,
+    /data-mdcms-document-properties-overlay="slide-over"/,
+  );
 });
 
 test("ContentDocumentPageView renders the active MDX component props panel in a dedicated Component tab", () => {
@@ -521,6 +536,7 @@ test("ContentDocumentPageView renders the active MDX component props panel in a 
 
   const markup = renderPageMarkup(state, {
     context: createMdxMountContext(),
+    sidebarOpen: true,
     activeMdxComponent: {
       component: createMdxMountContext().mdx!.catalog.components[0]!,
       componentName: "PricingTable",
@@ -1509,67 +1525,70 @@ test("loadContentDocumentPageState seeds arbitrary version comparison and diff s
 
 test("ContentDocumentPageView renders tabbed sidebar in info, properties, history order", () => {
   const ready = createReadyState();
-  const readyMarkup = renderPageMarkup({
-    ...ready,
-    publishDialogOpen: true,
-    publishChangeSummary: "Ready for launch.",
-    versionHistory: {
-      status: "ready",
-      versions: [
-        createVersionSummary(3, {
-          changeSummary: "Ready for launch.",
-        }),
-        createVersionSummary(1, {
-          changeSummary: "Initial publish.",
-        }),
-      ],
-    },
-    versionDiff: {
-      status: "ready",
-      diff: {
-        leftVersion: 1,
-        rightVersion: 3,
-        path: {
-          before: "blog/launch-notes",
-          after: "blog/launch-notes-updated",
-          changed: true,
-        },
-        frontmatter: {
-          changed: true,
-          changes: [
-            {
-              path: "title",
-              before: "Launch Notes v1",
-              after: "Launch Notes v3",
-            },
-          ],
-        },
-        body: {
-          changed: true,
-          lines: [
-            {
-              leftLineNumber: 1,
-              rightLineNumber: 1,
-              leftText: "# Launch Notes",
-              rightText: "# Launch Notes",
-              status: "unchanged" as const,
-            },
-            {
-              leftLineNumber: 2,
-              rightLineNumber: 2,
-              leftText: "Version 1",
-              rightText: "Version 3",
-              status: "changed" as const,
-            },
-          ],
+  const readyMarkup = renderPageMarkup(
+    {
+      ...ready,
+      publishDialogOpen: true,
+      publishChangeSummary: "Ready for launch.",
+      versionHistory: {
+        status: "ready",
+        versions: [
+          createVersionSummary(3, {
+            changeSummary: "Ready for launch.",
+          }),
+          createVersionSummary(1, {
+            changeSummary: "Initial publish.",
+          }),
+        ],
+      },
+      versionDiff: {
+        status: "ready",
+        diff: {
+          leftVersion: 1,
+          rightVersion: 3,
+          path: {
+            before: "blog/launch-notes",
+            after: "blog/launch-notes-updated",
+            changed: true,
+          },
+          frontmatter: {
+            changed: true,
+            changes: [
+              {
+                path: "title",
+                before: "Launch Notes v1",
+                after: "Launch Notes v3",
+              },
+            ],
+          },
+          body: {
+            changed: true,
+            lines: [
+              {
+                leftLineNumber: 1,
+                rightLineNumber: 1,
+                leftText: "# Launch Notes",
+                rightText: "# Launch Notes",
+                status: "unchanged" as const,
+              },
+              {
+                leftLineNumber: 2,
+                rightLineNumber: 2,
+                leftText: "Version 1",
+                rightText: "Version 3",
+                status: "changed" as const,
+              },
+            ],
+          },
         },
       },
+      selectedComparison: {
+        leftVersion: 1,
+        rightVersion: 3,
+      },
     },
-    selectedComparison: {
-      leftVersion: 1,
-      rightVersion: 3,
-    },
-  });
+    { sidebarOpen: true },
+  );
 
   // The sidebar exposes four tabs (Info, Properties, optional Component,
   // History). Properties is the default — Info is shown via its tab.
@@ -1695,7 +1714,7 @@ test("ContentDocumentPageView blocks writes when the local schema hash capabilit
     throw new Error("expected ready state");
   }
 
-  const markup = renderPageMarkup(state);
+  const markup = renderPageMarkup(state, { sidebarOpen: true });
 
   assert.equal(state.canWrite, false);
   assert.match(markup, /data-mdcms-document-write-state="blocked"/);
@@ -1734,7 +1753,7 @@ test("ContentDocumentPageView renders environment-specific field badges inline w
     },
   };
 
-  const markup = renderPageMarkup(state);
+  const markup = renderPageMarkup(state, { sidebarOpen: true });
 
   assert.match(markup, /data-mdcms-property-field="featured"/);
   assert.match(markup, /data-mdcms-property-type="boolean"/);
@@ -1811,7 +1830,7 @@ test("ContentDocumentPageView renders schema-driven property controls and unsupp
     ...state.document.frontmatter,
   };
 
-  const markup = renderPageMarkup(state);
+  const markup = renderPageMarkup(state, { sidebarOpen: true });
 
   assert.match(markup, /data-mdcms-property-field="title"/);
   assert.match(markup, /data-mdcms-property-type="string"/);
