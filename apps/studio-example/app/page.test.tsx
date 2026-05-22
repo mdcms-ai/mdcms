@@ -43,7 +43,22 @@ test("home page renders the CMS-backed home page document", async () => {
             frontmatter: {
               title: "MDCMS Demo Home",
             },
-            body: "# CMS home page\n\nRendered from the page category.",
+            body: [
+              '<HomeHero eyebrow="CMS home" title="CMS-owned headline" summary="Every section comes from the home page body." primaryHref="/pages" primaryLabel="Browse pages" secondaryHref="/admin" secondaryLabel="Open Studio">',
+              "  <HomeFeatureGrid>",
+              '    <HomeFeature title="Draft pages">Rendered by the consumer app.</HomeFeature>',
+              '    <HomeFeature title="Studio handoff">Edited in the same document.</HomeFeature>',
+              "  </HomeFeatureGrid>",
+              "</HomeHero>",
+              "",
+              '<HomeSection eyebrow="Workflow" title="CMS-owned workflow" summary="The homepage route only renders this document.">',
+              "  <HomeFeatureGrid>",
+              '    <HomeFeature title="One source">The public page, preview, and SDK demo share the same body.</HomeFeature>',
+              "  </HomeFeatureGrid>",
+              "</HomeSection>",
+              "",
+              '<HomeCta title="Ship the same document" href="/demo/sdk-content" label="Inspect SDK output">Rendered previews stay tied to the content contract.</HomeCta>',
+            ].join("\n"),
             createdBy: "33333333-3333-3333-3333-333333333333",
             createdAt: "2026-05-22T08:00:00.000Z",
             updatedAt: "2026-05-22T09:00:00.000Z",
@@ -69,10 +84,14 @@ test("home page renders the CMS-backed home page document", async () => {
   const markup = renderToStaticMarkup(element);
 
   assert.match(markup, /MDCMS Demo/i);
-  assert.match(markup, /content\/pages\/home/i);
-  assert.match(markup, /CMS home page/i);
-  assert.match(markup, /Rendered from the page category/i);
+  assert.match(markup, /CMS-owned headline/i);
+  assert.match(markup, /Every section comes from the home page body/i);
+  assert.match(markup, /Draft pages/i);
+  assert.match(markup, /CMS-owned workflow/i);
+  assert.match(markup, /Ship the same document/i);
   assert.match(markup, /\/pages/i);
+  assert.doesNotMatch(markup, /Rendered from a page document/i);
+  assert.doesNotMatch(markup, /One content layer/i);
   assert.doesNotMatch(markup, /Raw Content API/i);
 
   globalThis.fetch = originalFetch;

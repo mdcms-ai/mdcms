@@ -45,6 +45,11 @@ test("admin catch-all page prepares studio config with local MDX metadata", asyn
     "Chart",
     "Callout",
     "PricingTable",
+    "HomeHero",
+    "HomeSection",
+    "HomeFeatureGrid",
+    "HomeFeature",
+    "HomeCta",
   ]);
   assert.deepEqual(chart?.extractedProps?.data, {
     type: "array",

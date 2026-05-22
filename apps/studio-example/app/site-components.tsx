@@ -1,5 +1,4 @@
 import Link from "next/link";
-import type { ReactNode } from "react";
 
 import type {
   ExampleDocumentGroup,
@@ -144,19 +143,5 @@ export function DocumentCard({
         </Link>
       </div>
     </article>
-  );
-}
-
-export function RenderedSurface({
-  children,
-  label,
-}: {
-  children: ReactNode;
-  label: string;
-}) {
-  return (
-    <section className="rendered-surface" aria-label={label}>
-      {children}
-    </section>
   );
 }
