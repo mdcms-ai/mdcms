@@ -14,6 +14,7 @@ import {
   createEchoAiProvider,
   ECHO_PROVIDER_DEFAULT_MODEL,
   ECHO_PROVIDER_ID,
+  type EchoStepResponse,
 } from "./providers/echo.js";
 import { createNullAiProvider } from "./providers/null.js";
 
@@ -291,6 +292,65 @@ describe("createAiOrchestrator", () => {
         return true;
       },
     );
+  });
+
+  test("chat replacement proposals are invalid when source text is missing from the active draft", async () => {
+    resetIds();
+    const steps: EchoStepResponse[] = [
+      {
+        type: "tool-calls",
+        calls: [
+          {
+            toolName: "propose_replace_document_text",
+            input: JSON.stringify({
+              summary: "Replace contact block",
+              originalText: "## Contact us\n\nMissing text",
+              replacementText: "## Contact us\n\nUpdated text",
+            }),
+          },
+        ],
+      },
+      { type: "text", text: "I proposed the replacement." },
+    ];
+    const provider = createEchoAiProvider({ steps });
+    const orchestrator = createAiOrchestrator({
+      provider,
+      clock: fixedClock,
+      idFactory,
+    });
+
+    const result = await orchestrator.runChat({
+      message: "Update the contact section",
+      project: "demo",
+      environment: "draft",
+      activeDocument: {
+        documentId: "doc_1",
+        path: "content/pages/about",
+        type: "page",
+        locale: "en",
+        draftRevision: 4,
+        body: "## Contact us\n\nExisting text",
+        frontmatter: {},
+        hasPublishedVersion: false,
+      },
+      capabilities: {
+        canEditDocument: true,
+        canCreateDocument: false,
+        canDeleteDocument: false,
+        canReadEntries: false,
+      },
+    });
+
+    assert.equal(result.proposals.length, 1);
+    const proposal = result.proposals[0]!;
+    assert.equal(proposal.kind, "replace_selection");
+    assert.equal(proposal.validation.status, "invalid");
+    if (proposal.validation.status === "invalid") {
+      assert.equal(
+        proposal.validation.errors[0]?.code,
+        "REPLACE_SELECTION_SOURCE_NOT_FOUND",
+      );
+    }
   });
 
   test("seo_improvement task only allows update_frontmatter operations", async () => {

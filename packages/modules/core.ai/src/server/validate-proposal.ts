@@ -61,9 +61,11 @@ export type DocumentLookup = (input: {
  *      doesn't match the schema field's declared `kind` (e.g. a
  *      string field receiving a number).
  *
- * Replace-selection and insert-block proposals are left shape-valid
- * for now — full MDX validation requires an MDX component catalog
- * that doesn't exist yet (tracked separately).
+ * Replace-selection body-anchor validation is layered in per active
+ * document by `createReplaceSelectionApplyabilityValidator`, because
+ * the current draft body is turn-specific rather than schema state.
+ * Insert-block proposals are left shape-valid here; full MDX
+ * validation is supplied by `createMdxCatalogProposalValidator`.
  */
 export function createSchemaAwareProposalValidator(input: {
   schemaLookup: SchemaLookup;
@@ -94,8 +96,9 @@ export function createSchemaAwareProposalValidator(input: {
       case "insert_block":
         // Shape-only for now. delete_document's published-version
         // check is already done by chat-tools at proposal-build time
-        // and re-enforced by apply.ts at apply time. MDX component
-        // validation requires the catalog (separate ticket).
+        // and re-enforced by apply.ts at apply time. replace_selection
+        // anchor checks and MDX catalog checks are layered separately
+        // because both require per-request context.
         return { status: "valid" };
     }
   };
@@ -122,6 +125,66 @@ type MdxAttributeValue =
   | { kind: "boolean"; value: boolean }
   | { kind: "string"; value: string }
   | { kind: "expression"; value: string };
+
+export function createReplaceSelectionApplyabilityValidator(input: {
+  validator?: AiProposalValidator;
+  body: string;
+}): AiProposalValidator {
+  const { validator, body } = input;
+
+  return async (candidate) => {
+    const base = validator
+      ? await validator(candidate)
+      : ({ status: "valid" } satisfies AiProposalValidation);
+    const errors = validateReplaceSelectionAgainstBody(candidate, body);
+    return mergeValidation(base, errors);
+  };
+}
+
+function validateReplaceSelectionAgainstBody(
+  candidate: AiProposalCandidate,
+  body: string,
+): ValidationError[] {
+  if (candidate.kind !== "replace_selection") return [];
+
+  const errors: ValidationError[] = [];
+  candidate.operations.forEach((operation, index) => {
+    if (operation.op !== "replace_selection") return;
+
+    const first = body.indexOf(operation.originalText);
+    if (first < 0) {
+      errors.push({
+        code: "REPLACE_SELECTION_SOURCE_NOT_FOUND",
+        message:
+          "Original selection text was not found in the current draft body.",
+        path: `operations[${index}].originalText`,
+      });
+      return;
+    }
+
+    if (first !== body.lastIndexOf(operation.originalText)) {
+      errors.push({
+        code: "REPLACE_SELECTION_SOURCE_AMBIGUOUS",
+        message:
+          "Original selection text appears more than once in the current draft body; refusing to apply ambiguously.",
+        path: `operations[${index}].originalText`,
+      });
+    }
+  });
+
+  return errors;
+}
+
+function mergeValidation(
+  base: AiProposalValidation,
+  errors: ValidationError[],
+): AiProposalValidation {
+  if (errors.length === 0) return base;
+  if (base.status === "invalid") {
+    return { status: "invalid", errors: [...base.errors, ...errors] };
+  }
+  return { status: "invalid", errors };
+}
 
 /** RFC4122-ish UUID literal — mirrors the apply-time check in `reference-validation.ts`. */
 const UUID_PATTERN =

@@ -274,12 +274,7 @@ function CollapseHeader({
   removed: number;
 }) {
   return (
-    <div
-      className={cn(
-        "flex items-center gap-2.5 px-3 py-2 text-left",
-        collapsed ? "pb-2.5" : "pb-1",
-      )}
-    >
+    <div className="flex items-center gap-2.5 px-3 py-2 text-left">
       <ChevronRight
         className={cn(
           "size-3 shrink-0 text-foreground-muted transition-transform",

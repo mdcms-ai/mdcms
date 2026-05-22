@@ -25,7 +25,10 @@ import {
   type AiProposalValidator,
 } from "./proposal-builder.js";
 import type { AiProvider, AiProviderUsage } from "./provider.js";
-import { createMdxCatalogProposalValidator } from "./validate-proposal.js";
+import {
+  createMdxCatalogProposalValidator,
+  createReplaceSelectionApplyabilityValidator,
+} from "./validate-proposal.js";
 import {
   AI_TASK_DEFINITIONS,
   buildChatSystemPrompt,
@@ -446,12 +449,19 @@ function prepareChatRun(
   };
 
   const baseValidator = call.proposalValidator ?? validator;
+  const bodyAwareValidator =
+    typeof call.activeDocument?.body === "string"
+      ? createReplaceSelectionApplyabilityValidator({
+          ...(baseValidator ? { validator: baseValidator } : {}),
+          body: call.activeDocument.body,
+        })
+      : baseValidator;
   const effectiveValidator = call.mdxCatalog
     ? createMdxCatalogProposalValidator({
-        ...(baseValidator ? { validator: baseValidator } : {}),
+        ...(bodyAwareValidator ? { validator: bodyAwareValidator } : {}),
         catalog: call.mdxCatalog,
       })
-    : baseValidator;
+    : bodyAwareValidator;
 
   const tools = buildChatTools({
     envelope,
@@ -725,6 +735,14 @@ async function buildProposals(
   context: ErrorAuditContext,
 ): Promise<AiProposal[]> {
   try {
+    const bodyAwareValidator =
+      typeof taskInput.documentBody === "string"
+        ? createReplaceSelectionApplyabilityValidator({
+            ...(validator ? { validator } : {}),
+            body: taskInput.documentBody,
+          })
+        : validator;
+
     return await buildProposalsFromOutput(
       {
         taskKind: definition.kind,
@@ -737,7 +755,7 @@ async function buildProposals(
           ? { selectionId: taskInput.selectionId }
           : undefined,
       },
-      { clock, idFactory, ttlMs, validator },
+      { clock, idFactory, ttlMs, validator: bodyAwareValidator },
     );
   } catch (error) {
     if (

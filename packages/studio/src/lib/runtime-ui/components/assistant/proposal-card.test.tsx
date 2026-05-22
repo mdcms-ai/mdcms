@@ -3,7 +3,7 @@ import { test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { AppliedBanner } from "./proposal-card.js";
+import { AppliedBanner, ProposalCard } from "./proposal-card.js";
 import type { AssistantProposalEdit } from "./assistant-types.js";
 
 function buildAcceptedEditProposal(
@@ -40,4 +40,26 @@ test("AppliedBanner uses the bright lime token for the check icon", () => {
 
   assert.match(markup, /text-vibrant-green/);
   assert.doesNotMatch(markup, /text-vibrant-green-foreground/);
+});
+
+test("ProposalCard keeps collapse header padding stable when expanded or collapsed", () => {
+  const collapsed = renderToStaticMarkup(
+    createElement(ProposalCard, {
+      proposal: buildAcceptedEditProposal({ acceptedAt: undefined }),
+      defaultCollapsed: true,
+      onAccept: () => {},
+      onReject: () => {},
+    }),
+  );
+  const expanded = renderToStaticMarkup(
+    createElement(ProposalCard, {
+      proposal: buildAcceptedEditProposal({ acceptedAt: undefined }),
+      defaultCollapsed: false,
+      onAccept: () => {},
+      onReject: () => {},
+    }),
+  );
+
+  assert.doesNotMatch(collapsed, /pb-2\.5|pb-1/);
+  assert.doesNotMatch(expanded, /pb-2\.5|pb-1/);
 });
