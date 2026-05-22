@@ -255,10 +255,11 @@ deterministic error when `config.components` declares `Box`, `Text`, `Image`, or
 `style` prop in the extracted catalog; built-in support does not imply a
 universal wrapper or style injection layer for host components.
 
-The current toolbar Insert Component menu and `/` slash menu list only
-host-registered components. Built-ins remain hidden from those visual insertion
-surfaces until the dedicated visual composition UI is specified, but manual MDX
-editing and AI proposals may use them.
+The legacy toolbar Insert Component menu and `/` slash menu list only
+host-registered components. Built-ins remain hidden from those legacy insertion
+surfaces, but manual MDX editing, AI proposals, and the dedicated visual
+composition UI may use them. The visual composition palette is the first
+Studio-owned insertion surface that intentionally exposes built-ins.
 
 Built-in React source lives in an internal private workspace package and is
 bundled into published consumers. App authors do not install that workspace
@@ -373,7 +374,7 @@ Auto-detected prop types map to form controls as follows:
 | `number[]`                                 | Repeatable number input   | Add/remove number values |
 | `Date`                                     | Date picker               |                          |
 | `string` with `format: "url"`              | URL input with validation | Not a widget             |
-| `MdcmsInlineStyle`                         | JSON object editor        | Flat inline style only   |
+| `MdcmsInlineStyle`                         | Style editor              | Flat inline style only   |
 | `ReactNode` / `children`                   | Nested rich text editor   | See §18.5                |
 | Function types                             | **Hidden**                | Not CMS-editable         |
 | Ref types                                  | **Hidden**                | Not CMS-editable         |
@@ -539,13 +540,144 @@ MDX:
 In the current editor, the children area is a nested TipTap rich text surface
 within the component's node view. This means content editors can use full
 markdown formatting (bold, links, lists, etc.) inside component blocks.
-Dedicated visual composition controls for inserting built-ins into another
-component's children are deferred; AI proposals and manual MDX editing may
-create this nested structure first.
+Dedicated visual composition controls can insert, move, wrap, unwrap,
+duplicate, delete, and style valid child nodes inside compatible wrapper
+components. AI proposals and manual MDX editing use the same persisted MDX
+shape and the same validation rules.
 
 Wrapper component chrome and the props panel must make this distinction clear:
 top-level props remain in the side panel, while nested markdown content is
 edited directly inside the component block in the canvas.
+
+### Visual Composition UI
+
+Studio provides a desktop visual composition surface for MDX documents. It is a
+document-flow builder layered over the TipTap document model, not a freeform
+absolute-positioning canvas. Drag/drop changes the normal Markdown/MDX document
+tree order and never persists layout coordinates.
+
+The visual composition surface has three regions:
+
+1. A persistent left block palette on desktop.
+2. The central editor canvas with selection chrome, drag handles, contextual
+   drop targets, and host-rendered component previews where available.
+3. The selected-block inspector in the document sidebar.
+
+The palette exposes atomic blocks/components only:
+
+- Text: paragraph, heading, list, quote.
+- Layout: `Box`.
+- Media: `Image`.
+- Actions: `Link`.
+- Components: host-registered MDX components.
+
+The palette may expose search/filtering by block name, description, and
+category. It uses editor-facing categories; provenance such as Markdown,
+built-in, or host component is secondary metadata. Saved compositions,
+templates, named slots, responsive variants, touch drag/drop, and keyboard
+reorder/nesting parity are deferred.
+
+All document blocks participate in document-flow drag/drop:
+
+- markdown headings
+- paragraphs
+- lists
+- blockquotes
+- MDX component blocks
+- built-in MDX components
+- host-registered MDX components
+
+Visible drop targets are always valid. Studio must not render invalid parent,
+child, or sibling drop targets. Before/after drop targets appear for valid
+sibling positions. Inside drop targets appear only for wrapper components that
+expose `children` as a `rich-text` prop. Any wrapper component with rich-text
+`children` can receive child drops; this is not limited to `Box`. V1 supports
+only the default `children` zone. Host wrapper components receive one default
+child-drop overlay over the component body/children area; hosts do not need to
+map exact internal DOM slots.
+
+`Text` and `Link` are inline editing surfaces. They accept text and inline
+formatting edits but must not expose structural block drop targets for
+headings, lists, boxes, images, or other block-level content.
+
+Normal editing flows should avoid creating invalid nodes. Dragging a palette
+block with required props opens an insertion configuration surface before
+committing the node. The node is inserted only after required props are valid.
+Canceling leaves the document unchanged. Blocks/components with safe defaults
+insert immediately. If a component provides a custom props editor, the
+insertion surface uses that editor; otherwise it uses the generated prop form
+from catalog metadata.
+
+Selected blocks expose contextual chrome. Single click selects a block and
+double click edits text/content inside it. Dense text blocks show a left-gutter
+drag handle on hover or selection. The selected/hover toolbar includes drag,
+add before, add after, add inside when valid, duplicate, delete, wrap in `Box`,
+unwrap, move up, and move down. Invalid actions are hidden, not disabled.
+Duplicate creates an exact copy of the selected block subtree. Delete is
+immediate and relies on the editor undo/redo stack for recovery. Unwrap applies
+to any wrapper component with children and lifts those children into the
+wrapper's parent.
+
+Visual composition edits participate in the same draft-editing lifecycle as
+normal body text edits. Drag, drop, reorder, prop edits, style edits, text
+edits, duplicate, delete, wrap, and unwrap update local editor state, mark the
+draft dirty, serialize through the same Markdown/MDX pipeline, and persist
+through the same draft save action. They also participate in the normal editor
+undo/redo stack. Studio must not introduce a separate autosave or
+composition-specific persistence mechanism.
+
+The visual canvas is an editor surface, not an exact public-page preview. It
+may add selection outlines, artificial spacing, handles, labels, and drop
+zones. Exact public rendering remains the responsibility of preview routes or
+dedicated preview surfaces. Valid components use host-rendered previews when
+possible. Studio-owned fallback shells handle loading, invalid content,
+unsupported MDX, and preview render errors while keeping the block selectable.
+
+AI proposals remain a separate chat/proposal flow. Visual editing does not
+dismiss, auto-reject, or rebase open AI proposals. If local edits happen while
+proposals are visible, Studio may show a stale-risk indicator, but apply-time
+proposal validation remains authoritative. Proposal previews are read-only;
+accepted proposal content becomes normal document content and can then be
+edited visually.
+
+Invalid or unsupported MDX should be virtually unreachable in normal editing:
+AI apply, CLI push, manual Markdown validation, and visual insertion flows all
+reject invalid component names, props, and child placement before persistence.
+If invalid or unsupported content appears anyway, Studio must keep it visible
+as a selectable fallback block with warning chrome, partial preview when
+possible, and repair guidance. Studio must not hide unsupported content or
+silently normalize risky MDX.
+
+#### Visual Style Editing
+
+Visual style editing persists to the existing first-class flat inline `style`
+prop. Studio does not introduce design tokens, generated CSS, selector-based
+overrides, `className`, responsive styles, pseudo-state styles, hover/focus
+styles, or JavaScript props in document content.
+
+Style controls are available for built-ins that support `style` and for
+host-registered components whose extracted prop metadata exposes a `style`
+prop. Components without a `style` prop do not receive universal style
+injection.
+
+The selected-block inspector groups visual style controls as:
+
+- Spacing: `padding`, individual padding sides, `margin`, individual margin
+  sides, and `gap` where valid.
+- Color: `color`, `backgroundColor`, swatches/color inputs, and raw value
+  entry.
+- Typography: `fontSize`, `fontWeight`, `lineHeight`, and `textAlign`.
+- Layout: base flex/grid controls.
+- Advanced style object: flat string/number style keys not covered by visual
+  controls.
+
+Layout controls edit base inline flex/grid keys only: `display`,
+`flexDirection`, `alignItems`, `justifyContent`, `gap`, `flexWrap`,
+`gridTemplateColumns`, `gridTemplateRows`, `gridAutoFlow`, `columnGap`, and
+`rowGap`.
+
+The advanced style object editor must preserve unknown-but-valid flat style
+keys. Changing one visual style control must not drop unrelated keys.
 
 ### Editor Integration (Node Views)
 

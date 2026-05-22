@@ -389,6 +389,10 @@ Normative behavior:
   to that mutable head snapshot.
 - The primary canvas edits the document `body` through the editor engine owned
   by SPEC-007.
+- On desktop, the document editor may expose the visual composition palette to
+  the left of the canvas. The palette is part of the body editor surface and
+  follows the MDX visual composition behavior owned by SPEC-007. It must be
+  hidden on narrow screens where touch/mobile composition is not supported.
 - The editor topbar exposes, in order from leading edge: a breadcrumb trail
   (`Content` → routed type label → document label), an `UNPUBLISHED CHANGES`
   status pill that is rendered only while the document has unpublished
@@ -422,15 +426,20 @@ Normative behavior:
 - The right sidebar exposes these tabs in order:
   - `Info` for the document's read-only system metadata
   - `Properties` for schema-driven frontmatter editing
-  - `Component` for the currently selected MDX component props
+  - `Component` for the currently selected MDX/component block inspector
   - `History` for publish history and version comparison
 - `Component` appears only while an MDX component node is selected in the
   editor canvas. Selecting a component switches the sidebar to that tab.
+- The `Component` tab is one continuous selected-block inspector. It shows
+  required prop and validation issues first, component props next, style
+  groups next, and the advanced style object editor last. It must not hide
+  current validation problems behind nested tabs.
 - `Properties` is dedicated to schema-derived frontmatter fields for the
   current type in the active environment.
 - `Properties` does not render document system metadata such as `status`,
   `publishedVersion`, `locale`, `updatedAt`, or `path`.
-- `Properties` does not render MDX component prop editors.
+- `Properties` does not render MDX component prop editors or visual style
+  controls.
 - `Info` shows the read-only document metadata as a monospace key/value
   block (`status`, `type`, `locale`, `publishedVersion`, `updatedAt`,
   `path`).
