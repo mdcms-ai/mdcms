@@ -2142,6 +2142,7 @@ function SidebarTabButton({
   return (
     <button
       type="button"
+      data-mdcms-sidebar-tab={label.toLowerCase()}
       onClick={onClick}
       className={cn(
         "flex-1 border-b-2 border-transparent py-2.5 text-center font-mono text-[11px] uppercase tracking-wider transition-colors",

@@ -16,7 +16,7 @@ import {
   useMemo,
   useRef,
   useState,
-  type DragEvent,
+  type DragEvent as ReactDragEvent,
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
@@ -440,7 +440,7 @@ export function resolveSlashPickerCoordsForEditor(input: {
 
 export function resolveVisualDropPosition(
   editor: TipTapEditorInstance,
-  event: Pick<DragEvent<HTMLElement>, "clientX" | "clientY">,
+  event: Pick<ReactDragEvent<HTMLElement>, "clientX" | "clientY">,
 ): number | undefined {
   try {
     return (
@@ -1581,7 +1581,7 @@ export const TipTapEditor = forwardRef<TipTapEditorHandle, TipTapEditorProps>(
       setPendingVisualProps({});
     };
 
-    const handleVisualDragOver = (event: DragEvent<HTMLDivElement>) => {
+    const handleVisualDragOver = (event: ReactDragEvent<HTMLDivElement>) => {
       if (isEditorReadOnly || !hasVisualCompositionDragPayload(event)) {
         return;
       }
@@ -1590,7 +1590,7 @@ export const TipTapEditor = forwardRef<TipTapEditorHandle, TipTapEditorProps>(
       event.dataTransfer.dropEffect = "copy";
     };
 
-    const handleVisualDrop = (event: DragEvent<HTMLDivElement>) => {
+    const handleVisualDrop = (event: ReactDragEvent<HTMLDivElement>) => {
       if (isEditorReadOnly) {
         return;
       }

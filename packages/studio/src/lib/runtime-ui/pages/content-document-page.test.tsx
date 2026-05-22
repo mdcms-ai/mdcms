@@ -494,7 +494,7 @@ test("ContentDocumentPageView keeps the dedicated Component tab hidden until an 
     context: createMdxMountContext(),
   });
 
-  assert.doesNotMatch(markup, />Component</);
+  assert.doesNotMatch(markup, /data-mdcms-sidebar-tab="component"/);
   assert.match(markup, /data-mdcms-property-field="title"/);
   assert.doesNotMatch(markup, /data-mdcms-mdx-props-panel="PricingTable"/);
 });
@@ -532,7 +532,7 @@ test("ContentDocumentPageView renders the active MDX component props panel in a 
     },
   });
 
-  assert.match(markup, />Component</);
+  assert.match(markup, /data-mdcms-sidebar-tab="component"/);
   assert.match(markup, /data-mdcms-mdx-props-panel="PricingTable"/);
   assert.match(markup, /MDX component props/);
   assert.doesNotMatch(markup, /data-mdcms-property-field="title"/);
