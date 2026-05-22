@@ -267,6 +267,104 @@ describe("document text replacement tool", () => {
       assert.equal(proposal.operations[0].replacementText, "");
     }
   });
+
+  test("auto-rejects invalid proposals without collecting them", async () => {
+    const collected: AiProposal[] = [];
+    const tools = buildChatTools(
+      baseDeps({
+        envelope: {
+          project: "p",
+          environment: "e",
+          type: "post",
+          locale: "en",
+          documentId: "doc_1",
+          baseDraftRevision: 4,
+        },
+        hasActiveDocument: true,
+        capabilities: {
+          canEditDocument: true,
+          canCreateDocument: false,
+          canDeleteDocument: false,
+          canReadEntries: false,
+        },
+        collected,
+        validator: async () => ({
+          status: "invalid",
+          errors: [{ code: "BAD_SOURCE", message: "source missing" }],
+        }),
+      }),
+    );
+
+    const result = (await tools.propose_replace_document_text!.execute!(
+      {
+        summary: "Replace missing source",
+        originalText: "missing source",
+        replacementText: "new source",
+      },
+      { toolCallId: "tc_1", messages: [] },
+    )) as {
+      queued: false;
+      rejected: true;
+      retryable: true;
+      validation: { status: "invalid"; errors: { code: string }[] };
+    };
+
+    assert.equal(result.queued, false);
+    assert.equal(result.rejected, true);
+    assert.equal(result.retryable, true);
+    assert.equal(result.validation.errors[0]?.code, "BAD_SOURCE");
+    assert.equal(collected.length, 0);
+  });
+
+  test("allows only one invalid proposal correction attempt per chat toolset", async () => {
+    const collected: AiProposal[] = [];
+    const tools = buildChatTools(
+      baseDeps({
+        envelope: {
+          project: "p",
+          environment: "e",
+          type: "post",
+          locale: "en",
+          documentId: "doc_1",
+          baseDraftRevision: 4,
+        },
+        hasActiveDocument: true,
+        capabilities: {
+          canEditDocument: true,
+          canCreateDocument: false,
+          canDeleteDocument: false,
+          canReadEntries: false,
+        },
+        collected,
+        validator: async () => ({
+          status: "invalid",
+          errors: [{ code: "BAD_SOURCE", message: "source missing" }],
+        }),
+      }),
+    );
+
+    const first = (await tools.propose_replace_document_text!.execute!(
+      {
+        summary: "Replace missing source",
+        originalText: "first missing source",
+        replacementText: "new source",
+      },
+      { toolCallId: "tc_1", messages: [] },
+    )) as { queued: false; rejected: true; retryable: boolean };
+
+    const second = (await tools.propose_replace_document_text!.execute!(
+      {
+        summary: "Replace missing source again",
+        originalText: "second missing source",
+        replacementText: "new source",
+      },
+      { toolCallId: "tc_2", messages: [] },
+    )) as { queued: false; rejected: true; retryable: boolean };
+
+    assert.equal(first.retryable, true);
+    assert.equal(second.retryable, false);
+    assert.equal(collected.length, 0);
+  });
 });
 
 describe("selected text replacement tool", () => {

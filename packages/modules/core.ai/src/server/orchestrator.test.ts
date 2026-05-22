@@ -294,7 +294,7 @@ describe("createAiOrchestrator", () => {
     );
   });
 
-  test("chat replacement proposals are invalid when source text is missing from the active draft", async () => {
+  test("chat replacement proposals retry once when source text is missing from the active draft", async () => {
     resetIds();
     const steps: EchoStepResponse[] = [
       {
@@ -305,6 +305,19 @@ describe("createAiOrchestrator", () => {
             input: JSON.stringify({
               summary: "Replace contact block",
               originalText: "## Contact us\n\nMissing text",
+              replacementText: "## Contact us\n\nUpdated text",
+            }),
+          },
+        ],
+      },
+      {
+        type: "tool-calls",
+        calls: [
+          {
+            toolName: "propose_replace_document_text",
+            input: JSON.stringify({
+              summary: "Replace contact block",
+              originalText: "## Contact us\n\nExisting text",
               replacementText: "## Contact us\n\nUpdated text",
             }),
           },
@@ -344,12 +357,12 @@ describe("createAiOrchestrator", () => {
     assert.equal(result.proposals.length, 1);
     const proposal = result.proposals[0]!;
     assert.equal(proposal.kind, "replace_selection");
-    assert.equal(proposal.validation.status, "invalid");
-    if (proposal.validation.status === "invalid") {
-      assert.equal(
-        proposal.validation.errors[0]?.code,
-        "REPLACE_SELECTION_SOURCE_NOT_FOUND",
-      );
+    assert.equal(proposal.validation.status, "valid");
+    const operation = proposal.operations[0];
+    assert.equal(operation?.op, "replace_selection");
+    if (operation?.op === "replace_selection") {
+      assert.equal(operation.originalText, "## Contact us\n\nExisting text");
+      assert.equal(operation.replacementText, "## Contact us\n\nUpdated text");
     }
   });
 

@@ -2,7 +2,7 @@
 status: live
 canonical: true
 created: 2026-05-01
-last_updated: 2026-05-18
+last_updated: 2026-05-22
 ---
 
 # SPEC-014 AI-Assisted Studio Editing
@@ -131,9 +131,17 @@ the target document path, locale, kind chip, and a unified diff: removed lines
 single-sided `+N / −0` diff. Single-suggestion turns expand the diff by
 default; multi-proposal turns collapse all rows by default and let the user
 expand individual rows inline. Create-document proposals additionally show
-frontmatter and a body preview when present. Invalid proposals show the diff
-plus a list of validation errors below it and disable Accept until the user
-either retries or edits manually.
+frontmatter and a body preview when present.
+
+Chat-generated proposals that fail validation are auto-rejected by the server
+before they are returned to Studio. The assistant receives the validation
+errors as a tool result and gets one correction attempt in the same chat turn.
+If the correction also fails validation, Studio receives no actionable proposal
+card for that failed change; the assistant should explain the failure in text.
+
+Inline-transform proposals that fail validation show the diff plus a list of
+validation errors below it and disable Accept until the user retries or edits
+manually.
 
 Rejecting a proposal does not silently discard the model's turn. Reject opens
 an inline feedback textarea on the card; the user types what should change and

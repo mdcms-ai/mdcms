@@ -529,6 +529,7 @@ export function buildChatSystemPrompt(input: {
     "Decide what the user wants and act:",
     "- If they want a content change, call the matching tool (one tool per change, multiple tools allowed per turn).",
     "- If they're chatting or asking a question, just reply in text. Never call a tool the user didn't ask for.",
+    "- If a proposal tool returns `rejected: true` with `retryable: true`, correct the tool arguments and call the proposal tool once more. If it returns `retryable: false`, stop calling proposal tools for that change and explain the validation failure briefly.",
   ].join("\n");
   const availableTools =
     input.registeredToolNames.length > 0

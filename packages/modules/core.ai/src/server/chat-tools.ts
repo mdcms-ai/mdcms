@@ -179,6 +179,7 @@ function documentTextSelectionId(originalText: string): string {
 
 export function buildChatTools(deps: ChatToolDeps): Record<string, Tool> {
   const tools: Record<string, Tool> = {};
+  let validationRetryAvailable = true;
 
   const stampProposal = async (
     output: {
@@ -216,6 +217,32 @@ export function buildChatTools(deps: ChatToolDeps): Record<string, Tool> {
       );
     }
     return proposal;
+  };
+
+  const queueProposal = (
+    proposal: AiProposal,
+    extra: Record<string, unknown> = {},
+  ) => {
+    if (proposal.validation.status === "valid") {
+      deps.collected.push(proposal);
+      return {
+        proposalId: proposal.proposalId,
+        queued: true as const,
+        ...extra,
+      };
+    }
+
+    const retryable = validationRetryAvailable;
+    validationRetryAvailable = false;
+    return {
+      queued: false as const,
+      rejected: true as const,
+      retryable,
+      validation: proposal.validation,
+      error: retryable
+        ? "Proposal was auto-rejected because it failed validation. Correct the tool arguments and call the proposal tool once more."
+        : "Proposal was auto-rejected again after the retry. Do not call another proposal tool for this change; explain the validation failure to the user.",
+    };
   };
 
   if (
@@ -256,8 +283,7 @@ export function buildChatTools(deps: ChatToolDeps): Record<string, Tool> {
             },
             { selectionId: deps.attachedSelection!.selectionId },
           );
-          deps.collected.push(proposal);
-          return { proposalId: proposal.proposalId, queued: true as const };
+          return queueProposal(proposal);
         } catch (error) {
           return toolErrorResult(error);
         }
@@ -300,8 +326,7 @@ export function buildChatTools(deps: ChatToolDeps): Record<string, Tool> {
             },
             { selectionId },
           );
-          deps.collected.push(proposal);
-          return { proposalId: proposal.proposalId, queued: true as const };
+          return queueProposal(proposal);
         } catch (error) {
           return toolErrorResult(error);
         }
@@ -338,8 +363,7 @@ export function buildChatTools(deps: ChatToolDeps): Record<string, Tool> {
               },
             ],
           });
-          deps.collected.push(proposal);
-          return { proposalId: proposal.proposalId, queued: true as const };
+          return queueProposal(proposal);
         } catch (error) {
           return toolErrorResult(error);
         }
@@ -370,8 +394,7 @@ export function buildChatTools(deps: ChatToolDeps): Record<string, Tool> {
               },
             ],
           });
-          deps.collected.push(proposal);
-          return { proposalId: proposal.proposalId, queued: true as const };
+          return queueProposal(proposal);
         } catch (error) {
           return toolErrorResult(error);
         }
@@ -441,8 +464,7 @@ export function buildChatTools(deps: ChatToolDeps): Record<string, Tool> {
             // schema registered in the project.
             { type: args.type },
           );
-          deps.collected.push(proposal);
-          return { proposalId: proposal.proposalId, queued: true as const };
+          return queueProposal(proposal);
         } catch (error) {
           return toolErrorResult(error);
         }
@@ -481,21 +503,14 @@ export function buildChatTools(deps: ChatToolDeps): Record<string, Tool> {
               },
             ],
           });
-          // The proposal-builder's validator is the source of truth for
-          // domain validity. We also flag a published-version delete here
-          // so the model gets early signal in its tool result and can
-          // explain the conflict in its text reply.
-          deps.collected.push(proposal);
-          return {
-            proposalId: proposal.proposalId,
-            queued: true as const,
+          return queueProposal(proposal, {
             ...(hasPublished
               ? {
                   warning:
                     "The active document has a published version — the proposal will be rejected by apply unless the published version is unpublished first.",
                 }
               : {}),
-          };
+          });
         } catch (error) {
           return toolErrorResult(error);
         }
