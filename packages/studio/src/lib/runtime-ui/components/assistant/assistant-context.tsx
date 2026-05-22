@@ -5,6 +5,7 @@ import * as React from "react";
 import { RuntimeError, type MdxComponentCatalog } from "@mdcms/shared";
 
 import type {
+  StudioAiChatProgressEvent,
   StudioAiChatMessageRequest,
   StudioAiChatAttachedSelection,
   StudioAiProposal,
@@ -147,6 +148,12 @@ type AssistantAction =
       threadId: string;
       placeholderId: string;
       delta: string;
+    }
+  | {
+      type: "append-stream-progress";
+      threadId: string;
+      placeholderId: string;
+      progress: Omit<StudioAiChatProgressEvent, "type">;
     }
   | {
       type: "commit-stream-turn";
@@ -829,6 +836,30 @@ function reducer(
               messages: thread.messages.map((m) =>
                 m.id === action.placeholderId
                   ? { ...m, text: (m.text ?? "") + action.delta }
+                  : m,
+              ),
+            };
+          }),
+        },
+      };
+    }
+    case "append-stream-progress": {
+      return {
+        ...state,
+        store: {
+          ...state.store,
+          threads: state.store.threads.map((thread) => {
+            if (thread.id !== action.threadId) return thread;
+            return {
+              ...thread,
+              messages: thread.messages.map((m) =>
+                m.id === action.placeholderId
+                  ? {
+                      ...m,
+                      progress: [...(m.progress ?? []), action.progress].slice(
+                        -8,
+                      ),
+                    }
                   : m,
               ),
             };
@@ -1525,7 +1556,15 @@ export function AssistantProvider({
       try {
         for await (const event of liveApi.chatMessageStream(request)) {
           if (controller.signal.aborted) return;
-          if (event.type === "text-delta") {
+          if (event.type === "progress") {
+            const { type: _type, ...progress } = event;
+            dispatch({
+              type: "append-stream-progress",
+              threadId: state.activeThreadId,
+              placeholderId,
+              progress,
+            });
+          } else if (event.type === "text-delta") {
             dispatch({
               type: "append-stream-delta",
               threadId: state.activeThreadId,

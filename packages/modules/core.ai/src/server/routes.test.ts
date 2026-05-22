@@ -728,6 +728,62 @@ describe("mountAiRoutes — chat-message", () => {
     assert.equal(payload.data.message.text, "Proposed a tighter intro.");
   });
 
+  test("streaming chat emits progress events before the final proposal payload", async () => {
+    const { app } = createTestSetup({
+      authorize: authorizeWithScopes(
+        new Set(["ai:use", "content:read:draft", "content:write"]),
+      ),
+      echoSteps: [
+        {
+          type: "tool-calls",
+          calls: [
+            {
+              toolName: "propose_replace_document_text",
+              input: JSON.stringify({
+                summary: "Replace welcome text",
+                originalText: "Welcome to the site.",
+                replacementText: "Hi there!",
+              }),
+            },
+          ],
+        },
+        {
+          type: "text",
+          text: "Proposed a replacement.",
+        },
+      ],
+    });
+
+    const response = await app.fetch(
+      "POST",
+      "https://test.local/api/v1/ai/chat/messages/stream",
+      {
+        method: "POST",
+        headers: {
+          ...TARGET_HEADERS,
+          accept: "text/event-stream",
+        },
+        body: JSON.stringify({
+          message: "Replace the welcome text",
+          attachedDocumentIds: ["doc_1"],
+        }),
+      },
+    );
+
+    assert.equal(response.status, 200);
+    assert.equal(
+      response.headers.get("content-type"),
+      "text/event-stream; charset=utf-8",
+    );
+    const body = await response.text();
+    assert.match(body, /event: progress/);
+    assert.match(body, /"phase":"tool-call"/);
+    assert.match(body, /"toolName":"propose_replace_document_text"/);
+    assert.match(body, /"phase":"tool-result"/);
+    assert.match(body, /"status":"queued"/);
+    assert.match(body, /event: done/);
+  });
+
   test("chat-selected list proposals apply against the markdown selection span", async () => {
     const listBody = [
       "The sample stack seeds:",
@@ -1305,7 +1361,10 @@ describe("mountAiRoutes — chat-message", () => {
 
     assert.equal(response.status, 200);
     assert.match(capturedPrompt, /<active_document>/);
-    assert.match(capturedPrompt, /<body>\nACTIVE_DOC_BODY_SENTINEL\n<\/body>/);
+    assert.match(
+      capturedPrompt,
+      /<body>\n<!\[CDATA\[\nACTIVE_DOC_BODY_SENTINEL\n\]\]>\n<\/body>/,
+    );
     assert.match(capturedPrompt, /<document documentId="doc_related">/);
     assert.match(capturedPrompt, /<draft_revision>9<\/draft_revision>/);
     assert.match(
@@ -1317,7 +1376,7 @@ describe("mountAiRoutes — chat-message", () => {
     assert.doesNotMatch(capturedPrompt, /internalNotes/);
   });
 
-  test("propose_create_document with empty frontmatter returns INVALID via validator", async () => {
+  test("propose_create_document with empty frontmatter is auto-rejected by validator", async () => {
     // Plumb a schema-aware validator into the orchestrator so chat
     // proposals get real schema checks. The blog schema marks `title`
     // and `date` as required.
@@ -1377,16 +1436,10 @@ describe("mountAiRoutes — chat-message", () => {
 
     assert.equal(response.status, 200);
     const payload = (await response.json()) as {
-      data: { proposals?: AiProposal[] };
+      data: { message: { text?: string }; proposals?: AiProposal[] };
     };
-    assert.ok(payload.data.proposals && payload.data.proposals.length === 1);
-    const proposal = payload.data.proposals[0]!;
-    assert.equal(proposal.kind, "create_document");
-    assert.equal(proposal.validation.status, "invalid");
-    if (proposal.validation.status === "invalid") {
-      const codes = proposal.validation.errors.map((e) => e.code);
-      assert.ok(codes.includes("MISSING_REQUIRED_FRONTMATTER"));
-    }
+    assert.equal((payload.data.proposals ?? []).length, 0);
+    assert.equal(payload.data.message.text, "Proposed a new blog draft.");
   });
 
   test("propose_create_document with valid frontmatter returns VALID via validator", async () => {
@@ -1457,7 +1510,7 @@ describe("mountAiRoutes — chat-message", () => {
     assert.equal(proposal.type, "blog");
   });
 
-  test("propose_create_document with unregistered MDX component returns INVALID", async () => {
+  test("propose_create_document with unregistered MDX component is auto-rejected", async () => {
     const { app } = createTestSetup({
       authorize: authorizeWithScopes(
         new Set(["ai:use", "content:read:draft", "content:write"]),
@@ -1509,16 +1562,10 @@ describe("mountAiRoutes — chat-message", () => {
 
     assert.equal(response.status, 200);
     const payload = (await response.json()) as {
-      data: { proposals?: AiProposal[] };
+      data: { message: { text?: string }; proposals?: AiProposal[] };
     };
-    const proposal = payload.data.proposals?.[0]!;
-    assert.equal(proposal.validation.status, "invalid");
-    if (proposal.validation.status === "invalid") {
-      assert.deepEqual(
-        proposal.validation.errors.map((error) => error.code),
-        ["MDX_UNKNOWN_COMPONENT"],
-      );
-    }
+    assert.equal((payload.data.proposals ?? []).length, 0);
+    assert.equal(payload.data.message.text, "Proposed a new page.");
   });
 
   test("system prompt includes project knowledge block from lookups", async () => {
@@ -1625,7 +1672,7 @@ describe("mountAiRoutes — chat-message", () => {
     assert.equal(payload.data.message.text, "Found one match: John Doe.");
   });
 
-  test("propose_create_document at taken path returns PATH_ALREADY_IN_USE", async () => {
+  test("propose_create_document at taken path is auto-rejected", async () => {
     const validator: AiProposalValidator = async (candidate) => {
       if (candidate.kind !== "create_document") return { status: "valid" };
       const op = candidate.operations[0];
@@ -1680,14 +1727,10 @@ describe("mountAiRoutes — chat-message", () => {
     );
     assert.equal(response.status, 200);
     const payload = (await response.json()) as {
-      data: { proposals?: AiProposal[] };
+      data: { message: { text?: string }; proposals?: AiProposal[] };
     };
-    const proposal = payload.data.proposals?.[0]!;
-    assert.equal(proposal.validation.status, "invalid");
-    if (proposal.validation.status === "invalid") {
-      const codes = proposal.validation.errors.map((e) => e.code);
-      assert.ok(codes.includes("PATH_ALREADY_IN_USE"));
-    }
+    assert.equal((payload.data.proposals ?? []).length, 0);
+    assert.equal(payload.data.message.text, "Proposed.");
   });
 });
 

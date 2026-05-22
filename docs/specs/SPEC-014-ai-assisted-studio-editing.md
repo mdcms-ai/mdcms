@@ -143,6 +143,13 @@ Inline-transform proposals that fail validation show the diff plus a list of
 validation errors below it and disable Accept until the user retries or edits
 manually.
 
+While a chat turn is pending, Studio shows bounded progress events streamed
+from the server. These events may say that the model is thinking, name the
+tool it is calling, report whether a proposal tool queued or rejected a
+proposal, and show per-step token usage when the provider reports it. Progress
+events must not expose hidden chain-of-thought or raw tool arguments; they are
+status summaries only.
+
 Rejecting a proposal does not silently discard the model's turn. Reject opens
 an inline feedback textarea on the card; the user types what should change and
 submits. Studio sends the original proposal id, the user's feedback, and the
@@ -257,6 +264,14 @@ Allowed context:
   not register them.
 - Action-specific instructions for copy, SEO, MDX component insertion, or
   document creation workflows.
+
+The active draft body and attached selection are serialized to the model as
+raw markdown/MDX bounded by explicit content markers. MDCMS does not entity
+escape `<`, `>`, or `&` inside those content blocks, because the model must be
+able to copy exact MDX component syntax back into proposal operations.
+Prompt-control content such as the current user message, conversation history,
+project knowledge, and referenced-document excerpts remains escaped or
+summarized so document text cannot create new prompt sections.
 
 Disallowed context:
 

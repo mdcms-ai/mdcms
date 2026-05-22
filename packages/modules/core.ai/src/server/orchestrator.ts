@@ -153,12 +153,28 @@ export type AiChatResult = {
   audit: AiAuditRecord;
 };
 
+export type AiChatProgressEvent = {
+  type: "progress";
+  phase:
+    | "thinking"
+    | "tool-call"
+    | "tool-result"
+    | "tool-error"
+    | "step-finished";
+  message: string;
+  toolCallId?: string;
+  toolName?: string;
+  status?: "started" | "completed" | "queued" | "rejected" | "failed";
+  usage?: AiProviderUsage;
+};
+
 /**
  * Streaming event produced by `runChatStream`. The orchestrator yields
  * parsed events; the route handler is responsible for serialising them
  * to SSE on the wire.
  */
 export type AiChatStreamEvent =
+  | AiChatProgressEvent
   | { type: "text-delta"; text: string }
   | {
       type: "done";
@@ -343,6 +359,49 @@ export function createAiOrchestrator(deps: AiOrchestratorDeps): AiOrchestrator {
           if (part.type === "text-delta") {
             accumulatedText += part.text;
             yield { type: "text-delta", text: part.text };
+          } else if (part.type === "start-step") {
+            yield {
+              type: "progress",
+              phase: "thinking",
+              status: "started",
+              message: "Thinking through the request",
+            };
+          } else if (part.type === "tool-call") {
+            yield {
+              type: "progress",
+              phase: "tool-call",
+              status: "started",
+              toolCallId: part.toolCallId,
+              toolName: part.toolName,
+              message: progressMessageForToolCall(part.toolName),
+            };
+          } else if (part.type === "tool-result") {
+            yield progressEventForToolResult({
+              toolCallId: part.toolCallId,
+              toolName: part.toolName,
+              output: part.output,
+            });
+          } else if (part.type === "tool-error") {
+            yield {
+              type: "progress",
+              phase: "tool-error",
+              status: "failed",
+              toolCallId: part.toolCallId,
+              toolName: part.toolName,
+              message: `${toolLabel(part.toolName)} failed`,
+            };
+          } else if (part.type === "finish-step") {
+            const stepUsage = normalizeUsage(part.usage);
+            yield {
+              type: "progress",
+              phase: "step-finished",
+              status: "completed",
+              message:
+                part.finishReason === "tool-calls"
+                  ? "Tool results returned to the model"
+                  : "Model step finished",
+              ...(stepUsage ? { usage: stepUsage } : {}),
+            };
           }
         }
         const usage = normalizeUsage(await result.usage);
@@ -780,6 +839,89 @@ async function buildProposals(
 
     throw error;
   }
+}
+
+function toolLabel(toolName: string): string {
+  switch (toolName) {
+    case "propose_edit_selection":
+      return "Edit selected text";
+    case "propose_replace_document_text":
+      return "Prepare replacement";
+    case "propose_insert_block":
+      return "Insert block";
+    case "propose_update_frontmatter":
+      return "Update frontmatter";
+    case "propose_create_document":
+      return "Create draft";
+    case "propose_delete_document":
+      return "Delete draft";
+    case "find_entries":
+      return "Search documents";
+    case "get_entry":
+      return "Read document";
+    default:
+      return toolName;
+  }
+}
+
+function progressMessageForToolCall(toolName: string): string {
+  return `${toolLabel(toolName)} tool started`;
+}
+
+function progressEventForToolResult(input: {
+  toolCallId: string;
+  toolName: string;
+  output: unknown;
+}): AiChatProgressEvent {
+  const output =
+    input.output && typeof input.output === "object"
+      ? (input.output as Record<string, unknown>)
+      : {};
+
+  if (output.rejected === true) {
+    return {
+      type: "progress",
+      phase: "tool-result",
+      status: "rejected",
+      toolCallId: input.toolCallId,
+      toolName: input.toolName,
+      message:
+        output.retryable === true
+          ? "Proposal failed validation; retrying once"
+          : "Proposal failed validation after retry",
+    };
+  }
+
+  if (output.queued === true) {
+    return {
+      type: "progress",
+      phase: "tool-result",
+      status: "queued",
+      toolCallId: input.toolCallId,
+      toolName: input.toolName,
+      message: "Proposal queued for review",
+    };
+  }
+
+  if (typeof output.error === "string") {
+    return {
+      type: "progress",
+      phase: "tool-result",
+      status: "failed",
+      toolCallId: input.toolCallId,
+      toolName: input.toolName,
+      message: `${toolLabel(input.toolName)} returned an error`,
+    };
+  }
+
+  return {
+    type: "progress",
+    phase: "tool-result",
+    status: "completed",
+    toolCallId: input.toolCallId,
+    toolName: input.toolName,
+    message: `${toolLabel(input.toolName)} completed`,
+  };
 }
 
 /**

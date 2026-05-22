@@ -366,6 +366,82 @@ describe("createAiOrchestrator", () => {
     }
   });
 
+  test("chat stream emits progress events for model steps and proposal tools", async () => {
+    resetIds();
+    const provider = createEchoAiProvider({
+      steps: [
+        {
+          type: "tool-calls",
+          calls: [
+            {
+              toolName: "propose_replace_document_text",
+              input: JSON.stringify({
+                summary: "Replace contact block",
+                originalText: "## Contact us\n\nExisting text",
+                replacementText: "## Contact us\n\nUpdated text",
+              }),
+            },
+          ],
+        },
+        { type: "text", text: "I proposed the replacement." },
+      ],
+    });
+    const orchestrator = createAiOrchestrator({
+      provider,
+      clock: fixedClock,
+      idFactory,
+    });
+
+    const events = [];
+    for await (const event of orchestrator.runChatStream({
+      message: "Update the contact section",
+      project: "demo",
+      environment: "draft",
+      activeDocument: {
+        documentId: "doc_1",
+        path: "content/pages/about",
+        type: "page",
+        locale: "en",
+        draftRevision: 4,
+        body: "## Contact us\n\nExisting text",
+        frontmatter: {},
+        hasPublishedVersion: false,
+      },
+      capabilities: {
+        canEditDocument: true,
+        canCreateDocument: false,
+        canDeleteDocument: false,
+        canReadEntries: false,
+      },
+    })) {
+      events.push(event);
+    }
+
+    const progress = events.filter((event) => event.type === "progress");
+    assert.ok(
+      progress.some((event) => event.phase === "thinking"),
+      "should surface model-step progress before text/proposals are done",
+    );
+    assert.ok(
+      progress.some(
+        (event) =>
+          event.phase === "tool-call" &&
+          event.toolName === "propose_replace_document_text",
+      ),
+      "should surface proposal tool calls",
+    );
+    assert.ok(
+      progress.some(
+        (event) =>
+          event.phase === "tool-result" &&
+          event.toolName === "propose_replace_document_text" &&
+          event.status === "queued",
+      ),
+      "should surface proposal tool results",
+    );
+    assert.ok(events.some((event) => event.type === "done"));
+  });
+
   test("seo_improvement task only allows update_frontmatter operations", async () => {
     const provider = createEchoAiProvider({
       respond: () =>

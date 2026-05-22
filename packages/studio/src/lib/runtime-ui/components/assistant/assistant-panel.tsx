@@ -5,10 +5,14 @@ import {
   AtSign,
   Check,
   ChevronRight,
+  CircleDashed,
+  CheckCircle2,
   Maximize2,
   Minimize2,
   MoreHorizontal,
   Plus,
+  TriangleAlert,
+  Wrench,
   X,
 } from "lucide-react";
 
@@ -32,6 +36,7 @@ import {
 } from "./assistant-context.js";
 import type {
   AssistantMessage,
+  AssistantProgressEvent,
   AssistantProposal,
   AssistantThread,
 } from "./assistant-types.js";
@@ -412,6 +417,84 @@ function UserBubble({ message }: { message: AssistantMessage }) {
   );
 }
 
+function formatProgressUsage(
+  usage: AssistantProgressEvent["usage"],
+): string | null {
+  if (!usage) return null;
+  const parts: string[] = [];
+  if (typeof usage.inputTokens === "number") {
+    parts.push(`${usage.inputTokens} in`);
+  }
+  if (typeof usage.outputTokens === "number") {
+    parts.push(`${usage.outputTokens} out`);
+  }
+  if (typeof usage.totalTokens === "number") {
+    parts.push(`${usage.totalTokens} total`);
+  }
+  return parts.length > 0 ? `${parts.join(" / ")} tokens` : null;
+}
+
+function progressIcon(event: AssistantProgressEvent) {
+  if (event.status === "failed" || event.phase === "tool-error") {
+    return <TriangleAlert className="size-3.5" aria-hidden="true" />;
+  }
+  if (event.status === "queued" || event.status === "completed") {
+    return <CheckCircle2 className="size-3.5" aria-hidden="true" />;
+  }
+  if (event.phase === "tool-call") {
+    return <Wrench className="size-3.5" aria-hidden="true" />;
+  }
+  return <CircleDashed className="size-3.5 animate-spin" aria-hidden="true" />;
+}
+
+function progressTone(event: AssistantProgressEvent): string {
+  if (event.status === "failed" || event.phase === "tool-error") {
+    return "text-destructive";
+  }
+  if (event.status === "rejected") {
+    return "text-accent-amber";
+  }
+  if (event.status === "queued" || event.status === "completed") {
+    return "text-success";
+  }
+  return "text-primary";
+}
+
+function AssistantProgressTimeline({
+  events,
+}: {
+  events: AssistantProgressEvent[];
+}) {
+  if (events.length === 0) return null;
+  const visible = events.slice(-6);
+  return (
+    <div
+      className="mt-1 flex max-w-[92%] flex-col gap-1.5 border-l border-divider/60 pl-3"
+      aria-label="AI progress"
+    >
+      {visible.map((event, idx) => {
+        const usage = formatProgressUsage(event.usage);
+        return (
+          <div
+            key={`${event.phase}-${event.toolName ?? "model"}-${idx}`}
+            className="flex min-w-0 items-center gap-2 text-[12px] leading-5 text-foreground-muted"
+          >
+            <span className={cn("shrink-0", progressTone(event))}>
+              {progressIcon(event)}
+            </span>
+            <span className="min-w-0 flex-1 truncate">{event.message}</span>
+            {usage ? (
+              <span className="shrink-0 font-mono text-[10px] uppercase tracking-wide text-foreground-subtle">
+                {usage}
+              </span>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // Assistant turns sit in a two-column layout: a fixed 24px gutter that
 // holds the blue ✦ identity glyph, and a flex content column with the
 // prose + proposal cards. The fixed gutter keeps proposals aligned to
@@ -448,7 +531,15 @@ function AssistantBubble({
 }) {
   const proposalIds = message.proposals ?? [];
   const text = message.text?.trim();
-  if (proposalIds.length === 0 && !text && !isStreamingPlaceholder) return null;
+  const progressEvents = isStreamingPlaceholder ? (message.progress ?? []) : [];
+  if (
+    proposalIds.length === 0 &&
+    !text &&
+    !isStreamingPlaceholder &&
+    progressEvents.length === 0
+  ) {
+    return null;
+  }
   const proposals = proposalIds.flatMap((pid) => {
     const proposal = proposalsById[pid];
     return proposal
@@ -466,7 +557,7 @@ function AssistantBubble({
           <div className="max-w-[92%] py-0.5">
             <AssistantMarkdown text={text} />
           </div>
-        ) : isStreamingPlaceholder ? (
+        ) : isStreamingPlaceholder && progressEvents.length === 0 ? (
           <div
             className="inline-flex max-w-[92%] items-center gap-1 py-1.5 text-foreground-muted"
             aria-label="Generating response"
@@ -475,6 +566,9 @@ function AssistantBubble({
             <span className="size-1.5 animate-pulse rounded-full bg-primary" />
             <span className="size-1.5 animate-pulse rounded-full bg-primary [animation-delay:0.2s]" />
           </div>
+        ) : null}
+        {isStreamingPlaceholder && progressEvents.length > 0 ? (
+          <AssistantProgressTimeline events={progressEvents} />
         ) : null}
         {!isMultiTurn &&
           proposals.map((proposal) => (

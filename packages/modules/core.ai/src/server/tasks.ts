@@ -254,8 +254,16 @@ function escapePromptAttribute(value: string): string {
   return escapePromptText(value).replace(/"/g, "&quot;");
 }
 
+function cdataContent(value: string): string {
+  return value.replace(/]]>/g, "]]]]><![CDATA[>");
+}
+
 function xmlBlock(tagName: string, content: string): string {
   return `<${tagName}>\n${content}\n</${tagName}>`;
+}
+
+function xmlCdataBlock(tagName: string, content: string): string {
+  return `<${tagName}>\n<![CDATA[\n${cdataContent(content)}\n]]>\n</${tagName}>`;
 }
 
 function xmlLine(tagName: string, content: string): string {
@@ -695,16 +703,14 @@ export function buildChatUserPrompt(input: {
       );
     }
     if (input.activeDocument.body) {
-      documentLines.push(
-        xmlBlock("body", escapePromptText(input.activeDocument.body)),
-      );
+      documentLines.push(xmlCdataBlock("body", input.activeDocument.body));
     }
     sections.push(xmlBlock("active_document", documentLines.join("\n")));
   }
 
   if (input.attachedSelection) {
     sections.push(
-      `<selection selectionId="${escapePromptAttribute(input.attachedSelection.selectionId)}">\n${escapePromptText(input.attachedSelection.text)}\n</selection>`,
+      `<selection selectionId="${escapePromptAttribute(input.attachedSelection.selectionId)}">\n<![CDATA[\n${cdataContent(input.attachedSelection.text)}\n]]>\n</selection>`,
     );
   }
 

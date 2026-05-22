@@ -242,6 +242,25 @@ export type StudioAiChatMessageResult = {
   proposals?: StudioAiProposal[];
 };
 
+export type StudioAiChatProgressEvent = {
+  type: "progress";
+  phase:
+    | "thinking"
+    | "tool-call"
+    | "tool-result"
+    | "tool-error"
+    | "step-finished";
+  message: string;
+  toolCallId?: string;
+  toolName?: string;
+  status?: "started" | "completed" | "queued" | "rejected" | "failed";
+  usage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+  };
+};
+
 /**
  * Wire-shape of a Server-Sent Event emitted by the chat stream
  * endpoint. The client accumulates `text-delta` events into the
@@ -249,6 +268,7 @@ export type StudioAiChatMessageResult = {
  * (or renders a turn-level error on `error`).
  */
 export type StudioAiChatStreamEvent =
+  | StudioAiChatProgressEvent
   | { type: "text-delta"; text: string }
   | {
       type: "done";

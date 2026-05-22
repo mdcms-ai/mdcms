@@ -6,6 +6,12 @@ Entries are reverse-chronological (newest first).
 
 ---
 
+## 2026-05-22 — keep model-visible MDX body text raw
+
+**Rule:** Active draft body and selected markdown sent to the AI model must preserve literal MDX syntax such as `<Box>` and `<Text>`; bound it with explicit content markers instead of XML entity escaping it.
+**Why:** If the prompt shows `&lt;Box&gt;`, the model can copy escaped entities back into proposal operations, producing invalid or visibly broken MDX suggestions.
+**How to apply:** When changing chat prompt serialization, keep prompt-control sections escaped but assert that active body and selection content contain literal MDX tags in tests.
+
 ## 2026-05-22 — reject invalid chat proposals at collection time
 
 **Rule:** Chat proposal tools must only collect proposals whose validation status is `valid`; invalid tool output should be returned to the model as a rejected tool result with the correction budget.

@@ -2095,7 +2095,9 @@ async function handleChatMessageStream(
         for await (const event of options.orchestrator.runChatStream(
           chatInput,
         )) {
-          if (event.type === "text-delta") {
+          if (event.type === "progress") {
+            controller.enqueue(encodeSse("progress", event));
+          } else if (event.type === "text-delta") {
             controller.enqueue(encodeSse("text-delta", { text: event.text }));
           } else if (event.type === "done") {
             assistantText = event.text;
