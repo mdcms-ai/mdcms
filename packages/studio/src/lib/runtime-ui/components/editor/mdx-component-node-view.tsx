@@ -318,11 +318,7 @@ export function MdxComponentNodeFrame(props: {
         {props.isVoid ? null : (
           <div
             data-mdcms-mdx-content-label={props.componentName}
-            className={
-              props.previewState === "ready"
-                ? "mt-2 border-t border-border pt-2"
-                : undefined
-            }
+            className={props.previewState === "ready" ? "mt-2" : undefined}
           >
             {props.canReceiveChildDrops ? (
               <div

@@ -95,6 +95,25 @@ test("MdxComponentNodeFrame renders content-label data attribute for wrapper com
   assert.doesNotMatch(markup, /Edit nested markdown directly in this block/);
 });
 
+test("MdxComponentNodeFrame does not draw a separator before wrapper children", () => {
+  const markup = renderToStaticMarkup(
+    createElement(
+      MdxComponentNodeFrame,
+      {
+        componentName: "Box",
+        isVoid: false,
+        propsSummary: "",
+        previewState: "ready",
+        previewSurface: null,
+        canReceiveChildDrops: true,
+      },
+      createElement("div", { "data-test-slot": "children" }),
+    ),
+  );
+
+  assert.doesNotMatch(markup, /border-t border-border/);
+});
+
 test("MdxComponentNodeFrame does not render content label for void components", () => {
   const markup = renderToStaticMarkup(
     createElement(MdxComponentNodeFrame, {
