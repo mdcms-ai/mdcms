@@ -94,6 +94,10 @@ test("VisualStyleInspector renders intentional style controls for components wit
   assert.match(markup, /data-mdcms-style-box-model="margin"/);
   assert.match(markup, /data-mdcms-style-box-model="padding"/);
   assert.match(markup, /data-mdcms-style-swatch="backgroundColor"/);
+  assert.match(markup, /data-mdcms-style-color-picker="backgroundColor"/);
+  assert.match(markup, /type="color"/);
+  assert.match(markup, /aria-label="Pick Background color"/);
+  assert.match(markup, /value="#ffffff"/);
   assert.match(markup, /data-mdcms-style-field="gap"/);
   assert.match(markup, /value="12px"/);
   assert.match(markup, /value="#fff"/);

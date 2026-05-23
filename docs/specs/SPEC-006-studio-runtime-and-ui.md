@@ -445,9 +445,11 @@ Normative behavior:
   controls, box-model spacing controls, color swatches, and small value inputs.
   Segmented controls should use familiar icons with accessible labels when the
   value is visually standard, such as display mode, layout direction, wrapping,
-  alignment, justification, grid flow, and text alignment. The full inline style
-  object remains available as a collapsed advanced escape hatch for supported
-  flat style keys that do not yet have first-class controls.
+  alignment, justification, grid flow, and text alignment. Color-valued fields
+  expose a native color picker through the swatch while retaining the text input
+  for exact CSS strings such as variables and functional color values. The full
+  inline style object remains available as a collapsed advanced escape hatch for
+  supported flat style keys that do not yet have first-class controls.
 - The `Component` tab does not show placeholder copy for wrapper-only
   components whose editable surface is their nested canvas content. When a
   component has no editable non-style props, Studio omits the generic props

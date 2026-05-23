@@ -54,3 +54,21 @@ export function parseAdvancedStyleObject(
 
   return { ok: true, value: parsed as InlineStyle };
 }
+
+export function normalizeColorPickerValue(value: string): string {
+  const trimmed = value.trim();
+  const shortHexMatch = /^#([\da-f]{3})$/i.exec(trimmed);
+
+  if (shortHexMatch) {
+    return `#${shortHexMatch[1]
+      .split("")
+      .map((character) => `${character}${character}`)
+      .join("")}`.toLowerCase();
+  }
+
+  if (/^#[\da-f]{6}$/i.test(trimmed)) {
+    return trimmed.toLowerCase();
+  }
+
+  return "#000000";
+}

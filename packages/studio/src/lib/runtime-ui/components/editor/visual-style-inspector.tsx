@@ -28,6 +28,7 @@ import {
 import type { PropsEditorChangeHandler } from "../../../mdx-props-editor-host.js";
 import { cn } from "../../lib/utils.js";
 import {
+  normalizeColorPickerValue,
   parseAdvancedStyleObject,
   patchInlineStyleValue,
   type InlineStyle,
@@ -562,25 +563,37 @@ function ColorControl({
   const value = getStyleValue(style, styleKey);
 
   return (
-    <label className="grid grid-cols-[74px_minmax(0,1fr)] items-center gap-2">
+    <div className="grid grid-cols-[74px_minmax(0,1fr)] items-center gap-2">
       <span className="text-[11px] font-medium text-foreground-muted">
         {label}
       </span>
       <span className="flex min-w-0 items-center gap-2">
-        <span
-          data-mdcms-style-swatch={styleKey}
-          className="size-8 shrink-0 rounded-md border border-border bg-background shadow-inner"
-          style={value ? { backgroundColor: value } : undefined}
-        />
+        <span className="relative size-8 shrink-0 overflow-hidden rounded-md border border-border bg-background shadow-inner transition-shadow focus-within:ring-2 focus-within:ring-primary/40">
+          <span
+            data-mdcms-style-swatch={styleKey}
+            className="absolute inset-0"
+            style={value ? { backgroundColor: value } : undefined}
+          />
+          <input
+            data-mdcms-style-color-picker={styleKey}
+            type="color"
+            aria-label={`Pick ${label} color`}
+            disabled={readOnly}
+            value={normalizeColorPickerValue(value)}
+            onChange={(event) => onChange(styleKey, event.currentTarget.value)}
+            className="absolute inset-0 size-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
+          />
+        </span>
         <StyleValueInput
           styleKey={styleKey}
           value={value}
           readOnly={readOnly}
           onChange={onChange}
           placeholder={placeholder}
+          ariaLabel={`${label} CSS value`}
         />
       </span>
-    </label>
+    </div>
   );
 }
 
