@@ -8,8 +8,8 @@ import type { StudioMountContext } from "@mdcms/shared";
 import {
   parseAdvancedStyleObject,
   patchInlineStyleValue,
-  VisualStyleInspector,
-} from "./visual-style-inspector.js";
+} from "./visual-style-inspector-utils.js";
+import { VisualStyleInspector } from "./visual-style-inspector.js";
 
 type MdxCatalogComponent = NonNullable<
   StudioMountContext["mdx"]
@@ -87,6 +87,10 @@ test("VisualStyleInspector renders intentional style controls for components wit
   assert.match(markup, /data-mdcms-visual-style-section="typography"/);
   assert.match(markup, /data-mdcms-visual-style-section="advanced"/);
   assert.match(markup, /data-mdcms-style-segmented-control="display"/);
+  assert.match(markup, /data-mdcms-style-option-icon="display:flex"/);
+  assert.match(markup, /data-mdcms-style-option-icon="textAlign:center"/);
+  assert.match(markup, /aria-label="Flex"/);
+  assert.match(markup, /aria-label="Center"/);
   assert.match(markup, /data-mdcms-style-box-model="margin"/);
   assert.match(markup, /data-mdcms-style-box-model="padding"/);
   assert.match(markup, /data-mdcms-style-swatch="backgroundColor"/);

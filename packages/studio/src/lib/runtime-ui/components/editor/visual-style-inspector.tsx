@@ -3,112 +3,85 @@
 import type { ReactNode } from "react";
 
 import type { StudioMountContext } from "@mdcms/shared";
+import {
+  AlignCenterVertical,
+  AlignEndVertical,
+  AlignHorizontalJustifyCenter,
+  AlignHorizontalJustifyEnd,
+  AlignHorizontalJustifyStart,
+  AlignHorizontalSpaceBetween,
+  AlignStartVertical,
+  Columns2,
+  Grid3x3,
+  MoveHorizontal,
+  Rows2,
+  Square,
+  StretchHorizontal,
+  StretchVertical,
+  TextAlignCenter,
+  TextAlignEnd,
+  TextAlignStart,
+  TextWrap,
+  type LucideIcon,
+} from "lucide-react";
 
 import type { PropsEditorChangeHandler } from "../../../mdx-props-editor-host.js";
 import { cn } from "../../lib/utils.js";
+import {
+  parseAdvancedStyleObject,
+  patchInlineStyleValue,
+  type InlineStyle,
+} from "./visual-style-inspector-utils.js";
 
 type MdxCatalogComponent = NonNullable<
   StudioMountContext["mdx"]
 >["catalog"]["components"][number];
 
-type InlineStyle = Record<string, string | number>;
-
-type ParseAdvancedStyleResult =
-  | { ok: true; value: InlineStyle }
-  | { ok: false; message: string };
-
 const DISPLAY_OPTIONS = [
-  { value: "block", label: "Block" },
-  { value: "flex", label: "Flex" },
-  { value: "grid", label: "Grid" },
+  { value: "block", label: "Block", icon: Square },
+  { value: "flex", label: "Flex", icon: StretchHorizontal },
+  { value: "grid", label: "Grid", icon: Grid3x3 },
 ] as const;
 
 const FLEX_DIRECTION_OPTIONS = [
-  { value: "row", label: "Row" },
-  { value: "column", label: "Column" },
+  { value: "row", label: "Row", icon: Columns2 },
+  { value: "column", label: "Column", icon: Rows2 },
 ] as const;
 
 const FLEX_WRAP_OPTIONS = [
-  { value: "nowrap", label: "No wrap" },
-  { value: "wrap", label: "Wrap" },
+  { value: "nowrap", label: "No wrap", icon: MoveHorizontal },
+  { value: "wrap", label: "Wrap", icon: TextWrap },
 ] as const;
 
 const ALIGN_OPTIONS = [
-  { value: "flex-start", label: "Start" },
-  { value: "center", label: "Center" },
-  { value: "flex-end", label: "End" },
-  { value: "stretch", label: "Stretch" },
+  { value: "flex-start", label: "Start", icon: AlignStartVertical },
+  { value: "center", label: "Center", icon: AlignCenterVertical },
+  { value: "flex-end", label: "End", icon: AlignEndVertical },
+  { value: "stretch", label: "Stretch", icon: StretchVertical },
 ] as const;
 
 const JUSTIFY_OPTIONS = [
-  { value: "flex-start", label: "Start" },
-  { value: "center", label: "Center" },
-  { value: "flex-end", label: "End" },
-  { value: "space-between", label: "Between" },
+  { value: "flex-start", label: "Start", icon: AlignHorizontalJustifyStart },
+  { value: "center", label: "Center", icon: AlignHorizontalJustifyCenter },
+  { value: "flex-end", label: "End", icon: AlignHorizontalJustifyEnd },
+  {
+    value: "space-between",
+    label: "Between",
+    icon: AlignHorizontalSpaceBetween,
+  },
 ] as const;
 
 const GRID_FLOW_OPTIONS = [
-  { value: "row", label: "Row" },
-  { value: "column", label: "Column" },
-  { value: "dense", label: "Dense" },
+  { value: "row", label: "Row", icon: Rows2 },
+  { value: "column", label: "Column", icon: Columns2 },
+  { value: "dense", label: "Dense", icon: Grid3x3 },
 ] as const;
 
 const TEXT_ALIGN_OPTIONS = [
-  { value: "left", label: "Left" },
-  { value: "center", label: "Center" },
-  { value: "right", label: "Right" },
+  { value: "left", label: "Left", icon: TextAlignStart },
+  { value: "center", label: "Center", icon: TextAlignCenter },
+  { value: "right", label: "Right", icon: TextAlignEnd },
 ] as const;
-
-export function patchInlineStyleValue(
-  style: InlineStyle,
-  key: string,
-  value: string | number | undefined,
-): InlineStyle {
-  const nextStyle = { ...style };
-
-  if (value === undefined || value === "") {
-    delete nextStyle[key];
-    return nextStyle;
-  }
-
-  nextStyle[key] = value;
-  return nextStyle;
-}
-
-export function parseAdvancedStyleObject(
-  source: string,
-): ParseAdvancedStyleResult {
-  const trimmed = source.trim();
-
-  if (trimmed.length === 0) {
-    return { ok: true, value: {} };
-  }
-
-  let parsed: unknown;
-
-  try {
-    parsed = JSON.parse(trimmed);
-  } catch {
-    return { ok: false, message: "Style must be valid JSON." };
-  }
-
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return { ok: false, message: "Style must be a JSON object." };
-  }
-
-  if (
-    !Object.values(parsed as Record<string, unknown>).every(
-      (value) => typeof value === "string" || typeof value === "number",
-    )
-  ) {
-    return {
-      ok: false,
-      message: "Style values must be strings or numbers.",
-    };
-  }
-
-  return { ok: true, value: parsed as InlineStyle };
-}
 
 export function VisualStyleInspector({
   component,
@@ -351,7 +324,7 @@ export function VisualStyleInspector({
         data-mdcms-style-advanced-details={component.name}
         className="group border-t border-border/70 pt-3"
       >
-        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-md px-1 py-1 text-xs font-medium text-foreground outline-none transition-colors hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-primary/40">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-md p-1 text-xs font-medium text-foreground outline-none transition-colors hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-primary/40">
           <span>Advanced CSS object</span>
           <span className="font-mono text-[10px] uppercase text-foreground-muted group-open:hidden">
             Show JSON
@@ -362,6 +335,7 @@ export function VisualStyleInspector({
         </summary>
         <textarea
           data-mdcms-visual-style-advanced={component.name}
+          aria-label={`${component.name} advanced CSS object`}
           rows={8}
           disabled={readOnly}
           defaultValue={JSON.stringify(style, null, 2)}
@@ -418,6 +392,7 @@ function InspectorRow({
 type SegmentedOption = {
   value: string;
   label: string;
+  icon?: LucideIcon;
 };
 
 function SegmentedControl({
@@ -440,12 +415,18 @@ function SegmentedControl({
     >
       {options.map((option) => {
         const active = value === option.value;
+        const Icon = option.icon;
 
         return (
           <button
             key={option.value}
             type="button"
+            aria-label={option.label}
             aria-pressed={active}
+            title={option.label}
+            data-mdcms-style-option-icon={
+              Icon ? `${controlId}:${option.value}` : undefined
+            }
             disabled={readOnly}
             onClick={() => onChange(active ? "" : option.value)}
             className={cn(
@@ -455,7 +436,14 @@ function SegmentedControl({
                 : "text-foreground-muted hover:bg-foreground/5 hover:text-foreground",
             )}
           >
-            <span className="block truncate">{option.label}</span>
+            {Icon ? (
+              <span className="flex items-center justify-center">
+                <Icon className="size-3.5" aria-hidden="true" />
+                <span className="sr-only">{option.label}</span>
+              </span>
+            ) : (
+              <span className="block truncate">{option.label}</span>
+            )}
           </button>
         );
       })}
@@ -493,7 +481,7 @@ function BoxModelControl({
         <span className="text-[11px] font-semibold text-foreground">
           {title}
         </span>
-        <label className="flex min-w-0 items-center gap-1.5">
+        <div className="flex min-w-0 items-center gap-1.5">
           <span className="font-mono text-[10px] uppercase text-foreground-muted">
             All
           </span>
@@ -505,7 +493,7 @@ function BoxModelControl({
             placeholder="0"
             className="w-20"
           />
-        </label>
+        </div>
       </div>
       <div className="grid grid-cols-[52px_minmax(0,1fr)_52px] grid-rows-[30px_34px_30px] items-center gap-1">
         <div className="col-start-2 row-start-1">
@@ -581,7 +569,7 @@ function ColorControl({
       <span className="flex min-w-0 items-center gap-2">
         <span
           data-mdcms-style-swatch={styleKey}
-          className="h-8 w-8 shrink-0 rounded-md border border-border bg-background shadow-inner"
+          className="size-8 shrink-0 rounded-md border border-border bg-background shadow-inner"
           style={value ? { backgroundColor: value } : undefined}
         />
         <StyleValueInput
