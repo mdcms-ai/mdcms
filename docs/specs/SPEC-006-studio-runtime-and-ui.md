@@ -439,6 +439,12 @@ Normative behavior:
   required prop and validation issues first, component props next, style
   groups next, and the advanced style object editor last. It must not hide
   current validation problems behind nested tabs.
+- Visual style controls in the `Component` tab use an intentional inspector UI,
+  not a generated grid of raw CSS property names. Common controls are grouped
+  into compact layout, spacing, fill, and typography sections with segmented
+  controls, box-model spacing controls, color swatches, and small value inputs.
+  The full inline style object remains available as a collapsed advanced escape
+  hatch for supported flat style keys that do not yet have first-class controls.
 - The `Component` tab does not show placeholder copy for wrapper-only
   components whose editable surface is their nested canvas content. When a
   component has no editable non-style props, Studio omits the generic props

@@ -56,7 +56,7 @@ test("parseAdvancedStyleObject accepts only flat string and number style values"
   });
 });
 
-test("VisualStyleInspector renders grouped controls for components with style props", () => {
+test("VisualStyleInspector renders intentional style controls for components with style props", () => {
   const component = createComponent({
     name: "Box",
     extractedProps: {
@@ -81,13 +81,19 @@ test("VisualStyleInspector renders grouped controls for components with style pr
   );
 
   assert.match(markup, /data-mdcms-visual-style-inspector="Box"/);
-  assert.match(markup, /data-mdcms-visual-style-group="spacing"/);
-  assert.match(markup, /data-mdcms-visual-style-group="color"/);
-  assert.match(markup, /data-mdcms-visual-style-group="typography"/);
-  assert.match(markup, /data-mdcms-visual-style-group="layout"/);
-  assert.match(markup, /data-mdcms-visual-style-group="advanced"/);
+  assert.match(markup, /data-mdcms-visual-style-section="layout"/);
+  assert.match(markup, /data-mdcms-visual-style-section="spacing"/);
+  assert.match(markup, /data-mdcms-visual-style-section="fill"/);
+  assert.match(markup, /data-mdcms-visual-style-section="typography"/);
+  assert.match(markup, /data-mdcms-visual-style-section="advanced"/);
+  assert.match(markup, /data-mdcms-style-segmented-control="display"/);
+  assert.match(markup, /data-mdcms-style-box-model="margin"/);
+  assert.match(markup, /data-mdcms-style-box-model="padding"/);
+  assert.match(markup, /data-mdcms-style-swatch="backgroundColor"/);
+  assert.match(markup, /data-mdcms-style-field="gap"/);
   assert.match(markup, /value="12px"/);
   assert.match(markup, /value="#fff"/);
+  assert.doesNotMatch(markup, /data-mdcms-visual-style-group=/);
 });
 
 test("VisualStyleInspector renders nothing for components without style props", () => {
@@ -108,4 +114,30 @@ test("VisualStyleInspector renders nothing for components without style props", 
   );
 
   assert.equal(markup, "");
+});
+
+test("VisualStyleInspector keeps the advanced JSON editor collapsed", () => {
+  const component = createComponent({
+    name: "Box",
+    extractedProps: {
+      style: { type: "style", required: false },
+    },
+  });
+
+  const markup = renderToStaticMarkup(
+    createElement(VisualStyleInspector, {
+      component,
+      value: {
+        style: {
+          borderRadius: "8px",
+        },
+      },
+      readOnly: false,
+      onChange: () => {},
+    }),
+  );
+
+  assert.match(markup, /<details[^>]+data-mdcms-style-advanced-details="Box"/);
+  assert.match(markup, /data-mdcms-visual-style-advanced="Box"/);
+  assert.doesNotMatch(markup, /<details[^>]+open/);
 });

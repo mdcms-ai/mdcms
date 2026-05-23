@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import type { StudioMountContext } from "@mdcms/shared";
 
 import type { PropsEditorChangeHandler } from "../../../mdx-props-editor-host.js";
+import { cn } from "../../lib/utils.js";
 
 type MdxCatalogComponent = NonNullable<
   StudioMountContext["mdx"]
@@ -16,40 +17,46 @@ type ParseAdvancedStyleResult =
   | { ok: true; value: InlineStyle }
   | { ok: false; message: string };
 
-const SPACING_KEYS = [
-  "padding",
-  "paddingTop",
-  "paddingRight",
-  "paddingBottom",
-  "paddingLeft",
-  "margin",
-  "marginTop",
-  "marginRight",
-  "marginBottom",
-  "marginLeft",
-  "gap",
+const DISPLAY_OPTIONS = [
+  { value: "block", label: "Block" },
+  { value: "flex", label: "Flex" },
+  { value: "grid", label: "Grid" },
 ] as const;
 
-const COLOR_KEYS = ["color", "backgroundColor"] as const;
-
-const TYPOGRAPHY_KEYS = [
-  "fontSize",
-  "fontWeight",
-  "lineHeight",
-  "textAlign",
+const FLEX_DIRECTION_OPTIONS = [
+  { value: "row", label: "Row" },
+  { value: "column", label: "Column" },
 ] as const;
 
-const LAYOUT_KEYS = [
-  "display",
-  "flexDirection",
-  "alignItems",
-  "justifyContent",
-  "flexWrap",
-  "gridTemplateColumns",
-  "gridTemplateRows",
-  "gridAutoFlow",
-  "columnGap",
-  "rowGap",
+const FLEX_WRAP_OPTIONS = [
+  { value: "nowrap", label: "No wrap" },
+  { value: "wrap", label: "Wrap" },
+] as const;
+
+const ALIGN_OPTIONS = [
+  { value: "flex-start", label: "Start" },
+  { value: "center", label: "Center" },
+  { value: "flex-end", label: "End" },
+  { value: "stretch", label: "Stretch" },
+] as const;
+
+const JUSTIFY_OPTIONS = [
+  { value: "flex-start", label: "Start" },
+  { value: "center", label: "Center" },
+  { value: "flex-end", label: "End" },
+  { value: "space-between", label: "Between" },
+] as const;
+
+const GRID_FLOW_OPTIONS = [
+  { value: "row", label: "Row" },
+  { value: "column", label: "Column" },
+  { value: "dense", label: "Dense" },
+] as const;
+
+const TEXT_ALIGN_OPTIONS = [
+  { value: "left", label: "Left" },
+  { value: "center", label: "Center" },
+  { value: "right", label: "Right" },
 ] as const;
 
 export function patchInlineStyleValue(
@@ -137,52 +144,222 @@ export function VisualStyleInspector({
   return (
     <section
       data-mdcms-visual-style-inspector={component.name}
-      className="space-y-4"
+      className="space-y-3"
     >
-      <div className="space-y-1">
-        <p className="text-sm font-medium text-foreground">Style</p>
-        <p className="text-xs text-foreground-muted">
-          Flat inline style props only.
-        </p>
+      <div className="flex items-start justify-between gap-3">
+        <div className="space-y-1">
+          <p className="text-sm font-semibold text-foreground">Style</p>
+          <p className="text-xs text-foreground-muted">
+            Visual controls for the component&apos;s inline style.
+          </p>
+        </div>
+        <span className="rounded-md border border-border bg-background px-2 py-1 font-mono text-[10px] uppercase text-foreground-muted">
+          Flat CSS
+        </span>
       </div>
 
-      <StyleGroup title="Spacing" id="spacing">
-        <StyleInputGrid
-          keys={SPACING_KEYS}
+      <StyleSection title="Layout" id="layout">
+        <InspectorRow label="Display">
+          <SegmentedControl
+            controlId="display"
+            options={DISPLAY_OPTIONS}
+            value={getStyleValue(style, "display")}
+            readOnly={readOnly}
+            onChange={(nextValue) => updateStyleKey("display", nextValue)}
+          />
+        </InspectorRow>
+        <InspectorRow label="Direction">
+          <SegmentedControl
+            controlId="flexDirection"
+            options={FLEX_DIRECTION_OPTIONS}
+            value={getStyleValue(style, "flexDirection")}
+            readOnly={readOnly}
+            onChange={(nextValue) => updateStyleKey("flexDirection", nextValue)}
+          />
+        </InspectorRow>
+        <InspectorRow label="Align">
+          <SegmentedControl
+            controlId="alignItems"
+            options={ALIGN_OPTIONS}
+            value={getStyleValue(style, "alignItems")}
+            readOnly={readOnly}
+            onChange={(nextValue) => updateStyleKey("alignItems", nextValue)}
+          />
+        </InspectorRow>
+        <InspectorRow label="Justify">
+          <SegmentedControl
+            controlId="justifyContent"
+            options={JUSTIFY_OPTIONS}
+            value={getStyleValue(style, "justifyContent")}
+            readOnly={readOnly}
+            onChange={(nextValue) =>
+              updateStyleKey("justifyContent", nextValue)
+            }
+          />
+        </InspectorRow>
+        <InspectorRow label="Wrap">
+          <SegmentedControl
+            controlId="flexWrap"
+            options={FLEX_WRAP_OPTIONS}
+            value={getStyleValue(style, "flexWrap")}
+            readOnly={readOnly}
+            onChange={(nextValue) => updateStyleKey("flexWrap", nextValue)}
+          />
+        </InspectorRow>
+        <div className="grid grid-cols-2 gap-2">
+          <StyleValueField
+            label="Gap"
+            styleKey="gap"
+            style={style}
+            readOnly={readOnly}
+            onChange={updateStyleKey}
+            placeholder="16px"
+          />
+          <StyleValueField
+            label="Column gap"
+            styleKey="columnGap"
+            style={style}
+            readOnly={readOnly}
+            onChange={updateStyleKey}
+            placeholder="24px"
+          />
+          <StyleValueField
+            label="Row gap"
+            styleKey="rowGap"
+            style={style}
+            readOnly={readOnly}
+            onChange={updateStyleKey}
+            placeholder="24px"
+          />
+          <div className="space-y-1">
+            <span className="block text-[11px] font-medium text-foreground-muted">
+              Flow
+            </span>
+            <SegmentedControl
+              controlId="gridAutoFlow"
+              options={GRID_FLOW_OPTIONS}
+              value={getStyleValue(style, "gridAutoFlow")}
+              readOnly={readOnly}
+              onChange={(nextValue) =>
+                updateStyleKey("gridAutoFlow", nextValue)
+              }
+            />
+          </div>
+          <StyleValueField
+            label="Columns"
+            styleKey="gridTemplateColumns"
+            style={style}
+            readOnly={readOnly}
+            onChange={updateStyleKey}
+            placeholder="repeat(3, 1fr)"
+          />
+          <StyleValueField
+            label="Rows"
+            styleKey="gridTemplateRows"
+            style={style}
+            readOnly={readOnly}
+            onChange={updateStyleKey}
+            placeholder="auto"
+          />
+        </div>
+      </StyleSection>
+
+      <StyleSection title="Spacing" id="spacing">
+        <BoxModelControl
+          title="Margin"
           style={style}
+          allKey="margin"
+          topKey="marginTop"
+          rightKey="marginRight"
+          bottomKey="marginBottom"
+          leftKey="marginLeft"
           readOnly={readOnly}
           onChange={updateStyleKey}
         />
-      </StyleGroup>
-
-      <StyleGroup title="Color" id="color">
-        <StyleInputGrid
-          keys={COLOR_KEYS}
+        <BoxModelControl
+          title="Padding"
           style={style}
+          allKey="padding"
+          topKey="paddingTop"
+          rightKey="paddingRight"
+          bottomKey="paddingBottom"
+          leftKey="paddingLeft"
           readOnly={readOnly}
           onChange={updateStyleKey}
         />
-      </StyleGroup>
+      </StyleSection>
 
-      <StyleGroup title="Typography" id="typography">
-        <StyleInputGrid
-          keys={TYPOGRAPHY_KEYS}
+      <StyleSection title="Fill" id="fill">
+        <ColorControl
+          label="Text"
+          styleKey="color"
           style={style}
           readOnly={readOnly}
           onChange={updateStyleKey}
+          placeholder="#111827"
         />
-      </StyleGroup>
-
-      <StyleGroup title="Layout" id="layout">
-        <StyleInputGrid
-          keys={LAYOUT_KEYS}
+        <ColorControl
+          label="Background"
+          styleKey="backgroundColor"
           style={style}
           readOnly={readOnly}
           onChange={updateStyleKey}
+          placeholder="#ffffff"
         />
-      </StyleGroup>
+      </StyleSection>
 
-      <StyleGroup title="Advanced style object" id="advanced">
+      <StyleSection title="Typography" id="typography">
+        <div className="grid grid-cols-3 gap-2">
+          <StyleValueField
+            label="Size"
+            styleKey="fontSize"
+            style={style}
+            readOnly={readOnly}
+            onChange={updateStyleKey}
+            placeholder="16px"
+          />
+          <StyleValueField
+            label="Weight"
+            styleKey="fontWeight"
+            style={style}
+            readOnly={readOnly}
+            onChange={updateStyleKey}
+            placeholder="600"
+          />
+          <StyleValueField
+            label="Line"
+            styleKey="lineHeight"
+            style={style}
+            readOnly={readOnly}
+            onChange={updateStyleKey}
+            placeholder="1.5"
+          />
+        </div>
+        <InspectorRow label="Align">
+          <SegmentedControl
+            controlId="textAlign"
+            options={TEXT_ALIGN_OPTIONS}
+            value={getStyleValue(style, "textAlign")}
+            readOnly={readOnly}
+            onChange={(nextValue) => updateStyleKey("textAlign", nextValue)}
+          />
+        </InspectorRow>
+      </StyleSection>
+
+      <details
+        data-mdcms-visual-style-section="advanced"
+        data-mdcms-style-advanced-details={component.name}
+        className="group border-t border-border/70 pt-3"
+      >
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-md px-1 py-1 text-xs font-medium text-foreground outline-none transition-colors hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-primary/40">
+          <span>Advanced CSS object</span>
+          <span className="font-mono text-[10px] uppercase text-foreground-muted group-open:hidden">
+            Show JSON
+          </span>
+          <span className="hidden font-mono text-[10px] uppercase text-foreground-muted group-open:inline">
+            Hide JSON
+          </span>
+        </summary>
         <textarea
           data-mdcms-visual-style-advanced={component.name}
           rows={8}
@@ -195,14 +372,14 @@ export function VisualStyleInspector({
               updateStyle(parsed.value);
             }
           }}
-          className="w-full rounded-md border border-border bg-background px-3 py-2 font-mono text-xs text-foreground shadow-xs disabled:cursor-not-allowed disabled:opacity-60"
+          className="mt-2 w-full rounded-md border border-border bg-background px-3 py-2 font-mono text-xs text-foreground shadow-xs disabled:cursor-not-allowed disabled:opacity-60"
         />
-      </StyleGroup>
+      </details>
     </section>
   );
 }
 
-function StyleGroup({
+function StyleSection({
   id,
   title,
   children,
@@ -212,7 +389,7 @@ function StyleGroup({
   children: ReactNode;
 }) {
   return (
-    <section data-mdcms-visual-style-group={id} className="space-y-2">
+    <section data-mdcms-visual-style-section={id} className="space-y-2">
       <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-foreground-muted">
         {title}
       </p>
@@ -221,33 +398,271 @@ function StyleGroup({
   );
 }
 
-function StyleInputGrid({
-  keys,
-  style,
+function InspectorRow({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="grid grid-cols-[74px_minmax(0,1fr)] items-center gap-2">
+      <span className="text-[11px] font-medium text-foreground-muted">
+        {label}
+      </span>
+      {children}
+    </div>
+  );
+}
+
+type SegmentedOption = {
+  value: string;
+  label: string;
+};
+
+function SegmentedControl({
+  controlId,
+  options,
+  value,
   readOnly,
   onChange,
 }: {
-  keys: readonly string[];
+  controlId: string;
+  options: readonly SegmentedOption[];
+  value: string;
+  readOnly: boolean;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div
+      data-mdcms-style-segmented-control={controlId}
+      className="grid auto-cols-fr grid-flow-col rounded-md border border-border bg-background p-0.5"
+    >
+      {options.map((option) => {
+        const active = value === option.value;
+
+        return (
+          <button
+            key={option.value}
+            type="button"
+            aria-pressed={active}
+            disabled={readOnly}
+            onClick={() => onChange(active ? "" : option.value)}
+            className={cn(
+              "h-7 min-w-0 rounded-sm px-2 text-[11px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60",
+              active
+                ? "bg-primary/15 text-primary shadow-xs"
+                : "text-foreground-muted hover:bg-foreground/5 hover:text-foreground",
+            )}
+          >
+            <span className="block truncate">{option.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function BoxModelControl({
+  title,
+  style,
+  allKey,
+  topKey,
+  rightKey,
+  bottomKey,
+  leftKey,
+  readOnly,
+  onChange,
+}: {
+  title: string;
   style: InlineStyle;
+  allKey: string;
+  topKey: string;
+  rightKey: string;
+  bottomKey: string;
+  leftKey: string;
   readOnly: boolean;
   onChange: (key: string, value: string) => void;
 }) {
   return (
-    <div className="grid grid-cols-2 gap-2">
-      {keys.map((key) => (
-        <label key={key} className="space-y-1 text-xs text-foreground-muted">
-          <span className="font-mono text-[10px]">{key}</span>
-          <input
-            data-mdcms-visual-style-control={key}
-            disabled={readOnly}
-            defaultValue={style[key] !== undefined ? String(style[key]) : ""}
-            onChange={(event) => onChange(key, event.currentTarget.value)}
-            className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground shadow-xs disabled:cursor-not-allowed disabled:opacity-60"
+    <div
+      data-mdcms-style-box-model={allKey}
+      className="rounded-lg border border-border bg-background/40 p-2"
+    >
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <span className="text-[11px] font-semibold text-foreground">
+          {title}
+        </span>
+        <label className="flex min-w-0 items-center gap-1.5">
+          <span className="font-mono text-[10px] uppercase text-foreground-muted">
+            All
+          </span>
+          <StyleValueInput
+            styleKey={allKey}
+            value={getStyleValue(style, allKey)}
+            readOnly={readOnly}
+            onChange={onChange}
+            placeholder="0"
+            className="w-20"
           />
         </label>
-      ))}
+      </div>
+      <div className="grid grid-cols-[52px_minmax(0,1fr)_52px] grid-rows-[30px_34px_30px] items-center gap-1">
+        <div className="col-start-2 row-start-1">
+          <StyleValueInput
+            styleKey={topKey}
+            value={getStyleValue(style, topKey)}
+            readOnly={readOnly}
+            onChange={onChange}
+            placeholder="T"
+            ariaLabel={`${title} top`}
+          />
+        </div>
+        <div className="col-start-1 row-start-2">
+          <StyleValueInput
+            styleKey={leftKey}
+            value={getStyleValue(style, leftKey)}
+            readOnly={readOnly}
+            onChange={onChange}
+            placeholder="L"
+            ariaLabel={`${title} left`}
+          />
+        </div>
+        <div className="col-start-2 row-start-2 flex h-8 items-center justify-center rounded-md border border-dashed border-border bg-foreground/[0.03] font-mono text-[10px] uppercase text-foreground-muted">
+          {title}
+        </div>
+        <div className="col-start-3 row-start-2">
+          <StyleValueInput
+            styleKey={rightKey}
+            value={getStyleValue(style, rightKey)}
+            readOnly={readOnly}
+            onChange={onChange}
+            placeholder="R"
+            ariaLabel={`${title} right`}
+          />
+        </div>
+        <div className="col-start-2 row-start-3">
+          <StyleValueInput
+            styleKey={bottomKey}
+            value={getStyleValue(style, bottomKey)}
+            readOnly={readOnly}
+            onChange={onChange}
+            placeholder="B"
+            ariaLabel={`${title} bottom`}
+          />
+        </div>
+      </div>
     </div>
   );
+}
+
+function ColorControl({
+  label,
+  styleKey,
+  style,
+  readOnly,
+  onChange,
+  placeholder,
+}: {
+  label: string;
+  styleKey: string;
+  style: InlineStyle;
+  readOnly: boolean;
+  onChange: (key: string, value: string) => void;
+  placeholder: string;
+}) {
+  const value = getStyleValue(style, styleKey);
+
+  return (
+    <label className="grid grid-cols-[74px_minmax(0,1fr)] items-center gap-2">
+      <span className="text-[11px] font-medium text-foreground-muted">
+        {label}
+      </span>
+      <span className="flex min-w-0 items-center gap-2">
+        <span
+          data-mdcms-style-swatch={styleKey}
+          className="h-8 w-8 shrink-0 rounded-md border border-border bg-background shadow-inner"
+          style={value ? { backgroundColor: value } : undefined}
+        />
+        <StyleValueInput
+          styleKey={styleKey}
+          value={value}
+          readOnly={readOnly}
+          onChange={onChange}
+          placeholder={placeholder}
+        />
+      </span>
+    </label>
+  );
+}
+
+function StyleValueField({
+  label,
+  styleKey,
+  style,
+  readOnly,
+  onChange,
+  placeholder,
+}: {
+  label: string;
+  styleKey: string;
+  style: InlineStyle;
+  readOnly: boolean;
+  onChange: (key: string, value: string) => void;
+  placeholder?: string;
+}) {
+  return (
+    <label className="space-y-1">
+      <span className="block text-[11px] font-medium text-foreground-muted">
+        {label}
+      </span>
+      <StyleValueInput
+        styleKey={styleKey}
+        value={getStyleValue(style, styleKey)}
+        readOnly={readOnly}
+        onChange={onChange}
+        placeholder={placeholder}
+      />
+    </label>
+  );
+}
+
+function StyleValueInput({
+  styleKey,
+  value,
+  readOnly,
+  onChange,
+  placeholder,
+  ariaLabel,
+  className,
+}: {
+  styleKey: string;
+  value: string;
+  readOnly: boolean;
+  onChange: (key: string, value: string) => void;
+  placeholder?: string;
+  ariaLabel?: string;
+  className?: string;
+}) {
+  return (
+    <input
+      data-mdcms-style-field={styleKey}
+      data-mdcms-visual-style-control={styleKey}
+      aria-label={ariaLabel ?? styleKey}
+      disabled={readOnly}
+      value={value}
+      placeholder={placeholder}
+      onChange={(event) => onChange(styleKey, event.currentTarget.value)}
+      className={cn(
+        "h-8 min-w-0 rounded-md border border-border bg-background px-2 font-mono text-[11px] text-foreground shadow-xs outline-none transition-colors placeholder:text-foreground-muted/60 focus:border-primary/60 focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-60",
+        className ?? "w-full",
+      )}
+    />
+  );
+}
+
+function getStyleValue(style: InlineStyle, key: string): string {
+  return style[key] !== undefined ? String(style[key]) : "";
 }
 
 function isInlineStyle(value: unknown): value is InlineStyle {
