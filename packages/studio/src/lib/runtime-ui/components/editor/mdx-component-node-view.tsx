@@ -13,8 +13,6 @@ import type { ReactNodeViewProps } from "@tiptap/react";
 import { NodeViewContent, NodeViewWrapper } from "@tiptap/react";
 
 import {
-  ArrowDown,
-  ArrowUp,
   Box as BoxIcon,
   ChevronDown,
   ChevronRight,
@@ -30,7 +28,6 @@ import { cn } from "../../lib/utils.js";
 import { useMdxComponentCollapseSnapshot } from "./mdx-component-collapse.js";
 import {
   duplicateSelectedMdxComponent,
-  moveSelectedVisualBlock,
   unwrapSelectedMdxComponent,
   wrapSelectedBlockInBox,
 } from "./visual-composition-commands.js";
@@ -75,8 +72,6 @@ export function MdxComponentNodeFrame(props: {
   onToggleCollapsed?: () => void;
   onEditProps?: () => void;
   onDuplicate?: () => void;
-  onMoveUp?: () => void;
-  onMoveDown?: () => void;
   onWrapInBox?: () => void;
   onUnwrap?: () => void;
   onDelete?: () => void;
@@ -219,28 +214,6 @@ export function MdxComponentNodeFrame(props: {
               className="inline-flex size-6 items-center justify-center rounded text-foreground-muted hover:bg-background-subtle hover:text-foreground"
             >
               <Settings className="size-3.5" />
-            </button>
-          ) : null}
-          {props.onMoveUp ? (
-            <button
-              type="button"
-              onClick={props.onMoveUp}
-              aria-label={`Move ${props.componentName} up`}
-              title="Move up"
-              className="inline-flex size-6 items-center justify-center rounded text-foreground-muted hover:bg-background-subtle hover:text-foreground"
-            >
-              <ArrowUp className="size-3.5" />
-            </button>
-          ) : null}
-          {props.onMoveDown ? (
-            <button
-              type="button"
-              onClick={props.onMoveDown}
-              aria-label={`Move ${props.componentName} down`}
-              title="Move down"
-              className="inline-flex size-6 items-center justify-center rounded text-foreground-muted hover:bg-background-subtle hover:text-foreground"
-            >
-              <ArrowDown className="size-3.5" />
             </button>
           ) : null}
           {props.onDuplicate ? (
@@ -508,15 +481,6 @@ export function MdxComponentNodeView(
   const boxComponent = props.context?.mdx?.catalog.components.find(
     (component) => component.name === "Box",
   );
-  const nodePos = props.getPos();
-  const canMoveUp =
-    isEditable &&
-    typeof nodePos === "number" &&
-    canMoveNodeAtPosition(props.editor, nodePos, "up");
-  const canMoveDown =
-    isEditable &&
-    typeof nodePos === "number" &&
-    canMoveNodeAtPosition(props.editor, nodePos, "down");
   const canReceiveChildDrops =
     !isVoid && componentName !== "Text" && componentName !== "Link";
 
@@ -540,22 +504,6 @@ export function MdxComponentNodeView(
         canReceiveChildDrops={canReceiveChildDrops}
         onToggleCollapsed={handleToggleCollapsed}
         onEditProps={isEditable ? handleEditProps : undefined}
-        onMoveUp={
-          canMoveUp
-            ? () =>
-                runSelectedAction(() =>
-                  moveSelectedVisualBlock(props.editor, "up"),
-                )
-            : undefined
-        }
-        onMoveDown={
-          canMoveDown
-            ? () =>
-                runSelectedAction(() =>
-                  moveSelectedVisualBlock(props.editor, "down"),
-                )
-            : undefined
-        }
         onDuplicate={
           isEditable
             ? () =>
@@ -615,16 +563,4 @@ export function MdxComponentNodeView(
       </MdxComponentNodeFrame>
     </NodeViewWrapper>
   );
-}
-
-function canMoveNodeAtPosition(
-  editor: ReactNodeViewProps["editor"],
-  pos: number,
-  direction: "up" | "down",
-): boolean {
-  const resolved = editor.state.doc.resolve(pos);
-  const index = resolved.index();
-  const parent = resolved.parent;
-
-  return direction === "up" ? index > 0 : index < parent.childCount - 1;
 }

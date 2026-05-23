@@ -612,10 +612,11 @@ Selected blocks expose contextual chrome. Single click selects a block and
 double click edits text/content inside it. Dense text blocks show a left-gutter
 drag handle on hover or selection. The selected/hover toolbar includes drag,
 add before, add after, add inside when valid, duplicate, delete, wrap in `Box`,
-unwrap, move up, and move down. Invalid actions are hidden, not disabled.
-Duplicate creates an exact copy of the selected block subtree. Delete is
-immediate and relies on the editor undo/redo stack for recovery. Unwrap applies
-to any wrapper component with children and lifts those children into the
+and unwrap. It does not expose separate move up/down arrow actions; document
+flow reordering is handled through drag/drop. Invalid actions are hidden, not
+disabled. Duplicate creates an exact copy of the selected block subtree. Delete
+is immediate and relies on the editor undo/redo stack for recovery. Unwrap
+applies to any wrapper component with children and lifts those children into the
 wrapper's parent.
 
 Visual composition edits participate in the same draft-editing lifecycle as

@@ -137,18 +137,20 @@ test("MdxComponentNodeFrame renders action buttons when callbacks are provided",
       onEditProps: () => {},
       onDelete: () => {},
       onDuplicate: () => {},
-      onMoveUp: () => {},
-      onMoveDown: () => {},
       onWrapInBox: () => {},
+      ...({
+        onMoveUp: () => {},
+        onMoveDown: () => {},
+      } as Record<string, unknown>),
     }),
   );
 
   assert.match(markup, /aria-label="Edit Alert props"/);
   assert.match(markup, /aria-label="Delete Alert"/);
   assert.match(markup, /aria-label="Duplicate Alert"/);
-  assert.match(markup, /aria-label="Move Alert up"/);
-  assert.match(markup, /aria-label="Move Alert down"/);
   assert.match(markup, /aria-label="Wrap Alert in Box"/);
+  assert.doesNotMatch(markup, /aria-label="Move Alert up"/);
+  assert.doesNotMatch(markup, /aria-label="Move Alert down"/);
 });
 
 test("MdxComponentNodeFrame omits action buttons when callbacks are not provided", () => {
