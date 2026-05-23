@@ -124,3 +124,37 @@ test("MdxPropsPanel renders visual style controls for selected components with a
   assert.match(markup, /data-mdcms-visual-style-inspector="HeroBanner"/);
   assert.doesNotMatch(markup, /HeroBanner:style:style/);
 });
+
+test("MdxPropsPanel omits wrapper-only placeholder copy when there are no concrete props", () => {
+  const component = {
+    name: "Box",
+    importPath: "@mdcms/sdk/react-primitives",
+    description: "Layout wrapper.",
+    extractedProps: {
+      style: { type: "style" as const, required: false },
+      children: { type: "rich-text" as const, required: false },
+    },
+  };
+  const context = createContext();
+  context.mdx!.catalog.components = [component];
+
+  const markup = renderToStaticMarkup(
+    createElement(MdxPropsPanel, {
+      context,
+      selection: createSelection({
+        component,
+        componentName: "Box",
+        isVoid: false,
+        props: { style: { padding: "16px" } },
+      }),
+    }),
+  );
+
+  assert.match(markup, /data-mdcms-mdx-props-panel="Box"/);
+  assert.match(markup, /data-mdcms-visual-style-inspector="Box"/);
+  assert.doesNotMatch(markup, /This wrapper component is edited/);
+  assert.doesNotMatch(
+    markup,
+    /data-mdcms-mdx-props-editor-state="Box:content-only"/,
+  );
+});

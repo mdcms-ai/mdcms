@@ -439,6 +439,10 @@ Normative behavior:
   required prop and validation issues first, component props next, style
   groups next, and the advanced style object editor last. It must not hide
   current validation problems behind nested tabs.
+- The `Component` tab does not show placeholder copy for wrapper-only
+  components whose editable surface is their nested canvas content. When a
+  component has no editable non-style props, Studio omits the generic props
+  editor area and shows only the sections that have concrete controls.
 - `Properties` is dedicated to schema-derived frontmatter fields for the
   current type in the active environment.
 - `Properties` does not render document system metadata such as `status`,
