@@ -13,7 +13,6 @@ type HomeHeroProps = {
   primaryLabel?: string;
   secondaryHref?: string;
   secondaryLabel?: string;
-  children?: ReactNode;
 };
 
 export function HomeHero({
@@ -24,7 +23,6 @@ export function HomeHero({
   primaryLabel,
   secondaryHref,
   secondaryLabel,
-  children,
 }: HomeHeroProps) {
   return (
     <section className="landing-hero">
@@ -48,7 +46,6 @@ export function HomeHero({
           ) : null}
         </div>
       </div>
-      {children ? <div className="hero-panel">{children}</div> : null}
     </section>
   );
 }

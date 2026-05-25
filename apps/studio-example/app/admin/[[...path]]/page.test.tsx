@@ -36,6 +36,15 @@ test("admin catch-all page prepares studio config with local MDX metadata", asyn
   const names = components.map((component) => component.name);
   const chart = components.find((component) => component.name === "Chart");
   const callout = components.find((component) => component.name === "Callout");
+  const homeHero = components.find(
+    (component) => component.name === "HomeHero",
+  );
+  const customRichTextChildrenComponents = components
+    .filter(
+      (component) => component.extractedProps?.children?.type === "rich-text",
+    )
+    .map((component) => component.name)
+    .filter((name) => !["Box", "Text", "Link"].includes(name));
 
   assert.deepEqual(names, [
     "Box",
@@ -65,4 +74,12 @@ test("admin catch-all page prepares studio config with local MDX metadata", asyn
     type: "rich-text",
     required: false,
   });
+  assert.equal(homeHero?.extractedProps?.children, undefined);
+  assert.deepEqual(customRichTextChildrenComponents, [
+    "Callout",
+    "HomeSection",
+    "HomeFeatureGrid",
+    "HomeFeature",
+    "HomeCta",
+  ]);
 });
