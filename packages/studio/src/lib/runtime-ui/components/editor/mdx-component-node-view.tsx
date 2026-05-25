@@ -69,7 +69,6 @@ export function MdxComponentNodeFrame(props: {
   readOnly?: boolean;
   forbidden?: boolean;
   collapsed?: boolean;
-  canReceiveChildDrops?: boolean;
   onToggleCollapsed?: () => void;
   onEditProps?: () => void;
   onDuplicate?: () => void;
@@ -296,16 +295,6 @@ export function MdxComponentNodeFrame(props: {
             data-mdcms-mdx-content-label={props.componentName}
             className="relative"
           >
-            {props.canReceiveChildDrops ? (
-              <div
-                data-mdcms-visual-drop-target="inside"
-                contentEditable={false}
-                suppressContentEditableWarning
-                className="pointer-events-none absolute inset-x-0 top-1/2 z-10 -translate-y-1/2 rounded-sm border border-dashed border-primary/30 bg-primary/5 px-2 py-1 text-center font-mono text-[10px] uppercase tracking-[0.08em] text-primary/80 opacity-0 transition-opacity duration-150 group-hover/mdx-block:opacity-100"
-              >
-                Drop inside
-              </div>
-            ) : null}
             {props.children}
           </div>
         )}
@@ -449,8 +438,6 @@ export function MdxComponentNodeView(
   const boxComponent = props.context?.mdx?.catalog.components.find(
     (component) => component.name === "Box",
   );
-  const canReceiveChildDrops =
-    !isVoid && componentName !== "Text" && componentName !== "Link";
   const resolvedWrapperComponent = !isVoid
     ? props.context?.hostBridge.resolveComponent(componentName)
     : null;
@@ -472,7 +459,6 @@ export function MdxComponentNodeView(
         previewState={previewState}
         selected={props.selected}
         collapsed={collapsed}
-        canReceiveChildDrops={canReceiveChildDrops}
         onToggleCollapsed={handleToggleCollapsed}
         onEditProps={isEditable ? handleEditProps : undefined}
         onDuplicate={

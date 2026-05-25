@@ -92,7 +92,6 @@ test("MdxComponentNodeFrame does not draw a separator before wrapper children", 
         propsSummary: "",
         previewState: "ready",
         previewSurface: null,
-        canReceiveChildDrops: true,
       },
       createElement("div", { "data-test-slot": "children" }),
     ),
@@ -155,48 +154,28 @@ test("MdxComponentNodeFrame omits action buttons when callbacks are not provided
   assert.doesNotMatch(markup, /aria-label="Duplicate Alert"/);
 });
 
-test("MdxComponentNodeFrame exposes an inside drop target for structural wrappers", () => {
+test("MdxComponentNodeFrame does not render persistent drop-inside text for wrappers", () => {
+  const propsWithLegacyDropFlag = {
+    componentName: "Callout",
+    isVoid: false,
+    propsSummary: "",
+    previewState: "empty",
+    canReceiveChildDrops: true,
+  } satisfies Parameters<typeof MdxComponentNodeFrame>[0] & {
+    canReceiveChildDrops?: boolean;
+  };
+
   const markup = renderToStaticMarkup(
     createElement(
       MdxComponentNodeFrame,
-      {
-        componentName: "Callout",
-        isVoid: false,
-        propsSummary: "",
-        previewState: "empty",
-        canReceiveChildDrops: true,
-      },
-      createElement("div", { "data-test-slot": "children" }, "Body"),
-    ),
-  );
-
-  assert.match(markup, /data-mdcms-visual-drop-target="inside"/);
-  assert.match(
-    markup,
-    /data-mdcms-visual-drop-target="inside"[^>]+class="[^"]*absolute/,
-  );
-  assert.doesNotMatch(
-    markup,
-    /data-mdcms-visual-drop-target="inside"[^>]+class="[^"]*mb-2/,
-  );
-});
-
-test("MdxComponentNodeFrame hides inside drop target for inline wrappers", () => {
-  const markup = renderToStaticMarkup(
-    createElement(
-      MdxComponentNodeFrame,
-      {
-        componentName: "Text",
-        isVoid: false,
-        propsSummary: "",
-        previewState: "empty",
-        canReceiveChildDrops: false,
-      },
+      propsWithLegacyDropFlag,
       createElement("div", { "data-test-slot": "children" }, "Body"),
     ),
   );
 
   assert.doesNotMatch(markup, /data-mdcms-visual-drop-target="inside"/);
+  assert.doesNotMatch(markup, /Drop inside/);
+  assert.match(markup, /data-test-slot="children"/);
 });
 
 test("MdxComponentNodeFrame applies selected styles when selected", () => {

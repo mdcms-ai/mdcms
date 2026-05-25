@@ -458,9 +458,10 @@ Normative behavior:
   Studio renders the component chrome once, then places the editable rich-text
   child slot where the component's `children` render. Studio must not render a
   separate read-only child preview above or beside a second editable child
-  editor. Drop-inside affordances for wrapper components are overlays or
-  empty-state hints and must not occupy normal content layout before existing
-  children.
+  editor. Wrapper component canvases do not render persistent `Drop inside`
+  text in normal editing. Drag/drop feedback may use drag-state-only outlines
+  or highlights, but it must not place text over the editable caret or reserve
+  content layout space.
 - `Properties` is dedicated to schema-derived frontmatter fields for the
   current type in the active environment.
 - `Properties` does not render document system metadata such as `status`,
