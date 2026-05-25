@@ -4,12 +4,11 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import {
-  createMdxComponentPreviewProps,
   formatMdxComponentPropsSummary,
   MdxComponentNodeFrame,
 } from "./mdx-component-node-view.js";
 
-test("MdxComponentNodeFrame renders wrapper component chrome with nested slot", () => {
+test("MdxComponentNodeFrame renders wrapper content once as the editable surface", () => {
   const markup = renderToStaticMarkup(
     createElement(
       MdxComponentNodeFrame,
@@ -18,7 +17,11 @@ test("MdxComponentNodeFrame renders wrapper component chrome with nested slot", 
         isVoid: false,
         propsSummary: 'type="warning"',
         previewState: "ready",
-        previewSurface: createElement("div", { "data-test-preview": "ready" }),
+        previewSurface: createElement(
+          "div",
+          { "data-test-preview": "ready" },
+          "Child content",
+        ),
       },
       createElement("div", { "data-test-slot": "children" }, "Child content"),
     ),
@@ -26,10 +29,11 @@ test("MdxComponentNodeFrame renders wrapper component chrome with nested slot", 
 
   assert.match(markup, /data-mdcms-mdx-component-frame="Callout"/);
   assert.match(markup, /data-mdcms-mdx-component-kind="wrapper"/);
-  assert.match(markup, /data-mdcms-mdx-preview-state="ready"/);
-  assert.match(markup, /data-test-preview="ready"/);
   assert.match(markup, /&lt;Callout \/&gt;/);
   assert.match(markup, /data-test-slot="children"/);
+  assert.doesNotMatch(markup, /data-mdcms-mdx-preview-state="ready"/);
+  assert.doesNotMatch(markup, /data-test-preview="ready"/);
+  assert.equal(markup.match(/Child content/g)?.length, 1);
   assert.doesNotMatch(markup, />Wrapper</);
   assert.doesNotMatch(markup, /type=&quot;warning&quot;/);
 });
@@ -57,23 +61,6 @@ test("MdxComponentNodeFrame renders void component chrome without child slot", (
 test("formatMdxComponentPropsSummary distinguishes empty props from non-editable components", () => {
   assert.equal(formatMdxComponentPropsSummary({}), "No props set yet");
   assert.equal(formatMdxComponentPropsSummary(undefined), "No props set yet");
-});
-
-test("createMdxComponentPreviewProps injects wrapper children into preview props", () => {
-  const previewProps = createMdxComponentPreviewProps({
-    props: { tone: "warning" },
-    isVoid: false,
-    childrenHtml: "<p><strong>Body</strong></p>",
-  });
-
-  assert.equal(previewProps.tone, "warning");
-  assert.ok("children" in previewProps);
-
-  const markup = renderToStaticMarkup(
-    createElement("section", null, previewProps.children as never),
-  );
-
-  assert.match(markup, /<strong>Body<\/strong>/);
 });
 
 test("MdxComponentNodeFrame renders content-label data attribute for wrapper components", () => {
@@ -184,6 +171,14 @@ test("MdxComponentNodeFrame exposes an inside drop target for structural wrapper
   );
 
   assert.match(markup, /data-mdcms-visual-drop-target="inside"/);
+  assert.match(
+    markup,
+    /data-mdcms-visual-drop-target="inside"[^>]+class="[^"]*absolute/,
+  );
+  assert.doesNotMatch(
+    markup,
+    /data-mdcms-visual-drop-target="inside"[^>]+class="[^"]*mb-2/,
+  );
 });
 
 test("MdxComponentNodeFrame hides inside drop target for inline wrappers", () => {
@@ -263,7 +258,7 @@ test("MdxComponentNodeFrame omits collapse toggle when handler is not provided",
   assert.doesNotMatch(markup, /aria-label="Expand Hero"/);
 });
 
-test("MdxComponentNodeFrame collapsed wrapper hides preview and content but keeps them mounted", () => {
+test("MdxComponentNodeFrame collapsed wrapper hides editable content but keeps it mounted", () => {
   const markup = renderToStaticMarkup(
     createElement(
       MdxComponentNodeFrame,
@@ -284,11 +279,11 @@ test("MdxComponentNodeFrame collapsed wrapper hides preview and content but keep
   assert.match(markup, /aria-label="Expand Hero"/);
   assert.match(markup, /aria-expanded="false"/);
 
-  // The preview surface and the editable child slot remain in the DOM —
-  // ProseMirror tracks the editable region through the live node, so
-  // unmounting it on collapse would break re-expansion. Hiding via a
-  // `hidden` Tailwind utility on the wrapper is what we expect instead.
-  assert.match(markup, /data-test-preview="ready"/);
+  // The editable child slot remains in the DOM — ProseMirror tracks the
+  // editable region through the live node, so unmounting it on collapse would
+  // break re-expansion. Hiding via a `hidden` Tailwind utility on the wrapper
+  // is what we expect instead.
+  assert.doesNotMatch(markup, /data-test-preview="ready"/);
   assert.match(markup, /data-test-slot="children"/);
   assert.match(markup, /class="hidden"/);
 

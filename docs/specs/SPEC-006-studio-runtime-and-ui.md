@@ -454,6 +454,13 @@ Normative behavior:
   components whose editable surface is their nested canvas content. When a
   component has no editable non-style props, Studio omits the generic props
   editor area and shows only the sections that have concrete controls.
+- Wrapper MDX components use a single visual editing surface in the canvas.
+  Studio renders the component chrome once, then places the editable rich-text
+  child slot where the component's `children` render. Studio must not render a
+  separate read-only child preview above or beside a second editable child
+  editor. Drop-inside affordances for wrapper components are overlays or
+  empty-state hints and must not occupy normal content layout before existing
+  children.
 - `Properties` is dedicated to schema-derived frontmatter fields for the
   current type in the active environment.
 - `Properties` does not render document system metadata such as `status`,

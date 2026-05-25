@@ -5,6 +5,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type ComponentType,
   type ReactNode,
 } from "react";
 
@@ -273,32 +274,34 @@ export function MdxComponentNodeFrame(props: {
             contentEditable=false or the browser lets the caret land inside
             the rendered DOM (headings, labels, table cells) and corrupts the
             preview on the next keystroke. */}
-        <div
-          data-mdcms-mdx-preview-state={props.previewState ?? "empty"}
-          contentEditable={false}
-          suppressContentEditableWarning
-        >
-          {props.previewSurface}
-          {props.previewState === "error" ? (
-            <p className="text-xs text-destructive">
-              Preview failed to render.
-            </p>
-          ) : null}
-        </div>
+        {props.isVoid ? (
+          <div
+            data-mdcms-mdx-preview-state={props.previewState ?? "empty"}
+            contentEditable={false}
+            suppressContentEditableWarning
+          >
+            {props.previewSurface}
+            {props.previewState === "error" ? (
+              <p className="text-xs text-destructive">
+                Preview failed to render.
+              </p>
+            ) : null}
+          </div>
+        ) : null}
 
         {/* Wrapper children — the inner NodeViewContent is the ONE place
             inside this frame that must stay editable. */}
         {props.isVoid ? null : (
           <div
             data-mdcms-mdx-content-label={props.componentName}
-            className={props.previewState === "ready" ? "mt-2" : undefined}
+            className="relative"
           >
             {props.canReceiveChildDrops ? (
               <div
                 data-mdcms-visual-drop-target="inside"
                 contentEditable={false}
                 suppressContentEditableWarning
-                className="mb-2 rounded-sm border border-dashed border-primary/30 bg-primary/5 px-2 py-1 text-center font-mono text-[10px] uppercase tracking-[0.08em] text-primary/80 opacity-0 transition-opacity duration-150 group-hover/mdx-block:opacity-100"
+                className="pointer-events-none absolute inset-x-0 top-1/2 z-10 -translate-y-1/2 rounded-sm border border-dashed border-primary/30 bg-primary/5 px-2 py-1 text-center font-mono text-[10px] uppercase tracking-[0.08em] text-primary/80 opacity-0 transition-opacity duration-150 group-hover/mdx-block:opacity-100"
               >
                 Drop inside
               </div>
@@ -311,48 +314,25 @@ export function MdxComponentNodeFrame(props: {
   );
 }
 
-export function createMdxComponentPreviewProps(input: {
+function MdxComponentEditableSurface(input: {
+  component: unknown;
+  componentName: string;
   props: Record<string, unknown>;
-  isVoid: boolean;
-  childrenHtml?: string;
-}): Record<string, unknown> {
-  if (input.isVoid) {
-    return input.props;
+  children: ReactNode;
+}) {
+  if (!input.component) {
+    return (
+      <div data-mdcms-mdx-unresolved-wrapper={input.componentName}>
+        {input.children}
+      </div>
+    );
   }
 
-  const childrenHtml = input.childrenHtml?.trim() ?? "";
+  const Component = input.component as ComponentType<
+    Record<string, unknown> & { children?: ReactNode }
+  >;
 
-  if (childrenHtml.length === 0) {
-    return input.props;
-  }
-
-  // The HTML is extracted from the TipTap editor's own preview surface
-  // (see getMdxComponentPreviewChildrenHtml). It originates from the same
-  // user who is authoring and viewing the document, and TipTap's schema
-  // sanitization runs on input. This is the preview pane only; the
-  // published output goes through the MDX pipeline, not this path.
-  return {
-    ...input.props,
-    children: createElement("div", {
-      dangerouslySetInnerHTML: {
-        __html: childrenHtml,
-      },
-    }),
-  };
-}
-
-function getMdxComponentPreviewChildrenHtml(
-  container: HTMLDivElement | null,
-): string | undefined {
-  if (!container) {
-    return undefined;
-  }
-
-  if (container.firstElementChild instanceof HTMLElement) {
-    return container.firstElementChild.innerHTML;
-  }
-
-  return container.innerHTML;
+  return createElement(Component, input.props, input.children);
 }
 
 export function MdxComponentNodeView(
@@ -368,7 +348,6 @@ export function MdxComponentNodeView(
       : "Component";
   const isVoid = props.node.attrs.isVoid === true;
   const previewContainerRef = useRef<HTMLDivElement | null>(null);
-  const contentContainerRef = useRef<HTMLDivElement | null>(null);
   const [previewState, setPreviewState] = useState<"ready" | "empty" | "error">(
     "empty",
   );
@@ -403,10 +382,13 @@ export function MdxComponentNodeView(
   const mdxProps =
     (props.node.attrs.props as Record<string, unknown> | undefined) ?? {};
   const serializedPreviewProps = JSON.stringify(mdxProps);
-  const serializedChildren = JSON.stringify(props.node.content.toJSON());
   const propsSummary = formatMdxComponentPropsSummary(mdxProps);
 
   useEffect(() => {
+    if (!isVoid) {
+      return;
+    }
+
     const container = previewContainerRef.current;
 
     if (!container || !props.context) {
@@ -420,18 +402,11 @@ export function MdxComponentNodeView(
     }
 
     try {
-      const previewProps = createMdxComponentPreviewProps({
-        props: mdxProps,
-        isVoid,
-        childrenHtml: getMdxComponentPreviewChildrenHtml(
-          contentContainerRef.current,
-        ),
-      });
       const cleanup = props.context.hostBridge.renderMdxPreview({
         container,
         componentName,
-        props: previewProps,
-        key: `mdx-component:${componentName}:${serializedPreviewProps}:${serializedChildren}`,
+        props: mdxProps,
+        key: `mdx-component:${componentName}:${serializedPreviewProps}`,
       });
 
       setPreviewState("ready");
@@ -443,14 +418,7 @@ export function MdxComponentNodeView(
       setPreviewState("error");
       return;
     }
-  }, [
-    componentName,
-    isVoid,
-    mdxProps,
-    props.context,
-    serializedChildren,
-    serializedPreviewProps,
-  ]);
+  }, [componentName, isVoid, mdxProps, props.context, serializedPreviewProps]);
 
   const handleEditProps = () => {
     const pos = props.getPos();
@@ -483,6 +451,9 @@ export function MdxComponentNodeView(
   );
   const canReceiveChildDrops =
     !isVoid && componentName !== "Text" && componentName !== "Link";
+  const resolvedWrapperComponent = !isVoid
+    ? props.context?.hostBridge.resolveComponent(componentName)
+    : null;
 
   const runSelectedAction = (action: () => boolean) => {
     if (selectThisNode() === null) {
@@ -552,13 +523,17 @@ export function MdxComponentNodeView(
         forbidden={props.forbidden}
       >
         {isVoid ? null : (
-          <div ref={contentContainerRef}>
+          <MdxComponentEditableSurface
+            component={resolvedWrapperComponent}
+            componentName={componentName}
+            props={mdxProps}
+          >
             <NodeViewContent
               as="div"
               data-placeholder="Type content here..."
-              className="prose prose-sm max-w-none min-h-[3rem] rounded-md bg-background p-3 text-sm before:pointer-events-none before:float-left before:h-0 before:text-sm before:text-foreground-muted/60 before:content-[attr(data-placeholder)] has-[>:first-child:not(.is-empty)]:before:content-none"
+              className="prose prose-sm max-w-none min-h-[3rem] text-sm before:pointer-events-none before:float-left before:h-0 before:text-sm before:text-foreground-muted/60 before:content-[attr(data-placeholder)] has-[>:first-child:not(.is-empty)]:before:content-none"
             />
-          </div>
+          </MdxComponentEditableSurface>
         )}
       </MdxComponentNodeFrame>
     </NodeViewWrapper>
