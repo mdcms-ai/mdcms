@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "bun:test";
-import { createElement } from "react";
+import { createElement, isValidElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import {
@@ -8,6 +8,37 @@ import {
   MdxComponentNodeView,
   MdxComponentNodeFrame,
 } from "./mdx-component-node-view.js";
+
+function findElementByAriaLabel(
+  node: ReactNode,
+  ariaLabel: string,
+): { props: Record<string, unknown> } | null {
+  if (!isValidElement(node)) {
+    return null;
+  }
+
+  const props = node.props as {
+    "aria-label"?: string;
+    children?: ReactNode;
+  };
+
+  if (props["aria-label"] === ariaLabel) {
+    return { props: node.props as Record<string, unknown> };
+  }
+
+  const children = Array.isArray(props.children)
+    ? props.children
+    : [props.children];
+
+  for (const child of children) {
+    const found = findElementByAriaLabel(child, ariaLabel);
+    if (found) {
+      return found;
+    }
+  }
+
+  return null;
+}
 
 test("MdxComponentNodeFrame renders wrapper content once as the editable surface", () => {
   const markup = renderToStaticMarkup(
@@ -138,6 +169,50 @@ test("MdxComponentNodeFrame renders action buttons when callbacks are provided",
   assert.match(markup, /aria-label="Wrap Alert in Box"/);
   assert.doesNotMatch(markup, /aria-label="Move Alert up"/);
   assert.doesNotMatch(markup, /aria-label="Move Alert down"/);
+});
+
+test("MdxComponentNodeFrame keeps component action mouse down from stealing editor focus", () => {
+  const frame = MdxComponentNodeFrame({
+    componentName: "Alert",
+    isVoid: true,
+    propsSummary: "",
+    previewState: "empty",
+    onEditProps: () => {},
+    onDelete: () => {},
+    onDuplicate: () => {},
+    onWrapInBox: () => {},
+  });
+
+  const deleteButton = findElementByAriaLabel(frame, "Delete Alert");
+  const duplicateButton = findElementByAriaLabel(frame, "Duplicate Alert");
+
+  assert.equal(typeof deleteButton?.props.onMouseDown, "function");
+  assert.equal(typeof duplicateButton?.props.onMouseDown, "function");
+
+  let deletePrevented = false;
+  (
+    deleteButton?.props.onMouseDown as (event: {
+      preventDefault: () => void;
+    }) => void
+  )({
+    preventDefault: () => {
+      deletePrevented = true;
+    },
+  });
+
+  let duplicatePrevented = false;
+  (
+    duplicateButton?.props.onMouseDown as (event: {
+      preventDefault: () => void;
+    }) => void
+  )({
+    preventDefault: () => {
+      duplicatePrevented = true;
+    },
+  });
+
+  assert.equal(deletePrevented, true);
+  assert.equal(duplicatePrevented, true);
 });
 
 test("MdxComponentNodeFrame omits action buttons when callbacks are not provided", () => {

@@ -730,6 +730,10 @@ the component through its props panel.
   editor lifecycle above or the auto-generated/widget-override controls for
   that node; any accepted prop change updates node attrs immediately and
   re-renders the inline preview from the same local document state.
+- Component node-view chrome actions do not steal editor focus on mouse down.
+  Document-mutating component actions such as duplicate, wrap, unwrap, and
+  delete leave focus with the editor after the transaction so keyboard
+  shortcuts like undo and redo apply immediately.
 
 **Collapse / expand:**
 

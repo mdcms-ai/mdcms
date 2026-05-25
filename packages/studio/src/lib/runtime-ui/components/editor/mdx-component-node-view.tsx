@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type ComponentType,
+  type MouseEvent,
   type ReactNode,
   type SyntheticEvent,
 } from "react";
@@ -35,6 +36,12 @@ import {
 } from "./visual-composition-commands.js";
 
 const MDX_EDITABLE_SLOT_SELECTOR = "[data-mdcms-mdx-editable-slot]";
+
+function preventEditorChromeButtonMouseDown(
+  event: MouseEvent<HTMLButtonElement>,
+) {
+  event.preventDefault();
+}
 
 export function formatMdxComponentPropsSummary(
   props: Record<string, unknown> | undefined,
@@ -142,6 +149,7 @@ export function MdxComponentNodeFrame(props: {
           {props.onToggleCollapsed ? (
             <button
               type="button"
+              onMouseDown={preventEditorChromeButtonMouseDown}
               onClick={props.onToggleCollapsed}
               aria-label={
                 collapsed
@@ -211,6 +219,7 @@ export function MdxComponentNodeFrame(props: {
           {props.onEditProps ? (
             <button
               type="button"
+              onMouseDown={preventEditorChromeButtonMouseDown}
               onClick={props.onEditProps}
               aria-label={`Edit ${props.componentName} props`}
               title="Edit props"
@@ -222,6 +231,7 @@ export function MdxComponentNodeFrame(props: {
           {props.onDuplicate ? (
             <button
               type="button"
+              onMouseDown={preventEditorChromeButtonMouseDown}
               onClick={props.onDuplicate}
               aria-label={`Duplicate ${props.componentName}`}
               title="Duplicate"
@@ -233,6 +243,7 @@ export function MdxComponentNodeFrame(props: {
           {props.onWrapInBox ? (
             <button
               type="button"
+              onMouseDown={preventEditorChromeButtonMouseDown}
               onClick={props.onWrapInBox}
               aria-label={`Wrap ${props.componentName} in Box`}
               title="Wrap in Box"
@@ -244,6 +255,7 @@ export function MdxComponentNodeFrame(props: {
           {props.onUnwrap ? (
             <button
               type="button"
+              onMouseDown={preventEditorChromeButtonMouseDown}
               onClick={props.onUnwrap}
               aria-label={`Unwrap ${props.componentName}`}
               title="Unwrap"
@@ -255,6 +267,7 @@ export function MdxComponentNodeFrame(props: {
           {props.onDelete ? (
             <button
               type="button"
+              onMouseDown={preventEditorChromeButtonMouseDown}
               onClick={props.onDelete}
               aria-label={`Delete ${props.componentName}`}
               title="Delete component"
@@ -491,6 +504,7 @@ export function MdxComponentNodeView(
 
   const handleDelete = () => {
     props.deleteNode();
+    props.editor.commands.focus();
   };
 
   const handleToggleCollapsed = () => {
@@ -510,7 +524,9 @@ export function MdxComponentNodeView(
       return;
     }
 
-    action();
+    if (action()) {
+      props.editor.commands.focus();
+    }
   };
 
   return (
