@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import {
   formatMdxComponentPropsSummary,
+  MdxComponentNodeView,
   MdxComponentNodeFrame,
 } from "./mdx-component-node-view.js";
 
@@ -176,6 +177,58 @@ test("MdxComponentNodeFrame does not render persistent drop-inside text for wrap
   assert.doesNotMatch(markup, /data-mdcms-visual-drop-target="inside"/);
   assert.doesNotMatch(markup, /Drop inside/);
   assert.match(markup, /data-test-slot="children"/);
+});
+
+test("MdxComponentNodeView keeps wrapper host output inert outside the editable child slot", () => {
+  function HeroPreview(props: { title?: string; children?: React.ReactNode }) {
+    return createElement(
+      "section",
+      { "data-test-host-wrapper": "HeroPreview" },
+      createElement("h1", null, props.title ?? "Fallback"),
+      props.children,
+    );
+  }
+
+  const markup = renderToStaticMarkup(
+    createElement(MdxComponentNodeView, {
+      node: {
+        attrs: {
+          componentName: "HeroPreview",
+          isVoid: false,
+          props: { title: "Prop-owned title" },
+        },
+      },
+      selected: false,
+      readOnly: false,
+      forbidden: false,
+      context: {
+        hostBridge: {
+          resolveComponent: () => HeroPreview,
+          renderMdxPreview: () => () => {},
+        },
+        mdx: {
+          catalog: { components: [] },
+        },
+      },
+      editor: {
+        commands: {
+          setNodeSelection: () => true,
+        },
+      },
+      getPos: () => 1,
+      deleteNode: () => {},
+    } as never),
+  );
+
+  assert.match(markup, /<h1>Prop-owned title<\/h1>/);
+  assert.match(
+    markup,
+    /data-mdcms-mdx-rendered-wrapper="HeroPreview"[^>]+contentEditable="false"/,
+  );
+  assert.match(
+    markup,
+    /data-mdcms-mdx-editable-slot="HeroPreview"[^>]+contentEditable="true"/,
+  );
 });
 
 test("MdxComponentNodeFrame applies selected styles when selected", () => {

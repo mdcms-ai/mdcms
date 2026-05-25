@@ -714,6 +714,13 @@ All registered MDX components share this single node type, differentiated by the
 **Inline preview:**
 Since the Studio is embedded in the user's app, the **actual React component** is rendered inside the node view using the current prop values. This resolution happens locally in the host app context, so content editors see exactly what the component will look like on the live site.
 
+For void components, the entire rendered preview is non-editable chrome.
+For wrapper components, only the nested `children` slot is editable document
+content. Host-rendered DOM outside that slot, including headings, labels, links,
+cards, or other output derived from props/source code, must not accept a caret or
+text input. Clicking that DOM selects the component node so editors can update
+the component through its props panel.
+
 **Editing props:**
 
 - Clicking/selecting a component node view reveals the props editing panel (displayed below the component preview or as a slide-out drawer).

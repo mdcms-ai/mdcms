@@ -461,7 +461,10 @@ Normative behavior:
   editor. Wrapper component canvases do not render persistent `Drop inside`
   text in normal editing. Drag/drop feedback may use drag-state-only outlines
   or highlights, but it must not place text over the editable caret or reserve
-  content layout space.
+  content layout space. Host-rendered wrapper DOM outside the nested
+  `children` slot is not editable document content; clicking prop-rendered
+  headings, labels, links, or other component-owned DOM selects the component
+  for prop editing rather than placing a caret inside that DOM.
 - `Properties` is dedicated to schema-derived frontmatter fields for the
   current type in the active environment.
 - `Properties` does not render document system metadata such as `status`,

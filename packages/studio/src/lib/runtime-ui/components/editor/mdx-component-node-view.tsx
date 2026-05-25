@@ -7,6 +7,7 @@ import {
   useState,
   type ComponentType,
   type ReactNode,
+  type SyntheticEvent,
 } from "react";
 
 import type { StudioMountContext } from "@mdcms/shared";
@@ -32,6 +33,8 @@ import {
   unwrapSelectedMdxComponent,
   wrapSelectedBlockInBox,
 } from "./visual-composition-commands.js";
+
+const MDX_EDITABLE_SLOT_SELECTOR = "[data-mdcms-mdx-editable-slot]";
 
 export function formatMdxComponentPropsSummary(
   props: Record<string, unknown> | undefined,
@@ -303,11 +306,39 @@ export function MdxComponentNodeFrame(props: {
   );
 }
 
+function getElementFromEventTarget(target: EventTarget | null): Element | null {
+  if (target instanceof Element) {
+    return target;
+  }
+
+  if (target instanceof Node) {
+    return target.parentElement;
+  }
+
+  return null;
+}
+
+function isInsideEditableSlot(
+  target: EventTarget | null,
+  currentTarget: EventTarget | null,
+): boolean {
+  const targetElement = getElementFromEventTarget(target);
+
+  if (!(currentTarget instanceof Element) || !targetElement) {
+    return false;
+  }
+
+  const editableSlot = targetElement.closest(MDX_EDITABLE_SLOT_SELECTOR);
+
+  return editableSlot !== null && currentTarget.contains(editableSlot);
+}
+
 function MdxComponentEditableSurface(input: {
   component: unknown;
   componentName: string;
   props: Record<string, unknown>;
   children: ReactNode;
+  onSelectPreview?: () => void;
 }) {
   if (!input.component) {
     return (
@@ -321,7 +352,39 @@ function MdxComponentEditableSurface(input: {
     Record<string, unknown> & { children?: ReactNode }
   >;
 
-  return createElement(Component, input.props, input.children);
+  const keepHostPreviewInert = (event: SyntheticEvent<HTMLElement>) => {
+    if (isInsideEditableSlot(event.target, event.currentTarget)) {
+      return;
+    }
+
+    event.preventDefault();
+    input.onSelectPreview?.();
+  };
+
+  return (
+    <div
+      data-mdcms-mdx-rendered-wrapper={input.componentName}
+      contentEditable={false}
+      suppressContentEditableWarning
+      className="select-none"
+      onPointerDownCapture={keepHostPreviewInert}
+      onMouseDownCapture={keepHostPreviewInert}
+      onBeforeInputCapture={keepHostPreviewInert}
+    >
+      {createElement(
+        Component,
+        input.props,
+        <div
+          data-mdcms-mdx-editable-slot={input.componentName}
+          contentEditable={true}
+          suppressContentEditableWarning
+          className="select-text"
+        >
+          {input.children}
+        </div>,
+      )}
+    </div>
+  );
 }
 
 export function MdxComponentNodeView(
@@ -513,6 +576,9 @@ export function MdxComponentNodeView(
             component={resolvedWrapperComponent}
             componentName={componentName}
             props={mdxProps}
+            onSelectPreview={() => {
+              selectThisNode();
+            }}
           >
             <NodeViewContent
               as="div"
