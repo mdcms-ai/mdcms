@@ -306,6 +306,97 @@ test("MdxComponentNodeView keeps wrapper host output inert outside the editable 
   );
 });
 
+test("MdxComponentNodeView makes the ProseMirror content DOM the editable wrapper slot", () => {
+  function BoxPreview(props: { children?: React.ReactNode }) {
+    return createElement("section", null, props.children);
+  }
+
+  const markup = renderToStaticMarkup(
+    createElement(MdxComponentNodeView, {
+      node: {
+        attrs: {
+          componentName: "BoxPreview",
+          isVoid: false,
+          props: {},
+        },
+      },
+      selected: false,
+      readOnly: false,
+      forbidden: false,
+      context: {
+        hostBridge: {
+          resolveComponent: () => BoxPreview,
+          renderMdxPreview: () => () => {},
+        },
+        mdx: {
+          catalog: { components: [] },
+        },
+      },
+      editor: {
+        commands: {
+          setNodeSelection: () => true,
+        },
+      },
+      getPos: () => 1,
+      deleteNode: () => {},
+    } as never),
+  );
+
+  assert.match(
+    markup,
+    /<div(?=[^>]*data-node-view-content)(?=[^>]*data-mdcms-mdx-editable-slot="BoxPreview")(?=[^>]*contentEditable="true")[^>]*>/,
+  );
+  assert.doesNotMatch(
+    markup,
+    /<div(?=[^>]*data-mdcms-mdx-editable-slot="BoxPreview")(?=[^>]*contentEditable="true")(?![^>]*data-node-view-content)[^>]*>/,
+  );
+});
+
+test("MdxComponentNodeView keeps wrapper slot typography on the main editor scale", () => {
+  function BoxPreview(props: { children?: React.ReactNode }) {
+    return createElement("section", null, props.children);
+  }
+
+  const markup = renderToStaticMarkup(
+    createElement(MdxComponentNodeView, {
+      node: {
+        attrs: {
+          componentName: "BoxPreview",
+          isVoid: false,
+          props: {},
+        },
+      },
+      selected: false,
+      readOnly: false,
+      forbidden: false,
+      context: {
+        hostBridge: {
+          resolveComponent: () => BoxPreview,
+          renderMdxPreview: () => () => {},
+        },
+        mdx: {
+          catalog: { components: [] },
+        },
+      },
+      editor: {
+        commands: {
+          setNodeSelection: () => true,
+        },
+      },
+      getPos: () => 1,
+      deleteNode: () => {},
+    } as never),
+  );
+
+  const slotTag = markup.match(
+    /<div(?=[^>]*data-node-view-content)(?=[^>]*data-mdcms-mdx-editable-slot="BoxPreview")[^>]*>/,
+  )?.[0];
+
+  assert.ok(slotTag);
+  assert.doesNotMatch(slotTag, /\bprose-sm\b/);
+  assert.doesNotMatch(slotTag, /\btext-sm\b/);
+});
+
 test("MdxComponentNodeFrame applies selected styles when selected", () => {
   const markup = renderToStaticMarkup(
     createElement(MdxComponentNodeFrame, {

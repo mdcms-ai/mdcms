@@ -6,7 +6,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { StudioMountContext } from "@mdcms/shared";
 
 import { createVisualCompositionPaletteGroups } from "./visual-composition-commands.js";
-import { VisualCompositionPalette } from "./visual-composition-palette.js";
+import {
+  VisualCompositionPalette,
+  writeVisualCompositionDragPayload,
+} from "./visual-composition-palette.js";
 
 type MdxCatalogComponent = NonNullable<
   StudioMountContext["mdx"]
@@ -92,4 +95,37 @@ test("VisualCompositionPalette filters by query across block labels and descript
   assert.match(markup, /data-mdcms-visual-palette-item="component:Hero"/);
   assert.doesNotMatch(markup, /data-mdcms-visual-palette-item="paragraph"/);
   assert.doesNotMatch(markup, /data-mdcms-visual-palette-item="component:Box"/);
+});
+
+test("writeVisualCompositionDragPayload also exposes plain text for ProseMirror dropcursor", () => {
+  const calls: Array<[string, string]> = [];
+  const dataTransfer = {
+    effectAllowed: "",
+    setData(type: string, value: string) {
+      calls.push([type, value]);
+    },
+  };
+
+  writeVisualCompositionDragPayload(
+    {
+      dataTransfer,
+    } as unknown as Parameters<typeof writeVisualCompositionDragPayload>[0],
+    {
+      kind: "mdx-component",
+      id: "component:Image",
+      label: "Image",
+      group: "Media",
+      component: createComponent({
+        name: "Image",
+        builtIn: true,
+      }),
+    },
+  );
+
+  assert.equal(dataTransfer.effectAllowed, "copy");
+  assert.equal(
+    calls.some(([type]) => type === "text/plain"),
+    true,
+  );
+  assert.equal(calls.find(([type]) => type === "text/plain")?.[1], "Image");
 });

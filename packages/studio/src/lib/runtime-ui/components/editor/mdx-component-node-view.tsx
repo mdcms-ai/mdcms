@@ -1,7 +1,9 @@
 "use client";
 
 import {
+  cloneElement,
   createElement,
+  isValidElement,
   useEffect,
   useRef,
   useState,
@@ -364,6 +366,7 @@ function MdxComponentEditableSurface(input: {
   const Component = input.component as ComponentType<
     Record<string, unknown> & { children?: ReactNode }
   >;
+  const editableSlot = renderEditableSlot(input.componentName, input.children);
 
   const keepHostPreviewInert = (event: SyntheticEvent<HTMLElement>) => {
     if (isInsideEditableSlot(event.target, event.currentTarget)) {
@@ -384,18 +387,41 @@ function MdxComponentEditableSurface(input: {
       onMouseDownCapture={keepHostPreviewInert}
       onBeforeInputCapture={keepHostPreviewInert}
     >
-      {createElement(
-        Component,
-        input.props,
-        <div
-          data-mdcms-mdx-editable-slot={input.componentName}
-          contentEditable={true}
-          suppressContentEditableWarning
-          className="select-text"
-        >
-          {input.children}
-        </div>,
-      )}
+      {createElement(Component, input.props, editableSlot)}
+    </div>
+  );
+}
+
+type EditableSlotProps = {
+  className?: string;
+  contentEditable?: boolean;
+  suppressContentEditableWarning?: boolean;
+  "data-mdcms-mdx-editable-slot"?: string;
+};
+
+function renderEditableSlot(
+  componentName: string,
+  children: ReactNode,
+): ReactNode {
+  const slotProps = {
+    "data-mdcms-mdx-editable-slot": componentName,
+    contentEditable: true,
+    suppressContentEditableWarning: true,
+  } satisfies Omit<EditableSlotProps, "className">;
+
+  if (isValidElement<EditableSlotProps>(children)) {
+    return cloneElement(children, {
+      ...slotProps,
+      className: cn(
+        children.props.className,
+        "mdcms-mdx-editable-slot select-text",
+      ),
+    });
+  }
+
+  return (
+    <div {...slotProps} className="mdcms-mdx-editable-slot select-text">
+      {children}
     </div>
   );
 }
@@ -599,7 +625,7 @@ export function MdxComponentNodeView(
             <NodeViewContent
               as="div"
               data-placeholder="Type content here..."
-              className="prose prose-sm max-w-none min-h-[3rem] text-sm before:pointer-events-none before:float-left before:h-0 before:text-sm before:text-foreground-muted/60 before:content-[attr(data-placeholder)] has-[>:first-child:not(.is-empty)]:before:content-none"
+              className="max-w-none min-h-[3rem] before:pointer-events-none before:float-left before:h-0 before:text-foreground-muted/60 before:content-[attr(data-placeholder)] has-[>:first-child:not(.is-empty)]:before:content-none"
             />
           </MdxComponentEditableSurface>
         )}

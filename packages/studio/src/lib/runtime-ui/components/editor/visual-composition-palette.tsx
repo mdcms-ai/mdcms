@@ -143,6 +143,10 @@ export function writeVisualCompositionDragPayload(
   block: VisualCompositionBlock,
 ): void {
   event.dataTransfer.effectAllowed = "copy";
+  // ProseMirror's dropcursor only paints when the browser drag carries a
+  // readable slice such as text/plain. The custom MIME still drives the real
+  // MDCMS insertion on drop; this label is just enough for live positioning.
+  event.dataTransfer.setData("text/plain", block.label);
   event.dataTransfer.setData(
     VISUAL_COMPOSITION_DRAG_MIME,
     JSON.stringify({ block }),
