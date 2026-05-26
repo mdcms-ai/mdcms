@@ -657,6 +657,16 @@ function mapKindToTask(kind: AiProposalKind): AiTaskKind {
   return "copy_improvement";
 }
 
+function canReanchorProposalBySourceText(proposal: AiProposal): boolean {
+  const [operation] = proposal.operations;
+
+  return (
+    proposal.operations.length === 1 &&
+    proposal.kind === "replace_selection" &&
+    operation?.op === "replace_selection"
+  );
+}
+
 async function handleProposalApply(
   request: Request,
   proposalId: string,
@@ -734,7 +744,8 @@ async function handleProposalApply(
     if (
       typeof requestDraftRevision === "number" &&
       typeof proposal.baseDraftRevision === "number" &&
-      requestDraftRevision !== proposal.baseDraftRevision
+      requestDraftRevision !== proposal.baseDraftRevision &&
+      !canReanchorProposalBySourceText(proposal)
     ) {
       throw new RuntimeError({
         code: "AI_PROPOSAL_CONFLICT",
@@ -2101,6 +2112,20 @@ async function handleChatMessageStream(
       const collectedProposals: AiProposal[] = [];
       let assistantText = "";
       let finalAudit: AiAuditRecord | undefined;
+      const emitTurnAudit = (audit: AiAuditRecord | undefined) => {
+        if (!audit) {
+          return;
+        }
+        emitAudit(options.emitAudit, {
+          ...audit,
+          project,
+          environment,
+          actorId: aiAuth.actorId,
+          ...(attachedDocument?.documentId
+            ? { documentId: attachedDocument.documentId }
+            : {}),
+        });
+      };
       // SSE keepalive: fire a comment-only frame every 15s while the
       // LLM is mid-think. Bun's per-connection idle timeout (default
       // 10s, raised to 255s in http-server.ts) and most proxies
@@ -2137,6 +2162,7 @@ async function handleChatMessageStream(
                 message: event.message,
               }),
             );
+            emitTurnAudit(finalAudit);
             // No `done` after an `error` — the client closes.
             clearInterval(keepalive);
             controller.close();
@@ -2182,17 +2208,7 @@ async function handleChatMessageStream(
           : {}),
       };
 
-      if (finalAudit) {
-        emitAudit(options.emitAudit, {
-          ...finalAudit,
-          project,
-          environment,
-          actorId: aiAuth.actorId,
-          ...(attachedDocument?.documentId
-            ? { documentId: attachedDocument.documentId }
-            : {}),
-        });
-      }
+      emitTurnAudit(finalAudit);
 
       controller.enqueue(
         encodeSse("done", {

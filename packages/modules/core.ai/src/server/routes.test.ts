@@ -22,6 +22,7 @@ import {
   type AiProposalStore,
 } from "./proposal-store.js";
 import { createAiOrchestrator, type AiOrchestrator } from "./orchestrator.js";
+import { buildAuditRecord } from "./audit.js";
 import {
   createEchoAiProvider,
   type EchoAiProviderOptions,
@@ -179,6 +180,7 @@ function createTestSetup(input: {
   userLookup?: MountAiRoutesOptions["userLookup"];
   listEntries?: MountAiRoutesOptions["listEntries"];
   getEntry?: MountAiRoutesOptions["getEntry"];
+  orchestrator?: AiOrchestrator;
 }) {
   const document = input.document ?? input.documents?.[0] ?? buildDocument();
   const documents = input.documents ?? [document];
@@ -186,24 +188,26 @@ function createTestSetup(input: {
     documentId: string,
   ): ContentDocumentResponse | undefined =>
     documents.find((candidate) => candidate.documentId === documentId);
-  const orchestrator: AiOrchestrator = createAiOrchestrator({
-    provider: createEchoAiProvider({
-      respond:
-        input.echoRespond ?? (() => buildEchoOutputForReplaceSelection()),
-      ...(input.echoSteps ? { steps: input.echoSteps } : {}),
-    }),
-    clock: () => new Date("2026-05-01T00:00:00.000Z"),
-    idFactory: (() => {
-      let n = 0;
-      return () => {
-        n += 1;
-        return `prop_${n}`;
-      };
-    })(),
-    ...(input.proposalValidator
-      ? { proposalValidator: input.proposalValidator }
-      : {}),
-  });
+  const orchestrator: AiOrchestrator =
+    input.orchestrator ??
+    createAiOrchestrator({
+      provider: createEchoAiProvider({
+        respond:
+          input.echoRespond ?? (() => buildEchoOutputForReplaceSelection()),
+        ...(input.echoSteps ? { steps: input.echoSteps } : {}),
+      }),
+      clock: () => new Date("2026-05-01T00:00:00.000Z"),
+      idFactory: (() => {
+        let n = 0;
+        return () => {
+          n += 1;
+          return `prop_${n}`;
+        };
+      })(),
+      ...(input.proposalValidator
+        ? { proposalValidator: input.proposalValidator }
+        : {}),
+    });
   const proposalStore: AiProposalStore = createInMemoryAiProposalStore({
     clock: () => new Date("2026-05-01T00:00:00.000Z"),
   });
@@ -483,6 +487,62 @@ describe("mountAiRoutes — proposals/:id/apply", () => {
     // the kind on the record.
     assert.equal(last.proposalKind, "replace_selection");
     assert.deepEqual(last.proposalIds, [proposalId]);
+  });
+
+  test("applies replace proposal on a newer draft revision when the source text still exists", async () => {
+    const proposal: AiProposal = {
+      proposalId: "p_reanchor_1",
+      kind: "replace_selection",
+      project: "demo",
+      environment: "draft",
+      documentId: "doc_1",
+      baseDraftRevision: 4,
+      type: "post",
+      locale: "en",
+      summary: "Rewrite.",
+      operations: [
+        {
+          op: "replace_selection",
+          selectionId: "sel_anchor",
+          originalText: "Welcome to the site.",
+          replacementText: "Hi there!",
+        },
+      ],
+      validation: { status: "valid" },
+      expiresAt: "2026-05-01T00:05:00.000Z",
+      provider: {
+        providerId: "echo",
+        model: "echo-1",
+        promptTemplateId: "copy_improvement.v1",
+      },
+    };
+    const setup = createTestSetup({
+      document: buildDocument({
+        draftRevision: 6,
+        body: "Intro still here.\n\nWelcome to the site.",
+      }),
+    });
+
+    const response = await setup.app.fetch(
+      "POST",
+      `https://test.local/api/v1/ai/proposals/${proposal.proposalId}/apply`,
+      {
+        method: "POST",
+        headers: TARGET_HEADERS,
+        body: JSON.stringify({
+          proposal,
+          schemaHash: "hash_1",
+          draftRevision: 6,
+        }),
+      },
+    );
+
+    assert.equal(response.status, 200);
+    const body = (await response.json()) as {
+      data: { document: { body: string } };
+    };
+    assert.equal(body.data.document.body, "Intro still here.\n\nHi there!");
+    assert.equal(setup.updateCalls.length, 1);
   });
 
   test("expired proposal returns 410 and emits expired audit", async () => {
@@ -782,6 +842,69 @@ describe("mountAiRoutes — chat-message", () => {
     assert.match(body, /"phase":"tool-result"/);
     assert.match(body, /"status":"queued"/);
     assert.match(body, /event: done/);
+  });
+
+  test("streaming chat emits failure audit before closing on stream errors", async () => {
+    const audit = buildAuditRecord({
+      taskKind: "chat",
+      providerId: "groq",
+      model: "openai/gpt-oss-120b",
+      promptTemplateId: "chat.tool.v1",
+      occurredAt: new Date("2026-05-01T00:00:00.000Z"),
+      outcome: "provider_error",
+      errorCode: "AI_PROVIDER_UNAVAILABLE",
+      errorMessage: "Request too large for model token budget",
+    });
+    const orchestrator: AiOrchestrator = {
+      providerId: "groq",
+      async runTask() {
+        throw new Error("not used");
+      },
+      async runChat() {
+        throw new Error("not used");
+      },
+      async *runChatStream() {
+        yield {
+          type: "error",
+          code: "AI_PROVIDER_UNAVAILABLE",
+          message: "Request too large for model token budget",
+          audit,
+        };
+      },
+    };
+    const { app, audits } = createTestSetup({
+      orchestrator,
+      authorize: authorizeWithScopes(
+        new Set(["ai:use", "content:read:draft", "content:write"]),
+      ),
+    });
+
+    const response = await app.fetch(
+      "POST",
+      "https://test.local/api/v1/ai/chat/messages/stream",
+      {
+        method: "POST",
+        headers: {
+          ...TARGET_HEADERS,
+          accept: "text/event-stream",
+        },
+        body: JSON.stringify({
+          message: "Build a larger section",
+          attachedDocumentIds: ["doc_1"],
+        }),
+      },
+    );
+
+    assert.equal(response.status, 200);
+    const body = await response.text();
+    assert.match(body, /event: error/);
+    assert.doesNotMatch(body, /event: done/);
+    assert.equal(audits.length, 1);
+    assert.equal(audits[0]?.outcome, "provider_error");
+    assert.equal(audits[0]?.errorCode, "AI_PROVIDER_UNAVAILABLE");
+    assert.equal(audits[0]?.project, "demo");
+    assert.equal(audits[0]?.environment, "draft");
+    assert.equal(audits[0]?.documentId, "doc_1");
   });
 
   test("chat-selected list proposals apply against the markdown selection span", async () => {

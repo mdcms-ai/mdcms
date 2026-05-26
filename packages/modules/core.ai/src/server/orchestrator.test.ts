@@ -1,15 +1,23 @@
 import assert from "node:assert/strict";
 import { describe, test } from "bun:test";
 
+import type {
+  LanguageModelV3StreamPart,
+  LanguageModelV3Usage,
+} from "@ai-sdk/provider";
 import { RuntimeError } from "@mdcms/shared";
+import { APICallError } from "ai";
+import { MockLanguageModelV3 } from "ai/test";
 
 import {
+  type AiChatStreamEvent,
   createAiOrchestrator,
   getOrchestratorFailureAudit,
   getOrchestratorFailureRuntimeError,
   OrchestratorFailure,
   type AiOrchestrationInput,
 } from "./orchestrator.js";
+import type { AiProvider } from "./provider.js";
 import {
   createEchoAiProvider,
   ECHO_PROVIDER_DEFAULT_MODEL,
@@ -46,6 +54,40 @@ const idFactory = () => {
 
 function resetIds(): void {
   nextProposalId = 0;
+}
+
+function createStreamErrorAiProvider(error: unknown): AiProvider {
+  const usage: LanguageModelV3Usage = {
+    inputTokens: {
+      total: 0,
+      noCache: 0,
+      cacheRead: undefined,
+      cacheWrite: undefined,
+    },
+    outputTokens: { total: 0, text: 0, reasoning: undefined },
+  };
+  return {
+    id: ECHO_PROVIDER_ID,
+    languageModel: new MockLanguageModelV3({
+      provider: ECHO_PROVIDER_ID,
+      modelId: ECHO_PROVIDER_DEFAULT_MODEL,
+      doGenerate: async () => ({
+        content: [],
+        finishReason: { unified: "stop", raw: "stop" },
+        usage,
+        warnings: [],
+      }),
+      doStream: async () => ({
+        stream: new ReadableStream<LanguageModelV3StreamPart>({
+          start(controller) {
+            controller.enqueue({ type: "stream-start", warnings: [] });
+            controller.enqueue({ type: "error", error });
+            controller.close();
+          },
+        }),
+      }),
+    }),
+  };
 }
 
 function buildEchoOutput(): string {
@@ -440,6 +482,61 @@ describe("createAiOrchestrator", () => {
       "should surface proposal tool results",
     );
     assert.ok(events.some((event) => event.type === "done"));
+  });
+
+  test("chat stream maps model error parts to a terminal error event", async () => {
+    const orchestrator = createAiOrchestrator({
+      provider: createStreamErrorAiProvider(
+        new APICallError({
+          message: "Request too large for model token budget",
+          url: "https://api.example.test/chat",
+          requestBodyValues: {},
+          statusCode: 429,
+          responseBody:
+            '{"error":{"message":"Request too large for model token budget"}}',
+          isRetryable: false,
+        }),
+      ),
+      clock: fixedClock,
+      idFactory,
+    });
+
+    const events: AiChatStreamEvent[] = [];
+    for await (const event of orchestrator.runChatStream({
+      message: "Build a larger section",
+      project: "demo",
+      environment: "draft",
+      activeDocument: {
+        documentId: "doc_1",
+        path: "content/pages/about",
+        type: "page",
+        locale: "en",
+        draftRevision: 4,
+        body: "## Contact us\n\nExisting text",
+        frontmatter: {},
+        hasPublishedVersion: false,
+      },
+      capabilities: {
+        canEditDocument: true,
+        canCreateDocument: false,
+        canDeleteDocument: false,
+        canReadEntries: false,
+      },
+    })) {
+      events.push(event);
+    }
+
+    const errorEvent = events.find((event) => event.type === "error");
+    assert.ok(errorEvent);
+    assert.equal(
+      events.some((event) => event.type === "done"),
+      false,
+      "stream errors must not fall through to a succeeded done event",
+    );
+    assert.equal(errorEvent.audit.outcome, "provider_error");
+    assert.equal(errorEvent.audit.errorCode, "AI_RATE_LIMITED");
+    assert.equal(errorEvent.code, "AI_RATE_LIMITED");
+    assert.match(errorEvent.message, /rate limit/i);
   });
 
   test("seo_improvement task only allows update_frontmatter operations", async () => {

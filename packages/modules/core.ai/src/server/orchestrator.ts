@@ -391,6 +391,8 @@ export function createAiOrchestrator(deps: AiOrchestratorDeps): AiOrchestrator {
               toolName: part.toolName,
               message: `${toolLabel(part.toolName)} failed`,
             };
+          } else if (part.type === "error") {
+            throw part.error;
           } else if (part.type === "finish-step") {
             const stepUsage = normalizeUsage(part.usage);
             yield {

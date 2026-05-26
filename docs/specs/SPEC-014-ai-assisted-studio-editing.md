@@ -111,9 +111,23 @@ The assistant surface presents:
 - A persistent right-side rail that can expand into a fullscreen workspace
   while the editor remains visible behind the chat in the rail state and is
   hidden in the fullscreen state.
+- In rail state, the assistant width is user-resizable from its left edge. The
+  rail defaults to 420px, is bounded to a usable range, and Studio reserves the
+  same width on the main editor area so content does not slide underneath the
+  chat. The chosen rail width is persisted with the assistant's local thread
+  state for the active project and environment. Fullscreen mode ignores the
+  rail width and continues to occupy the available Studio workspace.
 - A thread list with conversation persistence across navigation.
 - A composer that auto-attaches the active document and any current editor
   selection as removable context chips.
+- While a chat turn is pending, the composer remains editable so the user can
+  draft the next message. Studio must block sending that draft until the
+  pending turn completes or is stopped; the pending affordance remains Stop,
+  not Send.
+- If the provider or model fails after the streaming response has opened, the
+  server must send a terminal SSE `error` event, emit a non-success audit record
+  for the turn, and Studio must render that error in the assistant thread. A
+  stream failure must never be audited or displayed as a succeeded turn.
 - One proposal card per generated proposal, rendered inline in the assistant
   thread next to the model turn that produced it.
 
@@ -165,8 +179,13 @@ AI output is always mediated through proposals:
 3. Studio renders the proposal with validation status and accept/reject
    controls.
 4. User explicitly accepts a proposal.
-5. Server applies the accepted proposal as a draft write if the target still
-   matches the proposal's base revision and validation passes.
+5. Server applies the accepted proposal as a draft write if validation passes
+   and the proposal still has an unambiguous live target. For
+   `replace_selection`, a changed draft revision is not by itself a conflict:
+   apply may proceed when the operation's `originalText` still appears exactly
+   once in the current draft body. Proposal kinds without an exact source-text
+   replacement anchor continue to require the live draft revision to match the
+   proposal's base revision.
 6. Studio reconciles local editor state from the accepted draft response.
 
 Rejecting a proposal has no content side effects. Proposals expire after a short
