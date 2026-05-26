@@ -411,6 +411,15 @@ The chat assistant grounds the model in real project data via three layers:
   when the user asks to clone, imitate, restyle, or design something similar to
   an existing component.
 
+When proposing UI-like MDX such as sections, heroes, cards, forms, calls to
+action, or component-heavy blocks, the assistant preserves the host site's
+existing visual language unless the user explicitly asks for a new direction.
+Registered catalog components and built-ins are the default building blocks for
+visually editable composition. When `get_component_reference` is available and
+the user names, implies, or asks to match an existing component, the assistant
+uses that reference before proposing the edit so the result follows the existing
+aesthetic instead of inventing a disconnected one-off visual system.
+
 Document lookup tools are capability-gated on `content:read:draft`; absent
 capability removes the tool from the model's surface and the model gracefully
 responds in text. The component reference tool is available only when the

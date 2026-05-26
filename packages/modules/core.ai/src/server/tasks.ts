@@ -651,6 +651,13 @@ export function buildChatSystemPrompt(input: {
     "- Unbounded autonomous crawling of the document library. Use `find_entries`, `get_entry`, and `get_component_reference` only when the user's request needs a specific lookup, duplicate check, reference resolution, referenced-document read, or component design reference.",
   ].join("\n");
 
+  const visualDesignGuidance = [
+    "When proposing UI-like MDX (sections, heroes, cards, forms, calls to action, or component-heavy blocks), preserve the host site's existing visual language unless the user explicitly asks for a new direction.",
+    "Use registered catalog components and built-ins as the default building blocks for visually editable composition.",
+    "If `get_component_reference` is listed in available tools and the user names, implies, or asks to match an existing component, call it before proposing so the result follows the existing aesthetic.",
+    "Do not invent a one-off visual system when the active document, catalog, or component references already show the site's style.",
+  ].join("\n");
+
   const responseStyle =
     "Tone: short, helpful, conversational. No emoji. Never claim you've DONE something — your tool calls create proposals that the user accepts manually. After calling a tool, follow up with one short sentence summarizing what you proposed.";
 
@@ -665,6 +672,7 @@ export function buildChatSystemPrompt(input: {
     ),
     xmlBlock("available_tools", availableTools),
     xmlBlock("action_availability", actionAvailability),
+    xmlBlock("visual_design_guidance", visualDesignGuidance),
     xmlBlock("hard_limits", hardLimits),
     xmlBlock("response_style", responseStyle),
   ].join("\n\n");

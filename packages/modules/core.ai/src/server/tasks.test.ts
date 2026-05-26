@@ -185,6 +185,31 @@ test("buildChatSystemPrompt allows bounded document lookup tools when registered
   assert.match(prompt, /Unbounded autonomous crawling/);
 });
 
+test("buildChatSystemPrompt guides UI proposals toward the existing aesthetic", () => {
+  const prompt = buildChatSystemPrompt({
+    hasActiveDocument: true,
+    hasAttachedSelection: false,
+    capabilities: {
+      canEditDocument: true,
+      canCreateDocument: true,
+      canDeleteDocument: true,
+    },
+    registeredToolNames: ["get_component_reference", "propose_insert_block"],
+    projectKnowledge: {
+      project: "demo",
+      environment: "draft",
+      registeredTypes: [],
+      supportedLocales: ["en"],
+    },
+  });
+
+  assert.match(prompt, /<visual_design_guidance>/);
+  assert.match(prompt, /UI-like MDX/);
+  assert.match(prompt, /existing visual language/);
+  assert.match(prompt, /get_component_reference/);
+  assert.match(prompt, /before proposing/);
+});
+
 test("buildChatSystemPrompt uses stable XML-style sections", () => {
   const prompt = buildChatSystemPrompt({
     hasActiveDocument: true,
@@ -209,6 +234,7 @@ test("buildChatSystemPrompt uses stable XML-style sections", () => {
     "project_knowledge",
     "available_tools",
     "action_availability",
+    "visual_design_guidance",
     "hard_limits",
     "response_style",
   ]) {
