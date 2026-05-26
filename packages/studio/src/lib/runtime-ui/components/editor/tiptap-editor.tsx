@@ -63,6 +63,7 @@ import {
   serializeDocumentToMarkdown,
 } from "../../../markdown-pipeline.js";
 import { MdxComponentExtension } from "../../../mdx-component-extension.js";
+import { MdxRawJsxExtension } from "../../../mdx-raw-jsx-extension.js";
 import { CodeBlockWithNodeView } from "./code-block-node-view.js";
 import {
   MdxComponentCollapseProvider,
@@ -70,6 +71,7 @@ import {
 } from "./mdx-component-collapse.js";
 import { createEditorToolbarLayout } from "./editor-toolbar.js";
 import { MdxComponentNodeView } from "./mdx-component-node-view.js";
+import { MdxRawJsxNodeView } from "./mdx-raw-jsx-node-view.js";
 import {
   createMdxComponentInsertContent,
   isMdxComponentVisibleInInsertUi,
@@ -838,6 +840,11 @@ export const TipTapEditor = forwardRef<TipTapEditorHandle, TipTapEditorProps>(
         // only to the handful of mark/node-active flags it actually reads.
         extensions: createEditorExtensions({
           codeBlock: CodeBlockWithNodeView,
+          mdxRawJsx: MdxRawJsxExtension.extend({
+            addNodeView() {
+              return ReactNodeViewRenderer(MdxRawJsxNodeView);
+            },
+          }),
           mdxComponent: MdxComponentExtension.extend({
             addNodeView() {
               const NodeView = (props: ReactNodeViewProps) => (

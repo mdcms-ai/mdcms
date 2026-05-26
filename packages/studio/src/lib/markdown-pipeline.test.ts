@@ -171,6 +171,55 @@ test("markdown pipeline parses nested MDX components inside wrapper children", (
   });
 });
 
+test("markdown pipeline preserves lowercase raw MDX islands inside wrapper children", () => {
+  const source = [
+    '<HomeSection eyebrow="Content layer" title="Contact Us">',
+    '<form name="contact" method="POST" netlify>',
+    "<label>",
+    "Name<br />",
+    '<input type="text" name="name" required style={{ width: "100%" }} />',
+    "</label>",
+    '<button type="submit" style={{ padding: "0.75rem 1.5rem", backgroundColor: "#0070f3", color: "#fff" }}>',
+    "Send Message",
+    "</button>",
+    "</form>",
+    "</HomeSection>",
+  ].join("\n");
+
+  const parsed = parseMarkdownToDocument(source);
+
+  assert.deepEqual(parsed.content?.[0], {
+    type: "mdxComponent",
+    attrs: {
+      componentName: "HomeSection",
+      isVoid: false,
+      props: {
+        eyebrow: "Content layer",
+        title: "Contact Us",
+      },
+    },
+    content: [
+      {
+        type: "mdxRawJsx",
+        attrs: {
+          source: [
+            '<form name="contact" method="POST" netlify>',
+            "<label>",
+            "Name<br />",
+            '<input type="text" name="name" required style={{ width: "100%" }} />',
+            "</label>",
+            '<button type="submit" style={{ padding: "0.75rem 1.5rem", backgroundColor: "#0070f3", color: "#fff" }}>',
+            "Send Message",
+            "</button>",
+            "</form>",
+          ].join("\n"),
+        },
+      },
+    ],
+  });
+  assert.equal(serializeDocumentToMarkdown(parsed), source);
+});
+
 test("markdown pipeline keeps wrapper MDX serialization stable after first pass", () => {
   const source = [
     '<Callout type="warning">',

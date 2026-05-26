@@ -255,6 +255,14 @@ deterministic error when `config.components` declares `Box`, `Text`, `Image`, or
 `style` prop in the extracted catalog; built-in support does not imply a
 universal wrapper or style injection layer for host components.
 
+Raw lowercase MDX/HTML elements such as `<div>`, `<form>`, `<label>`,
+`<input>`, and `<button>` remain valid advanced MDX authoring syntax. They are
+not catalog components and are not shown as first-class visual composition
+blocks. Studio preserves them as raw MDX islands, renders an inert preview where
+possible, and serializes them back to their original MDX source. Built-ins are
+therefore the supported visual-editing primitives, not the only HTML that can
+exist in a document.
+
 The legacy toolbar Insert Component menu and `/` slash menu list only
 host-registered components. Built-ins remain hidden from those legacy insertion
 surfaces, but manual MDX editing, AI proposals, and the dedicated visual
@@ -544,6 +552,13 @@ Dedicated visual composition controls can insert, move, wrap, unwrap,
 duplicate, delete, and style valid child nodes inside compatible wrapper
 components. AI proposals and manual MDX editing use the same persisted MDX
 shape and the same validation rules.
+
+When wrapper children contain raw lowercase MDX/HTML, Studio keeps that raw
+subtree as a selectable, non-inline-editable island inside the child surface.
+The island may be deleted, moved, or replaced as a block, but its internal HTML
+is edited through Markdown/MDX source editing rather than through the visual
+component controls. This preserves parity with SDK/public rendering without
+turning arbitrary HTML into Studio-owned components.
 
 Wrapper component chrome and the props panel must make this distinction clear:
 top-level props remain in the side panel, while nested markdown content is

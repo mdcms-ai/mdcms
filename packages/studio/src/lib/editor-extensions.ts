@@ -13,6 +13,7 @@ import StarterKit from "@tiptap/starter-kit";
 import { common, createLowlight } from "lowlight";
 
 import { MdxComponentExtension } from "./mdx-component-extension.js";
+import { MdxRawJsxExtension } from "./mdx-raw-jsx-extension.js";
 
 // Returns a lowlight instance seeded with the common language set and with
 // `highlightAuto` replaced by a plain-text no-op. CodeBlockLowlight falls
@@ -170,6 +171,7 @@ const HeadlessCodeBlock = CodeBlockLowlight.configure({
 // own React-wrapped `codeBlock` override so `@tiptap/react` only loads when
 // an editor is actually mounting in a browser.
 export function createEditorExtensions(options?: {
+  mdxRawJsx?: Extensions[number];
   mdxComponent?: Extensions[number];
   codeBlock?: Extensions[number];
 }): Extensions {
@@ -201,6 +203,7 @@ export function createEditorExtensions(options?: {
       nested: true,
     }),
     options?.codeBlock ?? HeadlessCodeBlock,
+    options?.mdxRawJsx ?? MdxRawJsxExtension,
     options?.mdxComponent ?? MdxComponentExtension,
     Markdown,
   ];

@@ -495,6 +495,12 @@ Rules:
   does not create different validation semantics; it only distinguishes
   MDCMS-provided components from host-registered components for Studio
   discoverability.
+- Lowercase intrinsic MDX/HTML elements are valid raw MDX output. They are not
+  catalog components, so the catalog validator does not require them to be
+  registered. The assistant should prefer catalog components and built-ins when
+  the user asks for visually editable composition, and use raw intrinsic HTML
+  only when the requested result needs native HTML semantics such as forms or
+  inputs.
 - Inline styles are valid only through first-class `style` props. Style values
   must be flat objects whose values are strings or numbers.
 
