@@ -16,22 +16,29 @@ export function SiteHeader({ active }: SiteHeaderProps) {
         MDCMS Demo
       </Link>
       <nav aria-label="Primary navigation" className="site-nav">
-        <Link data-active={active === "home" ? "true" : undefined} href="/">
+        <Link
+          aria-current={active === "home" ? "page" : undefined}
+          data-active={active === "home" ? "true" : undefined}
+          href="/"
+        >
           Home
         </Link>
         <Link
+          aria-current={active === "pages" ? "page" : undefined}
           data-active={active === "pages" ? "true" : undefined}
           href="/pages"
         >
           Pages
         </Link>
         <Link
+          aria-current={active === "studio" ? "page" : undefined}
           data-active={active === "studio" ? "true" : undefined}
           href="/admin"
         >
           Studio
         </Link>
         <Link
+          aria-current={active === "sdk" ? "page" : undefined}
           data-active={active === "sdk" ? "true" : undefined}
           href="/demo/sdk-content"
         >

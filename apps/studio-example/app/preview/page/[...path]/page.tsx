@@ -13,5 +13,5 @@ export default async function PagePreviewPage({
   const { path } = await params;
   const result = await fetchPreviewPageByPath(path);
 
-  return await PreviewDocumentView({ heading: "Page Preview", result });
+  return <PreviewDocumentView heading="Page Preview" result={result} />;
 }

@@ -37,9 +37,10 @@ function makeDocument(input: {
 }
 
 test("SDK content list page renders all configured document groups", async () => {
+  const originalApiKey = process.env.MDCMS_DEMO_API_KEY;
+  const originalFetch = globalThis.fetch;
   process.env.MDCMS_DEMO_API_KEY = "mdcms_key_test";
   const requestedTypes: string[] = [];
-  const originalFetch = globalThis.fetch;
   globalThis.fetch = async (
     input: string | URL | Request,
     init?: RequestInit,
@@ -107,22 +108,28 @@ test("SDK content list page renders all configured document groups", async () =>
     );
   };
 
-  const module = await import("./page");
-  const element = await module.default();
-  const markup = renderToStaticMarkup(element);
+  try {
+    const module = await import("./page");
+    const element = await module.default();
+    const markup = renderToStaticMarkup(element);
 
-  assert.deepEqual(requestedTypes.slice(0, 2), ["page", "post"]);
-  assert.match(markup, /SDK client/i);
-  assert.match(markup, /@mdcms\/sdk/i);
-  assert.match(markup, /Pages/i);
-  assert.match(markup, /Posts/i);
-  assert.match(markup, /About Demo/i);
-  assert.match(markup, /Hello MDCMS/i);
-  assert.match(markup, /Rendered page copy/i);
-  assert.match(markup, /Rendered post copy/i);
-  assert.doesNotMatch(markup, /frontmatter \(raw JSON\)/i);
-  assert.doesNotMatch(markup, /body \(raw\)/i);
-
-  globalThis.fetch = originalFetch;
-  delete process.env.MDCMS_DEMO_API_KEY;
+    assert.deepEqual(requestedTypes.slice(0, 2), ["page", "post"]);
+    assert.match(markup, /SDK client/i);
+    assert.match(markup, /@mdcms\/sdk/i);
+    assert.match(markup, /Pages/i);
+    assert.match(markup, /Posts/i);
+    assert.match(markup, /About Demo/i);
+    assert.match(markup, /Hello MDCMS/i);
+    assert.match(markup, /Rendered page copy/i);
+    assert.match(markup, /Rendered post copy/i);
+    assert.doesNotMatch(markup, /frontmatter \(raw JSON\)/i);
+    assert.doesNotMatch(markup, /body \(raw\)/i);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalApiKey === undefined) {
+      delete process.env.MDCMS_DEMO_API_KEY;
+    } else {
+      process.env.MDCMS_DEMO_API_KEY = originalApiKey;
+    }
+  }
 });

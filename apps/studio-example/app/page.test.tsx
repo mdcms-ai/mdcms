@@ -6,8 +6,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import HomePage from "./page";
 
 test("home page renders the CMS-backed home page document", async () => {
-  process.env.MDCMS_DEMO_API_KEY = "mdcms_key_test";
+  const originalApiKey = process.env.MDCMS_DEMO_API_KEY;
   const originalFetch = globalThis.fetch;
+  process.env.MDCMS_DEMO_API_KEY = "mdcms_key_test";
   globalThis.fetch = async (
     input: string | URL | Request,
     init?: RequestInit,
@@ -82,20 +83,26 @@ test("home page renders the CMS-backed home page document", async () => {
     );
   };
 
-  const element = await HomePage();
-  const markup = renderToStaticMarkup(element);
+  try {
+    const element = await HomePage();
+    const markup = renderToStaticMarkup(element);
 
-  assert.match(markup, /MDCMS Demo/i);
-  assert.match(markup, /CMS-owned headline/i);
-  assert.match(markup, /Every section comes from the home page body/i);
-  assert.match(markup, /Draft pages/i);
-  assert.match(markup, /CMS-owned workflow/i);
-  assert.match(markup, /Ship the same document/i);
-  assert.match(markup, /\/pages/i);
-  assert.doesNotMatch(markup, /Rendered from a page document/i);
-  assert.doesNotMatch(markup, /One content layer/i);
-  assert.doesNotMatch(markup, /Raw Content API/i);
-
-  globalThis.fetch = originalFetch;
-  delete process.env.MDCMS_DEMO_API_KEY;
+    assert.match(markup, /MDCMS Demo/i);
+    assert.match(markup, /CMS-owned headline/i);
+    assert.match(markup, /Every section comes from the home page body/i);
+    assert.match(markup, /Draft pages/i);
+    assert.match(markup, /CMS-owned workflow/i);
+    assert.match(markup, /Ship the same document/i);
+    assert.match(markup, /\/pages/i);
+    assert.doesNotMatch(markup, /Rendered from a page document/i);
+    assert.doesNotMatch(markup, /One content layer/i);
+    assert.doesNotMatch(markup, /Raw Content API/i);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalApiKey === undefined) {
+      delete process.env.MDCMS_DEMO_API_KEY;
+    } else {
+      process.env.MDCMS_DEMO_API_KEY = originalApiKey;
+    }
+  }
 });

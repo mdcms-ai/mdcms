@@ -117,7 +117,7 @@ export function HomeCta({ title, href, label, children }: HomeCtaProps) {
       <div>
         <p className="eyebrow">Next step</p>
         <h2>{text(title, "Inspect the rendered content library")}</h2>
-        {children ? <p>{children}</p> : null}
+        {children ?? null}
       </div>
       <a href={href ?? "/demo/sdk-content"}>{text(label, "Open SDK output")}</a>
     </section>

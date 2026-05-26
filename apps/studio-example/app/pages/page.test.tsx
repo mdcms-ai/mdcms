@@ -37,9 +37,10 @@ function makeDocument(input: {
 }
 
 test("pages index lists pages before posts with rendered previews", async () => {
+  const originalApiKey = process.env.MDCMS_DEMO_API_KEY;
+  const originalFetch = globalThis.fetch;
   process.env.MDCMS_DEMO_API_KEY = "mdcms_key_test";
   const requestedTypes: string[] = [];
-  const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input: string | URL | Request) => {
     const url = new URL(String(input));
     const type = url.searchParams.get("type");
@@ -123,26 +124,32 @@ test("pages index lists pages before posts with rendered previews", async () => 
     );
   };
 
-  const module = await import("./page");
-  const element = await module.default();
-  const markup = renderToStaticMarkup(element);
+  try {
+    const module = await import("./page");
+    const element = await module.default();
+    const markup = renderToStaticMarkup(element);
 
-  assert.deepEqual(requestedTypes.slice(0, 2), ["page", "post"]);
-  assert.match(markup, /Content library/i);
-  assert.match(markup, /Case Studies/i);
-  assert.match(markup, /Plain summary after component/i);
-  assert.doesNotMatch(markup, /&lt;Box/i);
-  assert.match(markup, /About Demo/i);
-  assert.match(markup, /This page is rendered/i);
-  assert.match(markup, /Image Carousel Demo/i);
-  assert.match(markup, /Preview could not be rendered/i);
-  assert.match(markup, /Hello MDCMS/i);
-  assert.match(markup, /This post is rendered/i);
-  assert.doesNotMatch(markup, /Documents could not be loaded/i);
-  assert.ok(markup.indexOf("Pages") < markup.indexOf("Posts"));
-  assert.doesNotMatch(markup, /frontmatter/i);
-  assert.doesNotMatch(markup, /body \(raw\)/i);
-
-  globalThis.fetch = originalFetch;
-  delete process.env.MDCMS_DEMO_API_KEY;
+    assert.deepEqual(requestedTypes.slice(0, 2), ["page", "post"]);
+    assert.match(markup, /Content library/i);
+    assert.match(markup, /Case Studies/i);
+    assert.match(markup, /Plain summary after component/i);
+    assert.doesNotMatch(markup, /&lt;Box/i);
+    assert.match(markup, /About Demo/i);
+    assert.match(markup, /This page is rendered/i);
+    assert.match(markup, /Image Carousel Demo/i);
+    assert.match(markup, /Preview could not be rendered/i);
+    assert.match(markup, /Hello MDCMS/i);
+    assert.match(markup, /This post is rendered/i);
+    assert.doesNotMatch(markup, /Documents could not be loaded/i);
+    assert.ok(markup.indexOf("Pages") < markup.indexOf("Posts"));
+    assert.doesNotMatch(markup, /frontmatter/i);
+    assert.doesNotMatch(markup, /body \(raw\)/i);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalApiKey === undefined) {
+      delete process.env.MDCMS_DEMO_API_KEY;
+    } else {
+      process.env.MDCMS_DEMO_API_KEY = originalApiKey;
+    }
+  }
 });
