@@ -170,29 +170,29 @@ Implication for MDCMS: The AI-builder path that best aligns with developer-first
 
 ## Can We Support These User Requests Without Source Code Changes?
 
-| Request | Safe without source code? | Recommended MDCMS representation |
-| --- | --- | --- |
-| "Center this hero" | Yes, if hero exposes an alignment prop or is in a CMS-owned layout primitive. | Update MDX component prop, e.g. `align="center"`, or layout primitive props. |
-| "Remove right image" | Yes, if image is a nullable prop or optional child slot. | Set prop to `null`, remove an MDX child block, or use a defined variant. |
-| "Change CTA layout" | Sometimes. Safe only when CTA layout is a declared prop/variant. | Update `ctaLayout="stacked"` or switch to a registered variant. |
-| "Move buttons below text" | Sometimes. Safe when button group is a child slot or layout primitive. | Reorder document-owned child nodes, not arbitrary DOM nodes. |
-| "Restyle section colors/spacing" | Yes, if tokens/spacing props are exposed. | Update tokenized props, not raw CSS. |
-| "Inject dynamic structures" | Only within registered components/primitives. | Insert registered MDX component or primitive tree. |
-| "Fully override existing UI" | No, not safely without changing source or rendering a database-owned tree. | Create PR/source patch, or create an isolated draft iframe prototype. |
+| Request                          | Safe without source code?                                                     | Recommended MDCMS representation                                             |
+| -------------------------------- | ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| "Center this hero"               | Yes, if hero exposes an alignment prop or is in a CMS-owned layout primitive. | Update MDX component prop, e.g. `align="center"`, or layout primitive props. |
+| "Remove right image"             | Yes, if image is a nullable prop or optional child slot.                      | Set prop to `null`, remove an MDX child block, or use a defined variant.     |
+| "Change CTA layout"              | Sometimes. Safe only when CTA layout is a declared prop/variant.              | Update `ctaLayout="stacked"` or switch to a registered variant.              |
+| "Move buttons below text"        | Sometimes. Safe when button group is a child slot or layout primitive.        | Reorder document-owned child nodes, not arbitrary DOM nodes.                 |
+| "Restyle section colors/spacing" | Yes, if tokens/spacing props are exposed.                                     | Update tokenized props, not raw CSS.                                         |
+| "Inject dynamic structures"      | Only within registered components/primitives.                                 | Insert registered MDX component or primitive tree.                           |
+| "Fully override existing UI"     | No, not safely without changing source or rendering a database-owned tree.    | Create PR/source patch, or create an isolated draft iframe prototype.        |
 
 The core rule: if the desired change can be expressed as a stable public component contract, it can be runtime-editable. If it requires changing markup, CSS selectors, hooks, event handlers, or component composition inside a code-owned component, it is source work.
 
 ## Isolation Tradeoffs
 
-| Mechanism | Strengths | Weaknesses | Fit for MDCMS |
-| --- | --- | --- | --- |
-| Inline styles | Easy to serialize and apply. | Hard to theme, weak responsive/design-system fit, high specificity drift. | Avoid except inside isolated drafts. |
-| Scoped CSS/classes | Familiar, cacheable, can use design tokens. | Requires stable generated selectors or a CSS compiler/runtime. | Good for primitives if class generation is deterministic and server-side. |
-| CSS Modules/Tailwind classes | Developer-friendly in source. | Runtime authoring requires exposing class names as product API. | Good only through token/variant props. |
-| CSS-in-JS runtime overrides | Dynamic and component-local. | Runtime cost and library lock-in; hard to inspect from CMS. | Avoid as persisted CMS output. |
-| Shadow DOM | Strong style isolation for embedded islands. | Theming and host CSS integration are harder; SSR/hydration integration is complex. | Good for Studio/editor chrome or sandboxed widgets, not main page rendering. |
-| Iframes | Strongest isolation for untrusted HTML/JS. | Expensive, separate document context, resizing/communication complexity. | Good for raw HTML drafts/prototypes only. |
-| Host-rendered React components | Best UX fidelity, code-owned behavior. | Requires component contracts and host bridge. | Best fit. |
+| Mechanism                      | Strengths                                    | Weaknesses                                                                         | Fit for MDCMS                                                                |
+| ------------------------------ | -------------------------------------------- | ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Inline styles                  | Easy to serialize and apply.                 | Hard to theme, weak responsive/design-system fit, high specificity drift.          | Avoid except inside isolated drafts.                                         |
+| Scoped CSS/classes             | Familiar, cacheable, can use design tokens.  | Requires stable generated selectors or a CSS compiler/runtime.                     | Good for primitives if class generation is deterministic and server-side.    |
+| CSS Modules/Tailwind classes   | Developer-friendly in source.                | Runtime authoring requires exposing class names as product API.                    | Good only through token/variant props.                                       |
+| CSS-in-JS runtime overrides    | Dynamic and component-local.                 | Runtime cost and library lock-in; hard to inspect from CMS.                        | Avoid as persisted CMS output.                                               |
+| Shadow DOM                     | Strong style isolation for embedded islands. | Theming and host CSS integration are harder; SSR/hydration integration is complex. | Good for Studio/editor chrome or sandboxed widgets, not main page rendering. |
+| Iframes                        | Strongest isolation for untrusted HTML/JS.   | Expensive, separate document context, resizing/communication complexity.           | Good for raw HTML drafts/prototypes only.                                    |
+| Host-rendered React components | Best UX fidelity, code-owned behavior.       | Requires component contracts and host bridge.                                      | Best fit.                                                                    |
 
 ## Security Assessment
 
@@ -336,12 +336,12 @@ Verdict: best answer for changes beyond component contracts.
 
 Scores: 1 = poor, 5 = strong.
 
-| Approach | Flexibility | Performance | Security | Maintainability | DX | Implementation speed | Long-term scalability |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| A: Raw HTML drafts | 5 | 2 | 1 | 1 | 2 | 4 | 1 |
-| B: Generic primitives + registered components | 4 | 4 | 4 | 4 | 4 | 3 | 4 |
-| C: Runtime visual overrides | 4 | 2 | 2 | 1 | 2 | 2 | 1 |
-| D: Source code PRs | 5 | 5 | 4 | 5 | 3 | 2 | 4 |
+| Approach                                      | Flexibility | Performance | Security | Maintainability |  DX | Implementation speed | Long-term scalability |
+| --------------------------------------------- | ----------: | ----------: | -------: | --------------: | --: | -------------------: | --------------------: |
+| A: Raw HTML drafts                            |           5 |           2 |        1 |               1 |   2 |                    4 |                     1 |
+| B: Generic primitives + registered components |           4 |           4 |        4 |               4 |   4 |                    3 |                     4 |
+| C: Runtime visual overrides                   |           4 |           2 |        2 |               1 |   2 |                    2 |                     1 |
+| D: Source code PRs                            |           5 |           5 |        4 |               5 |   3 |                    2 |                     4 |
 
 Best combined strategy:
 
