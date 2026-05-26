@@ -263,11 +263,13 @@ possible, and serializes them back to their original MDX source. Built-ins are
 therefore the supported visual-editing primitives, not the only HTML that can
 exist in a document.
 
-The legacy toolbar Insert Component menu and `/` slash menu list only
-host-registered components. Built-ins remain hidden from those legacy insertion
-surfaces, but manual MDX editing, AI proposals, and the dedicated visual
-composition UI may use them. The visual composition palette is the first
-Studio-owned insertion surface that intentionally exposes built-ins.
+The legacy `/` slash menu lists only host-registered components and is
+positioned inline near the active cursor. Built-ins remain hidden from that
+legacy insertion surface, but manual MDX editing, AI proposals, and the
+dedicated visual composition UI may use them. The editor toolbar's Insert
+Component control opens and closes the docked visual composition palette rather
+than rendering a second top-docked picker. The visual composition palette is
+the first Studio-owned insertion surface that intentionally exposes built-ins.
 
 Built-in React source lives in an internal private workspace package and is
 bundled into published consumers. App authors do not install that workspace
@@ -573,7 +575,8 @@ tree order and never persists layout coordinates.
 
 The visual composition surface has three regions:
 
-1. A persistent left block palette on desktop.
+1. A collapsible left block palette on desktop, hidden by default and toggled
+   by the editor toolbar's Insert Component control.
 2. The central editor canvas with selection chrome, drag handles, contextual
    drop targets, and host-rendered component previews where available.
 3. The selected-block inspector in the document sidebar.
@@ -690,7 +693,11 @@ The selected-block inspector groups visual style controls as:
 Layout controls edit base inline flex/grid keys only: `display`,
 `flexDirection`, `alignItems`, `justifyContent`, `gap`, `flexWrap`,
 `gridTemplateColumns`, `gridTemplateRows`, `gridAutoFlow`, `columnGap`, and
-`rowGap`.
+`rowGap`. The primary layout mode control presents `block`, `row`, `column`,
+and `grid` as editor-facing options. `row` and `column` are convenience modes
+for `display: flex` with `flexDirection: row` or `flexDirection: column`; the
+inspector does not expose a separate flex-direction row when those modes are
+available.
 
 The advanced style object editor must preserve unknown-but-valid flat style
 keys. Changing one visual style control must not drop unrelated keys.
@@ -720,8 +727,8 @@ All registered MDX components share this single node type, differentiated by the
 
 **Insertion:**
 
-1. User opens the component insertion panel (toolbar button or `/` slash command).
-2. Panel lists all registered components from the local catalog with names and descriptions. When opened from `/`, the picker is positioned inline near the active cursor location instead of docking at the top of the editor.
+1. User opens an insertion surface: the toolbar Insert Component control toggles the docked visual composition palette, while `/` opens the inline component picker near the active cursor location.
+2. The inline picker lists host-registered components from the local catalog with names and descriptions; the docked visual composition palette lists Markdown blocks, built-ins, and host-registered components according to the visual composition rules above.
 3. User selects a component.
 4. The component is inserted into the document as a node view block.
 5. Props form appears (auto-generated or custom editor) for initial configuration.

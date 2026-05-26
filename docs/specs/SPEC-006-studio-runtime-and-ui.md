@@ -391,8 +391,11 @@ Normative behavior:
   by SPEC-007.
 - On desktop, the document editor may expose the visual composition palette to
   the left of the canvas. The palette is part of the body editor surface and
-  follows the MDX visual composition behavior owned by SPEC-007. It must be
-  hidden on narrow screens where touch/mobile composition is not supported.
+  follows the MDX visual composition behavior owned by SPEC-007. It is
+  collapsed by default, opens and closes through the editor toolbar's Insert
+  Component control, and lets the central canvas fill the available width while
+  closed. It must be hidden on narrow screens where touch/mobile composition is
+  not supported.
 - The document editor route starts in a focused editing layout on desktop:
   the global Studio navigation sidebar is collapsed by default for this route,
   and the document's right sidebar is also collapsed by default. Both sidebars
@@ -438,18 +441,24 @@ Normative behavior:
 - The `Component` tab is one continuous selected-block inspector. It shows
   required prop and validation issues first, component props next, style
   groups next, and the advanced style object editor last. It must not hide
-  current validation problems behind nested tabs.
+  current validation problems behind nested tabs. When a component is selected,
+  the inspector identifies it with the component name instead of repeating
+  generic labels such as "MDX component props" or "Selected component".
 - Visual style controls in the `Component` tab use an intentional inspector UI,
   not a generated grid of raw CSS property names. Common controls are grouped
   into compact layout, spacing, fill, and typography sections with segmented
   controls, box-model spacing controls, color swatches, and small value inputs.
   Segmented controls should use familiar icons with accessible labels when the
-  value is visually standard, such as display mode, layout direction, wrapping,
-  alignment, justification, grid flow, and text alignment. Color-valued fields
+  value is visually standard, such as layout mode, wrapping, alignment,
+  justification, grid flow, and text alignment. The layout mode control combines
+  flex display and direction into `row` and `column` options instead of exposing
+  a separate flex-direction row. Color-valued fields
   expose a native color picker through the swatch while retaining the text input
   for exact CSS strings such as variables and functional color values. The full
   inline style object remains available as a collapsed advanced escape hatch for
-  supported flat style keys that do not yet have first-class controls.
+  supported flat style keys that do not yet have first-class controls. The
+  style inspector does not render redundant explanatory copy or badges above
+  those concrete controls.
 - The `Component` tab does not show placeholder copy for wrapper-only
   components whose editable surface is their nested canvas content. When a
   component has no editable non-style props, Studio omits the generic props

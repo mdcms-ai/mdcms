@@ -24,6 +24,7 @@ import type {
 export const VISUAL_COMPOSITION_DRAG_MIME = "application/x-mdcms-visual-block";
 
 export type VisualCompositionPaletteProps = {
+  id?: string;
   groups: readonly VisualCompositionPaletteGroup[];
   query: string;
   readOnly?: boolean;
@@ -32,6 +33,7 @@ export type VisualCompositionPaletteProps = {
 };
 
 export function VisualCompositionPalette({
+  id,
   groups,
   query,
   readOnly = false,
@@ -42,6 +44,7 @@ export function VisualCompositionPalette({
 
   return (
     <aside
+      id={id}
       data-mdcms-visual-palette="true"
       className="hidden w-64 shrink-0 border-r border-border bg-card lg:flex lg:flex-col"
     >

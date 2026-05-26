@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import type { StudioMountContext } from "@mdcms/shared";
 import {
@@ -16,7 +16,6 @@ import {
   MoveHorizontal,
   Rows2,
   Square,
-  StretchHorizontal,
   StretchVertical,
   TextAlignCenter,
   TextAlignEnd,
@@ -28,10 +27,13 @@ import {
 import type { PropsEditorChangeHandler } from "../../../mdx-props-editor-host.js";
 import { cn } from "../../lib/utils.js";
 import {
+  getLayoutDisplayControlValue,
   normalizeColorPickerValue,
   parseAdvancedStyleObject,
+  patchLayoutDisplayControlValue,
   patchInlineStyleValue,
   type InlineStyle,
+  type LayoutDisplayControlValue,
 } from "./visual-style-inspector-utils.js";
 
 type MdxCatalogComponent = NonNullable<
@@ -40,13 +42,9 @@ type MdxCatalogComponent = NonNullable<
 
 const DISPLAY_OPTIONS = [
   { value: "block", label: "Block", icon: Square },
-  { value: "flex", label: "Flex", icon: StretchHorizontal },
-  { value: "grid", label: "Grid", icon: Grid3x3 },
-] as const;
-
-const FLEX_DIRECTION_OPTIONS = [
   { value: "row", label: "Row", icon: Columns2 },
   { value: "column", label: "Column", icon: Rows2 },
+  { value: "grid", label: "Grid", icon: Grid3x3 },
 ] as const;
 
 const FLEX_WRAP_OPTIONS = [
@@ -95,11 +93,18 @@ export function VisualStyleInspector({
   readOnly: boolean;
   onChange: PropsEditorChangeHandler;
 }) {
+  const style = isInlineStyle(value.style) ? value.style : {};
+  const serializedStyle = JSON.stringify(style, null, 2);
+  const [advancedText, setAdvancedText] = useState(serializedStyle);
+
+  useEffect(() => {
+    setAdvancedText(serializedStyle);
+  }, [serializedStyle]);
+
   if (component.extractedProps?.style?.type !== "style") {
     return null;
   }
 
-  const style = isInlineStyle(value.style) ? value.style : {};
   const updateStyle = (nextStyle: InlineStyle) => {
     onChange({
       style: Object.keys(nextStyle).length > 0 ? nextStyle : undefined,
@@ -120,35 +125,21 @@ export function VisualStyleInspector({
       data-mdcms-visual-style-inspector={component.name}
       className="space-y-3"
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="space-y-1">
-          <p className="text-sm font-semibold text-foreground">Style</p>
-          <p className="text-xs text-foreground-muted">
-            Visual controls for the component&apos;s inline style.
-          </p>
-        </div>
-        <span className="rounded-md border border-border bg-background px-2 py-1 font-mono text-[10px] uppercase text-foreground-muted">
-          Flat CSS
-        </span>
-      </div>
-
       <StyleSection title="Layout" id="layout">
         <InspectorRow label="Display">
           <SegmentedControl
-            controlId="display"
+            controlId="layoutDisplay"
             options={DISPLAY_OPTIONS}
-            value={getStyleValue(style, "display")}
+            value={getLayoutDisplayControlValue(style)}
             readOnly={readOnly}
-            onChange={(nextValue) => updateStyleKey("display", nextValue)}
-          />
-        </InspectorRow>
-        <InspectorRow label="Direction">
-          <SegmentedControl
-            controlId="flexDirection"
-            options={FLEX_DIRECTION_OPTIONS}
-            value={getStyleValue(style, "flexDirection")}
-            readOnly={readOnly}
-            onChange={(nextValue) => updateStyleKey("flexDirection", nextValue)}
+            onChange={(nextValue) =>
+              updateStyle(
+                patchLayoutDisplayControlValue(
+                  style,
+                  nextValue as LayoutDisplayControlValue,
+                ),
+              )
+            }
           />
         </InspectorRow>
         <InspectorRow label="Align">
@@ -339,9 +330,11 @@ export function VisualStyleInspector({
           aria-label={`${component.name} advanced CSS object`}
           rows={8}
           disabled={readOnly}
-          defaultValue={JSON.stringify(style, null, 2)}
+          value={advancedText}
           onChange={(event) => {
-            const parsed = parseAdvancedStyleObject(event.currentTarget.value);
+            const nextText = event.currentTarget.value;
+            setAdvancedText(nextText);
+            const parsed = parseAdvancedStyleObject(nextText);
 
             if (parsed.ok) {
               updateStyle(parsed.value);

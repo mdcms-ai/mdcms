@@ -73,21 +73,7 @@ export function MdxPropsPanel({
 
   return (
     <section data-mdcms-mdx-props-panel={component.name} className="space-y-3">
-      <div className="space-y-1">
-        <p className="text-sm font-medium text-foreground">
-          MDX component props
-        </p>
-        <p className="text-xs text-foreground-muted">Selected component</p>
-      </div>
-
-      <div className="space-y-1">
-        <p className="text-sm font-medium text-foreground">{component.name}</p>
-        {component.description ? (
-          <p className="text-xs text-foreground-muted">
-            {component.description}
-          </p>
-        ) : null}
-      </div>
+      <p className="text-sm font-medium text-foreground">{component.name}</p>
 
       {hasPropsEditor ? (
         <div className="rounded-md border border-border bg-background-subtle p-3">

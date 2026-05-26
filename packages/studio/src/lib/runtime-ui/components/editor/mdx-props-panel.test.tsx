@@ -76,7 +76,10 @@ test("MdxPropsPanel renders the selected component instead of an arbitrary catal
   );
 
   assert.match(markup, /data-mdcms-mdx-props-panel="HeroBanner"/);
-  assert.match(markup, /Selected component/);
+  assert.match(markup, />HeroBanner</);
+  assert.doesNotMatch(markup, /MDX component props/);
+  assert.doesNotMatch(markup, /Selected component/);
+  assert.doesNotMatch(markup, /A hero banner/);
   assert.match(markup, /data-mdcms-mdx-auto-form="HeroBanner"/);
   assert.doesNotMatch(markup, />Void</);
   assert.doesNotMatch(markup, />Auto</);

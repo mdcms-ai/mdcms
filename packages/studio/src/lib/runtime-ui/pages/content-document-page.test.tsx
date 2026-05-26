@@ -550,7 +550,9 @@ test("ContentDocumentPageView renders the active MDX component props panel in a 
 
   assert.match(markup, /data-mdcms-sidebar-tab="component"/);
   assert.match(markup, /data-mdcms-mdx-props-panel="PricingTable"/);
-  assert.match(markup, /MDX component props/);
+  assert.match(markup, />PricingTable</);
+  assert.doesNotMatch(markup, /MDX component props/);
+  assert.doesNotMatch(markup, /Selected component/);
   assert.doesNotMatch(markup, /data-mdcms-property-field="title"/);
 });
 

@@ -124,6 +124,20 @@ test("validateMdxComponentRequiredProps ignores rich-text children and reports m
   assert.deepEqual(getRequiredMdxComponentPropNames(wrapper), ["tone"]);
 });
 
+test("validateMdxComponentRequiredProps treats structured children as a required prop", () => {
+  const component = createComponent({
+    name: "StructuredChildren",
+    extractedProps: {
+      children: { type: "array", required: true, items: "string" },
+    },
+  });
+
+  assert.deepEqual(getRequiredMdxComponentPropNames(component), ["children"]);
+  assert.deepEqual(validateMdxComponentRequiredProps(component, {}).missing, [
+    "children",
+  ]);
+});
+
 test("insertVisualCompositionBlock inserts Markdown and MDX blocks through the current editor document", () => {
   const editor = createDocumentEditor({ content: "" });
   const box = createComponent({

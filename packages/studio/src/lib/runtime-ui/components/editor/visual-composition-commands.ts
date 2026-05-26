@@ -83,7 +83,10 @@ export function getRequiredMdxComponentPropNames(
 ): string[] {
   return Object.entries(component.extractedProps ?? {}).flatMap(
     ([name, prop]) =>
-      prop.required && name !== MDX_CHILDREN_PROP_NAME ? [name] : [],
+      prop.required &&
+      !(name === MDX_CHILDREN_PROP_NAME && prop.type === "rich-text")
+        ? [name]
+        : [],
   );
 }
 

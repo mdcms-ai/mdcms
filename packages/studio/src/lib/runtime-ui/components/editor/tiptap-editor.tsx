@@ -483,15 +483,14 @@ export const TipTapEditor = forwardRef<TipTapEditorHandle, TipTapEditorProps>(
     );
     const isEditorReadOnly = readOnly || forbidden;
     const collapseController = useMdxComponentCollapseController();
+    const [visualPaletteOpen, setVisualPaletteOpen] = useState(false);
     const [visualPaletteQuery, setVisualPaletteQuery] = useState("");
     const [pendingVisualInsertion, setPendingVisualInsertion] =
       useState<VisualCompositionInsertion | null>(null);
     const [pendingVisualProps, setPendingVisualProps] = useState<
       Record<string, unknown>
     >({});
-    const [pickerSource, setPickerSource] = useState<
-      "toolbar" | "slash" | null
-    >(null);
+    const [pickerSource, setPickerSource] = useState<"slash" | null>(null);
     const [slashTrigger, setSlashTrigger] =
       useState<MdxComponentSlashTrigger | null>(null);
     const [slashPickerCoords, setSlashPickerCoords] =
@@ -743,10 +742,6 @@ export const TipTapEditor = forwardRef<TipTapEditorHandle, TipTapEditorProps>(
 
         setSlashTrigger(nextTrigger);
         setPickerSource((currentSource) => {
-          if (currentSource === "toolbar") {
-            return currentSource;
-          }
-
           if (nextTrigger) {
             return "slash";
           }
@@ -1450,9 +1445,8 @@ export const TipTapEditor = forwardRef<TipTapEditorHandle, TipTapEditorProps>(
           return;
         }
         case "insertComponent":
-          setPickerSource((currentSource) =>
-            currentSource === "toolbar" ? null : "toolbar",
-          );
+          setPickerSource(null);
+          setVisualPaletteOpen((isOpen) => !isOpen);
           return;
         default:
           return;
@@ -1875,7 +1869,32 @@ export const TipTapEditor = forwardRef<TipTapEditorHandle, TipTapEditorProps>(
                           ? `${item.label} (unavailable in read-only mode)`
                           : item.label
                     }
-                    className="border-primary text-primary hover:bg-accent-subtle hover:text-primary"
+                    aria-controls={
+                      item.id === "insertComponent"
+                        ? "mdcms-visual-composition-palette"
+                        : undefined
+                    }
+                    aria-expanded={
+                      item.id === "insertComponent"
+                        ? visualPaletteOpen
+                        : undefined
+                    }
+                    data-mdcms-visual-palette-toggle={
+                      item.id === "insertComponent" ? "true" : undefined
+                    }
+                    data-mdcms-visual-palette-toggle-state={
+                      item.id === "insertComponent"
+                        ? visualPaletteOpen
+                          ? "open"
+                          : "closed"
+                        : undefined
+                    }
+                    className={cn(
+                      "border-primary text-primary hover:bg-accent-subtle hover:text-primary",
+                      item.id === "insertComponent" &&
+                        visualPaletteOpen &&
+                        "bg-accent-subtle",
+                    )}
                   >
                     {resolveToolbarIcon(item.id)}
                   </Button>
@@ -1914,33 +1933,25 @@ export const TipTapEditor = forwardRef<TipTapEditorHandle, TipTapEditorProps>(
                 </Button>
               </div>
             ) : null}
-
-            {pickerSource === "toolbar" ? (
-              <div
-                data-mdcms-mdx-picker-source="toolbar"
-                className="border-t border-border p-3"
-              >
-                <MdxComponentPicker
-                  components={insertableCatalogComponents}
-                  query=""
-                  forbidden={isEditorReadOnly}
-                  onSelect={insertSelectedComponent}
-                />
-              </div>
-            ) : null}
           </div>
 
           <div
             data-mdcms-visual-composition-layout="true"
+            data-mdcms-visual-composition-palette-state={
+              visualPaletteOpen ? "open" : "closed"
+            }
             className="flex min-h-0 flex-1 bg-background"
           >
-            <VisualCompositionPalette
-              groups={visualCompositionPaletteGroups}
-              query={visualPaletteQuery}
-              readOnly={isEditorReadOnly}
-              onQueryChange={setVisualPaletteQuery}
-              onInsert={requestVisualInsertion}
-            />
+            {visualPaletteOpen ? (
+              <VisualCompositionPalette
+                id="mdcms-visual-composition-palette"
+                groups={visualCompositionPaletteGroups}
+                query={visualPaletteQuery}
+                readOnly={isEditorReadOnly}
+                onQueryChange={setVisualPaletteQuery}
+                onInsert={requestVisualInsertion}
+              />
+            ) : null}
             <div
               className="min-w-0 flex-1 overflow-y-auto"
               onDragOver={handleVisualDragOver}
