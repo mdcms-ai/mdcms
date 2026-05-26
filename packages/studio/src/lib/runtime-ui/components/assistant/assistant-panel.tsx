@@ -1051,6 +1051,7 @@ function Composer({
   }, [textareaRef]);
 
   const submit = () => {
+    if (assistant.isPending) return;
     if (!draft.trim()) return;
     assistant.sendMessage(draft);
     setDraft("");
@@ -1136,16 +1137,12 @@ function Composer({
           value={draft}
           onChange={onChange}
           rows={2}
-          disabled={assistant.isPending}
           placeholder={
             assistant.isPending
-              ? "Generating response… Esc to stop"
+              ? "Draft your next message…"
               : "Ask about any doc, propose edits, draft new posts…"
           }
-          className={cn(
-            "w-full resize-none border-none bg-transparent text-[13.5px] leading-snug text-foreground outline-none placeholder:text-foreground-muted",
-            assistant.isPending && "cursor-not-allowed opacity-55",
-          )}
+          className="w-full resize-none border-none bg-transparent text-[13.5px] leading-snug text-foreground outline-none placeholder:text-foreground-muted"
           onKeyDown={(e) => {
             if (e.key === "Escape" && assistant.isPending) {
               e.preventDefault();
@@ -1170,7 +1167,7 @@ function Composer({
         <div className="mt-1.5 flex items-center gap-2">
           <span className="flex-1 font-mono text-[10px] text-foreground-muted">
             {assistant.isPending
-              ? "Streaming… Esc to stop"
+              ? "Streaming… Esc to stop · send after response finishes"
               : "⌘ ↵ to send · @ to reference a doc"}
           </span>
           <button

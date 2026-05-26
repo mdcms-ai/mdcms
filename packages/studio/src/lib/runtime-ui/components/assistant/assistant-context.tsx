@@ -57,6 +57,7 @@ type AssistantState = {
   store: AssistantStore;
   mode: RailMode;
   activeThreadId: string;
+  railWidth: number;
 };
 
 type AssistantAction =
@@ -64,6 +65,7 @@ type AssistantAction =
   | { type: "close" }
   | { type: "toggle-fullscreen" }
   | { type: "set-mode"; mode: RailMode }
+  | { type: "set-rail-width"; width: number }
   | { type: "select-thread"; threadId: string }
   | { type: "clear-selection-on-active" }
   | { type: "remove-context-doc"; path: string }
@@ -180,6 +182,17 @@ type AssistantAction =
     };
 
 const NEW_THREAD_TITLE = "New conversation";
+export const ASSISTANT_RAIL_DEFAULT_WIDTH = 420;
+export const ASSISTANT_RAIL_MIN_WIDTH = 360;
+export const ASSISTANT_RAIL_MAX_WIDTH = 720;
+
+export function clampAssistantRailWidth(width: number): number {
+  if (!Number.isFinite(width)) return ASSISTANT_RAIL_DEFAULT_WIDTH;
+  return Math.min(
+    ASSISTANT_RAIL_MAX_WIDTH,
+    Math.max(ASSISTANT_RAIL_MIN_WIDTH, Math.round(width)),
+  );
+}
 
 /**
  * Server 500s wrap the original exception's text inside
@@ -674,6 +687,8 @@ function reducer(
       return state;
     case "set-mode":
       return { ...state, mode: action.mode };
+    case "set-rail-width":
+      return { ...state, railWidth: clampAssistantRailWidth(action.width) };
     case "select-thread":
       return { ...state, activeThreadId: action.threadId };
     case "toggle-thread-pin":
@@ -1124,10 +1139,15 @@ export type AssistantContextValue = {
   mode: RailMode;
   isOpen: boolean;
   isFullscreen: boolean;
+  /** Current docked assistant rail width in pixels. */
+  railWidth: number;
+  /** Resize the docked assistant rail; ignored by fullscreen rendering. */
+  setRailWidth: (width: number) => void;
   /**
    * True while a chat turn is in flight (network request hasn't resolved
-   * yet). The composer flips its Send affordance to Stop while this is
-   * true so the user can abort.
+   * yet). The composer keeps accepting draft text while this is true, but
+   * flips its Send affordance to Stop so the user can abort instead of
+   * starting an overlapping turn.
    */
   isPending: boolean;
   activeThread: AssistantThread;
@@ -1215,6 +1235,8 @@ const FALLBACK_VALUE: AssistantContextValue = {
   mode: "closed",
   isOpen: false,
   isFullscreen: false,
+  railWidth: ASSISTANT_RAIL_DEFAULT_WIDTH,
+  setRailWidth: () => {},
   activeThread: FALLBACK_THREAD,
   openRail: () => {},
   close: () => {},
@@ -1253,6 +1275,10 @@ export type AssistantProviderProps = {
   initialStore?: AssistantStore;
   /** Initial visibility — defaults to closed. */
   initialMode?: RailMode;
+  /** Initial docked rail width in px. Defaults to 420. */
+  initialRailWidth?: number;
+  /** Optional pending-state override for tests / Storybook-style harnesses. */
+  initialPending?: boolean;
   /**
    * Studio AI route client. When provided, sendMessage / acceptProposal /
    * rejectProposal call the real `/api/v1/ai/*` endpoints. When omitted
@@ -1325,12 +1351,36 @@ function loadStoreFromStorage(key: string): AssistantStore | undefined {
   }
 }
 
-function saveStoreToStorage(key: string, store: AssistantStore): void {
+function loadRailWidthFromStorage(key: string): number | undefined {
+  if (typeof window === "undefined") return undefined;
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as {
+      railWidth?: unknown;
+    };
+    return typeof parsed.railWidth === "number"
+      ? clampAssistantRailWidth(parsed.railWidth)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function saveStoreToStorage(
+  key: string,
+  store: AssistantStore,
+  railWidth: number,
+): void {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(
       key,
-      JSON.stringify({ v: STORAGE_VERSION, store }),
+      JSON.stringify({
+        v: STORAGE_VERSION,
+        store,
+        railWidth: clampAssistantRailWidth(railWidth),
+      }),
     );
   } catch {
     // Quota exceeded / private mode — swallow; persistence is best-effort.
@@ -1341,6 +1391,8 @@ export function AssistantProvider({
   children,
   initialStore,
   initialMode = "closed",
+  initialRailWidth,
+  initialPending = false,
   api,
   schemaHashFetcher,
   mdxCatalog,
@@ -1349,6 +1401,9 @@ export function AssistantProvider({
 }: AssistantProviderProps) {
   const [state, dispatch] = React.useReducer(reducer, undefined, () => {
     const persisted = storageKey ? loadStoreFromStorage(storageKey) : undefined;
+    const persistedRailWidth = storageKey
+      ? loadRailWidthFromStorage(storageKey)
+      : undefined;
     const store =
       initialStore ??
       persisted ??
@@ -1357,6 +1412,9 @@ export function AssistantProvider({
       store,
       mode: initialMode,
       activeThreadId: store.activeThreadId,
+      railWidth: clampAssistantRailWidth(
+        initialRailWidth ?? persistedRailWidth ?? ASSISTANT_RAIL_DEFAULT_WIDTH,
+      ),
     };
   });
   const [registeredActiveDocument, setRegisteredActiveDocument] =
@@ -1468,11 +1526,14 @@ export function AssistantProvider({
   // state) so we don't re-render the provider tree on every flip; the
   // user-facing `isPending` boolean below is the rendered projection.
   const pendingControllerRef = React.useRef<AbortController | null>(null);
-  const [isPending, setIsPending] = React.useState(false);
+  const [isPending, setIsPending] = React.useState(initialPending);
 
   const cancelPending = React.useCallback(() => {
     const ctrl = pendingControllerRef.current;
-    if (!ctrl) return;
+    if (!ctrl) {
+      setIsPending(false);
+      return;
+    }
     pendingControllerRef.current = null;
     setIsPending(false);
     ctrl.abort();
@@ -1513,6 +1574,11 @@ export function AssistantProvider({
         thread: liveThread,
         userMessage: input.userMessage,
       });
+
+      // If a previous turn is still in flight (the user clicked Send twice
+      // in quick succession), abort it before preparing expensive request
+      // context so we never overlap two streaming requests.
+      pendingControllerRef.current?.abort();
       const componentReferences = componentReferenceProvider
         ? await componentReferenceProvider().catch(() => [])
         : [];
@@ -1529,10 +1595,6 @@ export function AssistantProvider({
         })
         .slice(-10);
 
-      // If a previous turn is still in flight (the user clicked Send twice
-      // in quick succession), abort it so we never end up with two
-      // overlapping requests racing to dispatch their results.
-      pendingControllerRef.current?.abort();
       const controller = new AbortController();
       pendingControllerRef.current = controller;
       setIsPending(true);
@@ -1701,6 +1763,8 @@ export function AssistantProvider({
       mode: state.mode,
       isOpen: state.mode !== "closed",
       isFullscreen: state.mode === "fullscreen",
+      railWidth: state.railWidth,
+      setRailWidth: (width) => dispatch({ type: "set-rail-width", width }),
       isPending,
       cancelPending,
       activeThread,
@@ -1940,6 +2004,7 @@ export function AssistantProvider({
         })();
       },
       sendMessage: (text) => {
+        if (isPending) return;
         const trimmed = text.trim();
         if (!trimmed) return;
         const context = buildAssistantMessageContextSnapshot({
@@ -1986,11 +2051,15 @@ export function AssistantProvider({
   // restore to a thread the user has navigated away from.
   React.useEffect(() => {
     if (!storageKey) return;
-    saveStoreToStorage(storageKey, {
-      ...state.store,
-      activeThreadId: state.activeThreadId,
-    });
-  }, [storageKey, state.store, state.activeThreadId]);
+    saveStoreToStorage(
+      storageKey,
+      {
+        ...state.store,
+        activeThreadId: state.activeThreadId,
+      },
+      state.railWidth,
+    );
+  }, [storageKey, state.store, state.activeThreadId, state.railWidth]);
 
   // Mode is read inside the once-mounted ⌘K handler, so keep a ref in
   // sync with the latest reducer state to avoid stale closure reads.

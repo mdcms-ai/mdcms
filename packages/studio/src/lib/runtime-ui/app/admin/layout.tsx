@@ -34,6 +34,7 @@ import { AssistantProvider } from "../../components/assistant/assistant-context.
 import {
   AssistantRail,
   useAssistantMainPadding,
+  useAssistantMainPaddingStyle,
 } from "../../components/assistant/assistant-rail.js";
 import { useAssistant } from "../../components/assistant/assistant-context.js";
 import { cn } from "../../lib/utils.js";
@@ -692,6 +693,7 @@ function AdminMain({
   sidebarCollapsed: boolean;
 }) {
   const assistantPadding = useAssistantMainPadding();
+  const assistantPaddingStyle = useAssistantMainPaddingStyle();
   const assistant = useAssistant();
   // While the rail is in fullscreen mode, hide the editor entirely so
   // the rail can take over the page without dual-scroll glitches.
@@ -704,6 +706,7 @@ function AdminMain({
         assistantPadding,
         fullscreenHidden && "invisible",
       )}
+      style={assistantPaddingStyle}
       aria-hidden={fullscreenHidden ? true : undefined}
     >
       {children}
