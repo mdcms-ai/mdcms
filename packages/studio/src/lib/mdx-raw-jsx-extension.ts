@@ -42,6 +42,113 @@ const VOID_HTML_ELEMENTS = new Set([
   "wbr",
 ]);
 
+const RAW_PREVIEW_ALLOWED_ELEMENTS = new Set([
+  "a",
+  "abbr",
+  "address",
+  "article",
+  "aside",
+  "audio",
+  "b",
+  "blockquote",
+  "br",
+  "button",
+  "caption",
+  "cite",
+  "code",
+  "col",
+  "colgroup",
+  "data",
+  "dd",
+  "del",
+  "details",
+  "dfn",
+  "div",
+  "dl",
+  "dt",
+  "em",
+  "fieldset",
+  "figcaption",
+  "figure",
+  "footer",
+  "form",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "header",
+  "hr",
+  "i",
+  "img",
+  "input",
+  "ins",
+  "kbd",
+  "label",
+  "legend",
+  "li",
+  "main",
+  "mark",
+  "meter",
+  "nav",
+  "ol",
+  "optgroup",
+  "option",
+  "output",
+  "p",
+  "picture",
+  "pre",
+  "progress",
+  "q",
+  "rp",
+  "rt",
+  "ruby",
+  "s",
+  "samp",
+  "section",
+  "select",
+  "small",
+  "source",
+  "span",
+  "strong",
+  "sub",
+  "summary",
+  "sup",
+  "table",
+  "tbody",
+  "td",
+  "textarea",
+  "tfoot",
+  "th",
+  "thead",
+  "time",
+  "tr",
+  "track",
+  "u",
+  "ul",
+  "var",
+  "video",
+  "wbr",
+]);
+
+const RAW_PREVIEW_DROPPED_ELEMENTS = new Set(["script", "style"]);
+const RAW_PREVIEW_URL_ATTRIBUTES = new Set([
+  "action",
+  "formaction",
+  "href",
+  "poster",
+  "src",
+  "xlink:href",
+]);
+const RAW_PREVIEW_UNSAFE_ATTRIBUTES = new Set(["srcdoc"]);
+const RAW_PREVIEW_SAFE_URL_PROTOCOLS = new Set([
+  "http:",
+  "https:",
+  "mailto:",
+  "tel:",
+]);
+
 function isLowercaseRawTagName(name: string): boolean {
   return /^[a-z][A-Za-z0-9._-]*$/.test(name);
 }
@@ -58,13 +165,96 @@ function escapeHtmlAttribute(value: string): string {
     .replaceAll(">", "&gt;");
 }
 
+function escapeHtmlText(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
 function toKebabCase(value: string): string {
   return value.replace(/[A-Z]/g, (match) => `-${match.toLowerCase()}`);
 }
 
+function normalizeCssPropertyName(value: string): string | null {
+  const name = toKebabCase(value).trim().toLowerCase();
+
+  if (!/^(?:--[a-z0-9-]+|-?[a-z][a-z0-9-]*)$/.test(name)) {
+    return null;
+  }
+
+  if (name === "behavior" || name === "-moz-binding") {
+    return null;
+  }
+
+  return name;
+}
+
+function isSafeCssValue(value: string): boolean {
+  const normalized = value.replace(/\/\*[\s\S]*?\*\//g, "").trim();
+
+  if (/[<>]/.test(normalized)) {
+    return false;
+  }
+
+  return !/(?:@import|expression\s*\(|javascript\s*:|url\s*\(|behavior\s*:|-moz-binding)/i.test(
+    normalized,
+  );
+}
+
+function renderStyleDeclaration(name: string, value: unknown): string | null {
+  const propertyName = normalizeCssPropertyName(name);
+
+  if (
+    propertyName === null ||
+    (typeof value !== "string" && typeof value !== "number")
+  ) {
+    return null;
+  }
+
+  const cssValue = String(value).trim();
+
+  if (!isSafeCssValue(cssValue)) {
+    return null;
+  }
+
+  return `${propertyName}:${cssValue}`;
+}
+
+function renderStyleString(value: string): string | null {
+  const declarations: string[] = [];
+
+  for (const rawDeclaration of value.split(";")) {
+    const declaration = rawDeclaration.trim();
+
+    if (!declaration) {
+      continue;
+    }
+
+    const separatorIndex = declaration.indexOf(":");
+
+    if (separatorIndex <= 0) {
+      return null;
+    }
+
+    const rendered = renderStyleDeclaration(
+      declaration.slice(0, separatorIndex),
+      declaration.slice(separatorIndex + 1),
+    );
+
+    if (rendered === null) {
+      return null;
+    }
+
+    declarations.push(rendered);
+  }
+
+  return declarations.length > 0 ? declarations.join(";") : null;
+}
+
 function renderStyleValue(value: unknown): string | null {
   if (typeof value === "string") {
-    return value;
+    return renderStyleString(value);
   }
 
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -74,17 +264,14 @@ function renderStyleValue(value: unknown): string | null {
   const declarations: string[] = [];
 
   for (const [key, declarationValue] of Object.entries(value)) {
-    if (
-      typeof declarationValue !== "string" &&
-      typeof declarationValue !== "number"
-    ) {
-      return null;
-    }
+    const rendered = renderStyleDeclaration(key, declarationValue);
 
-    declarations.push(`${toKebabCase(key)}:${String(declarationValue)}`);
+    if (rendered !== null) {
+      declarations.push(rendered);
+    }
   }
 
-  return declarations.join(";");
+  return declarations.length > 0 ? declarations.join(";") : null;
 }
 
 function normalizeHtmlAttributeName(name: string): string {
@@ -94,11 +281,26 @@ function normalizeHtmlAttributeName(name: string): string {
 }
 
 function isUnsafeUrlAttribute(name: string, value: string): boolean {
-  if (!["action", "href", "src", "xlink:href"].includes(name)) {
+  if (!RAW_PREVIEW_URL_ATTRIBUTES.has(name.toLowerCase())) {
     return false;
   }
 
-  return /^\s*javascript:/i.test(value);
+  const trimmed = value.trim().replace(/[\u0000-\u001F\u007F\s]+/g, "");
+  const colonIndex = trimmed.indexOf(":");
+
+  if (colonIndex < 0) {
+    return false;
+  }
+
+  const firstPathIndex = trimmed.search(/[/?#]/);
+
+  if (firstPathIndex >= 0 && firstPathIndex < colonIndex) {
+    return false;
+  }
+
+  return !RAW_PREVIEW_SAFE_URL_PROTOCOLS.has(
+    trimmed.slice(0, colonIndex + 1).toLowerCase(),
+  );
 }
 
 function renderHtmlAttributes(attrsSource: string): string {
@@ -111,8 +313,13 @@ function renderHtmlAttributes(attrsSource: string): string {
     }
 
     const name = normalizeHtmlAttributeName(rawName);
+    const lowerName = name.toLowerCase();
 
-    if (!isSafeHtmlAttributeName(name) || rawValue === false) {
+    if (
+      RAW_PREVIEW_UNSAFE_ATTRIBUTES.has(lowerName) ||
+      !isSafeHtmlAttributeName(name) ||
+      rawValue === false
+    ) {
       continue;
     }
 
@@ -153,6 +360,18 @@ function renderHtmlAttributes(attrsSource: string): string {
   return rendered.length > 0 ? ` ${rendered.join(" ")}` : "";
 }
 
+function countPrecedingBackslashes(input: string, index: number): number {
+  let count = 0;
+  let cursor = index - 1;
+
+  while (cursor >= 0 && input[cursor] === "\\") {
+    count += 1;
+    cursor -= 1;
+  }
+
+  return count;
+}
+
 function readRawOpeningTag(
   input: string,
   offset: number,
@@ -180,10 +399,12 @@ function readRawOpeningTag(
 
   while (cursor < input.length) {
     const current = input[cursor]!;
-    const previous = input[cursor - 1];
 
     if (quote) {
-      if (current === quote && previous !== "\\") {
+      if (
+        current === quote &&
+        countPrecedingBackslashes(input, cursor) % 2 === 0
+      ) {
         quote = null;
       }
       cursor += 1;
@@ -344,7 +565,11 @@ export function tokenizeMdxRawJsxBlock(
   };
 }
 
-function renderRawOpeningTag(openingTag: RawOpeningTag): string {
+function renderRawOpeningTag(openingTag: RawOpeningTag): string | null {
+  if (!RAW_PREVIEW_ALLOWED_ELEMENTS.has(openingTag.name)) {
+    return null;
+  }
+
   const attrs = renderHtmlAttributes(openingTag.attrsSource);
   const selfClosing = openingTag.isVoid ? " /" : "";
 
@@ -352,30 +577,46 @@ function renderRawOpeningTag(openingTag: RawOpeningTag): string {
 }
 
 export function renderRawMdxJsxPreview(source: string): string {
-  const withoutScripts = source.replace(/<script\b[\s\S]*?<\/script\s*>/gi, "");
   let cursor = 0;
   let rendered = "";
 
-  while (cursor < withoutScripts.length) {
-    const tagOffset = withoutScripts.indexOf("<", cursor);
+  while (cursor < source.length) {
+    const tagOffset = source.indexOf("<", cursor);
 
     if (tagOffset < 0) {
-      rendered += withoutScripts.slice(cursor);
+      rendered += source.slice(cursor);
       break;
     }
 
-    rendered += withoutScripts.slice(cursor, tagOffset);
+    rendered += source.slice(cursor, tagOffset);
 
-    const closingTag = readRawClosingTag(withoutScripts, tagOffset);
+    const closingTag = readRawClosingTag(source, tagOffset);
     if (closingTag) {
-      rendered += withoutScripts.slice(tagOffset, closingTag.endIndex);
+      if (RAW_PREVIEW_ALLOWED_ELEMENTS.has(closingTag.name)) {
+        rendered += `</${closingTag.name}>`;
+      } else if (!RAW_PREVIEW_DROPPED_ELEMENTS.has(closingTag.name)) {
+        rendered += escapeHtmlText(
+          source.slice(tagOffset, closingTag.endIndex),
+        );
+      }
       cursor = closingTag.endIndex;
       continue;
     }
 
-    const openingTag = readRawOpeningTag(withoutScripts, tagOffset);
+    const openingTag = readRawOpeningTag(source, tagOffset);
     if (openingTag) {
-      rendered += renderRawOpeningTag(openingTag);
+      if (RAW_PREVIEW_DROPPED_ELEMENTS.has(openingTag.name)) {
+        const closingDroppedTag = openingTag.isVoid
+          ? null
+          : findRawClosingTag(source, openingTag.name, openingTag.endIndex);
+        cursor = closingDroppedTag
+          ? closingDroppedTag.endIndex
+          : openingTag.endIndex;
+        continue;
+      }
+
+      rendered +=
+        renderRawOpeningTag(openingTag) ?? escapeHtmlText(openingTag.raw);
       cursor = openingTag.endIndex;
       continue;
     }

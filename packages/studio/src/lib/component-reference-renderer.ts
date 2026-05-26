@@ -156,15 +156,24 @@ function sampleText(name: string): string {
     .toLowerCase();
 }
 
-async function waitForPreviewFlush(): Promise<void> {
+/**
+ * Best-effort preview flush. One frame matches the historical behavior, but
+ * callers may request extra frames for components that schedule follow-up work.
+ * Arbitrary delayed effects can still update after this resolves.
+ */
+async function waitForPreviewFlush(maxFrames = 1): Promise<void> {
   await Promise.resolve();
-  if (typeof requestAnimationFrame === "function") {
-    await new Promise<void>((resolve) =>
-      requestAnimationFrame(() => resolve()),
-    );
-    return;
+  const frames = Math.max(1, maxFrames);
+
+  for (let frame = 0; frame < frames; frame += 1) {
+    if (typeof requestAnimationFrame === "function") {
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => resolve()),
+      );
+    } else {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
   }
-  await new Promise<void>((resolve) => setTimeout(resolve, 0));
 }
 
 function normalizeVisibleText(value: string): string {
