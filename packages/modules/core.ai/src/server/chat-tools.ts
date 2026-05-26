@@ -45,6 +45,19 @@ export type GetEntryResult = {
 };
 
 /**
+ * Result returned by the `get_component_reference` chat tool. This is
+ * a read-only design-reference snapshot rendered by the Studio host
+ * before the chat request reaches the AI server.
+ */
+export type GetComponentReferenceResult = {
+  componentName: string;
+  source: "studio_host_preview";
+  renderedHtml: string;
+  text?: string;
+  styleSummary?: string;
+};
+
+/**
  * Chat-tool surface for the assistant. The model picks a tool per
  * "thing it wants to do" — propose an edit to the selected span,
  * propose a new draft, propose a delete, etc. — and the server's
@@ -125,6 +138,14 @@ export type ChatToolDeps = {
   getEntryBackend?: (input: {
     documentId: string;
   }) => Promise<GetEntryResult | undefined>;
+
+  /**
+   * Backend for the get_component_reference tool. The route layer
+   * serves request-supplied Studio-host-rendered component snapshots.
+   */
+  getComponentReferenceBackend?: (input: {
+    componentName: string;
+  }) => Promise<GetComponentReferenceResult | undefined>;
 };
 
 const SUMMARY_FIELD = z
@@ -581,7 +602,62 @@ export function buildChatTools(deps: ChatToolDeps): Record<string, Tool> {
     });
   }
 
+  if (deps.getComponentReferenceBackend) {
+    const backend = deps.getComponentReferenceBackend;
+    tools.get_component_reference = tool({
+      description:
+        "Fetch sanitized rendered HTML and visible text for a registered MDX component as read-only design reference. Use this when the user asks to clone, imitate, restyle, make something similar to, or follow the aesthetic of an existing component. This tool does not edit content; combine it with a propose_* tool only after reading the reference.",
+      inputSchema: z.object({
+        componentName: z
+          .string()
+          .min(1)
+          .describe(
+            "Registered MDX component name to inspect, e.g. HomeHero or PricingTable.",
+          ),
+      }),
+      execute: async (args) => {
+        try {
+          const reference = await backend({
+            componentName: args.componentName,
+          });
+          if (!reference) {
+            return {
+              queued: false as const,
+              error: `Component reference "${args.componentName}" was not supplied by this Studio host.`,
+            };
+          }
+          return sanitizeComponentReference(reference);
+        } catch (error) {
+          return toolErrorResult(error);
+        }
+      },
+    });
+  }
+
   return tools;
+}
+
+function sanitizeComponentReference(
+  reference: GetComponentReferenceResult,
+): GetComponentReferenceResult {
+  return {
+    componentName: reference.componentName,
+    source: reference.source,
+    renderedHtml: sanitizeRenderedHtml(reference.renderedHtml),
+    ...(reference.text ? { text: reference.text.slice(0, 5_000) } : {}),
+    ...(reference.styleSummary
+      ? { styleSummary: reference.styleSummary.slice(0, 5_000) }
+      : {}),
+  };
+}
+
+function sanitizeRenderedHtml(value: string): string {
+  return value
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/\s+on[a-z]+\s*=\s*"[^"]*"/gi, "")
+    .replace(/\s+on[a-z]+\s*=\s*'[^']*'/gi, "")
+    .replace(/\s+on[a-z]+\s*=\s*[^\s>]+/gi, "")
+    .slice(0, 20_000);
 }
 
 function toolErrorResult(error: unknown): {

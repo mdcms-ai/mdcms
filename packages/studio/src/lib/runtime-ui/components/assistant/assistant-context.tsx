@@ -2,7 +2,11 @@
 
 import * as React from "react";
 
-import { RuntimeError, type MdxComponentCatalog } from "@mdcms/shared";
+import {
+  RuntimeError,
+  type AiComponentReference,
+  type MdxComponentCatalog,
+} from "@mdcms/shared";
 
 import type {
   StudioAiChatProgressEvent,
@@ -1273,6 +1277,13 @@ export type AssistantProviderProps = {
    */
   mdxCatalog?: MdxComponentCatalog;
   /**
+   * Produces host-rendered component references for model grounding.
+   * The AI server exposes these through `get_component_reference` so
+   * the model can follow existing component aesthetics without seeing
+   * host source code.
+   */
+  componentReferenceProvider?: () => Promise<AiComponentReference[]>;
+  /**
    * localStorage key for persisting the thread store across reloads.
    * When omitted, persistence is disabled (tests / storybook). The admin
    * layout passes a key scoped to `<project>:<environment>` so projects
@@ -1333,6 +1344,7 @@ export function AssistantProvider({
   api,
   schemaHashFetcher,
   mdxCatalog,
+  componentReferenceProvider,
   storageKey,
 }: AssistantProviderProps) {
   const [state, dispatch] = React.useReducer(reducer, undefined, () => {
@@ -1501,6 +1513,9 @@ export function AssistantProvider({
         thread: liveThread,
         userMessage: input.userMessage,
       });
+      const componentReferences = componentReferenceProvider
+        ? await componentReferenceProvider().catch(() => [])
+        : [];
 
       // Build a rolling window of prior conversation turns so the server
       // can resolve anaphora across the thread. Skip empty assistant
@@ -1530,6 +1545,7 @@ export function AssistantProvider({
           : {}),
         ...requestContext,
         ...(mdxCatalog ? { mdxCatalog } : {}),
+        ...(componentReferences.length > 0 ? { componentReferences } : {}),
         ...(input.rejectedProposalId
           ? { rejectedProposalId: input.rejectedProposalId }
           : {}),
@@ -1671,7 +1687,12 @@ export function AssistantProvider({
         }
       }
     },
-    [appendErrorTurn, mdxCatalog, state.activeThreadId],
+    [
+      appendErrorTurn,
+      componentReferenceProvider,
+      mdxCatalog,
+      state.activeThreadId,
+    ],
   );
 
   const value = React.useMemo<AssistantContextValue>(

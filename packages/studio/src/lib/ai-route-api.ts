@@ -1,5 +1,6 @@
 import {
   RuntimeError,
+  type AiComponentReference,
   type ContentDocumentResponse,
   type MdxComponentCatalog,
 } from "@mdcms/shared";
@@ -217,6 +218,7 @@ export type StudioAiChatMessageRequest = {
   rejectionFeedback?: string;
   allowedActions?: StudioAiChatAllowedAction[];
   mdxCatalog?: MdxComponentCatalog;
+  componentReferences?: AiComponentReference[];
   /**
    * Prior conversation turns from the same thread, oldest first. The
    * server is stateless per request — the client owns conversation
@@ -635,6 +637,12 @@ export function createStudioAiRouteApi(
       if (input.mdxCatalog !== undefined) {
         body.mdxCatalog = input.mdxCatalog;
       }
+      if (
+        input.componentReferences !== undefined &&
+        input.componentReferences.length > 0
+      ) {
+        body.componentReferences = input.componentReferences;
+      }
       if (input.conversationHistory && input.conversationHistory.length > 0) {
         body.conversationHistory = input.conversationHistory;
       }
@@ -691,6 +699,12 @@ export function createStudioAiRouteApi(
       }
       if (input.mdxCatalog !== undefined) {
         body.mdxCatalog = input.mdxCatalog;
+      }
+      if (
+        input.componentReferences !== undefined &&
+        input.componentReferences.length > 0
+      ) {
+        body.componentReferences = input.componentReferences;
       }
       if (input.conversationHistory && input.conversationHistory.length > 0) {
         body.conversationHistory = input.conversationHistory;

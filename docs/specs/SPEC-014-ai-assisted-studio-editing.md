@@ -405,9 +405,18 @@ The chat assistant grounds the model in real project data via three layers:
   `type` parameter is enum-constrained to the project's registered content types,
   so the model cannot query for types that don't exist.
 - `get_entry({ documentId })` — fetch full body + frontmatter for a specific doc.
+- `get_component_reference({ componentName })` — fetch a Studio-host-rendered
+  reference snapshot for a registered MDX component. The tool returns sanitized
+  static HTML and visible text for design grounding. It is read-only and is used
+  when the user asks to clone, imitate, restyle, or design something similar to
+  an existing component.
 
-Both tools are capability-gated on `content:read:draft`; absent capability removes
-the tool from the model's surface and the model gracefully responds in text.
+Document lookup tools are capability-gated on `content:read:draft`; absent
+capability removes the tool from the model's surface and the model gracefully
+responds in text. The component reference tool is available only when the
+request supplies component reference snapshots for the active Studio host.
+The server never imports host app component source to render references inside
+the AI module.
 
 **Document context policy:**
 

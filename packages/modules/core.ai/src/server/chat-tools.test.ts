@@ -3,6 +3,7 @@ import { describe, test } from "bun:test";
 
 import {
   buildChatTools,
+  type GetComponentReferenceResult,
   type ChatToolDeps,
   type FindEntriesResult,
 } from "./chat-tools.js";
@@ -190,6 +191,64 @@ describe("get_entry tool", () => {
     )) as { queued: false; error: string };
     assert.equal(result.queued, false);
     assert.ok(result.error.toLowerCase().includes("not found"));
+  });
+});
+
+describe("get_component_reference tool", () => {
+  test("is registered when a component-reference backend is present", () => {
+    const tools = buildChatTools(
+      baseDeps({
+        getComponentReferenceBackend: async () => undefined,
+      }),
+    );
+    assert.ok(tools.get_component_reference);
+  });
+
+  test("returns a sanitized component reference by component name", async () => {
+    let captured: { componentName: string } | undefined;
+    const tools = buildChatTools(
+      baseDeps({
+        getComponentReferenceBackend: async (input) => {
+          captured = input;
+          return {
+            componentName: "HomeHero",
+            source: "studio_host_preview",
+            renderedHtml:
+              '<section onclick="alert(1)"><script>alert(1)</script><h1>Hero</h1></section>',
+            text: "Hero",
+            styleSummary:
+              "section { backgroundColor: rgb(15, 23, 42); color: rgb(255, 255, 255) }",
+          };
+        },
+      }),
+    );
+
+    const result = (await tools.get_component_reference!.execute!(
+      { componentName: "HomeHero" },
+      { toolCallId: "tc_1", messages: [] },
+    )) as GetComponentReferenceResult;
+
+    assert.deepEqual(captured, { componentName: "HomeHero" });
+    assert.equal(result.componentName, "HomeHero");
+    assert.doesNotMatch(result.renderedHtml, /script/i);
+    assert.doesNotMatch(result.renderedHtml, /onclick/i);
+    assert.match(result.renderedHtml, /<h1>Hero<\/h1>/);
+    assert.match(result.styleSummary ?? "", /backgroundColor/);
+  });
+
+  test("returns a structured not-found error when no reference exists", async () => {
+    const tools = buildChatTools(
+      baseDeps({
+        getComponentReferenceBackend: async () => undefined,
+      }),
+    );
+    const result = (await tools.get_component_reference!.execute!(
+      { componentName: "MissingHero" },
+      { toolCallId: "tc_1", messages: [] },
+    )) as { queued: false; error: string };
+
+    assert.equal(result.queued, false);
+    assert.match(result.error, /MissingHero/);
   });
 });
 

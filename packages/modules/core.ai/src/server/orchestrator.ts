@@ -142,6 +142,7 @@ export type AiChatInput = {
   toolBackends?: {
     findEntries?: import("./chat-tools.js").ChatToolDeps["findEntriesBackend"];
     getEntry?: import("./chat-tools.js").ChatToolDeps["getEntryBackend"];
+    getComponentReference?: import("./chat-tools.js").ChatToolDeps["getComponentReferenceBackend"];
   };
 };
 
@@ -559,6 +560,11 @@ function prepareChatRun(
     ...(call.toolBackends?.getEntry
       ? { getEntryBackend: call.toolBackends.getEntry }
       : {}),
+    ...(call.toolBackends?.getComponentReference
+      ? {
+          getComponentReferenceBackend: call.toolBackends.getComponentReference,
+        }
+      : {}),
   });
 
   const projectKnowledge: ProjectKnowledgeInput = {
@@ -859,6 +865,8 @@ function toolLabel(toolName: string): string {
       return "Search documents";
     case "get_entry":
       return "Read document";
+    case "get_component_reference":
+      return "Read component reference";
     default:
       return toolName;
   }

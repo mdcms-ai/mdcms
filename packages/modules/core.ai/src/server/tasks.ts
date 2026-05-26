@@ -648,7 +648,7 @@ export function buildChatSystemPrompt(input: {
     "The server does not expose tools for these. They are out of scope for the assistant entirely, regardless of role:",
     "- Publishing or unpublishing drafts.",
     "- Schema, role/permission, environment, project, or provider changes.",
-    "- Unbounded autonomous crawling of the document library. Use `find_entries` and `get_entry` only when the user's request needs a specific lookup, duplicate check, reference resolution, or referenced-document read.",
+    "- Unbounded autonomous crawling of the document library. Use `find_entries`, `get_entry`, and `get_component_reference` only when the user's request needs a specific lookup, duplicate check, reference resolution, referenced-document read, or component design reference.",
   ].join("\n");
 
   const responseStyle =

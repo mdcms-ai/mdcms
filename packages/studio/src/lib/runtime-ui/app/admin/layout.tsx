@@ -41,6 +41,7 @@ import {
   createStudioAiRouteApi,
   type StudioAiRouteApi,
 } from "../../../ai-route-api.js";
+import { createStudioComponentReferences } from "../../../component-reference-renderer.js";
 import { createStudioSchemaRouteApi } from "../../../schema-route-api.js";
 
 type AdminLayoutCapabilitiesLoadInput = {
@@ -530,6 +531,17 @@ function AdminLayoutInner({
     () => context.mdx?.catalog ?? { components: [] },
     [context.mdx?.catalog],
   );
+  const componentReferenceProvider = useMemo(
+    () =>
+      mdxCatalog.components.length > 0
+        ? () =>
+            createStudioComponentReferences({
+              catalog: mdxCatalog,
+              hostBridge: context.hostBridge,
+            })
+        : undefined,
+    [context.hostBridge, mdxCatalog],
+  );
 
   if (sessionState.status === "loading" && typeof window !== "undefined") {
     return (
@@ -627,6 +639,7 @@ function AdminLayoutInner({
         api={aiRouteApi}
         schemaHashFetcher={schemaHashFetcher}
         mdxCatalog={mdxCatalog}
+        componentReferenceProvider={componentReferenceProvider}
         storageKey={
           context.documentRoute && activeEnvironment
             ? `mdcms-assistant-v1:${context.documentRoute.project}:${activeEnvironment}`

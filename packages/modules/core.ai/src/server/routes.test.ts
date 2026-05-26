@@ -1672,6 +1672,56 @@ describe("mountAiRoutes — chat-message", () => {
     assert.equal(payload.data.message.text, "Found one match: John Doe.");
   });
 
+  test("get_component_reference tool call reads request-supplied component snapshots", async () => {
+    const { app } = createTestSetup({
+      authorize: authorizeWithScopes(
+        new Set(["ai:use", "content:read:draft", "content:write"]),
+      ),
+      echoSteps: [
+        {
+          type: "tool-calls",
+          calls: [
+            {
+              toolName: "get_component_reference",
+              input: JSON.stringify({ componentName: "HomeHero" }),
+            },
+          ],
+        },
+        { type: "text", text: "I used HomeHero as the reference." },
+      ],
+    });
+
+    const response = await app.fetch(
+      "POST",
+      "https://test.local/api/v1/ai/chat/messages",
+      {
+        method: "POST",
+        headers: TARGET_HEADERS,
+        body: JSON.stringify({
+          message: "build a hero similar to HomeHero",
+          componentReferences: [
+            {
+              componentName: "HomeHero",
+              source: "studio_host_preview",
+              renderedHtml:
+                '<section class="landing-hero"><h1>Content operations</h1></section>',
+              text: "Content operations",
+            },
+          ],
+        }),
+      },
+    );
+
+    assert.equal(response.status, 200);
+    const payload = (await response.json()) as {
+      data: { message: { text?: string } };
+    };
+    assert.equal(
+      payload.data.message.text,
+      "I used HomeHero as the reference.",
+    );
+  });
+
   test("propose_create_document at taken path is auto-rejected", async () => {
     const validator: AiProposalValidator = async (candidate) => {
       if (candidate.kind !== "create_document") return { status: "valid" };

@@ -6,6 +6,7 @@ import {
   type AiChatAllowedAction,
   type AiChatMessage,
   type AiChatMessageRequest,
+  type AiComponentReference,
   type AiProposal,
   type AiProposalKind,
   type AiTaskKind,
@@ -1338,6 +1339,23 @@ function resolveFreshChatSelection(
     : undefined;
 }
 
+function buildComponentReferenceBackend(
+  references: readonly AiComponentReference[] | undefined,
+): import("./chat-tools.js").ChatToolDeps["getComponentReferenceBackend"] {
+  if (!references || references.length === 0) {
+    return undefined;
+  }
+
+  const byName = new Map<string, AiComponentReference>();
+  for (const reference of references) {
+    if (!byName.has(reference.componentName)) {
+      byName.set(reference.componentName, reference);
+    }
+  }
+
+  return async ({ componentName }) => byName.get(componentName);
+}
+
 /**
  * Shared chat-turn prep: CSRF, parsing, auth + capability probe,
  * regenerate-prefix resolution, attached-doc loading, project-knowledge
@@ -1536,6 +1554,9 @@ async function prepareChatTurn(
       ? options.userLookup({ userId: aiAuth.actorId }).catch(() => undefined)
       : Promise.resolve(undefined),
   ]);
+  const getComponentReference = buildComponentReferenceBackend(
+    body.componentReferences,
+  );
 
   const chatInput: import("./orchestrator.js").AiChatInput = {
     message: `${regenerateInstructionPrefix}${body.message}`,
@@ -1574,7 +1595,7 @@ async function prepareChatTurn(
       ...(currentUser ? { currentUser } : {}),
     },
     ...(body.mdxCatalog ? { mdxCatalog: body.mdxCatalog } : {}),
-    ...(options.listEntries || options.getEntry
+    ...(options.listEntries || options.getEntry || getComponentReference
       ? {
           toolBackends: {
             ...(options.listEntries
@@ -1602,6 +1623,7 @@ async function prepareChatTurn(
                     }),
                 }
               : {}),
+            ...(getComponentReference ? { getComponentReference } : {}),
           },
         }
       : {}),
@@ -1852,6 +1874,9 @@ async function handleChatMessage(
         ? options.userLookup({ userId: aiAuth.actorId }).catch(() => undefined)
         : Promise.resolve(undefined),
     ]);
+    const getComponentReference = buildComponentReferenceBackend(
+      body.componentReferences,
+    );
 
     let newProposals: AiProposal[] = [];
     let assistantText: string | undefined;
@@ -1894,7 +1919,7 @@ async function handleChatMessage(
           ...(currentUser ? { currentUser } : {}),
         },
         ...(body.mdxCatalog ? { mdxCatalog: body.mdxCatalog } : {}),
-        ...(options.listEntries || options.getEntry
+        ...(options.listEntries || options.getEntry || getComponentReference
           ? {
               toolBackends: {
                 ...(options.listEntries
@@ -1922,6 +1947,7 @@ async function handleChatMessage(
                         }),
                     }
                   : {}),
+                ...(getComponentReference ? { getComponentReference } : {}),
               },
             }
           : {}),
