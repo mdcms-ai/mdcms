@@ -141,7 +141,7 @@ demo_status="$(http_get_status "/demo/content")"
 demo_body="$(http_get_body "/demo/content")"
 assert_contains \
   "$demo_body" \
-  "Raw Content API Demo" \
+  "Rendered documents from the content API." \
   "/demo/content response did not contain demo heading"
 assert_not_contains \
   "$demo_body" \
