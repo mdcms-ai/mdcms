@@ -205,6 +205,142 @@ function parseMdxExpressionValue(input: string): unknown {
   return createMdxExpressionValue(trimmed);
 }
 
+function splitTopLevel(input: string, separator: string): string[] {
+  const parts: string[] = [];
+  let cursor = 0;
+  let start = 0;
+  let braceDepth = 0;
+  let bracketDepth = 0;
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+
+  while (cursor < input.length) {
+    const current = input[cursor]!;
+    const previous = input[cursor - 1];
+
+    if (current === "'" && !inDoubleQuote && previous !== "\\") {
+      inSingleQuote = !inSingleQuote;
+      cursor += 1;
+      continue;
+    }
+
+    if (current === '"' && !inSingleQuote && previous !== "\\") {
+      inDoubleQuote = !inDoubleQuote;
+      cursor += 1;
+      continue;
+    }
+
+    if (!inSingleQuote && !inDoubleQuote) {
+      if (current === "{") {
+        braceDepth += 1;
+      } else if (current === "}") {
+        braceDepth -= 1;
+      } else if (current === "[") {
+        bracketDepth += 1;
+      } else if (current === "]") {
+        bracketDepth -= 1;
+      } else if (
+        current === separator &&
+        braceDepth === 0 &&
+        bracketDepth === 0
+      ) {
+        parts.push(input.slice(start, cursor));
+        start = cursor + 1;
+      }
+    }
+
+    cursor += 1;
+  }
+
+  parts.push(input.slice(start));
+  return parts;
+}
+
+function parseObjectKey(input: string): string | null {
+  const trimmed = input.trim();
+
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  if (trimmed[0] === '"' || trimmed[0] === "'") {
+    const [value, nextCursor] = readQuotedValue(trimmed, 0);
+    return nextCursor === trimmed.length ? value : null;
+  }
+
+  if (/^[A-Za-z_$][A-Za-z0-9_$-]*$/.test(trimmed)) {
+    return trimmed;
+  }
+
+  return null;
+}
+
+function parseFlatStyleObjectExpression(
+  input: string,
+): Record<string, string | number> | null {
+  const trimmed = input.trim();
+
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) {
+    return null;
+  }
+
+  const body = trimmed.slice(1, -1).trim();
+
+  if (body.length === 0) {
+    return {};
+  }
+
+  const result: Record<string, string | number> = {};
+
+  for (const pair of splitTopLevel(body, ",")) {
+    if (pair.trim().length === 0) {
+      continue;
+    }
+
+    const segments = splitTopLevel(pair, ":");
+    const [keySource, valueSource] = segments;
+
+    if (
+      keySource === undefined ||
+      valueSource === undefined ||
+      segments.length !== 2
+    ) {
+      return null;
+    }
+
+    const key = parseObjectKey(keySource);
+    const value = parseMdxExpressionValue(valueSource);
+
+    if (key === null) {
+      return null;
+    }
+
+    if (typeof value !== "string" && typeof value !== "number") {
+      return null;
+    }
+
+    result[key] = value;
+  }
+
+  return result;
+}
+
+function parseMdxAttributeValue(attributeName: string, input: string): unknown {
+  const parsed = parseMdxExpressionValue(input);
+
+  if (
+    attributeName !== "style" ||
+    (parsed !== null &&
+      typeof parsed === "object" &&
+      !Array.isArray(parsed) &&
+      !isMdxExpressionValue(parsed))
+  ) {
+    return parsed;
+  }
+
+  return parseFlatStyleObjectExpression(input) ?? parsed;
+}
+
 export function parseMdxJsxAttributes(input: string): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   let cursor = 0;
@@ -258,7 +394,7 @@ export function parseMdxJsxAttributes(input: string): Record<string, unknown> {
 
     if (current === "{") {
       const [rawValue, nextCursor] = readBracedValue(input, cursor);
-      result[attributeName] = parseMdxExpressionValue(rawValue);
+      result[attributeName] = parseMdxAttributeValue(attributeName, rawValue);
       cursor = nextCursor;
       continue;
     }
@@ -505,35 +641,52 @@ function findMatchingClosingTag(
       continue;
     }
 
-    const openingTag = readOpeningTag(input, blockTagOffset);
+    let tagCursor = Math.max(cursor, blockTagOffset);
 
-    if (
-      openingTag &&
-      openingTag.componentName === componentName &&
-      !openingTag.isVoid
-    ) {
-      depth += 1;
-      cursor = nextCursor;
-      continue;
+    while (tagCursor < lineEnd) {
+      const tagOffset = input.indexOf("<", tagCursor);
+
+      if (tagOffset === -1 || tagOffset >= lineEnd) {
+        break;
+      }
+
+      const openingTag = readOpeningTag(input, tagOffset);
+
+      if (
+        openingTag &&
+        openingTag.componentName === componentName &&
+        !openingTag.isVoid
+      ) {
+        depth += 1;
+        tagCursor = openingTag.endIndex;
+        continue;
+      }
+
+      if (openingTag) {
+        tagCursor = openingTag.endIndex;
+        continue;
+      }
+
+      const closingTag = readClosingTag(input, tagOffset);
+
+      if (closingTag?.componentName === componentName) {
+        if (depth === 0) {
+          return closingTag;
+        }
+
+        depth -= 1;
+        tagCursor = closingTag.endIndex;
+        continue;
+      }
+
+      if (closingTag) {
+        tagCursor = closingTag.endIndex;
+        continue;
+      }
+
+      tagCursor = tagOffset + 1;
     }
 
-    const closingTag = readClosingTag(input, blockTagOffset);
-
-    if (!closingTag) {
-      cursor = nextCursor;
-      continue;
-    }
-
-    if (closingTag.componentName !== componentName) {
-      cursor = nextCursor;
-      continue;
-    }
-
-    if (depth === 0) {
-      return closingTag;
-    }
-
-    depth -= 1;
     cursor = nextCursor;
   }
 

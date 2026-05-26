@@ -106,6 +106,71 @@ test("markdown pipeline preserves wrapper MDX blocks with nested markdown childr
   assert.match(serialized, /<\/Callout>/);
 });
 
+test("markdown pipeline parses nested MDX components inside wrapper children", () => {
+  const source = [
+    '<Box style={{backgroundColor: "#101010", padding: "2rem"}}>',
+    '<Text style={{fontSize: "2.5rem", fontWeight: "bold"}}>Welcome to Our Platform</Text>',
+    '<Link href="/signup" style={{color: "#fff"}}>Get Started</Link>',
+    "</Box>",
+  ].join("\n");
+
+  const parsed = parseMarkdownToDocument(source);
+
+  assert.deepEqual(parsed.content?.[0], {
+    type: "mdxComponent",
+    attrs: {
+      componentName: "Box",
+      isVoid: false,
+      props: {
+        style: {
+          backgroundColor: "#101010",
+          padding: "2rem",
+        },
+      },
+    },
+    content: [
+      {
+        type: "mdxComponent",
+        attrs: {
+          componentName: "Text",
+          isVoid: false,
+          props: {
+            style: {
+              fontSize: "2.5rem",
+              fontWeight: "bold",
+            },
+          },
+        },
+        content: [
+          {
+            type: "paragraph",
+            content: [{ type: "text", text: "Welcome to Our Platform" }],
+          },
+        ],
+      },
+      {
+        type: "mdxComponent",
+        attrs: {
+          componentName: "Link",
+          isVoid: false,
+          props: {
+            href: "/signup",
+            style: {
+              color: "#fff",
+            },
+          },
+        },
+        content: [
+          {
+            type: "paragraph",
+            content: [{ type: "text", text: "Get Started" }],
+          },
+        ],
+      },
+    ],
+  });
+});
+
 test("markdown pipeline keeps wrapper MDX serialization stable after first pass", () => {
   const source = [
     '<Callout type="warning">',
