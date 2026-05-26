@@ -142,12 +142,6 @@ const RAW_PREVIEW_URL_ATTRIBUTES = new Set([
   "xlink:href",
 ]);
 const RAW_PREVIEW_UNSAFE_ATTRIBUTES = new Set(["srcdoc"]);
-const RAW_PREVIEW_SAFE_URL_PROTOCOLS = new Set([
-  "http:",
-  "https:",
-  "mailto:",
-  "tel:",
-]);
 
 function isLowercaseRawTagName(name: string): boolean {
   return /^[a-z][A-Za-z0-9._-]*$/.test(name);
@@ -280,29 +274,6 @@ function normalizeHtmlAttributeName(name: string): string {
   return name;
 }
 
-function isUnsafeUrlAttribute(name: string, value: string): boolean {
-  if (!RAW_PREVIEW_URL_ATTRIBUTES.has(name.toLowerCase())) {
-    return false;
-  }
-
-  const trimmed = value.trim().replace(/[\u0000-\u001F\u007F\s]+/g, "");
-  const colonIndex = trimmed.indexOf(":");
-
-  if (colonIndex < 0) {
-    return false;
-  }
-
-  const firstPathIndex = trimmed.search(/[/?#]/);
-
-  if (firstPathIndex >= 0 && firstPathIndex < colonIndex) {
-    return false;
-  }
-
-  return !RAW_PREVIEW_SAFE_URL_PROTOCOLS.has(
-    trimmed.slice(0, colonIndex + 1).toLowerCase(),
-  );
-}
-
 function renderHtmlAttributes(attrsSource: string): string {
   const attrs = parseMdxJsxAttributes(attrsSource);
   const rendered: string[] = [];
@@ -316,6 +287,7 @@ function renderHtmlAttributes(attrsSource: string): string {
     const lowerName = name.toLowerCase();
 
     if (
+      RAW_PREVIEW_URL_ATTRIBUTES.has(lowerName) ||
       RAW_PREVIEW_UNSAFE_ATTRIBUTES.has(lowerName) ||
       !isSafeHtmlAttributeName(name) ||
       rawValue === false
@@ -349,10 +321,6 @@ function renderHtmlAttributes(attrsSource: string): string {
     }
 
     const value = String(rawValue);
-
-    if (isUnsafeUrlAttribute(name, value)) {
-      continue;
-    }
 
     rendered.push(`${name}="${escapeHtmlAttribute(value)}"`);
   }

@@ -1579,9 +1579,20 @@ export function AssistantProvider({
       // in quick succession), abort it before preparing expensive request
       // context so we never overlap two streaming requests.
       pendingControllerRef.current?.abort();
+      const controller = new AbortController();
+      pendingControllerRef.current = controller;
+      setIsPending(true);
+
       const componentReferences = componentReferenceProvider
         ? await componentReferenceProvider().catch(() => [])
         : [];
+
+      if (
+        controller.signal.aborted ||
+        pendingControllerRef.current !== controller
+      ) {
+        return;
+      }
 
       // Build a rolling window of prior conversation turns so the server
       // can resolve anaphora across the thread. Skip empty assistant
@@ -1594,10 +1605,6 @@ export function AssistantProvider({
           return [{ role: m.role, text }];
         })
         .slice(-10);
-
-      const controller = new AbortController();
-      pendingControllerRef.current = controller;
-      setIsPending(true);
 
       const request: StudioAiChatMessageRequest = {
         message: input.message,

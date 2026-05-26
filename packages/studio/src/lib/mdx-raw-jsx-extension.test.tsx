@@ -63,6 +63,29 @@ test("renderRawMdxJsxPreview removes unsafe raw JSX preview vectors", () => {
   assert.match(html, /<button type="button" style="color:blue">Safe<\/button>/);
 });
 
+test("renderRawMdxJsxPreview strips URL-bearing attributes from raw JSX previews", () => {
+  const html = renderRawMdxJsxPreview(
+    [
+      '<a href="/contact">Contact</a>',
+      '<img src="/hero.png" poster="/hero-poster.png" alt="Hero" />',
+      '<form action="/submit">',
+      '<button formaction="/alternate">Submit</button>',
+      "</form>",
+      '<a xlink:href="#icon">Icon</a>',
+    ].join("\n"),
+  );
+
+  assert.match(html, /<a>Contact<\/a>/);
+  assert.match(html, /<img alt="Hero" \/>/);
+  assert.match(html, /<form>/);
+  assert.match(html, /<button>Submit<\/button>/);
+  assert.match(html, /<a>Icon<\/a>/);
+  assert.doesNotMatch(
+    html,
+    /\b(?:href|src|poster|action|formaction|xlink:href)=/i,
+  );
+});
+
 test("tokenizeMdxRawJsxBlock closes quoted attributes after even backslashes", () => {
   const source = '<div title="value\\\\">Text</div>';
 
