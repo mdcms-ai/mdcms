@@ -374,18 +374,21 @@ function MdxComponentEditableSurface(input: {
     }
 
     event.preventDefault();
+    event.stopPropagation();
     input.onSelectPreview?.();
   };
 
   return (
     <div
       data-mdcms-mdx-rendered-wrapper={input.componentName}
-      contentEditable={false}
-      suppressContentEditableWarning
       className="select-none"
       onPointerDownCapture={keepHostPreviewInert}
       onMouseDownCapture={keepHostPreviewInert}
       onBeforeInputCapture={keepHostPreviewInert}
+      onCompositionStartCapture={keepHostPreviewInert}
+      onInputCapture={keepHostPreviewInert}
+      onKeyDownCapture={keepHostPreviewInert}
+      onPasteCapture={keepHostPreviewInert}
     >
       {createElement(Component, input.props, editableSlot)}
     </div>
@@ -394,7 +397,6 @@ function MdxComponentEditableSurface(input: {
 
 type EditableSlotProps = {
   className?: string;
-  contentEditable?: boolean;
   suppressContentEditableWarning?: boolean;
   "data-mdcms-mdx-editable-slot"?: string;
 };
@@ -405,7 +407,6 @@ function renderEditableSlot(
 ): ReactNode {
   const slotProps = {
     "data-mdcms-mdx-editable-slot": componentName,
-    contentEditable: true,
     suppressContentEditableWarning: true,
   } satisfies Omit<EditableSlotProps, "className">;
 

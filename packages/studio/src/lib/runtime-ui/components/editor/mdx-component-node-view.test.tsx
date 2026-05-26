@@ -298,11 +298,12 @@ test("MdxComponentNodeView keeps wrapper host output inert outside the editable 
   assert.match(markup, /<h1>Prop-owned title<\/h1>/);
   assert.match(
     markup,
-    /data-mdcms-mdx-rendered-wrapper="HeroPreview"[^>]+contentEditable="false"/,
+    /data-mdcms-mdx-rendered-wrapper="HeroPreview"[^>]+class="select-none"/,
   );
-  assert.match(
+  assert.match(markup, /data-mdcms-mdx-editable-slot="HeroPreview"/);
+  assert.doesNotMatch(
     markup,
-    /data-mdcms-mdx-editable-slot="HeroPreview"[^>]+contentEditable="true"/,
+    /data-mdcms-mdx-rendered-wrapper="HeroPreview"[^>]+contentEditable="false"/,
   );
 });
 
@@ -344,11 +345,11 @@ test("MdxComponentNodeView makes the ProseMirror content DOM the editable wrappe
 
   assert.match(
     markup,
-    /<div(?=[^>]*data-node-view-content)(?=[^>]*data-mdcms-mdx-editable-slot="BoxPreview")(?=[^>]*contentEditable="true")[^>]*>/,
+    /<div(?=[^>]*data-node-view-content)(?=[^>]*data-mdcms-mdx-editable-slot="BoxPreview")[^>]*>/,
   );
   assert.doesNotMatch(
     markup,
-    /<div(?=[^>]*data-mdcms-mdx-editable-slot="BoxPreview")(?=[^>]*contentEditable="true")(?![^>]*data-node-view-content)[^>]*>/,
+    /<div(?=[^>]*data-mdcms-mdx-editable-slot="BoxPreview")[^>]*contentEditable="true"[^>]*>/,
   );
 });
 
