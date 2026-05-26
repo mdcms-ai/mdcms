@@ -63,3 +63,26 @@ test("ProposalCard keeps collapse header padding stable when expanded or collaps
   assert.doesNotMatch(collapsed, /pb-2\.5|pb-1/);
   assert.doesNotMatch(expanded, /pb-2\.5|pb-1/);
 });
+
+test("ProposalCard keeps accepted proposal details expandable for history", () => {
+  const markup = renderToStaticMarkup(
+    createElement(ProposalCard, {
+      proposal: buildAcceptedEditProposal({
+        diffStats: { added: 1, removed: 1 },
+        op: {
+          op: "replace_selection",
+          selectionId: "sel_1",
+          originalText: "Old homepage copy",
+          replacementText: "New homepage copy",
+        },
+      }),
+      onAccept: () => {},
+      onReject: () => {},
+    }),
+  );
+
+  assert.match(markup, /View applied change/);
+  assert.match(markup, /Old homepage copy/);
+  assert.match(markup, /New homepage copy/);
+  assert.doesNotMatch(markup, />Accept</);
+});

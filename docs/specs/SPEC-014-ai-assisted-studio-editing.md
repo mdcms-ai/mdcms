@@ -194,16 +194,18 @@ server-defined lifetime and may also become stale when a draft revision changes.
 ### Post-Accept Undo Window
 
 After a proposal is successfully applied, Studio offers a bounded undo window
-in place of the proposal card. The window is the only opportunity to revert an
-applied proposal through the AI surface; once it expires, restore must go
-through the normal version history and trash endpoints.
+and keeps the accepted proposal available as an expandable, read-only history
+detail. The window is the only opportunity to revert an applied proposal
+through the AI surface; once it expires, restore must go through the normal
+version history and trash endpoints.
 
 Window behaviour:
 
 - The window is **6 seconds** long, opens when the apply endpoint returns
   success, and is per-proposal (each accepted proposal opens its own window).
 - During the window, Studio renders an `Applied` banner with a visible
-  countdown and an `Undo` affordance in place of the proposal card.
+  countdown and an `Undo` affordance above the read-only applied-change
+  details. Accept and reject controls are removed after apply.
 - Hovering the banner pauses the countdown. Hiding the tab pauses the
   countdown. Reloading the page inside the window resumes the remaining time;
   reloading after the window expires lands directly in the past-tense
@@ -212,8 +214,9 @@ Window behaviour:
   undo on the most recent still-open window when focus is inside the assistant
   panel. Outside the assistant panel the shortcut falls through to the
   surrounding editor or browser default.
-- When the window expires, the banner morphs into a quiet past-tense log line
-  and the affordance is no longer offered.
+- When the window expires, the banner morphs into a quiet past-tense log line,
+  the undo affordance is no longer offered, and the applied-change details
+  remain expandable for chat history review.
 
 Undo is routed through a single dedicated endpoint
 `POST /api/v1/ai/proposals/:proposalId/undo` that the client invokes with
