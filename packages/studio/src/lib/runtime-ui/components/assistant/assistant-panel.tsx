@@ -1052,15 +1052,29 @@ function Composer({
 
   // Auto-grow the textarea to fit content up to a max height. The min
   // matches the visual `rows={2}` baseline; beyond max, the textarea
-  // scrolls internally instead of pushing the layout further.
-  React.useLayoutEffect(() => {
+  // scrolls internally instead of pushing the layout further. Recompute
+  // on draft changes *and* whenever the textarea's width changes (rail
+  // resize), since wrapping changes the required line count.
+  const resizeTextarea = React.useCallback(() => {
     const ta = textareaRef.current;
     if (!ta) return;
     ta.style.height = "auto";
     const max = 180;
     ta.style.height = `${Math.min(ta.scrollHeight, max)}px`;
     ta.style.overflowY = ta.scrollHeight > max ? "auto" : "hidden";
-  }, [draft, textareaRef]);
+  }, [textareaRef]);
+
+  React.useLayoutEffect(() => {
+    resizeTextarea();
+  }, [draft, resizeTextarea]);
+
+  React.useEffect(() => {
+    const ta = textareaRef.current;
+    if (!ta || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => resizeTextarea());
+    observer.observe(ta);
+    return () => observer.disconnect();
+  }, [textareaRef, resizeTextarea]);
 
   const submit = () => {
     if (assistant.isPending) return;
