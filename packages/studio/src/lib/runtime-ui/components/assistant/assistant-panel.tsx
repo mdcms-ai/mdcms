@@ -1050,6 +1050,18 @@ function Composer({
     ta.setSelectionRange(end, end);
   }, [textareaRef]);
 
+  // Auto-grow the textarea to fit content up to a max height. The min
+  // matches the visual `rows={2}` baseline; beyond max, the textarea
+  // scrolls internally instead of pushing the layout further.
+  React.useLayoutEffect(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    ta.style.height = "auto";
+    const max = 180;
+    ta.style.height = `${Math.min(ta.scrollHeight, max)}px`;
+    ta.style.overflowY = ta.scrollHeight > max ? "auto" : "hidden";
+  }, [draft, textareaRef]);
+
   const submit = () => {
     if (assistant.isPending) return;
     if (!draft.trim()) return;
