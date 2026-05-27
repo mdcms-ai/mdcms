@@ -9,6 +9,7 @@ import {
   useFloating,
 } from "@floating-ui/react-dom";
 import {
+  Fragment as ReactFragment,
   forwardRef,
   useEffect,
   useEffectEvent,
@@ -47,7 +48,7 @@ import {
   ListTodo,
   ListOrdered,
   Minus,
-  Puzzle,
+  Plus,
   Quote,
   Redo,
   Strikethrough,
@@ -821,10 +822,14 @@ export const TipTapEditor = forwardRef<TipTapEditorHandle, TipTapEditorProps>(
         });
       },
     );
+    const initialEditorContent = useMemo(
+      () => parseMarkdownToDocument(initialContent),
+      [initialContent],
+    );
     const editor = useEditor(
       {
-        content: initialContent,
-        contentType: "markdown",
+        content: initialEditorContent,
+        contentType: "json",
         editable: !isEditorReadOnly,
         immediatelyRender: false,
         // Leaving `shouldRerenderOnTransaction` at its default (`false`) is
@@ -985,8 +990,8 @@ export const TipTapEditor = forwardRef<TipTapEditorHandle, TipTapEditorProps>(
           // Suppress onUpdate so programmatic syncs (version preview,
           // back-to-draft, post-save rehydration) don't trigger onChange
           // and accidentally mark the draft as unsaved / arm autosave.
-          editor.commands.setContent(markdown, {
-            contentType: "markdown",
+          editor.commands.setContent(parseMarkdownToDocument(markdown), {
+            contentType: "json",
             emitUpdate: false,
           });
           lastEmittedMarkdownRef.current = extractMarkdownFromEditor(editor);
@@ -1364,8 +1369,8 @@ export const TipTapEditor = forwardRef<TipTapEditorHandle, TipTapEditorProps>(
         case "insertComponent":
           return (
             <>
-              <Puzzle className={iconClassName} />
-              <span>Insert Component</span>
+              <Plus className={iconClassName} />
+              <span>Add block</span>
             </>
           );
         default:
@@ -1681,6 +1686,47 @@ export const TipTapEditor = forwardRef<TipTapEditorHandle, TipTapEditorProps>(
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
           <div className="shrink-0 border-b border-border bg-card">
             <div className="flex flex-wrap items-center gap-x-1 gap-y-1 px-6 py-2">
+              {toolbar.secondaryItems
+                .filter((item) => item.id === "insertComponent")
+                .map((item) => (
+                  <ReactFragment key={item.id}>
+                    <Button
+                      type="button"
+                      variant="default"
+                      size="sm"
+                      disabled={
+                        item.availability !== "enabled" || isEditorReadOnly
+                      }
+                      onClick={() => {
+                        if (
+                          item.availability === "enabled" &&
+                          !isEditorReadOnly
+                        ) {
+                          triggerToolbarItem(item.id);
+                        }
+                      }}
+                      title={
+                        item.availability !== "enabled"
+                          ? `${item.label} (planned)`
+                          : isEditorReadOnly
+                            ? `${item.label} (unavailable in read-only mode)`
+                            : item.label
+                      }
+                      aria-controls="mdcms-visual-composition-palette"
+                      aria-expanded={visualPaletteOpen}
+                      data-mdcms-visual-palette-toggle="true"
+                      data-mdcms-visual-palette-toggle-state={
+                        visualPaletteOpen ? "open" : "closed"
+                      }
+                      className={cn(
+                        visualPaletteOpen && "ring-2 ring-primary/40",
+                      )}
+                    >
+                      {resolveToolbarIcon(item.id)}
+                    </Button>
+                    <Separator orientation="vertical" className="mx-1 h-6" />
+                  </ReactFragment>
+                ))}
               {toolbar.primaryGroups.map((group, groupIndex) => (
                 <div key={group.id} className="flex items-center gap-1.5">
                   {groupIndex > 0 ? (
@@ -1841,98 +1887,39 @@ export const TipTapEditor = forwardRef<TipTapEditorHandle, TipTapEditorProps>(
                   })}
                 </div>
               ))}
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                data-mdcms-mdx-collapse-all={
+                  collapseController.snapshot.globalState ?? "expanded"
+                }
+                onClick={() => collapseController.toggleGlobalCollapse()}
+                title={
+                  collapseController.snapshot.globalState === "collapsed"
+                    ? "Expand all components"
+                    : "Collapse all components"
+                }
+                aria-label={
+                  collapseController.snapshot.globalState === "collapsed"
+                    ? "Expand all components"
+                    : "Collapse all components"
+                }
+                className="ml-auto text-foreground-muted hover:text-foreground"
+              >
+                {collapseController.snapshot.globalState === "collapsed" ? (
+                  <>
+                    <ChevronsUpDown className="size-4" />
+                    <span>Expand all</span>
+                  </>
+                ) : (
+                  <>
+                    <ChevronsDownUp className="size-4" />
+                    <span>Collapse all</span>
+                  </>
+                )}
+              </Button>
             </div>
-
-            {toolbar.secondaryItems.length > 0 ? (
-              <div className="flex items-center gap-2 border-t border-border px-3 py-2">
-                {toolbar.secondaryItems.map((item) => (
-                  <Button
-                    key={item.id}
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    disabled={
-                      item.availability !== "enabled" || isEditorReadOnly
-                    }
-                    onClick={() => {
-                      if (
-                        item.availability === "enabled" &&
-                        !isEditorReadOnly
-                      ) {
-                        triggerToolbarItem(item.id);
-                      }
-                    }}
-                    title={
-                      item.availability !== "enabled"
-                        ? `${item.label} (planned)`
-                        : isEditorReadOnly
-                          ? `${item.label} (unavailable in read-only mode)`
-                          : item.label
-                    }
-                    aria-controls={
-                      item.id === "insertComponent"
-                        ? "mdcms-visual-composition-palette"
-                        : undefined
-                    }
-                    aria-expanded={
-                      item.id === "insertComponent"
-                        ? visualPaletteOpen
-                        : undefined
-                    }
-                    data-mdcms-visual-palette-toggle={
-                      item.id === "insertComponent" ? "true" : undefined
-                    }
-                    data-mdcms-visual-palette-toggle-state={
-                      item.id === "insertComponent"
-                        ? visualPaletteOpen
-                          ? "open"
-                          : "closed"
-                        : undefined
-                    }
-                    className={cn(
-                      "border-primary text-primary hover:bg-accent-subtle hover:text-primary",
-                      item.id === "insertComponent" &&
-                        visualPaletteOpen &&
-                        "bg-accent-subtle",
-                    )}
-                  >
-                    {resolveToolbarIcon(item.id)}
-                  </Button>
-                ))}
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  data-mdcms-mdx-collapse-all={
-                    collapseController.snapshot.globalState ?? "expanded"
-                  }
-                  onClick={() => collapseController.toggleGlobalCollapse()}
-                  title={
-                    collapseController.snapshot.globalState === "collapsed"
-                      ? "Expand all components"
-                      : "Collapse all components"
-                  }
-                  aria-label={
-                    collapseController.snapshot.globalState === "collapsed"
-                      ? "Expand all components"
-                      : "Collapse all components"
-                  }
-                  className="ml-auto text-foreground-muted hover:text-foreground"
-                >
-                  {collapseController.snapshot.globalState === "collapsed" ? (
-                    <>
-                      <ChevronsUpDown className="size-4" />
-                      <span>Expand all</span>
-                    </>
-                  ) : (
-                    <>
-                      <ChevronsDownUp className="size-4" />
-                      <span>Collapse all</span>
-                    </>
-                  )}
-                </Button>
-              </div>
-            ) : null}
           </div>
 
           <div

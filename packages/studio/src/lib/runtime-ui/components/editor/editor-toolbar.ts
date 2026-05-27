@@ -100,7 +100,7 @@ export function createEditorToolbarLayout(): EditorToolbarLayout {
     secondaryItems: [
       {
         id: "insertComponent",
-        label: "Insert Component",
+        label: "Add block",
         availability: "enabled",
       },
     ],
