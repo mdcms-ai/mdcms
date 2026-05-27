@@ -1367,10 +1367,27 @@ function loadRailWidthFromStorage(key: string): number | undefined {
   }
 }
 
+function loadModeFromStorage(key: string): RailMode | undefined {
+  if (typeof window === "undefined") return undefined;
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as { mode?: unknown };
+    return parsed.mode === "closed" ||
+      parsed.mode === "rail" ||
+      parsed.mode === "fullscreen"
+      ? parsed.mode
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function saveStoreToStorage(
   key: string,
   store: AssistantStore,
   railWidth: number,
+  mode: RailMode,
 ): void {
   if (typeof window === "undefined") return;
   try {
@@ -1380,6 +1397,7 @@ function saveStoreToStorage(
         v: STORAGE_VERSION,
         store,
         railWidth: clampAssistantRailWidth(railWidth),
+        mode,
       }),
     );
   } catch {
@@ -1390,7 +1408,7 @@ function saveStoreToStorage(
 export function AssistantProvider({
   children,
   initialStore,
-  initialMode = "closed",
+  initialMode,
   initialRailWidth,
   initialPending = false,
   api,
@@ -1404,13 +1422,16 @@ export function AssistantProvider({
     const persistedRailWidth = storageKey
       ? loadRailWidthFromStorage(storageKey)
       : undefined;
+    const persistedMode = storageKey
+      ? loadModeFromStorage(storageKey)
+      : undefined;
     const store =
       initialStore ??
       persisted ??
       buildEmptyAssistantStore(new Date().toISOString());
     return {
       store,
-      mode: initialMode,
+      mode: initialMode ?? persistedMode ?? "closed",
       activeThreadId: store.activeThreadId,
       railWidth: clampAssistantRailWidth(
         initialRailWidth ?? persistedRailWidth ?? ASSISTANT_RAIL_DEFAULT_WIDTH,
@@ -2065,8 +2086,15 @@ export function AssistantProvider({
         activeThreadId: state.activeThreadId,
       },
       state.railWidth,
+      state.mode,
     );
-  }, [storageKey, state.store, state.activeThreadId, state.railWidth]);
+  }, [
+    storageKey,
+    state.store,
+    state.activeThreadId,
+    state.railWidth,
+    state.mode,
+  ]);
 
   // Mode is read inside the once-mounted ⌘K handler, so keep a ref in
   // sync with the latest reducer state to avoid stale closure reads.
