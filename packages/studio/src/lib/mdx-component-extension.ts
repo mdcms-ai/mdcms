@@ -35,6 +35,10 @@ type ClosingTagMatch = {
 
 const MDX_EXPRESSION_VALUE_KEY = "__mdxExpression";
 
+function findNextTagStart(input: string, startIndex: number): number {
+  return input.indexOf("<", startIndex);
+}
+
 export type MdxExpressionValue = {
   [MDX_EXPRESSION_VALUE_KEY]: string;
 };
@@ -658,7 +662,7 @@ function findMatchingClosingTag(
     let tagCursor = Math.max(cursor, blockTagOffset);
 
     while (tagCursor < lineEnd) {
-      const tagOffset = input.indexOf("<", tagCursor);
+      const tagOffset = findNextTagStart(input, tagCursor);
 
       if (tagOffset === -1 || tagOffset >= lineEnd) {
         break;

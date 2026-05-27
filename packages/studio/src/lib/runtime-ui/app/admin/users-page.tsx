@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useReducer, useState } from "react";
+import { useReducer, useState } from "react";
 import {
   Plus,
   MoreHorizontal,
@@ -179,10 +179,12 @@ function InviteUserDialog({
   onInvited: () => void;
 }) {
   const [form, dispatch] = useReducer(inviteFormReducer, initialInviteState);
-
-  useEffect(() => {
-    if (!open) dispatch({ type: "reset" });
-  }, [open]);
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen) {
+      dispatch({ type: "reset" });
+    }
+    onOpenChange(nextOpen);
+  };
 
   async function handleInvite() {
     dispatch({ type: "error", message: null });
@@ -217,7 +219,7 @@ function InviteUserDialog({
         ],
       });
       onInvited();
-      onOpenChange(false);
+      handleOpenChange(false);
     } catch (err) {
       dispatch({
         type: "error",
@@ -228,7 +230,7 @@ function InviteUserDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>
         <Button>
           <Plus className="mr-2 size-4" />
@@ -311,7 +313,7 @@ function InviteUserDialog({
           )}
         </div>
         <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+          <Button variant="ghost" onClick={() => handleOpenChange(false)}>
             Cancel
           </Button>
           <Button disabled={isInviting || !form.email} onClick={handleInvite}>
@@ -334,14 +336,42 @@ export type EditRoleTarget = {
   currentGrants: UserWithGrants["grants"];
 };
 
+type EditRoleState = {
+  role: string;
+  pathPrefix: string;
+  error: string | null;
+};
+
+type EditRoleAction =
+  | { type: "role-change"; value: string }
+  | { type: "path-prefix-change"; value: string }
+  | { type: "error"; message: string | null };
+
+function createEditRoleState(target: EditRoleTarget): EditRoleState {
+  return {
+    role: target.currentRole,
+    pathPrefix: target.currentGrants[0]?.pathPrefix ?? "",
+    error: null,
+  };
+}
+
+function editRoleReducer(
+  state: EditRoleState,
+  action: EditRoleAction,
+): EditRoleState {
+  switch (action.type) {
+    case "role-change":
+      return { ...state, role: action.value };
+    case "path-prefix-change":
+      return { ...state, pathPrefix: action.value };
+    case "error":
+      return { ...state, error: action.message };
+  }
+}
+
 function EditRoleDialog({
   target,
-  onOpenChange,
-  updateGrants,
-  isUpdatingGrants,
-  activeEnvironment,
-  activeProject,
-  onSaved,
+  ...props
 }: {
   target: EditRoleTarget | null;
   onOpenChange: (open: boolean) => void;
@@ -351,41 +381,68 @@ function EditRoleDialog({
   activeProject: string | null;
   onSaved: (userName: string) => void;
 }) {
-  const [role, setRole] = useState<string>("editor");
-  const [pathPrefix, setPathPrefix] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  if (!target) {
+    return <Dialog open={false} onOpenChange={props.onOpenChange} />;
+  }
 
-  useEffect(() => {
-    if (target) {
-      setRole(target.currentRole);
-      setPathPrefix(target.currentGrants[0]?.pathPrefix ?? "");
-      setError(null);
-    }
-  }, [target]);
+  return (
+    <EditRoleDialogOpen
+      key={`${target.userId}:${target.currentRole}:${target.currentGrants[0]?.pathPrefix ?? ""}`}
+      target={target}
+      {...props}
+    />
+  );
+}
+
+function EditRoleDialogOpen({
+  target,
+  onOpenChange,
+  updateGrants,
+  isUpdatingGrants,
+  activeEnvironment,
+  activeProject,
+  onSaved,
+}: {
+  target: EditRoleTarget;
+  onOpenChange: (open: boolean) => void;
+  updateGrants: ReturnType<typeof useUserList>["updateGrants"];
+  isUpdatingGrants: boolean;
+  activeEnvironment: string | null;
+  activeProject: string | null;
+  onSaved: (userName: string) => void;
+}) {
+  const [form, dispatch] = useReducer(
+    editRoleReducer,
+    target,
+    createEditRoleState,
+  );
 
   async function handleSave() {
-    if (!target) return;
-    const useFolderPrefix = pathPrefix && activeEnvironment;
+    const useFolderPrefix = form.pathPrefix && activeEnvironment;
     const editedGrant = {
-      role,
+      role: form.role,
       scopeKind:
-        role === "admin"
+        form.role === "admin"
           ? "global"
           : useFolderPrefix
             ? "folder_prefix"
             : "project",
       project:
-        role === "admin"
+        form.role === "admin"
           ? undefined
           : (target.currentGrants[0]?.project ?? activeProject ?? undefined),
       environment:
-        role === "admin"
+        form.role === "admin"
           ? undefined
           : useFolderPrefix
             ? activeEnvironment
             : undefined,
       pathPrefix:
-        role === "admin" ? undefined : useFolderPrefix ? pathPrefix : undefined,
+        form.role === "admin"
+          ? undefined
+          : useFolderPrefix
+            ? form.pathPrefix
+            : undefined,
     };
     const updatedGrants =
       target.currentGrants.length > 1
@@ -400,18 +457,21 @@ function EditRoleDialog({
             })),
           ]
         : [editedGrant];
-    setError(null);
+    dispatch({ type: "error", message: null });
     try {
       await updateGrants(target.userId, updatedGrants);
       onSaved(target.userName);
       onOpenChange(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to update role.");
+      dispatch({
+        type: "error",
+        message: err instanceof Error ? err.message : "Failed to update role.",
+      });
     }
   }
 
   return (
-    <Dialog open={target !== null} onOpenChange={onOpenChange}>
+    <Dialog open onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Edit role</DialogTitle>
@@ -422,7 +482,12 @@ function EditRoleDialog({
         <div className="space-y-4 py-4">
           <div className="space-y-2">
             <Label>Role</Label>
-            <Select value={role} onValueChange={setRole}>
+            <Select
+              value={form.role}
+              onValueChange={(value) =>
+                dispatch({ type: "role-change", value })
+              }
+            >
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
@@ -433,7 +498,7 @@ function EditRoleDialog({
               </SelectContent>
             </Select>
           </div>
-          {(role === "editor" || role === "viewer") && (
+          {(form.role === "editor" || form.role === "viewer") && (
             <div className="space-y-2">
               <Label htmlFor="edit-role-path-prefix">
                 Folder prefix (optional)
@@ -441,8 +506,13 @@ function EditRoleDialog({
               <Input
                 id="edit-role-path-prefix"
                 placeholder="e.g. content/blog"
-                value={pathPrefix}
-                onChange={(e) => setPathPrefix(e.target.value)}
+                value={form.pathPrefix}
+                onChange={(e) =>
+                  dispatch({
+                    type: "path-prefix-change",
+                    value: e.target.value,
+                  })
+                }
                 className="font-mono"
               />
               <p className="text-xs text-foreground-muted">
@@ -451,7 +521,9 @@ function EditRoleDialog({
               </p>
             </div>
           )}
-          {error && <p className="text-sm text-destructive">{error}</p>}
+          {form.error && (
+            <p className="text-sm text-destructive">{form.error}</p>
+          )}
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)}>

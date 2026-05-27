@@ -9,6 +9,9 @@ export function MdxRawJsxNodeView(props: ReactNodeViewProps) {
   const source =
     typeof props.node.attrs.source === "string" ? props.node.attrs.source : "";
   const html = renderRawMdxJsxPreview(source);
+  const sanitizedPreviewHtmlProps = {
+    dangerouslySetInnerHTML: { __html: html },
+  };
 
   return (
     <NodeViewWrapper
@@ -17,7 +20,7 @@ export function MdxRawJsxNodeView(props: ReactNodeViewProps) {
       contentEditable={false}
       suppressContentEditableWarning
       className="not-prose my-4 text-foreground"
-      dangerouslySetInnerHTML={{ __html: html }}
+      {...sanitizedPreviewHtmlProps}
     />
   );
 }

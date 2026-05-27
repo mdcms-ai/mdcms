@@ -17,11 +17,11 @@ import {
   resolveStudioEnv,
 } from "./studio.js";
 import { createStudioActionCatalogAdapter } from "./action-catalog-adapter.js";
+import { StudioShellFrame } from "./studio-component.js";
 import {
-  StudioShellFrame,
   describeStudioStartupError,
   resolveShellAppliedTheme,
-} from "./studio-component.js";
+} from "./studio-shell-state.js";
 import { loadStudioDocumentShell } from "./document-shell.js";
 
 const TYPECHECK_TEST_TIMEOUT_MS = 20_000;

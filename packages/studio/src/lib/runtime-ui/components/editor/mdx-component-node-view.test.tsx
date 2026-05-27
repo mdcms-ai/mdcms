@@ -4,10 +4,10 @@ import { createElement, isValidElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import {
-  formatMdxComponentPropsSummary,
   MdxComponentNodeView,
   MdxComponentNodeFrame,
 } from "./mdx-component-node-view.js";
+import { formatMdxComponentPropsSummary } from "./mdx-component-node-view-utils.js";
 
 function findElementByAriaLabel(
   node: ReactNode,

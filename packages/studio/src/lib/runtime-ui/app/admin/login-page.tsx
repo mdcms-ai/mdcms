@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useReducer, useEffect } from "react";
 import { useRouter, useBasePath } from "../../navigation.js";
 import { Button } from "../../components/ui/button.js";
 import { Input } from "../../components/ui/input.js";
@@ -24,33 +24,69 @@ function stripAdminPrefix(path: string): string {
 
 const EMPTY_SSO_PROVIDERS: SsoProvider[] = [];
 
+type LoginState = {
+  email: string;
+  password: string;
+  submitting: boolean;
+  error: string | null;
+  sso: { status: "loading" } | { status: "ready"; providers: SsoProvider[] };
+};
+
+type LoginAction =
+  | { type: "email-change"; value: string }
+  | { type: "password-change"; value: string }
+  | { type: "submit-start" }
+  | { type: "submit-error"; message: string }
+  | { type: "sso-ready"; providers: SsoProvider[] };
+
+const initialLoginState: LoginState = {
+  email: "",
+  password: "",
+  submitting: false,
+  error: null,
+  sso: { status: "loading" },
+};
+
+function loginReducer(state: LoginState, action: LoginAction): LoginState {
+  switch (action.type) {
+    case "email-change":
+      return { ...state, email: action.value };
+    case "password-change":
+      return { ...state, password: action.value };
+    case "submit-start":
+      return { ...state, submitting: true, error: null };
+    case "submit-error":
+      return { ...state, submitting: false, error: action.message };
+    case "sso-ready":
+      return {
+        ...state,
+        sso: { status: "ready", providers: action.providers },
+      };
+  }
+}
+
 export default function LoginPage() {
-  const router = useRouter();
+  const { replace } = useRouter();
   const basePath = useBasePath();
   const sessionState = useStudioSession();
   const mountInfo = useStudioMountInfo();
   const returnTo = useReturnTo();
 
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [ssoState, setSsoState] = useState<
-    { status: "loading" } | { status: "ready"; providers: SsoProvider[] }
-  >({ status: "loading" });
+  const [state, dispatch] = useReducer(loginReducer, initialLoginState);
+  const { email, password, submitting, error } = state;
   const ssoProviders =
-    ssoState.status === "ready" ? ssoState.providers : EMPTY_SSO_PROVIDERS;
-  const ssoLoading = ssoState.status === "loading";
+    state.sso.status === "ready" ? state.sso.providers : EMPTY_SSO_PROVIDERS;
+  const ssoLoading = state.sso.status === "loading";
 
   useEffect(() => {
     if (sessionState.status === "authenticated") {
-      router.replace(returnTo);
+      replace(returnTo);
     }
-  }, [sessionState.status, returnTo, router]);
+  }, [sessionState.status, returnTo, replace]);
 
   useEffect(() => {
     if (!mountInfo.apiBaseUrl) {
-      setSsoState({ status: "ready", providers: EMPTY_SSO_PROVIDERS });
+      dispatch({ type: "sso-ready", providers: EMPTY_SSO_PROVIDERS });
       return;
     }
 
@@ -61,12 +97,12 @@ export default function LoginPage() {
       .getSsoProviders()
       .then((providers) => {
         if (!cancelled) {
-          setSsoState({ status: "ready", providers });
+          dispatch({ type: "sso-ready", providers });
         }
       })
       .catch(() => {
         if (!cancelled) {
-          setSsoState({ status: "ready", providers: EMPTY_SSO_PROVIDERS });
+          dispatch({ type: "sso-ready", providers: EMPTY_SSO_PROVIDERS });
         }
       });
 
@@ -77,8 +113,7 @@ export default function LoginPage() {
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
-    setError(null);
-    setSubmitting(true);
+    dispatch({ type: "submit-start" });
 
     const api = createLoginApi({ serverUrl: mountInfo.apiBaseUrl });
     const result = await api.login(email, password);
@@ -90,19 +125,21 @@ export default function LoginPage() {
           : returnTo;
         return;
       case "invalid_credentials":
-        setError("Invalid email or password.");
+        dispatch({
+          type: "submit-error",
+          message: "Invalid email or password.",
+        });
         break;
       case "throttled":
-        setError(
-          `Too many attempts. Try again in ${result.retryAfterSeconds}s.`,
-        );
+        dispatch({
+          type: "submit-error",
+          message: `Too many attempts. Try again in ${result.retryAfterSeconds}s.`,
+        });
         break;
       case "error":
-        setError(result.message);
+        dispatch({ type: "submit-error", message: result.message });
         break;
     }
-
-    setSubmitting(false);
   };
 
   const handleSsoClick = (providerId: string) => {
@@ -126,11 +163,18 @@ export default function LoginPage() {
         if (redirectUrl) {
           window.location.href = redirectUrl;
         } else {
-          setError("SSO provider did not return a redirect. Please try again.");
+          dispatch({
+            type: "submit-error",
+            message:
+              "SSO provider did not return a redirect. Please try again.",
+          });
         }
       })
       .catch(() => {
-        setError("SSO sign-in failed. Please try again.");
+        dispatch({
+          type: "submit-error",
+          message: "SSO sign-in failed. Please try again.",
+        });
       });
   };
 
@@ -195,7 +239,9 @@ export default function LoginPage() {
               type="email"
               placeholder="you@company.com"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) =>
+                dispatch({ type: "email-change", value: e.target.value })
+              }
               required
               autoComplete="email"
             />
@@ -213,7 +259,9 @@ export default function LoginPage() {
               type="password"
               placeholder="••••••••"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(e) =>
+                dispatch({ type: "password-change", value: e.target.value })
+              }
               required
               autoComplete="current-password"
             />

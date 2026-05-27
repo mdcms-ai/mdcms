@@ -3,11 +3,11 @@ import { test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
+import { AssistantMarkdown } from "./assistant-markdown.js";
 import {
-  AssistantMarkdown,
   copyCodeToClipboard,
   downloadCodeBlock,
-} from "./assistant-markdown.js";
+} from "./assistant-markdown-actions.js";
 
 test("AssistantMarkdown renders fenced code blocks with Studio-owned controls", () => {
   const markup = renderToStaticMarkup(

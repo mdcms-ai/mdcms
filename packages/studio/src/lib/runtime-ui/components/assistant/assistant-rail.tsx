@@ -116,6 +116,7 @@ function AssistantRailResizeHandle() {
   const resizeHandlers = useAssistantRailResizeHandlers();
 
   return (
+    // react-doctor-disable-next-line react-doctor/prefer-tag-over-role -- this is an interactive resizer with separator semantics; <hr> cannot carry the resize handle affordance.
     <div
       role="separator"
       aria-label="Resize AI assistant"

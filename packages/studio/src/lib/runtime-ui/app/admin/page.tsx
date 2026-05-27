@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import Link from "../../adapters/next-link.js";
 import { AlertCircle, ShieldAlert } from "lucide-react";
 import { cn } from "../../lib/utils.js";
@@ -57,19 +56,8 @@ export default function DashboardPage() {
   const mountInfo = useStudioMountInfo();
   const { canCreateContent } = useAdminCapabilities();
   const query = useDashboardData();
-  const [showLoadingSkeleton, setShowLoadingSkeleton] = useState(false);
-
-  const isFetching = query.isFetching;
-  const hasData = query.data !== undefined || query.isError;
-
-  useEffect(() => {
-    if (!isFetching || hasData) {
-      setShowLoadingSkeleton(false);
-      return;
-    }
-    const timer = setTimeout(() => setShowLoadingSkeleton(true), 200);
-    return () => clearTimeout(timer);
-  }, [isFetching, hasData]);
+  const showLoadingSkeleton =
+    query.isFetching && query.data === undefined && !query.isError;
 
   const userLabel =
     session.status === "authenticated"

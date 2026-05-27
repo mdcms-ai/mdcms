@@ -6,10 +6,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { StudioMountContext } from "@mdcms/shared";
 
 import { createVisualCompositionPaletteGroups } from "./visual-composition-commands.js";
-import {
-  VisualCompositionPalette,
-  writeVisualCompositionDragPayload,
-} from "./visual-composition-palette.js";
+import { writeVisualCompositionDragPayload } from "./visual-composition-palette-dnd.js";
+import { VisualCompositionPalette } from "./visual-composition-palette.js";
 
 type MdxCatalogComponent = NonNullable<
   StudioMountContext["mdx"]

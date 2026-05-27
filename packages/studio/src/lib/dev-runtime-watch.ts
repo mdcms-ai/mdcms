@@ -15,22 +15,23 @@ async function collectFileEntries(directory: string): Promise<string[]> {
   const entries = await readdir(directory, {
     withFileTypes: true,
   });
-  const files: string[] = [];
+  const files = await Promise.all(
+    entries.map(async (entry) => {
+      const absolutePath = join(directory, entry.name);
 
-  for (const entry of entries) {
-    const absolutePath = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        return collectFileEntries(absolutePath);
+      }
 
-    if (entry.isDirectory()) {
-      files.push(...(await collectFileEntries(absolutePath)));
-      continue;
-    }
+      if (entry.isFile()) {
+        return [absolutePath];
+      }
 
-    if (entry.isFile()) {
-      files.push(absolutePath);
-    }
-  }
+      return [];
+    }),
+  );
 
-  return files;
+  return files.flat();
 }
 
 async function createSourceSignature(sourceRoot: string): Promise<string> {
@@ -70,6 +71,7 @@ async function main(): Promise<void> {
   );
 
   while (true) {
+    // react-doctor-disable-next-line react-doctor/async-await-in-loop -- this is an intentional polling loop, not independent parallel work.
     await sleep(pollIntervalMs);
 
     let nextSignature: string;

@@ -167,10 +167,12 @@ async function waitForPreviewFlush(maxFrames = 1): Promise<void> {
 
   for (let frame = 0; frame < frames; frame += 1) {
     if (typeof requestAnimationFrame === "function") {
+      // react-doctor-disable-next-line react-doctor/async-await-in-loop -- preview flush frames must be observed sequentially.
       await new Promise<void>((resolve) =>
         requestAnimationFrame(() => resolve()),
       );
     } else {
+      // react-doctor-disable-next-line react-doctor/async-await-in-loop -- preview flush frames must be observed sequentially.
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
     }
   }

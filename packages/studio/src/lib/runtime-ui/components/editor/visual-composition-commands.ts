@@ -104,7 +104,7 @@ export function validateMdxComponentRequiredProps(
   };
 }
 
-export function createVisualCompositionBlockContent(
+function createVisualCompositionBlockContent(
   block: VisualCompositionBlock,
   props: Record<string, unknown> = {},
 ): JSONContent | JSONContent[] {
@@ -161,7 +161,7 @@ export function insertVisualCompositionBlock(
   return editor.commands.insertContent(content);
 }
 
-export function patchSelectedMdxComponentProps(
+function patchSelectedMdxComponentProps(
   editor: Editor,
   patch: Record<string, unknown>,
 ): boolean {
@@ -224,68 +224,6 @@ export function duplicateSelectedMdxComponent(editor: Editor): boolean {
 
   return editor.commands.command(({ tr, dispatch }) => {
     tr.insert(selected.pos + selected.node.nodeSize, selected.node.copy());
-    dispatch?.(tr);
-    return true;
-  });
-}
-
-export function deleteSelectedVisualBlock(editor: Editor): boolean {
-  const selection = editor.state.selection as {
-    node?: PmNode;
-    from: number;
-    to: number;
-  };
-
-  if (!selection.node) {
-    return false;
-  }
-
-  return editor.commands.deleteSelection();
-}
-
-export function moveSelectedVisualBlock(
-  editor: Editor,
-  direction: "up" | "down",
-): boolean {
-  const selection = editor.state.selection as {
-    node?: PmNode;
-    from: number;
-    to: number;
-    $from: { parent: PmNode; index: () => number };
-  };
-
-  if (!selection.node) {
-    return false;
-  }
-
-  const index = selection.$from.index();
-  const parent = selection.$from.parent;
-
-  if (direction === "up") {
-    if (index === 0) {
-      return false;
-    }
-
-    const previous = parent.child(index - 1);
-    const targetPos = selection.from - previous.nodeSize;
-
-    return editor.commands.command(({ tr, dispatch }) => {
-      tr.delete(selection.from, selection.to);
-      tr.insert(targetPos, selection.node!.copy());
-      dispatch?.(tr);
-      return true;
-    });
-  }
-
-  if (index >= parent.childCount - 1) {
-    return false;
-  }
-
-  const next = parent.child(index + 1);
-
-  return editor.commands.command(({ tr, dispatch }) => {
-    tr.delete(selection.from, selection.to);
-    tr.insert(selection.from + next.nodeSize, selection.node!.copy());
     dispatch?.(tr);
     return true;
   });

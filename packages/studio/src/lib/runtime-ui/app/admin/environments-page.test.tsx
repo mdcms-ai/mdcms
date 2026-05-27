@@ -15,11 +15,13 @@ import { StudioMountInfoProvider } from "./mount-info-context.js";
 import { StudioSessionProvider } from "./session-context.js";
 import {
   EnvironmentManagementPageView,
-  PROMOTE_DEFAULT_STATE,
   type EnvironmentManagementState,
+} from "./environments-page.js";
+import {
+  PROMOTE_DEFAULT_STATE,
   type EnvironmentPromoteState,
   resolveDeleteFailureState,
-} from "./environments-page.js";
+} from "./environments-page-state.js";
 
 function createEnvironmentSummary(
   overrides: Partial<EnvironmentSummary> = {},

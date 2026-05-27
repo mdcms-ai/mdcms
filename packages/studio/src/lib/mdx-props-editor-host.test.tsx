@@ -6,13 +6,15 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { StudioMountContext } from "@mdcms/shared";
 
 import {
-  createInitialMdxPropsEditorHostState,
-  createMdxPropsEditorBindings,
   MdxPropsEditorHost,
   ReadyMdxPropsEditor,
+} from "./mdx-props-editor-host.js";
+import {
+  createInitialMdxPropsEditorHostState,
+  createMdxPropsEditorBindings,
   resolveMdxPropsEditorHostState,
   type PropsEditorComponentProps,
-} from "./mdx-props-editor-host.js";
+} from "./mdx-props-editor-host-state.js";
 
 function createContext(
   resolvePropsEditor: NonNullable<

@@ -501,6 +501,7 @@ function createStudioLoadFailure(input: {
 }
 
 async function defaultLoadRemoteModule(entryUrl: string): Promise<unknown> {
+  // react-doctor-disable-next-line react-doctor/no-dynamic-import-path -- the Studio runtime loader imports the server-provided bundle URL at runtime.
   return import(/* webpackIgnore: true */ entryUrl);
 }
 
@@ -529,6 +530,7 @@ async function fetchStudioBootstrapReadyResponse(input: {
 
   for (let attempt = 0; ; attempt += 1) {
     try {
+      // react-doctor-disable-next-line react-doctor/async-await-in-loop -- bootstrap retries must be sequential so delay/backoff and the final failure reason stay deterministic.
       bootstrapResponse = await input.fetcher(bootstrapUrl);
       break;
     } catch (error) {

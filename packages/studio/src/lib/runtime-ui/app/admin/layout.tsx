@@ -27,10 +27,16 @@ import {
   StudioSessionProvider,
   type StudioSessionState,
 } from "./session-context.js";
-import { StudioMountInfoProvider } from "./mount-info-context.js";
+import {
+  StudioMountInfoProvider,
+  type StudioMountInfo,
+} from "./mount-info-context.js";
 import { usePathname, useRouter } from "../../navigation.js";
 import { AppSidebar } from "../../components/layout/app-sidebar.js";
-import { AssistantProvider } from "../../components/assistant/assistant-context.js";
+import {
+  AssistantProvider,
+  type AssistantProviderProps,
+} from "../../components/assistant/assistant-context.js";
 import {
   AssistantRail,
   useAssistantMainPadding,
@@ -274,6 +280,17 @@ function extractStatusCode(error: unknown): number | null {
   return null;
 }
 
+function readStoredSidebarCollapsed(
+  storageKey: string,
+  defaultCollapsed: boolean,
+): boolean {
+  if (typeof localStorage === "undefined") {
+    return defaultCollapsed;
+  }
+  const stored = localStorage.getItem(storageKey);
+  return stored !== null ? stored === "true" : defaultCollapsed;
+}
+
 export default function AdminLayout({
   children,
   context,
@@ -298,7 +315,6 @@ function AdminLayoutInner({
   context: StudioMountContext;
 }) {
   const pathname = usePathname();
-  const router = useRouter();
   const sidebarStorageKey = getAdminSidebarStorageKey(
     pathname,
     context.basePath,
@@ -307,8 +323,45 @@ function AdminLayoutInner({
     pathname,
     context.basePath,
   );
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(
-    sidebarDefaultCollapsed,
+  return (
+    <AdminLayoutRouted
+      key={sidebarStorageKey}
+      context={context}
+      pathname={pathname}
+      sidebarStorageKey={sidebarStorageKey}
+      sidebarDefaultCollapsed={sidebarDefaultCollapsed}
+    >
+      {children}
+    </AdminLayoutRouted>
+  );
+}
+
+function AdminLayoutRouted(props: {
+  children: React.ReactNode;
+  context: StudioMountContext;
+  pathname: string;
+  sidebarStorageKey: string;
+  sidebarDefaultCollapsed: boolean;
+}) {
+  return useAdminLayoutRoutedElement(props);
+}
+
+function useAdminLayoutRoutedElement({
+  children,
+  context,
+  pathname,
+  sidebarStorageKey,
+  sidebarDefaultCollapsed,
+}: {
+  children: React.ReactNode;
+  context: StudioMountContext;
+  pathname: string;
+  sidebarStorageKey: string;
+  sidebarDefaultCollapsed: boolean;
+}) {
+  const { replace } = useRouter();
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() =>
+    readStoredSidebarCollapsed(sidebarStorageKey, sidebarDefaultCollapsed),
   );
   const [activeEnvironment, setActiveEnvironmentRaw] = useState<string | null>(
     () => {
@@ -331,15 +384,6 @@ function AdminLayoutInner({
     }
   }, []);
 
-  // Persist sidebar state. Document editor routes use their own key so the
-  // focused collapsed default does not overwrite the normal admin default.
-  useEffect(() => {
-    const stored = localStorage.getItem(sidebarStorageKey);
-    setSidebarCollapsed(
-      stored !== null ? stored === "true" : sidebarDefaultCollapsed,
-    );
-  }, [sidebarDefaultCollapsed, sidebarStorageKey]);
-
   // Re-fetch auth-scoped studio queries when the host rotates the bearer
   // token. The token is intentionally not part of query keys (matches the
   // pattern in the other CMS-132 TanStack hooks and avoids leaking the
@@ -352,6 +396,7 @@ function AdminLayoutInner({
     if (previousAuthTokenRef.current === context.auth.token) return;
     previousAuthTokenRef.current = context.auth.token;
     void queryClient.invalidateQueries({ queryKey: ["studio"] });
+    return () => {};
   }, [queryClient, context.auth.token]);
 
   // Capabilities
@@ -365,17 +410,7 @@ function AdminLayoutInner({
         environment: activeEnvironment,
       },
     };
-  }, [
-    context.apiBaseUrl,
-    context.auth.mode,
-    context.auth.token,
-    context.documentRoute?.project,
-    context.documentRoute?.initialEnvironment,
-    activeEnvironment,
-    // createAdminLayoutCapabilitiesLoadInput only reads the fields above
-    // from context, so the stable primitive deps above are sufficient.
-    context,
-  ]);
+  }, [activeEnvironment, context]);
 
   const capabilitiesQuery = useQuery({
     queryKey: [
@@ -409,7 +444,7 @@ function AdminLayoutInner({
   const isTokenMode = context.auth.mode === "token";
   const sessionLoadInput = useMemo(
     () => createAdminLayoutSessionLoadInput(context),
-    [context.apiBaseUrl, context.auth.mode, context.auth.token, context],
+    [context],
   );
 
   const sessionQuery = useQuery({
@@ -524,9 +559,10 @@ function AdminLayoutInner({
       const returnTo = encodeURIComponent(
         pathname.includes("/admin") ? pathname : "/admin",
       );
-      router.replace(`/admin/login?returnTo=${returnTo}`);
+      replace(`/admin/login?returnTo=${returnTo}`);
     }
-  }, [sessionState.status, pathname, router, isTokenMode]);
+    return () => {};
+  }, [sessionState.status, pathname, replace, isTokenMode]);
 
   const mdxCatalog = useMemo<MdxComponentCatalog>(
     () => context.mdx?.catalog ?? { components: [] },
@@ -633,7 +669,70 @@ function AdminLayoutInner({
           return response.schemaHash ?? null;
         }
       : undefined;
+  const permissions = {
+    canReadSchema,
+    canCreateContent,
+    canPublishContent,
+    canUnpublishContent,
+    canDeleteContent,
+    canManageUsers,
+    canManageSettings,
+  };
 
+  return (
+    <AdminLayoutShell
+      activeEnvironment={activeEnvironment}
+      aiRouteApi={aiRouteApi}
+      componentReferenceProvider={componentReferenceProvider}
+      context={context}
+      handleToggle={handleToggle}
+      mdxCatalog={mdxCatalog}
+      mountInfo={mountInfo}
+      permissions={permissions}
+      schemaHashFetcher={schemaHashFetcher}
+      sessionState={sessionState}
+      sidebarCollapsed={sidebarCollapsed}
+    >
+      {children}
+    </AdminLayoutShell>
+  );
+}
+
+function AdminLayoutShell({
+  activeEnvironment,
+  aiRouteApi,
+  children,
+  componentReferenceProvider,
+  context,
+  handleToggle,
+  mdxCatalog,
+  mountInfo,
+  permissions,
+  schemaHashFetcher,
+  sessionState,
+  sidebarCollapsed,
+}: {
+  activeEnvironment: string | null;
+  aiRouteApi: StudioAiRouteApi | undefined;
+  children: React.ReactNode;
+  componentReferenceProvider: AssistantProviderProps["componentReferenceProvider"];
+  context: StudioMountContext;
+  handleToggle: () => void;
+  mdxCatalog: MdxComponentCatalog;
+  mountInfo: StudioMountInfo;
+  permissions: {
+    canReadSchema: boolean;
+    canCreateContent: boolean;
+    canPublishContent: boolean;
+    canUnpublishContent: boolean;
+    canDeleteContent: boolean;
+    canManageUsers: boolean;
+    canManageSettings: boolean;
+  };
+  schemaHashFetcher: (() => Promise<string | null>) | undefined;
+  sessionState: StudioSessionState;
+  sidebarCollapsed: boolean;
+}) {
   return (
     <ToastProvider>
       <AssistantProvider
@@ -648,23 +747,13 @@ function AdminLayoutInner({
         }
       >
         <div className="min-h-screen overflow-x-hidden bg-background">
-          <AdminCapabilitiesProvider
-            value={{
-              canReadSchema,
-              canCreateContent,
-              canPublishContent,
-              canUnpublishContent,
-              canDeleteContent,
-              canManageUsers,
-              canManageSettings,
-            }}
-          >
+          <AdminCapabilitiesProvider value={permissions}>
             <StudioSessionProvider value={sessionState}>
               <StudioMountInfoProvider value={mountInfo}>
                 <AppSidebar
-                  canReadSchema={canReadSchema}
-                  canManageUsers={canManageUsers}
-                  canManageSettings={canManageSettings}
+                  canReadSchema={permissions.canReadSchema}
+                  canManageUsers={permissions.canManageUsers}
+                  canManageSettings={permissions.canManageSettings}
                   collapsed={sidebarCollapsed}
                   onToggle={handleToggle}
                 />

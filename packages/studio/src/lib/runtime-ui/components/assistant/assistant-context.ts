@@ -39,7 +39,7 @@ export type AssistantProposalAppliedEventDetail = {
   updatedAt: string;
 };
 
-export function emitAssistantProposalApplied(
+function emitAssistantProposalApplied(
   detail: AssistantProposalAppliedEventDetail,
 ) {
   if (typeof document === "undefined") return;
@@ -282,7 +282,7 @@ function makeEmptyThread(now: string, threadId?: string): AssistantThread {
   };
 }
 
-export function buildEmptyAssistantStore(now: string): AssistantStore {
+function buildEmptyAssistantStore(now: string): AssistantStore {
   const thread = makeEmptyThread(now);
   return {
     now,
@@ -540,7 +540,7 @@ export function resolveAssistantProposalDisplayPath(
   return { ...proposal, docPath: resolved };
 }
 
-export const AssistantActiveDocumentContext =
+const AssistantActiveDocumentContext =
   React.createContext<AssistantActiveDocument | null>(null);
 
 type AssistantActiveDocumentRegistration = (input: {
@@ -569,15 +569,16 @@ export function AssistantActiveDocumentProvider({
   }, [register, value]);
 
   React.useEffect(() => {
+    const token = tokenRef.current!;
     return () => {
-      register?.({ token: tokenRef.current!, document: null });
+      register?.({ token, document: null });
     };
   }, [register]);
 
-  return (
-    <AssistantActiveDocumentContext.Provider value={value}>
-      {children}
-    </AssistantActiveDocumentContext.Provider>
+  return React.createElement(
+    AssistantActiveDocumentContext.Provider,
+    { value },
+    children,
   );
 }
 
@@ -1405,8 +1406,7 @@ function saveStoreToStorage(
   }
 }
 
-export function AssistantProvider({
-  children,
+function useAssistantProviderModel({
   initialStore,
   initialMode,
   initialRailWidth,
@@ -1416,7 +1416,7 @@ export function AssistantProvider({
   mdxCatalog,
   componentReferenceProvider,
   storageKey,
-}: AssistantProviderProps) {
+}: Omit<AssistantProviderProps, "children">) {
   const [state, dispatch] = React.useReducer(reducer, undefined, () => {
     const persisted = storageKey ? loadStoreFromStorage(storageKey) : undefined;
     const persistedRailWidth = storageKey
@@ -1604,6 +1604,7 @@ export function AssistantProvider({
       pendingControllerRef.current = controller;
       setIsPending(true);
 
+      // react-doctor-disable-next-line react-doctor/async-defer-await -- the post-await guard rejects stale component-reference work if this request was aborted.
       const componentReferences = componentReferenceProvider
         ? await componentReferenceProvider().catch(() => [])
         : [];
@@ -2178,20 +2179,28 @@ export function AssistantProvider({
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  return (
-    <AssistantMountedContext.Provider value={true}>
-      <AssistantActiveDocumentRegistrationContext.Provider
-        value={registerActiveDocument}
-      >
-        <AssistantActiveDocumentContext.Provider
-          value={registeredActiveDocument}
-        >
-          <AssistantContext.Provider value={value}>
-            {children}
-          </AssistantContext.Provider>
-        </AssistantActiveDocumentContext.Provider>
-      </AssistantActiveDocumentRegistrationContext.Provider>
-    </AssistantMountedContext.Provider>
+  return { registerActiveDocument, registeredActiveDocument, value };
+}
+
+export function AssistantProvider({
+  children,
+  ...options
+}: AssistantProviderProps) {
+  const { registerActiveDocument, registeredActiveDocument, value } =
+    useAssistantProviderModel(options);
+
+  return React.createElement(
+    AssistantMountedContext.Provider,
+    { value: true },
+    React.createElement(
+      AssistantActiveDocumentRegistrationContext.Provider,
+      { value: registerActiveDocument },
+      React.createElement(
+        AssistantActiveDocumentContext.Provider,
+        { value: registeredActiveDocument },
+        React.createElement(AssistantContext.Provider, { value }, children),
+      ),
+    ),
   );
 }
 

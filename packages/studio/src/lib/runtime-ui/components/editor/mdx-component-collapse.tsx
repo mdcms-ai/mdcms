@@ -8,49 +8,17 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import {
+  defaultMdxComponentCollapseSnapshot,
+  nextMdxComponentCollapseSnapshot,
+  toggleMdxComponentCollapseSnapshot,
+  type MdxComponentCollapseMode,
+  type MdxComponentCollapseSnapshot,
+} from "./mdx-component-collapse-state.js";
 
-export type MdxComponentCollapseMode = "expanded" | "collapsed";
-
-// `null` for `globalState` means "no global broadcast has happened yet" —
-// each node view keeps its own local collapsed/expanded state. Once the user
-// hits the toolbar collapse/expand toggle, `globalState` flips and
-// `generation` bumps; node views observe the bump and reset their local
-// state to match. This lets us express "collapse all then keep individual
-// expansions" without the editor having to track per-node identity.
-export type MdxComponentCollapseSnapshot = {
-  globalState: MdxComponentCollapseMode | null;
-  generation: number;
-};
-
-const defaultSnapshot: MdxComponentCollapseSnapshot = {
-  globalState: null,
-  generation: 0,
-};
-
-// Extracted as a pure helper so the snapshot transition contract — the
-// `generation` bump that node views observe — is testable without spinning
-// up React just to drive a hook.
-export function nextMdxComponentCollapseSnapshot(
-  previous: MdxComponentCollapseSnapshot,
-  next: MdxComponentCollapseMode,
-): MdxComponentCollapseSnapshot {
-  return {
-    globalState: next,
-    generation: previous.generation + 1,
-  };
-}
-
-export function toggleMdxComponentCollapseSnapshot(
-  previous: MdxComponentCollapseSnapshot,
-): MdxComponentCollapseSnapshot {
-  return nextMdxComponentCollapseSnapshot(
-    previous,
-    previous.globalState === "collapsed" ? "expanded" : "collapsed",
-  );
-}
-
-const MdxComponentCollapseContext =
-  createContext<MdxComponentCollapseSnapshot>(defaultSnapshot);
+const MdxComponentCollapseContext = createContext<MdxComponentCollapseSnapshot>(
+  defaultMdxComponentCollapseSnapshot,
+);
 
 export function useMdxComponentCollapseSnapshot(): MdxComponentCollapseSnapshot {
   return use(MdxComponentCollapseContext);
@@ -58,7 +26,7 @@ export function useMdxComponentCollapseSnapshot(): MdxComponentCollapseSnapshot 
 
 export function MdxComponentCollapseProvider(props: {
   snapshot: MdxComponentCollapseSnapshot;
-  children: ReactNode;
+  children?: ReactNode;
 }) {
   return (
     <MdxComponentCollapseContext.Provider value={props.snapshot}>
@@ -74,8 +42,9 @@ export type MdxComponentCollapseController = {
 };
 
 export function useMdxComponentCollapseController(): MdxComponentCollapseController {
-  const [snapshot, setSnapshot] =
-    useState<MdxComponentCollapseSnapshot>(defaultSnapshot);
+  const [snapshot, setSnapshot] = useState<MdxComponentCollapseSnapshot>(
+    defaultMdxComponentCollapseSnapshot,
+  );
 
   const broadcastGlobalCollapse = useCallback(
     (next: MdxComponentCollapseMode) => {

@@ -5,11 +5,13 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import {
   MdxComponentCollapseProvider,
+  useMdxComponentCollapseSnapshot,
+} from "./mdx-component-collapse.js";
+import {
   nextMdxComponentCollapseSnapshot,
   toggleMdxComponentCollapseSnapshot,
-  useMdxComponentCollapseSnapshot,
   type MdxComponentCollapseSnapshot,
-} from "./mdx-component-collapse.js";
+} from "./mdx-component-collapse-state.js";
 
 const initialSnapshot: MdxComponentCollapseSnapshot = {
   globalState: null,
@@ -89,10 +91,11 @@ test("a consumer mounted after a 'collapsed' broadcast initializes as collapsed"
   };
 
   const markup = renderToStaticMarkup(
-    createElement(MdxComponentCollapseProvider, {
-      snapshot,
-      children: createElement(CollapseConsumerStub, { name: "late-mount" }),
-    }),
+    createElement(
+      MdxComponentCollapseProvider,
+      { snapshot },
+      createElement(CollapseConsumerStub, { name: "late-mount" }),
+    ),
   );
 
   assert.match(markup, /data-test-consumer="late-mount"/);
@@ -101,10 +104,11 @@ test("a consumer mounted after a 'collapsed' broadcast initializes as collapsed"
 
 test("a consumer mounted with no prior broadcast initializes as expanded", () => {
   const markup = renderToStaticMarkup(
-    createElement(MdxComponentCollapseProvider, {
-      snapshot: initialSnapshot,
-      children: createElement(CollapseConsumerStub, { name: "fresh-mount" }),
-    }),
+    createElement(
+      MdxComponentCollapseProvider,
+      { snapshot: initialSnapshot },
+      createElement(CollapseConsumerStub, { name: "fresh-mount" }),
+    ),
   );
 
   assert.match(markup, /data-test-collapsed="false"/);
@@ -117,10 +121,11 @@ test("a consumer mounted after an 'expanded' broadcast initializes as expanded",
   };
 
   const markup = renderToStaticMarkup(
-    createElement(MdxComponentCollapseProvider, {
-      snapshot,
-      children: createElement(CollapseConsumerStub, { name: "after-expand" }),
-    }),
+    createElement(
+      MdxComponentCollapseProvider,
+      { snapshot },
+      createElement(CollapseConsumerStub, { name: "after-expand" }),
+    ),
   );
 
   assert.match(markup, /data-test-collapsed="false"/);

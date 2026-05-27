@@ -64,7 +64,7 @@ describe("InlineAiResultBody — CMS-224 UI states", () => {
   test("loading state renders a 'Generating' status row", () => {
     const markup = render({ status: "loading", intent });
     assert.match(markup, /Generating…/);
-    assert.match(markup, /role="status"/);
+    assert.match(markup, /^<output /);
     assert.match(markup, /aria-live="polite"/);
   });
 

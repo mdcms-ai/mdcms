@@ -203,6 +203,7 @@ function RejectFeedback({ onCancel, onSend }: RejectFeedbackProps) {
         Rejected: what should change?
       </div>
       <textarea
+        aria-label="Rejection feedback"
         value={feedback}
         onChange={(e) => setFeedback(e.target.value)}
         placeholder="e.g. Keep it under 12 words, no em dashes."
@@ -655,7 +656,7 @@ export type ProposalCardProps = {
 };
 
 /** 6-second window — Sonia's design + the AI Elements reference both use this. */
-export const UNDO_WINDOW_MS = 6000;
+const UNDO_WINDOW_MS = 6000;
 
 /**
  * Countdown timer that pauses on hover and when the tab is hidden.
@@ -679,6 +680,10 @@ function useUndoCountdown(
   });
   const expiredRef = React.useRef(false);
   const onExpireRef = React.useRef(onExpire);
+  const progressRef = React.useRef(progress);
+  React.useEffect(() => {
+    progressRef.current = progress;
+  }, [progress]);
   React.useEffect(() => {
     onExpireRef.current = onExpire;
   }, [onExpire]);
@@ -701,7 +706,7 @@ function useUndoCountdown(
     if (expiredRef.current) return;
     if (effectivePaused) return;
     const startedAtMs = performance.now();
-    const startProgress = progress;
+    const startProgress = progressRef.current;
     const tick = () => {
       const elapsed = performance.now() - startedAtMs;
       const next = Math.max(0, startProgress - elapsed / durationMs);
@@ -714,10 +719,6 @@ function useUndoCountdown(
     };
     const id = setInterval(tick, 80);
     return () => clearInterval(id);
-    // We intentionally skip `progress` as a dep — re-running on every
-    // tick would keep restarting the timer. `progress` is read once
-    // when this effect mounts; from there the local closure drives it.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [durationMs, effectivePaused]);
 
   return progress;
@@ -774,19 +775,16 @@ export function AppliedBanner({
   // banner at the top of the stack every render and break LIFO
   // ordering relative to sibling banners).
   const onUndoRef = React.useRef(onUndo);
+  const canRegisterUndo = canUndo && Boolean(onUndo);
   React.useEffect(() => {
     onUndoRef.current = onUndo;
   }, [onUndo]);
   React.useEffect(() => {
-    if (!canUndo || !onUndo) return;
+    if (!canRegisterUndo) return;
     return pushAppliedUndoHandler(() => {
       onUndoRef.current?.();
     });
-    // We intentionally re-register only when the "is undo available"
-    // signal flips, not on every onUndo identity change — the ref
-    // above already keeps the handler current.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canUndo]);
+  }, [canRegisterUndo]);
   // `acceptedAt` is required for this banner to render — the caller
   // gates on it, but TypeScript needs the narrowing here so the hook
   // doesn't see a possibly-undefined value. Pause the countdown
@@ -1099,7 +1097,7 @@ function extractUndoErrorMessage(error: unknown): string {
  * the chat rhythm reads as "happening now vs. already history" without
  * the row vanishing. Matches the design's `LoggedLine` shape.
  */
-export function AppliedLogLine({ proposal }: { proposal: AssistantProposal }) {
+function AppliedLogLine({ proposal }: { proposal: AssistantProposal }) {
   const docPath = "docPath" in proposal ? proposal.docPath : undefined;
   const acceptedAt = proposal.acceptedAt
     ? formatLoggedTime(proposal.acceptedAt)

@@ -474,9 +474,9 @@ function ContentTypePaginationBar({
   );
 }
 
-export default function ContentTypePage() {
+function useContentTypePageController() {
   const params = useParams();
-  const router = useRouter();
+  const { push } = useRouter();
   const typeId = params.type as string;
   const mountInfo = useStudioMountInfo();
   const capabilities = useAdminCapabilities();
@@ -485,7 +485,6 @@ export default function ContentTypePage() {
   const toast = useToast();
   const [searchInput, setSearchInput] = useState("");
   const [rowActionError, setRowActionError] = useState<string | null>(null);
-  const [showLoading, setShowLoading] = useState(false);
 
   // Schema query for type metadata (localized, locales, directory)
   const schemaApi = useMemo(() => {
@@ -525,16 +524,7 @@ export default function ContentTypePage() {
     enableTranslationCoverage,
   });
   const create = useCreateDocument(typeId);
-
-  // Debounce loading skeleton by 200ms
-  useEffect(() => {
-    if (list.status !== "loading") {
-      setShowLoading(false);
-      return;
-    }
-    const timer = setTimeout(() => setShowLoading(true), 200);
-    return () => clearTimeout(timer);
-  }, [list.status]);
+  const showLoading = list.status === "loading";
 
   // Debounced search
   useEffect(() => {
@@ -566,6 +556,16 @@ export default function ContentTypePage() {
   const onRowActionError = (error: Error) => {
     setRowActionError(error.message || "Action failed.");
   };
+  const contentListQueryKey = getContentTypeListQueryKey(
+    mountInfo.project,
+    mountInfo.environment,
+    typeId,
+  );
+  const translationCoverageQueryKey = getContentTranslationCoverageQueryKey(
+    mountInfo.project,
+    mountInfo.environment,
+    typeId,
+  );
 
   const publishMutation = useMutation({
     mutationFn: (documentId: string) => {
@@ -574,7 +574,10 @@ export default function ContentTypePage() {
       return documentApi.publish({ documentId });
     },
     onSuccess: () => {
-      invalidateContentListQueries();
+      void queryClient.invalidateQueries({ queryKey: contentListQueryKey });
+      void queryClient.invalidateQueries({
+        queryKey: translationCoverageQueryKey,
+      });
     },
     onError: onRowActionError,
   });
@@ -586,7 +589,10 @@ export default function ContentTypePage() {
       return documentApi.unpublish({ documentId });
     },
     onSuccess: () => {
-      invalidateContentListQueries();
+      void queryClient.invalidateQueries({ queryKey: contentListQueryKey });
+      void queryClient.invalidateQueries({
+        queryKey: translationCoverageQueryKey,
+      });
     },
     onError: onRowActionError,
   });
@@ -598,8 +604,11 @@ export default function ContentTypePage() {
       return documentApi.duplicate({ documentId });
     },
     onSuccess: (data) => {
-      invalidateContentListQueries();
-      router.push(`/admin/content/${typeId}/${data.documentId}`);
+      void queryClient.invalidateQueries({ queryKey: contentListQueryKey });
+      void queryClient.invalidateQueries({
+        queryKey: translationCoverageQueryKey,
+      });
+      push(`/admin/content/${typeId}/${data.documentId}`);
     },
     onError: onRowActionError,
   });
@@ -611,7 +620,10 @@ export default function ContentTypePage() {
       return documentApi.softDelete({ documentId });
     },
     onSuccess: () => {
-      invalidateContentListQueries();
+      void queryClient.invalidateQueries({ queryKey: contentListQueryKey });
+      void queryClient.invalidateQueries({
+        queryKey: translationCoverageQueryKey,
+      });
       toast.success(
         "Document moved to trash. It can be restored from the Trash page.",
       );
@@ -639,32 +651,59 @@ export default function ContentTypePage() {
     [showTranslationCoverage],
   );
 
-  const invalidateContentListQueries = () => {
-    void queryClient.invalidateQueries({
-      queryKey: getContentTypeListQueryKey(
-        mountInfo.project,
-        mountInfo.environment,
-        typeId,
-      ),
-    });
-    void queryClient.invalidateQueries({
-      queryKey: getContentTranslationCoverageQueryKey(
-        mountInfo.project,
-        mountInfo.environment,
-        typeId,
-      ),
-    });
-  };
-
   const rowActionHandlers = {
     onEdit: (documentId: string) =>
-      router.push(`/admin/content/${typeId}/${documentId}`),
+      push(`/admin/content/${typeId}/${documentId}`),
     onPublish: (documentId: string) => publishMutation.mutate(documentId),
     onUnpublish: (documentId: string) => unpublishMutation.mutate(documentId),
     onDuplicate: (documentId: string) => duplicateMutation.mutate(documentId),
     onDelete: (documentId: string) => deleteMutation.mutate(documentId),
   };
 
+  return {
+    capabilities,
+    create,
+    currentPage,
+    isRowActionPending,
+    list,
+    mountInfo,
+    rowActionError,
+    rowActionHandlers,
+    schemaEntry,
+    searchInput,
+    setRowActionError,
+    setSearchInput,
+    showLoading,
+    showTranslationCoverage,
+    tableColumns,
+    totalPages,
+    typeId,
+    typeName,
+    push,
+  };
+}
+
+function ContentTypePageView({
+  capabilities,
+  create,
+  currentPage,
+  isRowActionPending,
+  list,
+  mountInfo,
+  rowActionError,
+  rowActionHandlers,
+  schemaEntry,
+  searchInput,
+  setRowActionError,
+  setSearchInput,
+  showLoading,
+  showTranslationCoverage,
+  tableColumns,
+  totalPages,
+  typeId,
+  typeName,
+  push,
+}: ReturnType<typeof useContentTypePageController>) {
   return (
     <div className="min-h-screen">
       <PageHeader
@@ -841,7 +880,7 @@ export default function ContentTypePage() {
                 translationCoverageByGroup={list.translationCoverageByGroup}
                 tableColumns={tableColumns}
                 onRowClick={(documentId) =>
-                  router.push(`/admin/content/${typeId}/${documentId}`)
+                  push(`/admin/content/${typeId}/${documentId}`)
                 }
                 rowActionHandlers={rowActionHandlers}
               />
@@ -888,4 +927,9 @@ export default function ContentTypePage() {
       />
     </div>
   );
+}
+
+export default function ContentTypePage() {
+  const viewProps = useContentTypePageController();
+  return <ContentTypePageView {...viewProps} />;
 }

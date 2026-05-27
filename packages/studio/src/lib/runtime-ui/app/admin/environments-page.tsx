@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useReducer, type ReactNode } from "react";
 
 import type {
   ContentDocumentResponse,
@@ -29,6 +29,16 @@ import { Input } from "../../components/ui/input.js";
 import { Label } from "../../components/ui/label.js";
 import { Switch } from "../../components/ui/switch.js";
 import { cn } from "../../lib/utils.js";
+import {
+  PROMOTE_DEFAULT_STATE,
+  readRemapDetails,
+  readRuntimeErrorMessage,
+  readRuntimeErrorStatus,
+  resolveDeleteFailureState,
+  type EnvironmentPromoteSnapshot,
+  type EnvironmentPromoteState,
+  type PromoteStage,
+} from "./environments-page-state.js";
 
 export type EnvironmentManagementState =
   | { status: "loading"; project: string; message: string }
@@ -47,49 +57,6 @@ export type EnvironmentCloneFormState = {
   includeSettings: boolean;
   includeDrafts: boolean;
   preservePaths: boolean;
-};
-
-export type PromoteStage = "configure" | "preview" | "result";
-
-export type EnvironmentPromoteSnapshot = {
-  sourceEnvId: string;
-  sourceEnvName: string;
-  targetEnvId: string;
-  targetEnvName: string;
-  documentIds: string[];
-  includeUnpublished: boolean;
-};
-
-export type EnvironmentPromoteState = {
-  stage: PromoteStage;
-  sourceEnvironmentId: string;
-  targetEnvironmentId: string;
-  selectedDocumentIds: string[];
-  includeUnpublished: boolean;
-  documents: ContentDocumentResponse[];
-  documentsLoading: boolean;
-  documentsError: string | null;
-  preview:
-    | { status: "idle" }
-    | { status: "loading" }
-    | {
-        status: "ready";
-        results: DocumentPromotionResult[];
-        snapshot: EnvironmentPromoteSnapshot;
-      }
-    | {
-        status: "error";
-        message: string;
-        remapDetails?: {
-          sourceDocumentId?: string;
-          fieldPath?: string;
-          translationGroupId?: string;
-          locale?: string;
-        };
-      };
-  executing: boolean;
-  executeError: string | null;
-  executeResult: DocumentPromotionResult[] | null;
 };
 
 type EnvironmentManagementPageViewProps = {
@@ -160,80 +127,6 @@ function isEnvironmentSummary(value: unknown): value is EnvironmentSummary {
   );
 }
 
-function readRuntimeErrorMessage(error: unknown, fallback: string): string {
-  const normalize = (message: string): string =>
-    message === "Server config is required to manage environments."
-      ? "Environment management is unavailable because the connected backend could not load mdcms.config.ts."
-      : message;
-  if (
-    error &&
-    typeof error === "object" &&
-    "message" in error &&
-    typeof (error as { message?: unknown }).message === "string" &&
-    (error as { message: string }).message.trim().length > 0
-  ) {
-    return normalize((error as { message: string }).message);
-  }
-  return normalize(fallback);
-}
-
-function readRuntimeErrorStatus(error: unknown): number | null {
-  if (
-    error &&
-    typeof error === "object" &&
-    "statusCode" in error &&
-    typeof (error as { statusCode?: unknown }).statusCode === "number"
-  ) {
-    return (error as { statusCode: number }).statusCode;
-  }
-  return null;
-}
-
-function readRemapDetails(error: unknown) {
-  if (
-    error &&
-    typeof error === "object" &&
-    "details" in error &&
-    typeof (error as { details?: unknown }).details === "object" &&
-    (error as { details?: unknown }).details !== null
-  ) {
-    const details = (error as { details: Record<string, unknown> }).details;
-    return {
-      sourceDocumentId:
-        typeof details.sourceDocumentId === "string"
-          ? details.sourceDocumentId
-          : undefined,
-      fieldPath:
-        typeof details.fieldPath === "string" ? details.fieldPath : undefined,
-      translationGroupId:
-        typeof details.translationGroupId === "string"
-          ? details.translationGroupId
-          : undefined,
-      locale: typeof details.locale === "string" ? details.locale : undefined,
-    };
-  }
-  return undefined;
-}
-
-export function resolveDeleteFailureState(error: unknown): {
-  message: string;
-  shouldCloseDialog: boolean;
-  shouldReload: boolean;
-  renderInDialog: boolean;
-} {
-  const message = readRuntimeErrorMessage(
-    error,
-    "Environment deletion failed.",
-  );
-  const statusCode = readRuntimeErrorStatus(error);
-  return {
-    message,
-    shouldCloseDialog: statusCode === 404,
-    shouldReload: statusCode === 404,
-    renderInDialog: statusCode !== 404,
-  };
-}
-
 const CLONE_DEFAULT_FORM: EnvironmentCloneFormState = {
   sourceEnvironmentId: "",
   includeContent: true,
@@ -242,20 +135,60 @@ const CLONE_DEFAULT_FORM: EnvironmentCloneFormState = {
   preservePaths: true,
 };
 
-export const PROMOTE_DEFAULT_STATE: EnvironmentPromoteState = {
-  stage: "configure",
-  sourceEnvironmentId: "",
-  targetEnvironmentId: "",
-  selectedDocumentIds: [],
-  includeUnpublished: false,
-  documents: [],
-  documentsLoading: false,
-  documentsError: null,
-  preview: { status: "idle" },
-  executing: false,
-  executeError: null,
-  executeResult: null,
+type EnvironmentPageUiState = {
+  isCreateDialogOpen: boolean;
+  createName: string;
+  createError: string | null;
+  actionError: string | null;
+  deleteError: string | null;
+  pendingCreate: boolean;
+  pendingDeleteId: string | null;
+  deleteTarget: EnvironmentSummary | null;
+  cloneTarget: EnvironmentSummary | null;
+  cloneForm: EnvironmentCloneFormState;
+  cloneError: string | null;
+  cloneSuccess: string | null;
+  pendingCloneId: string | null;
+  promoteTarget: EnvironmentSummary | null;
+  promoteState: EnvironmentPromoteState;
 };
+
+type EnvironmentPageUiPatch =
+  | Partial<EnvironmentPageUiState>
+  | ((state: EnvironmentPageUiState) => Partial<EnvironmentPageUiState>);
+
+const ENVIRONMENT_PAGE_INITIAL_UI: EnvironmentPageUiState = {
+  isCreateDialogOpen: false,
+  createName: "",
+  createError: null,
+  actionError: null,
+  deleteError: null,
+  pendingCreate: false,
+  pendingDeleteId: null,
+  deleteTarget: null,
+  cloneTarget: null,
+  cloneForm: CLONE_DEFAULT_FORM,
+  cloneError: null,
+  cloneSuccess: null,
+  pendingCloneId: null,
+  promoteTarget: null,
+  promoteState: PROMOTE_DEFAULT_STATE,
+};
+
+function environmentPageStateReducer(
+  _state: EnvironmentManagementState,
+  nextState: EnvironmentManagementState,
+): EnvironmentManagementState {
+  return nextState;
+}
+
+function environmentPageUiReducer(
+  state: EnvironmentPageUiState,
+  update: EnvironmentPageUiPatch,
+): EnvironmentPageUiState {
+  const patch = typeof update === "function" ? update(state) : update;
+  return { ...state, ...patch };
+}
 
 function orderedByLineage(
   environments: readonly EnvironmentSummary[],
@@ -1173,6 +1106,7 @@ function PromoteConfigure({
                   data-mdcms-environment-promote-document-row={doc.documentId}
                 >
                   <input
+                    aria-label={`Promote ${doc.path}`}
                     type="checkbox"
                     checked={checked}
                     onChange={() => onPromoteToggleDocument?.(doc.documentId)}
@@ -1674,58 +1608,97 @@ export function EnvironmentManagementPageView({
   );
 }
 
-export default function EnvironmentsPage() {
+function useEnvironmentPageController(): EnvironmentManagementPageViewProps {
   const { project, environment, apiBaseUrl, auth } = useStudioMountInfo();
   const sessionState = useStudioSession();
-  const [state, setState] = useState<EnvironmentManagementState>(() =>
+  const [state, setEnvironmentState] = useReducer(
+    environmentPageStateReducer,
     project ? createLoadingState(project) : createMissingRouteState(),
   );
-  const [reloadVersion, setReloadVersion] = useState(0);
-  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
-  const [createName, setCreateName] = useState("");
-  const [createError, setCreateError] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
-  const [pendingCreate, setPendingCreate] = useState(false);
-  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<EnvironmentSummary | null>(
-    null,
+  const [uiState, updateUiState] = useReducer(
+    environmentPageUiReducer,
+    ENVIRONMENT_PAGE_INITIAL_UI,
   );
-  const [cloneTarget, setCloneTarget] = useState<EnvironmentSummary | null>(
-    null,
-  );
-  const [cloneForm, setCloneForm] =
-    useState<EnvironmentCloneFormState>(CLONE_DEFAULT_FORM);
-  const [cloneError, setCloneError] = useState<string | null>(null);
-  const [cloneSuccess, setCloneSuccess] = useState<string | null>(null);
-  const [pendingCloneId, setPendingCloneId] = useState<string | null>(null);
-
-  const [promoteTarget, setPromoteTarget] = useState<EnvironmentSummary | null>(
-    null,
-  );
-  const [promoteState, setPromoteState] = useState<EnvironmentPromoteState>(
-    PROMOTE_DEFAULT_STATE,
+  const {
+    isCreateDialogOpen,
+    createName,
+    createError,
+    actionError,
+    deleteError,
+    pendingCreate,
+    pendingDeleteId,
+    deleteTarget,
+    cloneTarget,
+    cloneForm,
+    cloneError,
+    cloneSuccess,
+    pendingCloneId,
+    promoteTarget,
+    promoteState,
+  } = uiState;
+  const setIsCreateDialogOpen = (isCreateDialogOpen: boolean) =>
+    updateUiState({ isCreateDialogOpen });
+  const setCreateName = (createName: string) => updateUiState({ createName });
+  const setCreateError = (createError: string | null) =>
+    updateUiState({ createError });
+  const setActionError = (actionError: string | null) =>
+    updateUiState({ actionError });
+  const setDeleteError = (deleteError: string | null) =>
+    updateUiState({ deleteError });
+  const setPendingCreate = (pendingCreate: boolean) =>
+    updateUiState({ pendingCreate });
+  const setPendingDeleteId = (pendingDeleteId: string | null) =>
+    updateUiState({ pendingDeleteId });
+  const setDeleteTarget = (deleteTarget: EnvironmentSummary | null) =>
+    updateUiState({ deleteTarget });
+  const setCloneTarget = (cloneTarget: EnvironmentSummary | null) =>
+    updateUiState({ cloneTarget });
+  const setCloneForm = (cloneForm: EnvironmentCloneFormState) =>
+    updateUiState({ cloneForm });
+  const setCloneError = (cloneError: string | null) =>
+    updateUiState({ cloneError });
+  const setCloneSuccess = (cloneSuccess: string | null) =>
+    updateUiState({ cloneSuccess });
+  const setPendingCloneId = (pendingCloneId: string | null) =>
+    updateUiState({ pendingCloneId });
+  const setPromoteTarget = (promoteTarget: EnvironmentSummary | null) =>
+    updateUiState({ promoteTarget });
+  const setPromoteState = (
+    promoteState:
+      | EnvironmentPromoteState
+      | ((previousState: EnvironmentPromoteState) => EnvironmentPromoteState),
+  ) =>
+    updateUiState((currentUiState) => ({
+      promoteState:
+        typeof promoteState === "function"
+          ? promoteState(currentUiState.promoteState)
+          : promoteState,
+    }));
+  const [reloadVersion, requestReload] = useReducer(
+    (version: number) => version + 1,
+    0,
   );
 
   useEffect(() => {
-    if (!project || !environment) {
-      setState(createMissingRouteState());
-      return;
-    }
-
     let cancelled = false;
-    setState(createLoadingState(project));
 
-    const environmentApi = createStudioEnvironmentApi(
-      { project, environment, serverUrl: apiBaseUrl },
-      { auth },
-    );
+    const loadEnvironments = async () => {
+      if (!project || !environment) {
+        setEnvironmentState(createMissingRouteState());
+        return;
+      }
 
-    void environmentApi
-      .list()
-      .then((result) => {
+      setEnvironmentState(createLoadingState(project));
+
+      const environmentApi = createStudioEnvironmentApi(
+        { project, environment, serverUrl: apiBaseUrl },
+        { auth },
+      );
+
+      try {
+        const result = await environmentApi.list();
         if (cancelled) return;
-        setState({
+        setEnvironmentState({
           status: "ready",
           project,
           environments: result.data.toSorted((left, right) => {
@@ -1736,25 +1709,27 @@ export default function EnvironmentsPage() {
           }),
           definitionsMeta: result.meta,
         });
-      })
-      .catch((error) => {
+      } catch (error) {
         if (cancelled) return;
         const message = readRuntimeErrorMessage(
           error,
           "Environment request failed.",
         );
         const statusCode = readRuntimeErrorStatus(error);
-        setState(
+        setEnvironmentState(
           statusCode === 401 || statusCode === 403
             ? { status: "forbidden", project, message }
             : { status: "error", project, message },
         );
-      });
+      }
+    };
+
+    void loadEnvironments();
 
     return () => {
       cancelled = true;
     };
-  }, [apiBaseUrl, auth.mode, auth.token, environment, project, reloadVersion]);
+  }, [apiBaseUrl, auth, environment, project, reloadVersion]);
 
   const sourceEnvName = useMemo(() => {
     if (state.status !== "ready") return null;
@@ -1766,36 +1741,37 @@ export default function EnvironmentsPage() {
   // Load source documents whenever the promote drawer is open and the source
   // environment changes.
   useEffect(() => {
-    if (
-      !project ||
-      promoteTarget === null ||
-      !sourceEnvName ||
-      state.status !== "ready"
-    ) {
-      return;
-    }
-
     let cancelled = false;
-    setPromoteState((prev) => ({
-      ...prev,
-      documents: [],
-      documentsLoading: true,
-      documentsError: null,
-      selectedDocumentIds: [],
-    }));
 
-    const contentApi = createStudioContentListApi(
-      { project, environment: sourceEnvName, serverUrl: apiBaseUrl },
-      { auth },
-    );
+    const loadSourceDocuments = async () => {
+      if (
+        !project ||
+        promoteTarget === null ||
+        !sourceEnvName ||
+        state.status !== "ready"
+      ) {
+        return;
+      }
 
-    // Paginate exhaustively so the picker reflects the entire source
-    // environment, not just the first 100 results. The cap protects against
-    // pathological pagination loops and matches what an operator can
-    // reasonably scroll in a drawer.
-    const PAGE_SIZE = 100;
-    const HARD_CAP = 1000;
-    const fetchAll = async (): Promise<ContentDocumentResponse[]> => {
+      setPromoteState((prev) => ({
+        ...prev,
+        documents: [],
+        documentsLoading: true,
+        documentsError: null,
+        selectedDocumentIds: [],
+      }));
+
+      const contentApi = createStudioContentListApi(
+        { project, environment: sourceEnvName, serverUrl: apiBaseUrl },
+        { auth },
+      );
+
+      // Paginate exhaustively so the picker reflects the entire source
+      // environment, not just the first 100 results. The cap protects against
+      // pathological pagination loops and matches what an operator can
+      // reasonably scroll in a drawer.
+      const PAGE_SIZE = 100;
+      const HARD_CAP = 1000;
       const collected: ContentDocumentResponse[] = [];
       let offset = 0;
       while (collected.length < HARD_CAP) {
@@ -1813,8 +1789,10 @@ export default function EnvironmentsPage() {
       return collected;
     };
 
-    void fetchAll()
-      .then((documents) => {
+    const loadDocuments = async () => {
+      try {
+        const documents = await loadSourceDocuments();
+        if (!documents) return;
         if (cancelled) return;
         setPromoteState((prev) => ({
           ...prev,
@@ -1822,8 +1800,7 @@ export default function EnvironmentsPage() {
           documentsLoading: false,
           documentsError: null,
         }));
-      })
-      .catch((error) => {
+      } catch (error) {
         if (cancelled) return;
         setPromoteState((prev) => ({
           ...prev,
@@ -1833,20 +1810,15 @@ export default function EnvironmentsPage() {
             "Failed to load source environment documents.",
           ),
         }));
-      });
+      }
+    };
+
+    void loadDocuments();
 
     return () => {
       cancelled = true;
     };
-  }, [
-    apiBaseUrl,
-    auth.mode,
-    auth.token,
-    project,
-    promoteTarget,
-    sourceEnvName,
-    state,
-  ]);
+  }, [apiBaseUrl, auth, project, promoteTarget, sourceEnvName, state]);
 
   // Invalidate any existing preview when configure inputs change.
   useEffect(() => {
@@ -1889,7 +1861,7 @@ export default function EnvironmentsPage() {
       await environmentApi.create({ name: createName });
       setCreateName("");
       setIsCreateDialogOpen(false);
-      setReloadVersion((current) => current + 1);
+      requestReload();
     } catch (error) {
       setCreateError(
         readRuntimeErrorMessage(error, "Environment creation failed."),
@@ -1937,7 +1909,7 @@ export default function EnvironmentsPage() {
       setCloneSuccess(
         `Cloned ${result.documentsCloned} document${result.documentsCloned === 1 ? "" : "s"} into ${cloneTarget.name}.`,
       );
-      setReloadVersion((current) => current + 1);
+      requestReload();
     } catch (error) {
       setCloneError(
         readRuntimeErrorMessage(error, "Environment clone failed."),
@@ -1968,14 +1940,14 @@ export default function EnvironmentsPage() {
       await environmentApi.delete(deleteTarget.id);
       setDeleteError(null);
       setDeleteTarget(null);
-      setReloadVersion((current) => current + 1);
+      requestReload();
     } catch (error) {
       const failure = resolveDeleteFailureState(error);
       setActionError(failure.renderInDialog ? null : failure.message);
       setDeleteError(failure.renderInDialog ? failure.message : null);
       if (failure.shouldCloseDialog) setDeleteTarget(null);
       if (failure.shouldReload) {
-        setReloadVersion((current) => current + 1);
+        requestReload();
       }
     } finally {
       setPendingDeleteId(null);
@@ -2098,7 +2070,7 @@ export default function EnvironmentsPage() {
         executing: false,
         executeResult: result.promoted,
       }));
-      setReloadVersion((current) => current + 1);
+      requestReload();
     } catch (error) {
       setPromoteState((prev) => ({
         ...prev,
@@ -2112,128 +2084,125 @@ export default function EnvironmentsPage() {
     }
   }
 
-  return (
-    <EnvironmentManagementPageView
-      state={state}
-      activeEnvironment={environment}
-      createName={createName}
-      createError={createError}
-      actionError={actionError}
-      pendingCreate={pendingCreate}
-      pendingDeleteId={pendingDeleteId}
-      deleteTarget={deleteTarget}
-      cloneTarget={cloneTarget}
-      cloneForm={cloneForm}
-      cloneError={cloneError}
-      cloneSuccess={cloneSuccess}
-      pendingCloneId={pendingCloneId}
-      promoteTarget={promoteTarget}
-      promoteState={promoteState}
-      onRequestClone={(target) => {
-        setCloneTarget(target);
+  return {
+    state,
+    activeEnvironment: environment,
+    createName,
+    createError,
+    actionError,
+    pendingCreate,
+    pendingDeleteId,
+    deleteTarget,
+    cloneTarget,
+    cloneForm,
+    cloneError,
+    cloneSuccess,
+    pendingCloneId,
+    promoteTarget,
+    promoteState,
+    onRequestClone: (target) => {
+      setCloneTarget(target);
+      setCloneError(null);
+      setCloneSuccess(null);
+      const defaultSource =
+        state.status === "ready"
+          ? state.environments.find(
+              (entry) => entry.id !== target.id && entry.name === environment,
+            )
+          : undefined;
+      setCloneForm({
+        ...CLONE_DEFAULT_FORM,
+        sourceEnvironmentId: defaultSource?.id ?? "",
+      });
+    },
+    onCloneDialogChange: (open) => {
+      if (!open) {
+        setCloneTarget(null);
         setCloneError(null);
         setCloneSuccess(null);
-        const defaultSource =
-          state.status === "ready"
-            ? state.environments.find(
-                (entry) => entry.id !== target.id && entry.name === environment,
-              )
-            : undefined;
-        setCloneForm({
-          ...CLONE_DEFAULT_FORM,
-          sourceEnvironmentId: defaultSource?.id ?? "",
-        });
-      }}
-      onCloneDialogChange={(open) => {
-        if (!open) {
-          setCloneTarget(null);
-          setCloneError(null);
-          setCloneSuccess(null);
-        }
-      }}
-      onCloneFormChange={setCloneForm}
-      onCloneSubmit={handleCloneSubmit}
-      onRequestPromote={(target) => {
-        if (state.status !== "ready") return;
-        const defaultSource =
-          state.environments.find(
-            (entry) => entry.id !== target.id && entry.name === environment,
-          ) ?? state.environments.find((entry) => entry.id !== target.id);
-        setPromoteTarget(target);
-        setPromoteState({
-          ...PROMOTE_DEFAULT_STATE,
-          sourceEnvironmentId: defaultSource?.id ?? "",
-          targetEnvironmentId: target.id,
-        });
-      }}
-      onPromoteDialogChange={(open) => {
-        if (!open) {
-          setPromoteTarget(null);
-          setPromoteState(PROMOTE_DEFAULT_STATE);
-        }
-      }}
-      onPromoteSourceChange={(id) =>
-        setPromoteState((prev) => ({
-          ...prev,
-          sourceEnvironmentId: id,
-          selectedDocumentIds: [],
-        }))
       }
-      onPromoteTargetChange={(id) =>
-        setPromoteState((prev) => ({ ...prev, targetEnvironmentId: id }))
+    },
+    onCloneFormChange: setCloneForm,
+    onCloneSubmit: handleCloneSubmit,
+    onRequestPromote: (target) => {
+      if (state.status !== "ready") return;
+      const defaultSource =
+        state.environments.find(
+          (entry) => entry.id !== target.id && entry.name === environment,
+        ) ?? state.environments.find((entry) => entry.id !== target.id);
+      setPromoteTarget(target);
+      setPromoteState({
+        ...PROMOTE_DEFAULT_STATE,
+        sourceEnvironmentId: defaultSource?.id ?? "",
+        targetEnvironmentId: target.id,
+      });
+    },
+    onPromoteDialogChange: (open) => {
+      if (!open) {
+        setPromoteTarget(null);
+        setPromoteState(PROMOTE_DEFAULT_STATE);
       }
-      onPromoteToggleDocument={(documentId) =>
-        setPromoteState((prev) => ({
-          ...prev,
-          selectedDocumentIds: prev.selectedDocumentIds.includes(documentId)
-            ? prev.selectedDocumentIds.filter((id) => id !== documentId)
-            : [...prev.selectedDocumentIds, documentId],
-        }))
+    },
+    onPromoteSourceChange: (id) =>
+      setPromoteState((prev) => ({
+        ...prev,
+        sourceEnvironmentId: id,
+        selectedDocumentIds: [],
+      })),
+    onPromoteTargetChange: (id) =>
+      setPromoteState((prev) => ({ ...prev, targetEnvironmentId: id })),
+    onPromoteToggleDocument: (documentId) =>
+      setPromoteState((prev) => ({
+        ...prev,
+        selectedDocumentIds: prev.selectedDocumentIds.includes(documentId)
+          ? prev.selectedDocumentIds.filter((id) => id !== documentId)
+          : [...prev.selectedDocumentIds, documentId],
+      })),
+    onPromoteIncludeUnpublishedChange: (value) =>
+      setPromoteState((prev) => ({ ...prev, includeUnpublished: value })),
+    onPromoteRunPreview: handlePromotePreview,
+    onPromoteBackToConfigure: () =>
+      setPromoteState((prev) => ({ ...prev, stage: "configure" })),
+    onPromoteExecute: handlePromoteExecute,
+    onPromoteRunAnother: () =>
+      setPromoteState((prev) => ({
+        ...PROMOTE_DEFAULT_STATE,
+        sourceEnvironmentId: prev.sourceEnvironmentId,
+        targetEnvironmentId: prev.targetEnvironmentId,
+        documents: prev.documents,
+        documentsLoading: false,
+      })),
+    isCreateDialogOpen,
+    onCreateDialogChange: (open) => {
+      setIsCreateDialogOpen(open);
+      if (!open) {
+        setCreateError(null);
+        setCreateName("");
       }
-      onPromoteIncludeUnpublishedChange={(value) =>
-        setPromoteState((prev) => ({ ...prev, includeUnpublished: value }))
-      }
-      onPromoteRunPreview={handlePromotePreview}
-      onPromoteBackToConfigure={() =>
-        setPromoteState((prev) => ({ ...prev, stage: "configure" }))
-      }
-      onPromoteExecute={handlePromoteExecute}
-      onPromoteRunAnother={() =>
-        setPromoteState((prev) => ({
-          ...PROMOTE_DEFAULT_STATE,
-          sourceEnvironmentId: prev.sourceEnvironmentId,
-          targetEnvironmentId: prev.targetEnvironmentId,
-          documents: prev.documents,
-          documentsLoading: false,
-        }))
-      }
-      isCreateDialogOpen={isCreateDialogOpen}
-      onCreateDialogChange={(open) => {
-        setIsCreateDialogOpen(open);
-        if (!open) {
-          setCreateError(null);
-          setCreateName("");
-        }
-      }}
-      onCreateNameChange={setCreateName}
-      onCreateSubmit={handleCreateSubmit}
-      onDeleteDialogChange={(open) => {
-        if (!open) {
-          setDeleteError(null);
-          setDeleteTarget(null);
-        }
-      }}
-      onRequestDelete={(env) => {
-        setActionError(null);
+    },
+    onCreateNameChange: setCreateName,
+    onCreateSubmit: handleCreateSubmit,
+    onDeleteDialogChange: (open) => {
+      if (!open) {
         setDeleteError(null);
-        setDeleteTarget(env);
-      }}
-      onDeleteConfirm={handleDeleteConfirm}
-      deleteError={deleteError}
-      onRetry={() => {
-        setActionError(null);
-        setReloadVersion((current) => current + 1);
-      }}
-    />
-  );
+        setDeleteTarget(null);
+      }
+    },
+    onRequestDelete: (env) => {
+      setActionError(null);
+      setDeleteError(null);
+      setDeleteTarget(env);
+    },
+    onDeleteConfirm: handleDeleteConfirm,
+    deleteError,
+    onRetry: () => {
+      setActionError(null);
+      requestReload();
+    },
+  };
+}
+
+export default function EnvironmentsPage() {
+  const viewProps = useEnvironmentPageController();
+  return <EnvironmentManagementPageView {...viewProps} />;
 }

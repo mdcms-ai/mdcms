@@ -17,7 +17,8 @@ import {
   type StudioSchemaReadyState,
   type StudioSchemaState,
 } from "../../../schema-state.js";
-import { SchemaPageView, createSchemaPageLoadInput } from "./schema-page.js";
+import { SchemaPageView } from "./schema-page.js";
+import { createSchemaPageLoadInput } from "./schema-page-state.js";
 
 function createReadyState(
   overrides: Partial<StudioSchemaReadyState> = {},

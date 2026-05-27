@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useReducer, useState } from "react";
+import { useReducer } from "react";
 import { Copy, Check } from "lucide-react";
 
 import {
@@ -109,6 +109,10 @@ function createInitialFormState(): FormState {
 
 const initialFormState: FormState = createInitialFormState();
 
+function formatDateInputValue(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
 type FormAction =
   | { type: "reset" }
   | { type: "label-change"; value: string }
@@ -168,22 +172,7 @@ export function ApiKeyCreateDialog({
     copied,
     submitError,
   } = form;
-  const [todayMinDate, setTodayMinDate] = useState<string | undefined>(
-    undefined,
-  );
-
-  useEffect(() => {
-    if (!open) {
-      dispatch({ type: "reset" });
-      return;
-    }
-    // Recompute today's date each time the dialog opens so a reopen the
-    // next day picks up the new date instead of the first-mount day.
-    const d = new Date();
-    setTodayMinDate(
-      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`,
-    );
-  }, [open]);
+  const todayMinDate = open ? formatDateInputValue(new Date()) : undefined;
 
   const canSubmit =
     label.trim().length > 0 && selectedScopes.size > 0 && !isSubmitting;
@@ -224,12 +213,18 @@ export function ApiKeyCreateDialog({
     setTimeout(() => dispatch({ type: "copy-set", copied: false }), 2000);
   };
 
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen) {
+      dispatch({ type: "reset" });
+    }
+    onOpenChange(nextOpen);
+  };
   const handleDismiss = () => {
-    onOpenChange(false);
+    handleOpenChange(false);
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent>
         {step === "form" && (
           <form onSubmit={handleSubmit}>

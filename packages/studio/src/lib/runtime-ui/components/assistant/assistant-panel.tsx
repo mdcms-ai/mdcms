@@ -130,6 +130,34 @@ type MentionCandidate = {
   locale: string;
 };
 
+type MentionCandidateState = {
+  candidates: MentionCandidate[];
+  loading: boolean;
+  error: string | null;
+};
+
+type MentionCandidateAction =
+  | { type: "reset" }
+  | { type: "loading" }
+  | { type: "success"; candidates: MentionCandidate[] }
+  | { type: "error"; message: string };
+
+function mentionCandidateReducer(
+  state: MentionCandidateState,
+  action: MentionCandidateAction,
+): MentionCandidateState {
+  switch (action.type) {
+    case "reset":
+      return { candidates: [], loading: false, error: null };
+    case "loading":
+      return { ...state, loading: true, error: null };
+    case "success":
+      return { candidates: action.candidates, loading: false, error: null };
+    case "error":
+      return { candidates: [], loading: false, error: action.message };
+  }
+}
+
 /**
  * Server-backed mention candidate fetch. Debounces the query so the
  * picker doesn't fan out a request per keystroke, aborts in-flight
@@ -143,18 +171,18 @@ function useServerMentionCandidates(query: string): {
   error: string | null;
 } {
   const apiConfig = useStudioApiConfig();
-  const [state, setState] = React.useState<{
-    candidates: MentionCandidate[];
-    loading: boolean;
-    error: string | null;
-  }>({ candidates: [], loading: false, error: null });
+  const [state, dispatch] = React.useReducer(mentionCandidateReducer, {
+    candidates: [],
+    loading: false,
+    error: null,
+  });
 
   React.useEffect(() => {
     if (!apiConfig) {
-      setState({ candidates: [], loading: false, error: null });
+      dispatch({ type: "reset" });
       return;
     }
-    setState((s) => ({ ...s, loading: true, error: null }));
+    dispatch({ type: "loading" });
     const controller = new AbortController();
     const timeout = setTimeout(() => {
       const api = createStudioDocumentRouteApi(
@@ -175,7 +203,7 @@ function useServerMentionCandidates(query: string): {
             type: doc.type,
             locale: doc.locale,
           }));
-          setState({ candidates: mapped, loading: false, error: null });
+          dispatch({ type: "success", candidates: mapped });
         })
         .catch((error: unknown) => {
           if (controller.signal.aborted) return;
@@ -183,7 +211,7 @@ function useServerMentionCandidates(query: string): {
             error instanceof Error
               ? error.message
               : "Failed to load documents.";
-          setState({ candidates: [], loading: false, error: message });
+          dispatch({ type: "error", message });
         });
     }, 200);
 
@@ -216,7 +244,6 @@ function MentionPicker({
   if (error) {
     return (
       <div
-        role="listbox"
         aria-label="Document picker"
         className="absolute bottom-full left-3 right-3 mb-1 rounded-md border border-divider/60 bg-popover p-3 text-[12px] text-destructive shadow-lg"
       >
@@ -235,7 +262,6 @@ function MentionPicker({
   if (filtered.length === 0) {
     return (
       <div
-        role="listbox"
         aria-label="Document picker"
         className="absolute bottom-full left-3 right-3 mb-1 rounded-md border border-divider/60 bg-popover p-3 text-[12px] text-foreground-muted shadow-lg"
       >
@@ -260,6 +286,7 @@ function MentionPicker({
   }
 
   return (
+    // react-doctor-disable-next-line react-doctor/prefer-tag-over-role -- this custom popover contains buttons and status rows, so datalist cannot represent its interaction model.
     <div
       role="listbox"
       aria-label="Document picker"
@@ -848,19 +875,15 @@ function TurnRow({
   onAccept: () => void;
   onReject: () => void;
 }) {
-  const rowAria = `Proposal — ${TURN_KIND_LABEL[proposal.kind]} in ${
-    proposal.docPath
-  }, +${stats.added} −${stats.removed}`;
   return (
-    <div
-      role="group"
-      aria-label={rowAria}
-      className="flex flex-col gap-1.5 px-3 py-2"
-    >
+    <div className="flex flex-col gap-1.5 px-3 py-2">
       <button
         type="button"
         onClick={onToggle}
         title={proposal.docPath}
+        aria-label={`Proposal — ${TURN_KIND_LABEL[proposal.kind]} in ${
+          proposal.docPath
+        }, +${stats.added} −${stats.removed}`}
         aria-expanded={isExpanded}
         className="block w-full truncate text-left font-mono text-[12px] text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
         dir="rtl"
@@ -988,6 +1011,7 @@ function TurnRejectFeedback({
   return (
     <div className="space-y-2 border-t border-divider/40 bg-background-subtle px-3 py-2.5">
       <textarea
+        aria-label="Turn rejection feedback"
         value={text}
         onChange={(e) => setText(e.target.value)}
         placeholder="Why are you rejecting these? (optional — sent back to the model on regenerate)"
@@ -1141,6 +1165,7 @@ function Composer({
   };
 
   return (
+    // react-doctor-disable-next-line react-doctor/no-prevent-default -- chat submission is handled by the mounted Studio client, not a server action.
     <form
       onSubmit={(e) => {
         e.preventDefault();
@@ -1159,6 +1184,7 @@ function Composer({
         className="rounded-b-lg border border-divider/60 bg-card px-3 py-2.5 transition-colors focus-within:border-primary/60 focus-within:ring-1 focus-within:ring-primary/30"
       >
         <textarea
+          aria-label="Assistant message"
           ref={textareaRef}
           value={draft}
           onChange={onChange}

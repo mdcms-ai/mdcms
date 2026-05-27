@@ -25,6 +25,10 @@ type RawClosingTag = {
   endIndex: number;
 };
 
+function findNextTagStart(input: string, startIndex: number): number {
+  return input.indexOf("<", startIndex);
+}
+
 const VOID_HTML_ELEMENTS = new Set([
   "area",
   "base",
@@ -464,7 +468,7 @@ function findRawClosingTag(
   let depth = 0;
 
   while (cursor < input.length) {
-    const tagOffset = input.indexOf("<", cursor);
+    const tagOffset = findNextTagStart(input, cursor);
 
     if (tagOffset < 0) {
       return null;

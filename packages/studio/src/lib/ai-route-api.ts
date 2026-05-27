@@ -746,6 +746,7 @@ export function createStudioAiRouteApi(
       let buffer = "";
       try {
         while (true) {
+          // react-doctor-disable-next-line react-doctor/async-await-in-loop -- stream chunks must be read in order from a single reader.
           const { done, value } = await reader.read();
           if (done) break;
           buffer += decoder.decode(value, { stream: true });

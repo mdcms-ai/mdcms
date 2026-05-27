@@ -1,5 +1,5 @@
 import type { MdcmsInlineStyle } from "@mdcms/shared";
-import type { CSSProperties, ReactNode } from "react";
+import { createElement, type CSSProperties, type ReactNode } from "react";
 
 export type BoxProps = {
   style?: MdcmsInlineStyle;
@@ -7,7 +7,11 @@ export type BoxProps = {
 };
 
 export function Box({ style, children }: BoxProps) {
-  return <div style={style as CSSProperties | undefined}>{children}</div>;
+  return createElement(
+    "div",
+    { style: style as CSSProperties | undefined },
+    children,
+  );
 }
 
 export type TextProps = {
@@ -16,7 +20,11 @@ export type TextProps = {
 };
 
 export function Text({ style, children }: TextProps) {
-  return <span style={style as CSSProperties | undefined}>{children}</span>;
+  return createElement(
+    "span",
+    { style: style as CSSProperties | undefined },
+    children,
+  );
 }
 
 export type ImageProps = {
@@ -26,7 +34,11 @@ export type ImageProps = {
 };
 
 export function Image({ src, alt, style }: ImageProps) {
-  return <img src={src} alt={alt} style={style as CSSProperties | undefined} />;
+  return createElement("img", {
+    src,
+    alt,
+    style: style as CSSProperties | undefined,
+  });
 }
 
 export type LinkProps = {
@@ -36,9 +48,9 @@ export type LinkProps = {
 };
 
 export function Link({ href, style, children }: LinkProps) {
-  return (
-    <a href={href} style={style as CSSProperties | undefined}>
-      {children}
-    </a>
+  return createElement(
+    "a",
+    { href, style: style as CSSProperties | undefined },
+    children,
   );
 }

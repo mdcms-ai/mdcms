@@ -13,7 +13,7 @@ import { createStudioSchemaRouteApi } from "../../schema-route-api.js";
 import type { StudioRuntimeAuth } from "../../request-auth.js";
 import { useStudioMountInfo } from "../app/admin/mount-info-context.js";
 
-export function getDashboardDataQueryKey(
+function getDashboardDataQueryKey(
   project: string | null | undefined,
   environment: string | null | undefined,
   apiBaseUrl: string | null | undefined,

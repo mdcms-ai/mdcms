@@ -3,7 +3,7 @@ import type {
   MdxComponentCatalogEntry,
   MdxExtractedProps,
 } from "@mdcms/shared";
-import type { CSSProperties, ReactNode } from "react";
+import { createElement, type CSSProperties, type ReactNode } from "react";
 
 const BUILT_IN_IMPORT_PATH = "@mdcms/sdk/react-primitives";
 
@@ -59,7 +59,7 @@ type StudioBuiltInMdxComponent = MdxComponentCatalogEntry &
     load: () => Promise<unknown>;
   };
 
-export const STUDIO_BUILT_IN_MDX_COMPONENTS: StudioBuiltInMdxComponent[] = [
+const STUDIO_BUILT_IN_MDX_COMPONENTS: StudioBuiltInMdxComponent[] = [
   {
     name: "Box",
     importPath: BUILT_IN_IMPORT_PATH,
@@ -122,7 +122,11 @@ export type BoxProps = {
 };
 
 function Box({ style, children }: BoxProps) {
-  return <div style={style as CSSProperties | undefined}>{children}</div>;
+  return createElement(
+    "div",
+    { style: style as CSSProperties | undefined },
+    children,
+  );
 }
 
 export type TextProps = {
@@ -131,7 +135,11 @@ export type TextProps = {
 };
 
 function Text({ style, children }: TextProps) {
-  return <span style={style as CSSProperties | undefined}>{children}</span>;
+  return createElement(
+    "span",
+    { style: style as CSSProperties | undefined },
+    children,
+  );
 }
 
 export type ImageProps = {
@@ -141,7 +149,11 @@ export type ImageProps = {
 };
 
 function Image({ src, alt, style }: ImageProps) {
-  return <img src={src} alt={alt} style={style as CSSProperties | undefined} />;
+  return createElement("img", {
+    src,
+    alt,
+    style: style as CSSProperties | undefined,
+  });
 }
 
 export type LinkProps = {
@@ -151,9 +163,9 @@ export type LinkProps = {
 };
 
 function Link({ href, style, children }: LinkProps) {
-  return (
-    <a href={href} style={style as CSSProperties | undefined}>
-      {children}
-    </a>
+  return createElement(
+    "a",
+    { href, style: style as CSSProperties | undefined },
+    children,
   );
 }

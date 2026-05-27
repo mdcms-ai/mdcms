@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import type { StudioMountContext } from "@mdcms/shared";
 import {
@@ -95,11 +95,6 @@ export function VisualStyleInspector({
 }) {
   const style = isInlineStyle(value.style) ? value.style : {};
   const serializedStyle = JSON.stringify(style, null, 2);
-  const [advancedText, setAdvancedText] = useState(serializedStyle);
-
-  useEffect(() => {
-    setAdvancedText(serializedStyle);
-  }, [serializedStyle]);
 
   if (component.extractedProps?.style?.type !== "style") {
     return null;
@@ -325,25 +320,49 @@ export function VisualStyleInspector({
             Hide JSON
           </span>
         </summary>
-        <textarea
-          data-mdcms-visual-style-advanced={component.name}
-          aria-label={`${component.name} advanced CSS object`}
-          rows={8}
-          disabled={readOnly}
-          value={advancedText}
-          onChange={(event) => {
-            const nextText = event.currentTarget.value;
-            setAdvancedText(nextText);
-            const parsed = parseAdvancedStyleObject(nextText);
-
-            if (parsed.ok) {
-              updateStyle(parsed.value);
-            }
-          }}
-          className="mt-2 w-full rounded-md border border-border bg-background px-3 py-2 font-mono text-xs text-foreground shadow-xs disabled:cursor-not-allowed disabled:opacity-60"
+        <AdvancedStyleTextarea
+          key={serializedStyle}
+          componentName={component.name}
+          initialText={serializedStyle}
+          readOnly={readOnly}
+          onParsedStyle={updateStyle}
         />
       </details>
     </section>
+  );
+}
+
+function AdvancedStyleTextarea({
+  componentName,
+  initialText,
+  readOnly,
+  onParsedStyle,
+}: {
+  componentName: string;
+  initialText: string;
+  readOnly: boolean;
+  onParsedStyle: (style: InlineStyle) => void;
+}) {
+  const [text, setText] = useState(initialText);
+
+  return (
+    <textarea
+      data-mdcms-visual-style-advanced={componentName}
+      aria-label={`${componentName} advanced CSS object`}
+      rows={8}
+      disabled={readOnly}
+      value={text}
+      onChange={(event) => {
+        const nextText = event.currentTarget.value;
+        setText(nextText);
+        const parsed = parseAdvancedStyleObject(nextText);
+
+        if (parsed.ok) {
+          onParsedStyle(parsed.value);
+        }
+      }}
+      className="mt-2 w-full rounded-md border border-border bg-background px-3 py-2 font-mono text-xs text-foreground shadow-xs disabled:cursor-not-allowed disabled:opacity-60"
+    />
   );
 }
 

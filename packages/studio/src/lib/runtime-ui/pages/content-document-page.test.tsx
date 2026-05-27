@@ -13,12 +13,15 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { StudioDocumentShell } from "../../document-shell.js";
 import { StudioNavigationProvider } from "../navigation.js";
 import {
+  ContentDocumentPageView,
+  SidebarInfoTab,
+} from "./content-document-page.js";
+import {
   applyFailedDraftSaveToReadyState,
   applyAssistantProposalDocumentToReadyState,
   applySuccessfulPublishToReadyState,
   applySuccessfulDraftSaveToReadyState,
   applySchemaStateToReadyState,
-  ContentDocumentPageView,
   createContentDocumentRouteRequestToken,
   createContentDocumentPageState,
   filterLocaleOptions,
@@ -31,9 +34,8 @@ import {
   resolveActiveDocumentRouteContext,
   reduceContentDocumentPageReadyState,
   saveContentDocumentReadyState,
-  SidebarInfoTab,
   syncSchemaStateForGuard,
-} from "./content-document-page.js";
+} from "./content-document-page-state.js";
 
 function createReadyShell(
   overrides: Partial<StudioDocumentShell["data"]> = {},

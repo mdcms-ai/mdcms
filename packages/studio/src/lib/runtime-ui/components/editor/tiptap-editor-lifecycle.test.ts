@@ -5,7 +5,7 @@ import {
   createTipTapEditorDependencies,
   getSelectionMarkdownForAi,
   resolveSlashPickerCoordsForEditor,
-} from "./tiptap-editor.js";
+} from "./tiptap-editor-utils.js";
 import { createDocumentEditor } from "../../../document-editor.js";
 
 test("createTipTapEditorDependencies keeps editor lifetime independent of onChange identity", () => {

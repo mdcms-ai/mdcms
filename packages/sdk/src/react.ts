@@ -121,13 +121,17 @@ export function createMdcmsRenderer(
 
   async function loadComponents(): Promise<Map<string, unknown>> {
     const loadedComponents = new Map<string, unknown>();
+    const resolvedComponents = await Promise.all(
+      (config.components ?? []).map(async (component) => ({
+        component,
+        resolved: await loadComponent({
+          name: component.name,
+          load: component.load,
+        }),
+      })),
+    );
 
-    for (const component of config.components ?? []) {
-      const resolved = await loadComponent({
-        name: component.name,
-        load: component.load,
-      });
-
+    for (const { component, resolved } of resolvedComponents) {
       if (resolved !== undefined && resolved !== null) {
         loadedComponents.set(component.name, resolved);
       }

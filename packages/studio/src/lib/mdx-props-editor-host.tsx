@@ -7,48 +7,31 @@ import {
 } from "react";
 
 import type { StudioMountContext } from "@mdcms/shared";
+import type { MdxAutoFormField } from "@mdcms/shared/mdx/auto-form";
 import {
-  createMdxAutoFormFields,
-  type MdxAutoFormField,
-} from "@mdcms/shared/mdx/auto-form";
+  createInitialMdxPropsEditorHostState,
+  createMdxPropsEditorBindings,
+  resolveMdxPropsEditorHostState,
+  type MdxPropsEditorHostState,
+  type PropsEditorChangeHandler,
+  type PropsEditorComponent,
+  type PropsEditorComponentProps,
+  type PropsEditorValue,
+} from "./mdx-props-editor-host-state.js";
+
+export type {
+  MdxPropsEditorHostState,
+  PropsEditorChangeHandler,
+  PropsEditorComponent,
+  PropsEditorComponentProps,
+  PropsEditorValue,
+} from "./mdx-props-editor-host-state.js";
 
 type MdxCatalogComponent = NonNullable<
   StudioMountContext["mdx"]
 >["catalog"]["components"][number];
 
-export type PropsEditorValue = Record<string, unknown>;
-export type PropsEditorChangeHandler<TValue extends object = PropsEditorValue> =
-  (nextValue: Partial<TValue>) => void;
-export type PropsEditorComponentProps<
-  TValue extends object = PropsEditorValue,
-> = {
-  value: Partial<TValue>;
-  onChange: PropsEditorChangeHandler<TValue>;
-  readOnly: boolean;
-};
-export type PropsEditorComponent<TValue extends object = PropsEditorValue> = (
-  props: PropsEditorComponentProps<TValue>,
-) => ReactNode;
-
-const MDX_CHILDREN_PROP_NAME = "children";
 const EMPTY_HIDDEN_FIELD_NAMES: readonly string[] = [];
-
-export type MdxPropsEditorHostState =
-  | { status: "loading" }
-  | { status: "ready"; editor: PropsEditorComponent }
-  | { status: "auto-form"; fields: MdxAutoFormField[] }
-  | { status: "content-only" }
-  | { status: "empty" }
-  | { status: "error"; message: string }
-  | { status: "forbidden" };
-
-type MdxPropsEditorHostStateInput = {
-  component: MdxCatalogComponent;
-  context: StudioMountContext;
-  readOnly: boolean;
-  forbidden?: boolean;
-  hiddenFieldNames?: readonly string[];
-};
 
 type PropsEditorRenderBoundaryProps = {
   componentName: string;
@@ -71,15 +54,6 @@ class PropsEditorRenderBoundary extends Component<
     return {
       hasError: true,
     };
-  }
-
-  override componentDidUpdate(prevProps: PropsEditorRenderBoundaryProps): void {
-    if (
-      prevProps.componentName !== this.props.componentName &&
-      this.state.hasError
-    ) {
-      this.setState({ hasError: false });
-    }
   }
 
   override render(): ReactNode {
@@ -108,75 +82,6 @@ export type MdxPropsEditorHostProps = {
   hiddenFieldNames?: readonly string[];
 };
 
-export function createMdxPropsEditorBindings(input: {
-  value: PropsEditorValue;
-  onChange: PropsEditorChangeHandler;
-  readOnly: boolean;
-}): PropsEditorComponentProps {
-  return {
-    value: input.value,
-    readOnly: input.readOnly,
-    onChange: (nextValue) => {
-      if (input.readOnly) {
-        return;
-      }
-
-      input.onChange(nextValue);
-    },
-  };
-}
-
-export function createInitialMdxPropsEditorHostState(
-  input: MdxPropsEditorHostStateInput,
-): MdxPropsEditorHostState {
-  if (input.forbidden) {
-    return { status: "forbidden" };
-  }
-
-  if (!input.component.propsEditor || !input.context.mdx) {
-    return createFallbackState(input.component, input.hiddenFieldNames);
-  }
-
-  return { status: "loading" };
-}
-
-export async function resolveMdxPropsEditorHostState(
-  input: MdxPropsEditorHostStateInput,
-): Promise<MdxPropsEditorHostState> {
-  const initialState = createInitialMdxPropsEditorHostState(input);
-
-  if (initialState.status !== "loading") {
-    return initialState;
-  }
-
-  try {
-    const resolvedEditor = await input.context.mdx?.resolvePropsEditor(
-      input.component.name,
-    );
-
-    if (!resolvedEditor) {
-      return createFallbackState(input.component, input.hiddenFieldNames);
-    }
-
-    if (typeof resolvedEditor !== "function") {
-      return {
-        status: "error",
-        message: `Custom editor for "${input.component.name}" must resolve to a function component.`,
-      };
-    }
-
-    return {
-      status: "ready",
-      editor: resolvedEditor as PropsEditorComponent,
-    };
-  } catch (error) {
-    return {
-      status: "error",
-      message: formatPropsEditorError(error),
-    };
-  }
-}
-
 export function MdxPropsEditorHost({
   component,
   context,
@@ -187,6 +92,65 @@ export function MdxPropsEditorHost({
   forbidden = false,
   hiddenFieldNames = EMPTY_HIDDEN_FIELD_NAMES,
 }: MdxPropsEditorHostProps) {
+  const commonProps = {
+    component,
+    context,
+    readOnly,
+    forbidden,
+    hiddenFieldNames,
+  };
+
+  if (controlledValue !== undefined) {
+    return (
+      <MdxPropsEditorHostResolved
+        {...commonProps}
+        value={controlledValue}
+        onChange={onChange ?? (() => undefined)}
+      />
+    );
+  }
+
+  return (
+    <MdxPropsEditorHostUncontrolled
+      key={component.name}
+      {...commonProps}
+      initialValue={initialValue ?? {}}
+    />
+  );
+}
+
+type MdxPropsEditorHostResolvedProps = {
+  component: MdxCatalogComponent;
+  context: StudioMountContext;
+  value: PropsEditorValue;
+  onChange: PropsEditorChangeHandler;
+  readOnly: boolean;
+  forbidden: boolean;
+  hiddenFieldNames: readonly string[];
+};
+
+function MdxPropsEditorHostUncontrolled({
+  initialValue,
+  ...props
+}: Omit<MdxPropsEditorHostResolvedProps, "value" | "onChange"> & {
+  initialValue: PropsEditorValue;
+}) {
+  const [value, setValue] = useState<PropsEditorValue>(() => initialValue);
+
+  return (
+    <MdxPropsEditorHostResolved {...props} value={value} onChange={setValue} />
+  );
+}
+
+function MdxPropsEditorHostResolved({
+  component,
+  context,
+  value,
+  onChange,
+  readOnly,
+  forbidden,
+  hiddenFieldNames,
+}: MdxPropsEditorHostResolvedProps) {
   const [state, setState] = useState<MdxPropsEditorHostState>(() =>
     createInitialMdxPropsEditorHostState({
       component,
@@ -196,19 +160,6 @@ export function MdxPropsEditorHost({
       hiddenFieldNames,
     }),
   );
-  const [uncontrolledValue, setUncontrolledValue] = useState<PropsEditorValue>(
-    () => initialValue ?? {},
-  );
-  const value = controlledValue ?? uncontrolledValue;
-  const handleChange = onChange ?? setUncontrolledValue;
-
-  useEffect(() => {
-    if (controlledValue !== undefined) {
-      return;
-    }
-
-    setUncontrolledValue(initialValue ?? {});
-  }, [component.name, controlledValue, initialValue]);
 
   useEffect(() => {
     let cancelled = false;
@@ -248,12 +199,15 @@ export function MdxPropsEditorHost({
     case "ready": {
       const bindings = createMdxPropsEditorBindings({
         value,
-        onChange: handleChange,
+        onChange,
         readOnly,
       });
 
       return (
-        <PropsEditorRenderBoundary componentName={component.name}>
+        <PropsEditorRenderBoundary
+          key={component.name}
+          componentName={component.name}
+        >
           <ReadyMdxPropsEditor
             componentName={component.name}
             editor={state.editor as PropsEditorComponent<PropsEditorValue>}
@@ -267,7 +221,7 @@ export function MdxPropsEditorHost({
         component.name,
         state.fields,
         value,
-        handleChange,
+        onChange,
         readOnly,
       );
     case "empty":
@@ -300,28 +254,6 @@ export function MdxPropsEditorHost({
   }
 }
 
-function createFallbackState(
-  component: MdxCatalogComponent,
-  hiddenFieldNames: readonly string[] = [],
-): MdxPropsEditorHostState {
-  const hiddenFieldNameSet = new Set(hiddenFieldNames);
-  const fields = createMdxAutoFormFields(
-    component.extractedProps,
-    component.propHints,
-  ).filter((field) => {
-    return (
-      !hiddenFieldNameSet.has(field.name) &&
-      !(field.name === MDX_CHILDREN_PROP_NAME && field.control === "rich-text")
-    );
-  });
-
-  return fields.length > 0
-    ? { status: "auto-form", fields }
-    : hasNestedRichTextChildren(component)
-      ? { status: "content-only" }
-      : { status: "empty" };
-}
-
 export function ReadyMdxPropsEditor(input: {
   componentName: string;
   editor: PropsEditorComponent<PropsEditorValue>;
@@ -338,12 +270,6 @@ export function ReadyMdxPropsEditor(input: {
         {createElement(input.editor, input.bindings)}
       </div>
     </>
-  );
-}
-
-function hasNestedRichTextChildren(component: MdxCatalogComponent): boolean {
-  return (
-    component.extractedProps?.[MDX_CHILDREN_PROP_NAME]?.type === "rich-text"
   );
 }
 
@@ -403,6 +329,7 @@ function AutoFormFieldControl(input: {
   const commonProps = {
     id,
     disabled: input.readOnly,
+    "aria-label": input.field.name,
     "data-mdcms-mdx-auto-control": controlId,
     className:
       "w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground shadow-xs disabled:cursor-not-allowed disabled:opacity-60",
@@ -416,8 +343,8 @@ function AutoFormFieldControl(input: {
     case "image":
       return (
         <input
-          {...commonProps}
           key={controlId}
+          {...commonProps}
           type={getAutoFormInputType(input.field.control)}
           defaultValue={
             typeof input.value === "string"
@@ -437,8 +364,8 @@ function AutoFormFieldControl(input: {
     case "textarea":
       return (
         <textarea
-          {...commonProps}
           key={controlId}
+          {...commonProps}
           rows={4}
           defaultValue={
             typeof input.value === "string"
@@ -458,8 +385,8 @@ function AutoFormFieldControl(input: {
     case "number":
       return (
         <input
-          {...commonProps}
           key={controlId}
+          {...commonProps}
           type="number"
           defaultValue={
             typeof input.value === "number" ? String(input.value) : ""
@@ -484,8 +411,8 @@ function AutoFormFieldControl(input: {
       return (
         <div className="space-y-1">
           <input
-            {...commonProps}
             key={controlId}
+            {...commonProps}
             type="range"
             min={input.field.min}
             max={input.field.max}
@@ -510,6 +437,7 @@ function AutoFormFieldControl(input: {
         <label className="flex items-center gap-2 text-sm text-foreground">
           <input
             id={id}
+            aria-label={input.field.name}
             key={controlId}
             type="checkbox"
             disabled={input.readOnly}
@@ -532,8 +460,8 @@ function AutoFormFieldControl(input: {
 
       return (
         <select
-          {...commonProps}
           key={controlId}
+          {...commonProps}
           defaultValue={serializeAutoFormSelectValue(input.value)}
           onChange={(event) => {
             const nextValue = event.currentTarget.value;
@@ -565,8 +493,8 @@ function AutoFormFieldControl(input: {
     case "string-list":
       return (
         <textarea
-          {...commonProps}
           key={controlId}
+          {...commonProps}
           rows={4}
           defaultValue={formatAutoFormListValue(input.value)}
           onChange={(event) => {
@@ -581,8 +509,8 @@ function AutoFormFieldControl(input: {
     case "number-list":
       return (
         <textarea
-          {...commonProps}
           key={controlId}
+          {...commonProps}
           rows={4}
           defaultValue={formatAutoFormListValue(input.value)}
           onChange={(event) => {
@@ -611,8 +539,8 @@ function AutoFormFieldControl(input: {
     case "style":
       return (
         <textarea
-          {...commonProps}
           key={controlId}
+          {...commonProps}
           rows={6}
           defaultValue={formatAutoFormJsonValue(input.value)}
           onChange={(event) => {
@@ -789,14 +717,4 @@ function getAutoFormSelectOptionLabel(
   option: Extract<MdxAutoFormField, { control: "select" }>["options"][number],
 ): string {
   return typeof option === "object" ? option.label : String(option);
-}
-
-function formatPropsEditorError(error: unknown): string {
-  if (error instanceof Error && error.message.trim().length > 0) {
-    return error.message;
-  }
-
-  const message = String(error).trim();
-
-  return message.length > 0 ? message : "Failed to load custom editor.";
 }
