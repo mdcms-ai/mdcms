@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { getPricingTableEditorTiers } from "./PricingTable.editor";
+import { getPricingTableEditorTiers } from "./PricingTable.editor-state";
 
 test("getPricingTableEditorTiers preserves an explicit empty tier list", () => {
   assert.deepEqual(getPricingTableEditorTiers({ tiers: [] }), []);

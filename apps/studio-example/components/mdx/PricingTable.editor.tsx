@@ -3,6 +3,7 @@ import type { ChangeEvent } from "react";
 import type { PropsEditorComponent } from "@mdcms/studio";
 
 import type { PricingTableProps } from "./PricingTable";
+import { getPricingTableEditorTiers } from "./PricingTable.editor-state";
 
 type PricingTier = NonNullable<PricingTableProps["tiers"]>[number];
 
@@ -33,16 +34,6 @@ const buttonStyles = {
   fontSize: "12px",
   fontWeight: 600,
 } as const;
-
-export function getPricingTableEditorTiers(
-  value: Partial<PricingTableProps>,
-): PricingTier[] {
-  if (value.tiers === undefined) {
-    return [{ name: "", price: "", description: "" }];
-  }
-
-  return [...value.tiers];
-}
 
 const PricingTableEditor: PropsEditorComponent<PricingTableProps> = ({
   value,
@@ -106,6 +97,7 @@ const PricingTableEditor: PropsEditorComponent<PricingTableProps> = ({
       <label style={controlLabelStyles}>
         Headline
         <input
+          aria-label="Pricing table headline"
           type="text"
           value={value.title ?? ""}
           onChange={handleTitleChange}
@@ -117,7 +109,7 @@ const PricingTableEditor: PropsEditorComponent<PricingTableProps> = ({
       <div style={{ display: "grid", gap: "12px" }}>
         {tiers.map((tier, index) => (
           <fieldset
-            key={`tier-${index}`}
+            key={`${tier.name}:${tier.price}:${tier.description ?? ""}`}
             style={{
               margin: 0,
               borderRadius: "14px",
@@ -141,6 +133,7 @@ const PricingTableEditor: PropsEditorComponent<PricingTableProps> = ({
             <label style={controlLabelStyles}>
               Name
               <input
+                aria-label={`Tier ${index + 1} name`}
                 type="text"
                 value={tier.name}
                 onChange={(event) =>
@@ -154,6 +147,7 @@ const PricingTableEditor: PropsEditorComponent<PricingTableProps> = ({
             <label style={controlLabelStyles}>
               Price
               <input
+                aria-label={`Tier ${index + 1} price`}
                 type="text"
                 value={tier.price}
                 onChange={(event) =>
@@ -167,6 +161,7 @@ const PricingTableEditor: PropsEditorComponent<PricingTableProps> = ({
             <label style={controlLabelStyles}>
               Description
               <textarea
+                aria-label={`Tier ${index + 1} description`}
                 value={tier.description ?? ""}
                 onChange={(event) =>
                   updateTier(index, "description", event.currentTarget.value)

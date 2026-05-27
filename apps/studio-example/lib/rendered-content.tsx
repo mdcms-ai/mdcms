@@ -41,17 +41,28 @@ function getHeadingLevel(attrs: Record<string, unknown> | undefined) {
   return typeof level === "number" && level >= 1 && level <= 6 ? level : 2;
 }
 
-function renderInlineNodes(nodes: RenderNode[]): ReactNode[] {
-  return nodes.map((node, index) => renderInlineNode(node, index));
+function getNodeKey(node: RenderNode): string {
+  return JSON.stringify({
+    type: node.type,
+    text: node.text,
+    attrs: node.attrs,
+    content: node.content?.length ?? 0,
+  });
 }
 
-function renderInlineNode(node: RenderNode, key: number): ReactNode {
+function RenderInlineNodes({ nodes }: { nodes: RenderNode[] }) {
+  return nodes.map((node) => (
+    <RenderInlineNode key={getNodeKey(node)} node={node} />
+  ));
+}
+
+function RenderInlineNode({ node }: { node: RenderNode }) {
   if (node.type === "hardBreak") {
-    return <br key={key} />;
+    return <br />;
   }
 
   if (node.type !== "text") {
-    return <Fragment key={key}>{renderBlockNodes(getContent(node))}</Fragment>;
+    return <RenderBlockNodes nodes={getContent(node)} />;
   }
 
   let value: ReactNode = node.text ?? "";
@@ -72,25 +83,33 @@ function renderInlineNode(node: RenderNode, key: number): ReactNode {
     }
   }
 
-  return <Fragment key={key}>{value}</Fragment>;
+  return <Fragment>{value}</Fragment>;
 }
 
-function renderListItem(node: RenderNode, key: number): ReactNode {
+function RenderListItem({ node }: { node: RenderNode }) {
   const content = getContent(node);
 
   if (content.length === 1 && content[0]?.type === "paragraph") {
-    return <li key={key}>{renderInlineNodes(getContent(content[0]))}</li>;
+    return (
+      <li>
+        <RenderInlineNodes nodes={getContent(content[0])} />
+      </li>
+    );
   }
 
-  return <li key={key}>{renderBlockNodes(content)}</li>;
+  return (
+    <li>
+      <RenderBlockNodes nodes={content} />
+    </li>
+  );
 }
 
-function renderMdxComponent(node: RenderNode, key: number): ReactNode {
+function RenderMdxComponent({ node }: { node: RenderNode }) {
   const componentName = node.attrs?.componentName;
 
   if (typeof componentName !== "string" || !(componentName in mdxComponents)) {
     return (
-      <div key={key} data-mdcms-rendered-mdx-state="unsupported">
+      <div data-mdcms-rendered-mdx-state="unsupported">
         Unsupported MDX component
       </div>
     );
@@ -98,40 +117,59 @@ function renderMdxComponent(node: RenderNode, key: number): ReactNode {
 
   const Component = mdxComponents[componentName as keyof typeof mdxComponents];
   const props = getMdxProps(node.attrs);
-  const children = renderBlockNodes(getContent(node));
+  const children = getContent(node);
 
   return createElement(
     Component as never,
-    {
-      ...props,
-      key,
-    } as never,
-    children.length > 0 ? children : undefined,
+    props as never,
+    children.length > 0 ? <RenderBlockNodes nodes={children} /> : undefined,
   );
 }
 
-function renderBlockNode(node: RenderNode, key: number): ReactNode {
+function RenderBlockNode({ node }: { node: RenderNode }) {
   switch (node.type) {
     case "heading": {
       const tag = `h${getHeadingLevel(node.attrs)}`;
 
-      return createElement(tag, { key }, renderInlineNodes(getContent(node)));
+      return createElement(
+        tag,
+        null,
+        <RenderInlineNodes nodes={getContent(node)} />,
+      );
     }
     case "paragraph":
-      return <p key={key}>{renderInlineNodes(getContent(node))}</p>;
+      return (
+        <p>
+          <RenderInlineNodes nodes={getContent(node)} />
+        </p>
+      );
     case "bulletList":
-      return <ul key={key}>{getContent(node).map(renderListItem)}</ul>;
+      return (
+        <ul>
+          {getContent(node).map((child) => (
+            <RenderListItem key={getNodeKey(child)} node={child} />
+          ))}
+        </ul>
+      );
     case "orderedList":
-      return <ol key={key}>{getContent(node).map(renderListItem)}</ol>;
+      return (
+        <ol>
+          {getContent(node).map((child) => (
+            <RenderListItem key={getNodeKey(child)} node={child} />
+          ))}
+        </ol>
+      );
     case "listItem":
-      return renderListItem(node, key);
+      return <RenderListItem node={node} />;
     case "blockquote":
       return (
-        <blockquote key={key}>{renderBlockNodes(getContent(node))}</blockquote>
+        <blockquote>
+          <RenderBlockNodes nodes={getContent(node)} />
+        </blockquote>
       );
     case "codeBlock":
       return (
-        <pre key={key}>
+        <pre>
           <code>
             {getContent(node)
               .map((child) => child.text ?? "")
@@ -140,18 +178,18 @@ function renderBlockNode(node: RenderNode, key: number): ReactNode {
         </pre>
       );
     case "horizontalRule":
-      return <hr key={key} />;
+      return <hr />;
     case "mdxComponent":
-      return renderMdxComponent(node, key);
+      return <RenderMdxComponent node={node} />;
     default:
-      return (
-        <Fragment key={key}>{renderBlockNodes(getContent(node))}</Fragment>
-      );
+      return <RenderBlockNodes nodes={getContent(node)} />;
   }
 }
 
-function renderBlockNodes(nodes: RenderNode[]): ReactNode[] {
-  return nodes.map((node, index) => renderBlockNode(node, index));
+function RenderBlockNodes({ nodes }: { nodes: RenderNode[] }) {
+  return nodes.map((node) => (
+    <RenderBlockNode key={getNodeKey(node)} node={node} />
+  ));
 }
 
 export function RenderedContent({ body }: { body: string }) {
@@ -159,7 +197,7 @@ export function RenderedContent({ body }: { body: string }) {
 
   return (
     <div data-mdcms-rendered-content="true">
-      {renderBlockNodes(getContent(document))}
+      <RenderBlockNodes nodes={getContent(document)} />
     </div>
   );
 }

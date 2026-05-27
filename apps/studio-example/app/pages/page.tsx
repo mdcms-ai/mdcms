@@ -1,6 +1,11 @@
 import { fetchRenderedDocumentLibrary } from "../../lib/example-documents";
 import { DocumentLibrary, RequestError, SiteHeader } from "../site-components";
 
+export const metadata = {
+  title: "Content Library | MDCMS Demo",
+  description: "Browse rendered pages, posts, and configured MDCMS documents.",
+};
+
 export default async function PagesIndexPage() {
   const result = await fetchRenderedDocumentLibrary();
 

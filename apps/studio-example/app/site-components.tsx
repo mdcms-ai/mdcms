@@ -111,11 +111,7 @@ export function DocumentLibrary({
   );
 }
 
-export function DocumentCard({
-  document,
-}: {
-  document: RenderedExampleDocument;
-}) {
+function DocumentCard({ document }: { document: RenderedExampleDocument }) {
   return (
     <article className="document-card">
       <div className="document-card-header">
