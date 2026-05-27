@@ -130,7 +130,7 @@ function AssistantRailResizeHandle() {
     >
       <span
         aria-hidden
-        className="h-16 w-1 rounded-full bg-primary/70 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
+        className="h-full w-1 bg-primary/70 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
       />
     </div>
   );
