@@ -19,15 +19,16 @@ The content editor is built on **TipTap**. MVP ships a single-user editor with M
 
 #### Markdown Serialization
 
-Content is stored as Markdown/MDX text (`body` column) but edited via TipTap's internal document model. Bidirectional conversion between the two representations uses **`@tiptap/markdown`** (the official TipTap markdown extension, shipped in TipTap 3.7.0). It uses **Marked.js** as the parser/lexer and provides per-extension `markdown.parse` and `markdown.render` handlers.
+Content is stored as Markdown/MDX text (`body` column) but edited via TipTap's internal document model. The parse path uses **micromark/mdast MDX parsing** (`micromark-extension-mdx` plus `mdast-util-from-markdown` and `mdast-util-mdx`) to produce an MDX syntax tree, then a Studio-owned adapter converts that tree into TipTap JSON. This uses the same underlying MDX parser family as the SDK renderer without bundling the full MDX evaluator into the Studio browser runtime. The serialization path uses **`@tiptap/markdown`** (the official TipTap markdown extension, shipped in TipTap 3.7.0) and per-extension `markdown.render` handlers to render TipTap JSON back to Markdown/MDX.
 
-**MDX component serialization** is handled by a custom layer on top of `@tiptap/markdown`:
+**MDX component serialization** is handled by a custom layer around those parse/serialize boundaries:
 
-1. A **custom Marked.js tokenizer** recognizes JSX block and inline syntax (`<ComponentName prop="value">...</ComponentName>`) during parsing and emits tokens for them.
-2. A **custom TipTap extension** (`MdxComponent`) defines the node type with attrs (`componentName`, `props` as JSON) and provides the corresponding `markdown.parse` (token → node) and `markdown.render` (node → MDX string) handlers.
-3. For wrapper components with `children`, the node uses a content hole that allows nested rich-text editing inside the component block.
+1. The MDX processor recognizes JSX block and inline syntax (`<ComponentName prop="value">...</ComponentName>`) during parsing, including indented nested components and JSX expression props.
+2. The Studio parse adapter converts uppercase JSX elements into a custom TipTap node type (`MdxComponent`) with attrs (`componentName`, `props` as JSON, `isVoid`), and converts lowercase raw JSX islands into inert raw JSX preview nodes.
+3. The custom TipTap extension (`MdxComponent`) provides the corresponding `markdown.render` (node → MDX string) handler.
+4. For wrapper components with `children`, the node uses a content hole that allows nested rich-text editing inside the component block.
 
-This approach keeps MDX parsing/serialization within TipTap's standard extension model. If the custom Marked.js tokenizer proves insufficient for complex MDX (deeply nested components, JSX expressions in props), a fallback option is to swap the parsing layer to **remark + remark-mdx** (from the unified ecosystem) via `@handlewithcare/remark-prosemirror`, which provides a battle-tested MDX AST but is a smaller community project (~28 stars, from the NYT/moment.dev team).
+If the parser implementation changes again, it must be swapped behind the same adapter boundary. The TipTap node schema and Markdown/MDX serialization contract must remain unchanged.
 
 **Round-trip idempotency requirement:** The serialization pipeline must satisfy `serialize(parse(markdown)) === markdown` for all content the schema produces. This prevents phantom diffs, where a cold-start load/save cycle produces byte-different but semantically identical content and causes unnecessary `draft_revision` churn. The CI suite must include round-trip fidelity tests for each schema type.
 

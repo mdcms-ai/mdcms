@@ -66,6 +66,15 @@ test("serializeMdxJsxAttributes writes JSX-friendly attribute syntax", () => {
   assert.match(serialized, /tags=\{\["cms","mdx"\]\}/);
 });
 
+test("serializeMdxJsxAttributes emits valid MDX string attributes with quotes", () => {
+  assert.equal(
+    serializeMdxJsxAttributes({
+      title: 'He said "hi"',
+    }),
+    'title="He said &quot;hi&quot;"',
+  );
+});
+
 test("parseMdxJsxAttributes preserves raw JSX expressions that are not JSON", () => {
   const parsed = parseMdxJsxAttributes(
     'config={{foo: "bar"}} icon={icons.warning}',

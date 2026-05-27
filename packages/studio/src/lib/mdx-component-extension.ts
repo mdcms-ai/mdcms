@@ -325,7 +325,10 @@ function parseFlatStyleObjectExpression(
   return result;
 }
 
-function parseMdxAttributeValue(attributeName: string, input: string): unknown {
+export function parseMdxAttributeValue(
+  attributeName: string,
+  input: string,
+): unknown {
   const parsed = parseMdxExpressionValue(input);
 
   if (
@@ -407,13 +410,24 @@ export function parseMdxJsxAttributes(input: string): Record<string, unknown> {
   return result;
 }
 
+function escapeMdxStringAttribute(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll("{", "&#123;")
+    .replaceAll("}", "&#125;")
+    .replaceAll("\n", "&#10;")
+    .replaceAll("\r", "&#13;");
+}
+
 function formatAttributeValue(value: unknown): string {
   if (isMdxExpressionValue(value)) {
     return `{${value[MDX_EXPRESSION_VALUE_KEY]}}`;
   }
 
   if (typeof value === "string") {
-    return `${JSON.stringify(value)}`;
+    return `"${escapeMdxStringAttribute(value)}"`;
   }
 
   if (

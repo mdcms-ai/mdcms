@@ -171,6 +171,35 @@ test("markdown pipeline parses nested MDX components inside wrapper children", (
   });
 });
 
+test("markdown pipeline parses indented nested MDX components inside wrapper children", () => {
+  const source = [
+    '<Box style={{display: "grid", gap: "1rem"}}>',
+    '  <Box style={{backgroundColor: "#f3f4f6", padding: "1rem"}}>',
+    '    <Text style={{fontWeight: "bold"}}>2020</Text>',
+    "    Company founded.",
+    "  </Box>",
+    '  <Box style={{backgroundColor: "#f3f4f6", padding: "1rem"}}>',
+    '    <Text style={{fontWeight: "bold"}}>2021</Text>',
+    "    Launched first product.",
+    "  </Box>",
+    "</Box>",
+  ].join("\n");
+
+  const parsed = parseMarkdownToDocument(source);
+  const wrapperChildren = parsed.content?.[0]?.content ?? [];
+
+  assert.equal(parsed.content?.[0]?.type, "mdxComponent");
+  assert.equal(wrapperChildren.length, 2);
+  assert.equal(wrapperChildren[0]?.type, "mdxComponent");
+  assert.equal(wrapperChildren[1]?.type, "mdxComponent");
+  assert.equal(wrapperChildren[0]?.attrs?.componentName, "Box");
+  assert.equal(wrapperChildren[1]?.attrs?.componentName, "Box");
+  assert.equal(
+    wrapperChildren.some((child) => JSON.stringify(child).includes("<Text")),
+    false,
+  );
+});
+
 test("markdown pipeline preserves lowercase raw MDX islands inside wrapper children", () => {
   const source = [
     '<HomeSection eyebrow="Content layer" title="Contact Us">',
@@ -254,8 +283,8 @@ test("markdown pipeline preserves raw JSX prop expressions instead of throwing",
   assert.equal(roundTripMarkdown(source).markdown, source);
 });
 
-test("markdown pipeline keeps escaped quotes in string props stable", () => {
-  const source = '<Callout title="He said \\"hi\\"" />';
+test("markdown pipeline keeps quoted string props stable", () => {
+  const source = '<Callout title="He said &quot;hi&quot;" />';
 
   assert.equal(roundTripMarkdown(source).markdown, source);
 });
