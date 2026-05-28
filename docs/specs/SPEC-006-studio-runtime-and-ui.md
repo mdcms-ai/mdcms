@@ -127,6 +127,13 @@ and `renderMdxPreview(...)`. The backend bootstrap/runtime publication model
 stays unchanged; it still serves the signed runtime bundle and does not publish
 the component catalog.
 
+Cookie-authenticated Studio routes must redirect to `/admin/login` when the
+session bootstrap request cannot verify the active browser session, including
+`401` responses and network-level failures. The redirect includes `returnTo`
+for the current Studio route. Token-authenticated embeds must not redirect to
+the login route; token authentication failures remain inline operator-facing
+states because the host application, not the Studio login form, owns the token.
+
 MDCMS built-in MDX components defined by `SPEC-007` are injected by the Studio
 shell/runtime without host registration. Studio resolves their preview
 components from MDCMS-owned React code before falling back to host-registered
