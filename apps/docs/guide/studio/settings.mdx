@@ -1,12 +1,28 @@
 ---
 title: "Settings"
-description: "API keys, users, webhooks, and Studio configuration"
+description: "Read-only project context and API key management"
 ---
 
 <Warning>
   Settings access requires the **admin** or **owner** role. Users without these
   roles see an "Access denied" message.
 </Warning>
+
+## General
+
+The **General** tab shows read-only context for the active Studio target:
+
+| Field                | Description                                                |
+| -------------------- | ---------------------------------------------------------- |
+| **Project**          | The current project identifier                             |
+| **Environment**      | The current environment identifier                         |
+| **Server URL**       | The backend URL Studio is using for API requests           |
+| **Schema hash**      | The latest synced schema hash returned by the schema API   |
+| **Last schema sync** | The timestamp returned by the latest schema registry state |
+
+The schema and project configuration remain code-first. To change content type
+definitions or sync schema metadata, update `mdcms.config.ts` in the host
+project and run `mdcms schema sync` from the CLI.
 
 ## API Keys
 
