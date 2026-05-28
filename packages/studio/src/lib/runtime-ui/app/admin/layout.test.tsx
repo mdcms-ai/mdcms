@@ -14,6 +14,7 @@ import {
   getDefaultAdminSidebarCollapsed,
   getAdminSidebarStorageKey,
   isDocumentEditorPathname,
+  resolveAdminLayoutLoginRedirectPath,
 } from "./layout.js";
 
 function createContext(): StudioMountContext {
@@ -169,6 +170,39 @@ test("createAdminLayoutTokenErrorState maps 403 to a forbidden-token error", () 
 test("createAdminLayoutTokenErrorState ignores non-auth status codes", () => {
   assert.equal(createAdminLayoutTokenErrorState(500), null);
   assert.equal(createAdminLayoutTokenErrorState(null), null);
+});
+
+test("resolveAdminLayoutLoginRedirectPath redirects cookie session failures to login", () => {
+  assert.equal(
+    resolveAdminLayoutLoginRedirectPath({
+      isTokenMode: false,
+      pathname: "/admin/content/page/home",
+      sessionState: { status: "error", message: "Failed to fetch" },
+    }),
+    "/admin/login?returnTo=%2Fadmin%2Fcontent%2Fpage%2Fhome",
+  );
+});
+
+test("resolveAdminLayoutLoginRedirectPath preserves cookie unauthenticated redirects", () => {
+  assert.equal(
+    resolveAdminLayoutLoginRedirectPath({
+      isTokenMode: false,
+      pathname: "/admin/schema",
+      sessionState: { status: "unauthenticated" },
+    }),
+    "/admin/login?returnTo=%2Fadmin%2Fschema",
+  );
+});
+
+test("resolveAdminLayoutLoginRedirectPath keeps token auth failures inline", () => {
+  assert.equal(
+    resolveAdminLayoutLoginRedirectPath({
+      isTokenMode: true,
+      pathname: "/admin/content/page/home",
+      sessionState: { status: "error", message: "Failed to fetch" },
+    }),
+    null,
+  );
 });
 
 test("AdminTokenErrorStateView renders retry action and technical details", () => {

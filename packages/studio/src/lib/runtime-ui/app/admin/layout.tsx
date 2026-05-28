@@ -206,6 +206,29 @@ export function createAdminLayoutTokenErrorState(
   return null;
 }
 
+export function resolveAdminLayoutLoginRedirectPath(input: {
+  sessionState: StudioSessionState;
+  isTokenMode: boolean;
+  pathname: string;
+}): string | null {
+  if (input.isTokenMode) {
+    return null;
+  }
+
+  if (
+    input.sessionState.status !== "unauthenticated" &&
+    input.sessionState.status !== "error"
+  ) {
+    return null;
+  }
+
+  const returnTo = encodeURIComponent(
+    input.pathname.includes("/admin") ? input.pathname : "/admin",
+  );
+
+  return `/admin/login?returnTo=${returnTo}`;
+}
+
 export function AdminTokenErrorStateView({
   state,
   context,
@@ -551,18 +574,20 @@ function useAdminLayoutRoutedElement({
 
   const environments = environmentsQuery.data?.data ?? [];
 
-  // Auth gate: redirect only truly unauthenticated cookie-mode users to login.
-  // Token-mode embeds must never redirect to the login screen — token auth
-  // failures are shown inline via the "token-error" session state.
+  const loginRedirectPath = resolveAdminLayoutLoginRedirectPath({
+    sessionState,
+    isTokenMode,
+    pathname,
+  });
+
+  // Token-mode embeds must never redirect to the login screen; token auth
+  // failures are shown inline because the host app owns the bearer token.
   useEffect(() => {
-    if (sessionState.status === "unauthenticated" && !isTokenMode) {
-      const returnTo = encodeURIComponent(
-        pathname.includes("/admin") ? pathname : "/admin",
-      );
-      replace(`/admin/login?returnTo=${returnTo}`);
+    if (loginRedirectPath) {
+      replace(loginRedirectPath);
     }
     return () => {};
-  }, [sessionState.status, pathname, replace, isTokenMode]);
+  }, [loginRedirectPath, replace]);
 
   const mdxCatalog = useMemo<MdxComponentCatalog>(
     () => context.mdx?.catalog ?? { components: [] },
@@ -586,6 +611,10 @@ function useAdminLayoutRoutedElement({
         <div className="text-foreground-muted text-sm">Loading…</div>
       </div>
     );
+  }
+
+  if (loginRedirectPath) {
+    return null;
   }
 
   if (sessionState.status === "unauthenticated") {
