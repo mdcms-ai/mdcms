@@ -66,6 +66,7 @@ import {
   parseMarkdownToDocument,
 } from "../../../markdown-pipeline.js";
 import { MdxComponentExtension } from "../../../mdx-component-extension.js";
+import { MdxIntrinsicElementExtension } from "../../../mdx-intrinsic-element-extension.js";
 import { MdxRawJsxExtension } from "../../../mdx-raw-jsx-extension.js";
 import { CodeBlockWithNodeView } from "./code-block-with-node-view.js";
 import {
@@ -74,6 +75,7 @@ import {
 } from "./mdx-component-collapse.js";
 import { createEditorToolbarLayout } from "./editor-toolbar.js";
 import { MdxComponentNodeView } from "./mdx-component-node-view.js";
+import { MdxIntrinsicElementNodeView } from "./mdx-intrinsic-element-node-view.js";
 import { MdxRawJsxNodeView } from "./mdx-raw-jsx-node-view.js";
 import {
   createMdxComponentInsertContent,
@@ -833,6 +835,11 @@ function useTipTapEditorElement({
         mdxComponent: MdxComponentExtension.extend({
           addNodeView() {
             return ReactNodeViewRenderer(TipTapMdxComponentNodeView);
+          },
+        }),
+        mdxIntrinsicElement: MdxIntrinsicElementExtension.extend({
+          addNodeView() {
+            return ReactNodeViewRenderer(MdxIntrinsicElementNodeView);
           },
         }),
       }),

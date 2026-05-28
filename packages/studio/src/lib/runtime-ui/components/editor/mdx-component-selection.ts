@@ -7,6 +7,7 @@ type MdxCatalogComponent = NonNullable<
 >["catalog"]["components"][number];
 
 export type SelectedMdxComponent = {
+  kind: "component" | "intrinsic";
   component: MdxCatalogComponent | undefined;
   componentName: string;
   isVoid: boolean;
@@ -31,7 +32,10 @@ export function getSelectedMdxComponent(
     };
   };
 
-  if (nodeSelection.node?.type.name === "mdxComponent") {
+  if (
+    nodeSelection.node?.type.name === "mdxComponent" ||
+    nodeSelection.node?.type.name === "mdxIntrinsicElement"
+  ) {
     return createSelectedMdxComponent(
       nodeSelection.node,
       nodeSelection.from,
@@ -44,7 +48,10 @@ export function getSelectedMdxComponent(
   for (let depth = $from.depth; depth > 0; depth -= 1) {
     const node = $from.node(depth);
 
-    if (node.type.name === "mdxComponent") {
+    if (
+      node.type.name === "mdxComponent" ||
+      node.type.name === "mdxIntrinsicElement"
+    ) {
       return createSelectedMdxComponent(node, $from.before(depth), components);
     }
   }
@@ -74,11 +81,21 @@ export function updateSelectedMdxComponentProps(
       ...patch,
     };
 
-    tr.setNodeMarkup(selected.pos, undefined, {
-      componentName: selected.componentName,
-      props: nextProps,
-      isVoid: selected.isVoid,
-    });
+    tr.setNodeMarkup(
+      selected.pos,
+      undefined,
+      selected.kind === "intrinsic"
+        ? {
+            tagName: selected.componentName,
+            props: nextProps,
+            isVoid: selected.isVoid,
+          }
+        : {
+            componentName: selected.componentName,
+            props: nextProps,
+            isVoid: selected.isVoid,
+          },
+    );
     dispatch?.(tr);
 
     return true;
@@ -110,17 +127,27 @@ function createSelectedMdxComponent(
   pos: number,
   components: readonly MdxCatalogComponent[],
 ): SelectedMdxComponent | null {
+  const kind =
+    node.type.name === "mdxIntrinsicElement" ? "intrinsic" : "component";
   const componentName =
-    typeof node.attrs.componentName === "string"
-      ? node.attrs.componentName
-      : "";
+    kind === "intrinsic"
+      ? typeof node.attrs.tagName === "string"
+        ? node.attrs.tagName
+        : ""
+      : typeof node.attrs.componentName === "string"
+        ? node.attrs.componentName
+        : "";
 
   if (componentName.length === 0) {
     return null;
   }
 
   return {
-    component: components.find((component) => component.name === componentName),
+    kind,
+    component:
+      kind === "component"
+        ? components.find((component) => component.name === componentName)
+        : undefined,
     componentName,
     isVoid: node.attrs.isVoid === true,
     props: isPropsRecord(node.attrs.props) ? node.attrs.props : {},

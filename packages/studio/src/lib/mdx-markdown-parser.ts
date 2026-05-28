@@ -4,6 +4,7 @@ import { fromMarkdown } from "mdast-util-from-markdown";
 import { mdxFromMarkdown } from "mdast-util-mdx";
 import { mdx } from "micromark-extension-mdx";
 
+import { HTML_VOID_ELEMENTS } from "./html-void-elements.js";
 import { parseMdxAttributeValue } from "./mdx-component-extension.js";
 
 type AstPosition = {
@@ -37,6 +38,10 @@ type MdxJsxAttribute = {
 
 function isUppercaseComponentName(value: string | null | undefined): boolean {
   return typeof value === "string" && /^[A-Z][A-Za-z0-9._-]*$/.test(value);
+}
+
+function isLowercaseIntrinsicName(value: string | null | undefined): boolean {
+  return typeof value === "string" && /^[a-z][A-Za-z0-9._-]*$/.test(value);
 }
 
 function getSourceSlice(source: string, node: { position?: AstPosition }) {
@@ -320,6 +325,27 @@ function convertMdxJsxElementNode(
   const name = node.name ?? "";
 
   if (!isUppercaseComponentName(name)) {
+    const props = parseMdxElementProps(node, source);
+
+    if (isLowercaseIntrinsicName(name) && props !== null) {
+      const isVoid =
+        (rawSource?.trimEnd().endsWith("/>") ?? false) ||
+        HTML_VOID_ELEMENTS.has(name);
+      const content = isVoid
+        ? []
+        : convertChildrenToBlocks(node.children ?? [], source);
+
+      return {
+        type: "mdxIntrinsicElement",
+        attrs: {
+          tagName: name,
+          isVoid,
+          props,
+        },
+        ...(content.length > 0 ? { content } : {}),
+      };
+    }
+
     return {
       type: "mdxRawJsx",
       attrs: {

@@ -17,6 +17,7 @@ const registeredComponent = {
 test("does not republish the same MDX selection snapshot", () => {
   const previous = createPublishedMdxComponentSelectionSnapshot({
     selected: {
+      kind: "component",
       component: registeredComponent,
       componentName: "Chart",
       isVoid: true,
@@ -31,6 +32,7 @@ test("does not republish the same MDX selection snapshot", () => {
   });
   const next = createPublishedMdxComponentSelectionSnapshot({
     selected: {
+      kind: "component",
       component: registeredComponent,
       componentName: "Chart",
       isVoid: true,
@@ -50,6 +52,7 @@ test("does not republish the same MDX selection snapshot", () => {
 test("republishes the MDX selection when the snapshot meaningfully changes", () => {
   const previous = createPublishedMdxComponentSelectionSnapshot({
     selected: {
+      kind: "component",
       component: registeredComponent,
       componentName: "Chart",
       isVoid: true,
@@ -63,6 +66,7 @@ test("republishes the MDX selection when the snapshot meaningfully changes", () 
   });
   const next = createPublishedMdxComponentSelectionSnapshot({
     selected: {
+      kind: "component",
       component: registeredComponent,
       componentName: "Chart",
       isVoid: true,
@@ -81,6 +85,7 @@ test("republishes the MDX selection when the snapshot meaningfully changes", () 
 test("republishes the MDX selection when it is cleared", () => {
   const previous = createPublishedMdxComponentSelectionSnapshot({
     selected: {
+      kind: "component",
       component: registeredComponent,
       componentName: "Chart",
       isVoid: true,
