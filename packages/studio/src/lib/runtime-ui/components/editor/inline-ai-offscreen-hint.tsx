@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ArrowDown, ArrowUp } from "lucide-react";
 
 import type { TipTapEditorSelectionInfo } from "./tiptap-editor.js";
+import { getPickerOffscreenHintLeft } from "./inline-ai-offscreen-hint-position.js";
 import { cn } from "../../lib/utils.js";
 
 /**
@@ -44,6 +45,7 @@ export function PickerOffscreenHint(props: {
   const viewportTop = 0;
   const viewportBottom =
     typeof window === "undefined" ? Infinity : window.innerHeight;
+  const viewportWidth = typeof window === "undefined" ? 0 : window.innerWidth;
 
   // Picker sits below selection; we treat it as ~280px tall when
   // computing visibility (real height varies with scroll).
@@ -83,9 +85,7 @@ export function PickerOffscreenHint(props: {
   // Anchor the hint inside the editor surface when present, else
   // fall back to viewport edge.
   const surfaceRect = editorEl?.getBoundingClientRect();
-  const left = surfaceRect
-    ? surfaceRect.left + surfaceRect.width / 2
-    : viewportBottom / 2;
+  const left = getPickerOffscreenHintLeft(surfaceRect, viewportWidth);
   const top = aboveViewport
     ? (surfaceRect?.top ?? 16) + 16
     : (surfaceRect?.bottom ?? viewportBottom - 16) - 48;

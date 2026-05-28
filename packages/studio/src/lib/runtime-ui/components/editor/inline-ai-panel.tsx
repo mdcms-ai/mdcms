@@ -448,9 +448,7 @@ function ActionRow(props: {
 }
 
 export function InlineAiPanel(props: InlineAiPanelProps) {
-  return (
-    <InlineAiPanelStateful key={props.transform.state.status} {...props} />
-  );
+  return <InlineAiPanelStateful {...props} />;
 }
 
 function InlineAiPanelStateful(props: InlineAiPanelProps) {

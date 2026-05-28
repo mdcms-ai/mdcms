@@ -5,17 +5,10 @@ import { parseMarkdownToDocument } from "@mdcms/studio/markdown-pipeline";
 import { Callout } from "../components/mdx/Callout";
 import { Chart } from "../components/mdx/Chart";
 import { PricingTable } from "../components/mdx/PricingTable";
-
-type RenderNode = {
-  type?: string;
-  text?: string;
-  attrs?: Record<string, unknown>;
-  marks?: Array<{
-    type?: string;
-    attrs?: Record<string, unknown>;
-  }>;
-  content?: RenderNode[];
-};
+import {
+  createRenderedContentSiblingKeyer,
+  type RenderNode,
+} from "./rendered-content-keys";
 
 const mdxComponents = {
   Callout,
@@ -41,18 +34,11 @@ function getHeadingLevel(attrs: Record<string, unknown> | undefined) {
   return typeof level === "number" && level >= 1 && level <= 6 ? level : 2;
 }
 
-function getNodeKey(node: RenderNode): string {
-  return JSON.stringify({
-    type: node.type,
-    text: node.text,
-    attrs: node.attrs,
-    content: node.content?.length ?? 0,
-  });
-}
-
 function RenderInlineNodes({ nodes }: { nodes: RenderNode[] }) {
+  const getSiblingKey = createRenderedContentSiblingKeyer();
+
   return nodes.map((node) => (
-    <RenderInlineNode key={getNodeKey(node)} node={node} />
+    <RenderInlineNode key={getSiblingKey(node)} node={node} />
   ));
 }
 
@@ -143,22 +129,28 @@ function RenderBlockNode({ node }: { node: RenderNode }) {
           <RenderInlineNodes nodes={getContent(node)} />
         </p>
       );
-    case "bulletList":
+    case "bulletList": {
+      const getSiblingKey = createRenderedContentSiblingKeyer();
+
       return (
         <ul>
           {getContent(node).map((child) => (
-            <RenderListItem key={getNodeKey(child)} node={child} />
+            <RenderListItem key={getSiblingKey(child)} node={child} />
           ))}
         </ul>
       );
-    case "orderedList":
+    }
+    case "orderedList": {
+      const getSiblingKey = createRenderedContentSiblingKeyer();
+
       return (
         <ol>
           {getContent(node).map((child) => (
-            <RenderListItem key={getNodeKey(child)} node={child} />
+            <RenderListItem key={getSiblingKey(child)} node={child} />
           ))}
         </ol>
       );
+    }
     case "listItem":
       return <RenderListItem node={node} />;
     case "blockquote":
@@ -187,8 +179,10 @@ function RenderBlockNode({ node }: { node: RenderNode }) {
 }
 
 function RenderBlockNodes({ nodes }: { nodes: RenderNode[] }) {
+  const getSiblingKey = createRenderedContentSiblingKeyer();
+
   return nodes.map((node) => (
-    <RenderBlockNode key={getNodeKey(node)} node={node} />
+    <RenderBlockNode key={getSiblingKey(node)} node={node} />
   ));
 }
 

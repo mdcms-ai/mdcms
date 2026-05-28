@@ -11,3 +11,7 @@ export function getPricingTableEditorTiers(
 
   return [...value.tiers];
 }
+
+export function getPricingTableEditorTierKey(index: number): string {
+  return `tier:${index}`;
+}

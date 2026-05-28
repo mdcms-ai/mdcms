@@ -3,7 +3,10 @@ import type { ChangeEvent } from "react";
 import type { PropsEditorComponent } from "@mdcms/studio";
 
 import type { PricingTableProps } from "./PricingTable";
-import { getPricingTableEditorTiers } from "./PricingTable.editor-state";
+import {
+  getPricingTableEditorTierKey,
+  getPricingTableEditorTiers,
+} from "./PricingTable.editor-state";
 
 type PricingTier = NonNullable<PricingTableProps["tiers"]>[number];
 
@@ -109,7 +112,7 @@ const PricingTableEditor: PropsEditorComponent<PricingTableProps> = ({
       <div style={{ display: "grid", gap: "12px" }}>
         {tiers.map((tier, index) => (
           <fieldset
-            key={`${tier.name}:${tier.price}:${tier.description ?? ""}`}
+            key={getPricingTableEditorTierKey(index)}
             style={{
               margin: 0,
               borderRadius: "14px",
