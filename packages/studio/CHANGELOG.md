@@ -1,5 +1,65 @@
 # @mdcms/studio
 
+## 0.3.0
+
+### Minor Changes
+
+- ec9e435: Add the chat surface client APIs that pair with `POST /api/v1/ai/chat/messages` and the new content-list endpoint used by the assistant's `@`-mention picker. New public surface on `@mdcms/studio`:
+  - `StudioAiRouteApi.chatMessage(input)` and the `StudioAiChatMessageRequest` / `StudioAiChatMessageResult` / `StudioAiChatMessage` / `StudioAiChatAttachedSelection` / `StudioAiChatAllowedAction` types.
+  - `StudioAiProposal` extended with the `delete_document` kind (new `StudioAiProposalOperation` variant with `path` + optional `reason`).
+  - `StudioDocumentRouteApi.listContent({ q?, type?, limit?, offset?, signal? })` returning the standard `ApiPaginatedEnvelope<ContentDocumentResponse>` shape.
+
+- f9c445d: Add streaming + markdown rendering to the chat surface client APIs.
+  - `StudioAiRouteApi.chatMessageStream(input)` opens an SSE connection against `POST /api/v1/ai/chat/messages/stream` and returns an `AsyncIterable<StudioAiChatStreamEvent>` that yields `text-delta`, `done`, and `error` events as the model produces them.
+  - New `StudioAiChatStreamEvent` discriminated-union export covers the wire-shape of each SSE event the client can observe.
+  - New runtime dependency on `streamdown` (v2.5.0). The chat panel now uses it under the hood to render assistant prose as markdown — headings, fenced code (shiki highlighting), GFM tables, task lists, links, etc. Streaming-aware: `parseIncompleteMarkdown` keeps mid-stream chunks from leaking unclosed `**`/```` fences while a token batch is in flight.
+
+- 7bb04b7: Add MDX catalog validation to Studio AI chat proposals
+- 50ae976: Add built-in MDX primitives and inline style props
+- 6409863: Studio: post-accept Undo on the chat-assistant Applied banner.
+
+  After Accept succeeds, the 6-second lime banner now exposes a working
+  Undo button (and a ⌘Z / Ctrl+Z shortcut scoped to the assistant
+  panel). Undo routes through the new
+  `POST /api/v1/ai/proposals/:proposalId/undo` endpoint, which fans out
+  per proposal kind: soft-delete for `create_document`,
+  restore-from-trash for `delete_document`, and a body/frontmatter
+  replay for `replace_selection` / `insert_block` /
+  `update_frontmatter`. A concurrent edit inside the window fails loud
+  with `AI_PROPOSAL_CONFLICT`; outside the window the banner morphs to
+  the quiet log line and undo is no longer offered.
+
+  `StudioAiRouteApi` gains `undoProposal`. `StudioAiApplyResult` now
+  surfaces `priorDraft` for body/frontmatter kinds so the client can
+  echo the captured snapshot back. The AI audit outcome enum gains
+  `undone` and `undo_failed`.
+
+### Patch Changes
+
+- 0ba1039: Preserve raw lowercase MDX islands in Studio previews.
+- 4052b90: Clean up `react-doctor` warnings in `@mdcms/studio`: score 66 → 84.
+
+  Internal-only changes; no behaviour changes to the published surface. Highlights:
+  - Workspace `tsconfig.base.json` bumped to ES2023 to unblock `Array.prototype.toSorted`.
+  - Mechanical sweeps: `toSorted` over `[...arr].sort()`, `flatMap` over `map().filter()`, ES2023 length-check shape, hoisted `EMPTY_BREADCRUMBS`, SVG `d` decimals truncated to two places, label `htmlFor`/id associations, redundant `role="navigation"` removed, `Promise.all` for independent awaits, `gap-y` over `space-y` on flex children, action-named button labels.
+  - React 19: `useContext(X)` migrated to `use(X)` across context modules.
+  - `proposal-card.tsx`: removed prop-mirroring `useState`/`useEffect` pattern; the reject panel now opens via local override `OR rejecting` prop, eliminating the stale first-render.
+  - `settings-page.tsx`: API-keys table renders dates through a `formatClientDate` helper and a client-mounted `ApiKeyStatusBadge` to avoid SSR/CSR locale + clock hydration mismatches. `api-key-create-dialog.tsx`: `min` date attr is now set after mount.
+  - Render-in-render extractions: `ContentCardGrid`/`ContentTypeCard`, `RetryButton`, `SchemaKindChip`/`SchemaConstraintFlags`, `ReadyMdxPropsEditor`/`AutoFormFieldControl`, `RouteContent`, `RowActions` (content/[type]), `TrashRowActions`.
+  - Login page: SSO state collapsed into a single discriminated-union state to remove the cascading two-`setState` effect.
+  - `studio-component.tsx` and `mdx-component-node-view.tsx`: documented the two intentional `dangerouslySetInnerHTML` sites inline.
+  - Added `packages/studio/knip.json` describing the two-tier runtime bundling so knip stops false-flagging `runtime-ui/**` as unused.
+
+  API rename inside the package: `renderReadyMdxPropsEditor` → `ReadyMdxPropsEditor` (the prior name was not exported from `src/index.ts`, so consumers outside the package are unaffected).
+
+- 24d19d2: Use the MDX parser stack for Studio markdown parsing
+- 14193e3: Harden raw JSX previews and assistant request ownership
+- Updated dependencies [ec9e435]
+- Updated dependencies [7bb04b7]
+- Updated dependencies [50ae976]
+- Updated dependencies [6409863]
+  - @mdcms/shared@0.3.0
+
 ## 0.2.0
 
 ### Minor Changes
