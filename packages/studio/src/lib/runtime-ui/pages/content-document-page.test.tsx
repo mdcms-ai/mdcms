@@ -516,6 +516,27 @@ test("ContentDocumentPageView starts with the right document sidebar collapsed b
   );
 });
 
+test("ContentDocumentPageView localizes editor parse failures to the editor canvas", () => {
+  let markup = "";
+
+  assert.doesNotThrow(() => {
+    markup = renderPageMarkup(
+      createReadyState({
+        draftBody: "<Broken",
+      }),
+      {
+        context: createMdxMountContext(),
+        sidebarOpen: true,
+      },
+    );
+  });
+
+  assert.match(markup, /data-mdcms-editor-error-boundary="true"/);
+  assert.match(markup, /Editor failed to load/);
+  assert.match(markup, /Failed to parse Markdown\/MDX/);
+  assert.match(markup, /data-mdcms-editor-pane="sidebar"/);
+});
+
 test("ContentDocumentPageView renders the active MDX component props panel in a dedicated Component tab", () => {
   const state = createReadyState();
   state.schemaState = createReadySchemaState({

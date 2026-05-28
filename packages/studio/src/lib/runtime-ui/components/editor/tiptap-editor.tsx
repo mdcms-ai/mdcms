@@ -9,6 +9,7 @@ import {
   useFloating,
 } from "@floating-ui/react-dom";
 import {
+  Component,
   createContext,
   Fragment as ReactFragment,
   use,
@@ -20,6 +21,7 @@ import {
   useRef,
   useState,
   type DragEvent as ReactDragEvent,
+  type ErrorInfo,
   type Ref,
   type ReactNode,
 } from "react";
@@ -259,6 +261,133 @@ interface TipTapEditorProps {
   canvasHeader?: ReactNode;
 }
 
+type ParsedEditorContent = ReturnType<typeof parseMarkdownToDocument>;
+
+type TipTapEditorErrorBoundaryProps = {
+  children: ReactNode;
+  fallback: (error: unknown, reset: () => void) => ReactNode;
+  onError?: (error: unknown, errorInfo?: ErrorInfo) => void;
+  resetKey: string;
+};
+
+type TipTapEditorErrorBoundaryState = {
+  error: unknown | null;
+  hasError: boolean;
+};
+
+class TipTapEditorErrorBoundary extends Component<
+  TipTapEditorErrorBoundaryProps,
+  TipTapEditorErrorBoundaryState
+> {
+  override state: TipTapEditorErrorBoundaryState = {
+    error: null,
+    hasError: false,
+  };
+
+  static getDerivedStateFromError(error: unknown) {
+    return {
+      error,
+      hasError: true,
+    };
+  }
+
+  override componentDidUpdate(prevProps: TipTapEditorErrorBoundaryProps) {
+    if (prevProps.resetKey !== this.props.resetKey && this.state.hasError) {
+      this.setState({
+        error: null,
+        hasError: false,
+      });
+    }
+  }
+
+  override componentDidCatch(error: unknown, errorInfo: ErrorInfo) {
+    this.props.onError?.(error, errorInfo);
+  }
+
+  private reset = () => {
+    this.setState({
+      error: null,
+      hasError: false,
+    });
+  };
+
+  override render() {
+    if (this.state.hasError) {
+      return this.props.fallback(this.state.error, this.reset);
+    }
+
+    return this.props.children;
+  }
+}
+
+function formatEditorRuntimeError(error: unknown): string {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message;
+  }
+
+  if (typeof error === "string" && error.trim().length > 0) {
+    return error;
+  }
+
+  return "The editor encountered an unexpected error.";
+}
+
+function reportStudioEditorError(error: unknown, errorInfo?: ErrorInfo) {
+  if (typeof globalThis.reportError === "function") {
+    globalThis.reportError(error);
+    return;
+  }
+
+  console.error(error, errorInfo);
+}
+
+function TipTapEditorFailureFallback({
+  canvasHeader,
+  errorMessage,
+  onRetry,
+}: {
+  canvasHeader?: ReactNode;
+  errorMessage: string;
+  onRetry: () => void;
+}) {
+  return (
+    <div
+      data-mdcms-editor-error-boundary="true"
+      className="flex h-full min-h-0 min-w-0 flex-col bg-background"
+    >
+      <div className="border-b border-border bg-card px-4 py-2">
+        <div className="flex min-h-9 items-center justify-between gap-3">
+          <p className="text-sm font-medium text-foreground">
+            Editor unavailable
+          </p>
+          <Button type="button" variant="ghost" size="sm" onClick={onRetry}>
+            Retry editor
+          </Button>
+        </div>
+      </div>
+      <div className="min-w-0 flex-1 overflow-y-auto">
+        <div className="mx-auto max-w-[880px] px-6 pb-24 pt-4 lg:px-10 lg:pt-5">
+          {canvasHeader}
+          <section className="mt-4 rounded-md border border-destructive/25 bg-destructive/5 px-5 py-4">
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-foreground">
+                Editor failed to load
+              </p>
+              <p className="text-sm text-foreground-muted">
+                Studio could not open the Markdown/MDX editor for this document.
+                The rest of the document page is still available.
+              </p>
+              <p className="rounded-sm bg-background px-3 py-2 font-mono text-xs text-destructive">
+                {errorMessage}
+              </p>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 type TipTapNodeViewContextValue = {
   context?: StudioMountContext;
   readOnly: boolean;
@@ -429,12 +558,85 @@ function ToolbarButton({
 }
 
 export function TipTapEditor(props: TipTapEditorProps) {
+  const initialContent = props.initialContent ?? defaultContent;
+  const [retryNonce, setRetryNonce] = useState(0);
+  const parsedContent = useMemo<
+    | {
+        status: "ready";
+        document: ParsedEditorContent;
+      }
+    | {
+        status: "error";
+        error: unknown;
+        message: string;
+      }
+  >(() => {
+    try {
+      return {
+        status: "ready",
+        document: parseMarkdownToDocument(initialContent),
+      };
+    } catch (error) {
+      return {
+        status: "error",
+        error,
+        message: formatEditorRuntimeError(error),
+      };
+    }
+  }, [initialContent, retryNonce]);
+
+  useEffect(() => {
+    if (parsedContent.status === "error") {
+      reportStudioEditorError(parsedContent.error);
+    }
+  }, [parsedContent]);
+
+  const retryEditor = useCallback(() => {
+    setRetryNonce((current) => current + 1);
+  }, []);
+
+  if (parsedContent.status === "error") {
+    return (
+      <TipTapEditorFailureFallback
+        canvasHeader={props.canvasHeader}
+        errorMessage={parsedContent.message}
+        onRetry={retryEditor}
+      />
+    );
+  }
+
+  return (
+    <TipTapEditorErrorBoundary
+      resetKey={`${retryNonce}:${initialContent}`}
+      onError={reportStudioEditorError}
+      fallback={(error, reset) => (
+        <TipTapEditorFailureFallback
+          canvasHeader={props.canvasHeader}
+          errorMessage={formatEditorRuntimeError(error)}
+          onRetry={() => {
+            reset();
+            retryEditor();
+          }}
+        />
+      )}
+    >
+      <TipTapEditorInner
+        {...props}
+        initialEditorContent={parsedContent.document}
+      />
+    </TipTapEditorErrorBoundary>
+  );
+}
+
+function TipTapEditorInner(
+  props: TipTapEditorProps & { initialEditorContent: ParsedEditorContent },
+) {
   return useTipTapEditorElement(props);
 }
 
 function useTipTapEditorElement({
   ref,
-  initialContent = defaultContent,
+  initialEditorContent,
   onChange,
   placeholder = "Start writing, or press / for commands...",
   context,
@@ -443,7 +645,7 @@ function useTipTapEditorElement({
   onActiveMdxComponentChange,
   onSelectionTextChange,
   canvasHeader,
-}: TipTapEditorProps) {
+}: TipTapEditorProps & { initialEditorContent: ParsedEditorContent }) {
   const toolbar = createEditorToolbarLayout();
   const contextCatalogComponents = context?.mdx?.catalog.components;
   const catalogComponents = useMemo(
@@ -808,10 +1010,6 @@ function useTipTapEditorElement({
       }
     },
     [],
-  );
-  const initialEditorContent = useMemo(
-    () => parseMarkdownToDocument(initialContent),
-    [initialContent],
   );
   const editor = useEditor(
     {
