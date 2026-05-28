@@ -12,6 +12,12 @@ import {
 } from "./capabilities-context.js";
 import { StudioMountInfoProvider } from "./mount-info-context.js";
 import SettingsPage from "./settings-page.js";
+import {
+  SettingsPageView,
+  type SettingsPageApiKeysState,
+  type SettingsPageSchemaSummaryState,
+} from "./settings-page.js";
+import type { ApiKeyMetadata } from "../../../api-keys-api.js";
 
 function renderSettingsPage(input: {
   initialTab: string;
@@ -86,6 +92,7 @@ test("SettingsPage renders the API keys tab header and create button", () => {
 
   assert.match(markup, /Create API Key/);
   assert.match(markup, /Manage API keys for external integrations/);
+  assert.match(markup, /data-mdcms-settings-subnav/);
 });
 
 test("SettingsPage does not render a Schema tab", () => {
@@ -130,5 +137,102 @@ test("SettingsPage General tab shows read-only project context", () => {
     capabilities: { canManageSettings: true },
   });
   assert.match(markup, /read-only/i);
+  assert.match(markup, /Schema hash/);
+  assert.match(markup, /Last schema sync/);
+  assert.match(markup, /mdcms schema sync/);
   assert.doesNotMatch(markup, /Save changes/);
+});
+
+const readySchemaSummary: SettingsPageSchemaSummaryState = {
+  status: "ready",
+  schemaHash: "server-hash",
+  syncedAt: "2026-03-31T12:00:00.000Z",
+};
+
+const readyKey: ApiKeyMetadata = {
+  id: "key-1",
+  label: "CI deploy",
+  keyPrefix: "mdcms_key_abc123",
+  scopes: ["content:read", "content:publish", "schema:read"],
+  contextAllowlist: [{ project: "test-project", environment: "production" }],
+  createdByUserId: "user-1",
+  createdAt: "2026-03-01T00:00:00.000Z",
+  expiresAt: null,
+  revokedAt: null,
+  lastUsedAt: null,
+};
+
+function renderSettingsPageView(input: {
+  initialTab: string;
+  apiKeysState?: Partial<SettingsPageApiKeysState>;
+  schemaSummary?: SettingsPageSchemaSummaryState;
+  canManageSettings?: boolean;
+}): string {
+  return renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      null,
+      createElement(SettingsPageView, {
+        activeTab: input.initialTab,
+        setActiveTab: () => {},
+        canManageSettings: input.canManageSettings ?? true,
+        mountInfo: {
+          project: "test-project",
+          environment: "production",
+          apiBaseUrl: "https://api.example.com",
+        },
+        schemaSummary: input.schemaSummary ?? readySchemaSummary,
+        apiKeysState: {
+          status: "ready",
+          keys: [readyKey],
+          isRevoking: false,
+          revokeError: null,
+          onRevoke: () => {},
+          ...input.apiKeysState,
+        },
+        createDialogOpen: false,
+        setCreateDialogOpen: () => {},
+        createKey: async () => ({
+          ...readyKey,
+          key: "mdcms_key_secret",
+        }),
+        isCreating: false,
+        createError: null,
+      }),
+    ),
+  );
+}
+
+test("SettingsPageView renders schema summary metadata from the existing schema contract", () => {
+  const markup = renderSettingsPageView({ initialTab: "general" });
+
+  assert.match(markup, /data-mdcms-settings-general-state="ready"/);
+  assert.match(markup, /server-hash/);
+  assert.match(markup, /2026-03-31T12:00:00.000Z/);
+  assert.match(markup, /mdcms schema sync/);
+});
+
+test("SettingsPageView renders API key metadata and revoke affordance", () => {
+  const markup = renderSettingsPageView({ initialTab: "api-keys" });
+
+  assert.match(markup, /data-mdcms-settings-api-keys-state="ready"/);
+  assert.match(markup, /CI deploy/);
+  assert.match(markup, /mdcms_key_abc123/);
+  assert.match(markup, /content:read/);
+  assert.match(markup, /schema:read/);
+  assert.match(markup, /test-project/);
+  assert.match(markup, /production/);
+  assert.match(markup, /Active/);
+  assert.match(markup, /Revoke/);
+});
+
+test("SettingsPageView keeps forbidden state capability-gated", () => {
+  const markup = renderSettingsPageView({
+    initialTab: "api-keys",
+    canManageSettings: false,
+  });
+
+  assert.match(markup, /data-mdcms-settings-state="forbidden"/);
+  assert.match(markup, /Access denied/);
+  assert.doesNotMatch(markup, /Create API Key/);
 });

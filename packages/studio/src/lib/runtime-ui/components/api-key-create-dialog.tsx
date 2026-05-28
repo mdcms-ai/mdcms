@@ -85,7 +85,7 @@ export type ApiKeyCreateDialogProps = {
 
 type Step = "form" | "created";
 
-type FormState = {
+export type ApiKeyCreateDialogFormState = {
   step: Step;
   label: string;
   selectedScopes: Set<ApiKeyOperationScope>;
@@ -95,7 +95,7 @@ type FormState = {
   submitError: string | null;
 };
 
-function createInitialFormState(): FormState {
+export function createInitialApiKeyCreateDialogFormState(): ApiKeyCreateDialogFormState {
   return {
     step: "form",
     label: "",
@@ -107,13 +107,14 @@ function createInitialFormState(): FormState {
   };
 }
 
-const initialFormState: FormState = createInitialFormState();
+const initialFormState: ApiKeyCreateDialogFormState =
+  createInitialApiKeyCreateDialogFormState();
 
 function formatDateInputValue(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
-type FormAction =
+export type ApiKeyCreateDialogFormAction =
   | { type: "reset" }
   | { type: "label-change"; value: string }
   | { type: "scope-toggle"; scope: ApiKeyOperationScope }
@@ -123,13 +124,16 @@ type FormAction =
   | { type: "submit-error"; message: string }
   | { type: "copy-set"; copied: boolean };
 
-function formReducer(state: FormState, action: FormAction): FormState {
+export function apiKeyCreateDialogFormReducer(
+  state: ApiKeyCreateDialogFormState,
+  action: ApiKeyCreateDialogFormAction,
+): ApiKeyCreateDialogFormState {
   switch (action.type) {
     case "reset":
       // Build a fresh state so `selectedScopes` is a new Set rather than the
       // shared one held by `initialFormState` — otherwise a subsequent
       // `scope-toggle` would mutate the module-level reference.
-      return createInitialFormState();
+      return createInitialApiKeyCreateDialogFormState();
     case "label-change":
       return { ...state, label: action.value };
     case "scope-toggle": {
@@ -154,6 +158,39 @@ function formReducer(state: FormState, action: FormAction): FormState {
   }
 }
 
+export function isApiKeyCreateDialogSubmittable(
+  state: Pick<ApiKeyCreateDialogFormState, "label" | "selectedScopes">,
+  isSubmitting: boolean,
+): boolean {
+  return (
+    state.label.trim().length > 0 &&
+    state.selectedScopes.size > 0 &&
+    !isSubmitting
+  );
+}
+
+export function buildApiKeyCreateInput(input: {
+  label: string;
+  selectedScopes: Set<ApiKeyOperationScope>;
+  expiresAt: string;
+  project: string | null | undefined;
+  environment: string | null | undefined;
+}): ApiKeyCreateInput {
+  const contextAllowlist =
+    input.project && input.environment
+      ? [{ project: input.project, environment: input.environment }]
+      : [];
+
+  return {
+    label: input.label.trim(),
+    scopes: Array.from(input.selectedScopes),
+    contextAllowlist,
+    ...(input.expiresAt
+      ? { expiresAt: new Date(input.expiresAt).toISOString() }
+      : {}),
+  };
+}
+
 export function ApiKeyCreateDialog({
   open,
   onOpenChange,
@@ -162,7 +199,10 @@ export function ApiKeyCreateDialog({
   error,
 }: ApiKeyCreateDialogProps) {
   const mountInfo = useStudioMountInfo();
-  const [form, dispatch] = useReducer(formReducer, initialFormState);
+  const [form, dispatch] = useReducer(
+    apiKeyCreateDialogFormReducer,
+    initialFormState,
+  );
   const {
     step,
     label,
@@ -174,25 +214,20 @@ export function ApiKeyCreateDialog({
   } = form;
   const todayMinDate = open ? formatDateInputValue(new Date()) : undefined;
 
-  const canSubmit =
-    label.trim().length > 0 && selectedScopes.size > 0 && !isSubmitting;
+  const canSubmit = isApiKeyCreateDialogSubmittable(form, isSubmitting);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canSubmit) return;
     dispatch({ type: "submit-start" });
 
-    const contextAllowlist =
-      mountInfo.project && mountInfo.environment
-        ? [{ project: mountInfo.project, environment: mountInfo.environment }]
-        : [];
-
-    const input: ApiKeyCreateInput = {
-      label: label.trim(),
-      scopes: Array.from(selectedScopes),
-      contextAllowlist,
-      ...(expiresAt ? { expiresAt: new Date(expiresAt).toISOString() } : {}),
-    };
+    const input = buildApiKeyCreateInput({
+      label,
+      selectedScopes,
+      expiresAt,
+      project: mountInfo.project,
+      environment: mountInfo.environment,
+    });
 
     try {
       const result = await onSubmit(input);
