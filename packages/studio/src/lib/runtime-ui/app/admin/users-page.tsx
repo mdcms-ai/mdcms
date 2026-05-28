@@ -1,22 +1,21 @@
 "use client";
 
-import { useReducer, useState } from "react";
+import { type ReactNode, useReducer, useState } from "react";
 import {
-  Plus,
-  MoreHorizontal,
-  Mail,
+  AlertCircle,
+  Clock,
   Edit,
+  Loader2,
+  LogOut,
+  Mail,
+  MoreHorizontal,
+  Plus,
   ShieldOff,
   Trash2,
-  LogOut,
-  Loader2,
-  AlertCircle,
   Users,
   X,
-  Clock,
 } from "lucide-react";
 import { Button } from "../../components/ui/button.js";
-import { Badge } from "../../components/ui/badge.js";
 import { Avatar, AvatarFallback } from "../../components/ui/avatar.js";
 import { Input } from "../../components/ui/input.js";
 import {
@@ -64,58 +63,42 @@ import {
 import { cn } from "../../lib/utils.js";
 import { useCanManageUsers } from "./capabilities-context.js";
 import { useStudioMountInfo } from "./mount-info-context.js";
+import {
+  canUseOwnerProtectedAction,
+  createGrantInput,
+  createUpdatedGrants,
+  getHighestRole,
+  getScopeDisplay,
+  type Role,
+  type ScopeDisplay,
+} from "./users-page-model.js";
 
 const roleConfig = {
   owner: {
     label: "Owner",
-    className: "bg-primary/10 text-primary border-primary/20",
+    badgeClassName: "bg-foreground text-background border-foreground",
+    avatarClassName: "bg-foreground text-background",
   },
   admin: {
     label: "Admin",
-    className: "bg-foreground/10 text-foreground border-foreground/20",
+    badgeClassName: "bg-primary/10 text-primary border-transparent",
+    avatarClassName: "bg-blue-100 text-primary",
   },
   editor: {
     label: "Editor",
-    className: "bg-border text-foreground-muted border-border",
+    badgeClassName: "bg-background-subtle text-foreground border-transparent",
+    avatarClassName: "bg-blue-100 text-primary",
   },
   viewer: {
     label: "Viewer",
-    className: "bg-transparent text-foreground-muted border-border",
+    badgeClassName: "bg-transparent text-foreground-muted border-border/80",
+    avatarClassName: "bg-blue-100 text-primary",
   },
-};
+} as const;
 
-type Role = keyof typeof roleConfig;
+type InviteRole = Exclude<Role, "owner">;
 
-function getHighestRole(grants: UserWithGrants["grants"]): Role {
-  const roleRank: Record<Role, number> = {
-    owner: 3,
-    admin: 2,
-    editor: 1,
-    viewer: 0,
-  };
-  let highest: Role = "viewer";
-  for (const grant of grants) {
-    const role = grant.role as Role;
-    if (roleRank[role] !== undefined && roleRank[role] > roleRank[highest]) {
-      highest = role;
-    }
-  }
-  return highest;
-}
-
-function getScopeLabel(grants: UserWithGrants["grants"]): string {
-  const pathPrefixes = grants.flatMap((g) =>
-    g.pathPrefix ? [g.pathPrefix] : [],
-  );
-  if (pathPrefixes.length > 0) {
-    return pathPrefixes.length === 1
-      ? pathPrefixes[0]!
-      : `${pathPrefixes[0]} +${pathPrefixes.length - 1}`;
-  }
-  return "Full project";
-}
-
-function formatJoinedDate(isoString: string): string {
+function formatDate(isoString: string): string {
   const date = new Date(isoString);
   return date.toLocaleDateString("en-US", {
     month: "short",
@@ -124,13 +107,122 @@ function formatJoinedDate(isoString: string): string {
   });
 }
 
+function formatCount(count: number, singular: string, plural: string): string {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function deriveInitials(name: string, email: string): string {
+  const source = name.trim() || email.trim() || "?";
+  const parts = source.split(/[\s._-]+/).filter(Boolean);
+  if (parts.length >= 2) {
+    return `${parts[0]![0] ?? ""}${parts[1]![0] ?? ""}`.toUpperCase();
+  }
+  return source.slice(0, 2).toUpperCase();
+}
+
+function SectionCard({
+  eyebrow,
+  title,
+  hint,
+  children,
+  className,
+}: {
+  eyebrow: string;
+  title: string;
+  hint?: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <section
+      className={cn(
+        "overflow-hidden rounded-lg border border-card-border bg-card shadow-[0_1px_2px_rgba(0,0,0,.05)]",
+        className,
+      )}
+    >
+      <div className="flex items-center gap-3 border-b border-divider px-4 py-3.5 sm:px-[18px]">
+        <div className="min-w-0">
+          <div className="font-mono text-[10px] font-medium uppercase tracking-[0.08em] text-foreground-muted">
+            {eyebrow}
+          </div>
+          <h2 className="mt-0.5 truncate font-heading text-base font-bold leading-tight text-foreground">
+            {title}
+          </h2>
+        </div>
+        {hint ? (
+          <span className="ml-auto shrink-0 font-mono text-[11px] text-foreground-muted">
+            {hint}
+          </span>
+        ) : null}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function RoleBadge({ role }: { role: Role }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex w-fit shrink-0 items-center rounded-[3px] border px-2 py-[3px] font-mono text-[10px] font-bold leading-none tracking-[0.06em]",
+        roleConfig[role].badgeClassName,
+      )}
+    >
+      {roleConfig[role].label}
+    </span>
+  );
+}
+
+function ScopeChip({ display }: { display: ScopeDisplay }) {
+  return (
+    <span
+      title={display.variant === "folder" ? display.title : undefined}
+      className={cn(
+        "inline-flex max-w-52 items-center truncate rounded-[3px] px-2 py-1 font-mono text-[11px] leading-none",
+        display.variant === "full"
+          ? "bg-transparent italic text-foreground-muted"
+          : "bg-background-subtle text-foreground-muted",
+      )}
+    >
+      {display.label}
+    </span>
+  );
+}
+
+function StatePanel({
+  icon,
+  title,
+  description,
+  action,
+}: {
+  icon: ReactNode;
+  title: string;
+  description: string;
+  action?: ReactNode;
+}) {
+  return (
+    <div className="rounded-lg border border-card-border bg-card px-6 py-14 text-center shadow-[0_1px_2px_rgba(0,0,0,.05)]">
+      <div className="mx-auto mb-4 grid size-10 place-items-center rounded-full bg-background-subtle text-foreground-muted">
+        {icon}
+      </div>
+      <h2 className="font-heading text-xl font-bold text-foreground">
+        {title}
+      </h2>
+      <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-foreground-muted">
+        {description}
+      </p>
+      {action ? <div className="mt-5">{action}</div> : null}
+    </div>
+  );
+}
+
 /* ----------------------------------------------------------------- */
 /* InviteUserDialog                                                   */
 /* ----------------------------------------------------------------- */
 
 type InviteFormState = {
   email: string;
-  role: string;
+  role: InviteRole;
   pathPrefix: string;
   error: string | null;
 };
@@ -144,7 +236,9 @@ const initialInviteState: InviteFormState = {
 
 type InviteFormAction =
   | { type: "reset" }
-  | { type: "field"; field: "email" | "role" | "pathPrefix"; value: string }
+  | { type: "email"; value: string }
+  | { type: "role"; value: InviteRole }
+  | { type: "path-prefix"; value: string }
   | { type: "error"; message: string | null };
 
 function inviteFormReducer(
@@ -154,8 +248,12 @@ function inviteFormReducer(
   switch (action.type) {
     case "reset":
       return initialInviteState;
-    case "field":
-      return { ...state, [action.field]: action.value };
+    case "email":
+      return { ...state, email: action.value };
+    case "role":
+      return { ...state, role: action.value };
+    case "path-prefix":
+      return { ...state, pathPrefix: action.value };
     case "error":
       return { ...state, error: action.message };
   }
@@ -179,6 +277,7 @@ function InviteUserDialog({
   onInvited: () => void;
 }) {
   const [form, dispatch] = useReducer(inviteFormReducer, initialInviteState);
+
   const handleOpenChange = (nextOpen: boolean) => {
     if (!nextOpen) {
       dispatch({ type: "reset" });
@@ -189,33 +288,15 @@ function InviteUserDialog({
   async function handleInvite() {
     dispatch({ type: "error", message: null });
     try {
-      const useFolderPrefix = form.pathPrefix && activeEnvironment;
       await inviteUser({
         email: form.email,
         grants: [
-          {
+          createGrantInput({
             role: form.role,
-            scopeKind:
-              form.role === "admin"
-                ? "global"
-                : useFolderPrefix
-                  ? "folder_prefix"
-                  : "project",
-            project:
-              form.role === "admin" ? undefined : activeProject || undefined,
-            environment:
-              form.role === "admin"
-                ? undefined
-                : useFolderPrefix
-                  ? activeEnvironment
-                  : undefined,
-            pathPrefix:
-              form.role === "admin"
-                ? undefined
-                : useFolderPrefix
-                  ? form.pathPrefix
-                  : undefined,
-          },
+            pathPrefix: form.pathPrefix,
+            activeProject,
+            activeEnvironment,
+          }),
         ],
       });
       onInvited();
@@ -232,21 +313,28 @@ function InviteUserDialog({
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>
-        <Button>
-          <Plus className="mr-2 size-4" />
-          Invite User
+        <Button className="rounded-sm shadow-primary-btn">
+          <Plus className="size-4" />
+          Invite user
         </Button>
       </DialogTrigger>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Invite a new user</DialogTitle>
-          <DialogDescription>
-            Send an invitation to join this CMS instance
+      <DialogContent className="gap-0 overflow-hidden rounded-lg border-border bg-card p-0 sm:max-w-[480px]">
+        <DialogHeader className="px-6 pb-3 pt-5">
+          <DialogTitle className="font-heading text-[22px] font-bold leading-tight">
+            Invite a new user
+          </DialogTitle>
+          <DialogDescription className="text-[13px] leading-5 text-foreground-muted">
+            Send an invitation to join this CMS instance.
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-4 py-4">
-          <div className="space-y-2">
-            <Label htmlFor="email">Email</Label>
+        <div className="flex flex-col gap-4 px-6 pb-5 pt-2">
+          <div className="space-y-1.5">
+            <Label
+              htmlFor="email"
+              className="font-mono text-[10px] uppercase tracking-[0.08em] text-foreground-muted"
+            >
+              Email
+            </Label>
             <div className="relative">
               <Mail className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-foreground-muted" />
               <Input
@@ -254,27 +342,25 @@ function InviteUserDialog({
                 type="email"
                 placeholder="user@company.com"
                 value={form.email}
-                onChange={(e) =>
-                  dispatch({
-                    type: "field",
-                    field: "email",
-                    value: e.target.value,
-                  })
+                onChange={(event) =>
+                  dispatch({ type: "email", value: event.target.value })
                 }
-                className="pl-9"
+                className="h-9 rounded-sm border-border bg-background pl-9 text-[13px]"
               />
             </div>
           </div>
 
-          <div className="space-y-2">
-            <Label>Role</Label>
+          <div className="space-y-1.5">
+            <Label className="font-mono text-[10px] uppercase tracking-[0.08em] text-foreground-muted">
+              Role
+            </Label>
             <Select
               value={form.role}
               onValueChange={(value) =>
-                dispatch({ type: "field", field: "role", value })
+                dispatch({ type: "role", value: value as InviteRole })
               }
             >
-              <SelectTrigger>
+              <SelectTrigger className="h-9 rounded-sm border-border bg-background text-[13px]">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -286,38 +372,58 @@ function InviteUserDialog({
           </div>
 
           {(form.role === "editor" || form.role === "viewer") && (
-            <div className="space-y-2">
-              <Label htmlFor="path-prefix">Folder prefix (optional)</Label>
+            <div className="space-y-1.5">
+              <Label
+                htmlFor="path-prefix"
+                className="font-mono text-[10px] uppercase tracking-[0.08em] text-foreground-muted"
+              >
+                Folder prefix
+              </Label>
               <Input
                 id="path-prefix"
                 placeholder="e.g. content/blog"
                 value={form.pathPrefix}
-                onChange={(e) =>
+                onChange={(event) =>
                   dispatch({
-                    type: "field",
-                    field: "pathPrefix",
-                    value: e.target.value,
+                    type: "path-prefix",
+                    value: event.target.value,
                   })
                 }
-                className="font-mono"
+                className="h-9 rounded-sm border-border bg-background font-mono text-[12px]"
               />
-              <p className="text-xs text-foreground-muted">
-                Restricts access to content under this path only. Leave empty
-                for full project access.
+              <p className="font-mono text-[10px] leading-4 text-foreground-muted">
+                Optional. Leave empty for full project access.
               </p>
             </div>
           )}
 
           {form.error && (
-            <p className="text-sm text-destructive">{form.error}</p>
+            <p className="rounded-sm bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {form.error}
+            </p>
           )}
         </div>
-        <DialogFooter>
-          <Button variant="ghost" onClick={() => handleOpenChange(false)}>
+        <DialogFooter className="border-t border-divider bg-background-subtle px-6 py-3">
+          <Button
+            variant="ghost"
+            className="rounded-sm"
+            onClick={() => handleOpenChange(false)}
+          >
             Cancel
           </Button>
-          <Button disabled={isInviting || !form.email} onClick={handleInvite}>
-            {isInviting ? "Sending..." : "Send Invitation"}
+          <Button
+            className="rounded-sm"
+            disabled={isInviting || !form.email.trim()}
+            onClick={handleInvite}
+          >
+            {isInviting ? (
+              <>
+                <Loader2 className="size-4 animate-spin" />
+                Sending
+              </>
+            ) : (
+              "Send invitation"
+            )}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -337,14 +443,14 @@ export type EditRoleTarget = {
 };
 
 type EditRoleState = {
-  role: string;
+  role: Role;
   pathPrefix: string;
   error: string | null;
 };
 
 type EditRoleAction =
-  | { type: "role-change"; value: string }
-  | { type: "path-prefix-change"; value: string }
+  | { type: "role"; value: Role }
+  | { type: "path-prefix"; value: string }
   | { type: "error"; message: string | null };
 
 function createEditRoleState(target: EditRoleTarget): EditRoleState {
@@ -360,9 +466,9 @@ function editRoleReducer(
   action: EditRoleAction,
 ): EditRoleState {
   switch (action.type) {
-    case "role-change":
+    case "role":
       return { ...state, role: action.value };
-    case "path-prefix-change":
+    case "path-prefix":
       return { ...state, pathPrefix: action.value };
     case "error":
       return { ...state, error: action.message };
@@ -418,48 +524,18 @@ function EditRoleDialogOpen({
   );
 
   async function handleSave() {
-    const useFolderPrefix = form.pathPrefix && activeEnvironment;
-    const editedGrant = {
-      role: form.role,
-      scopeKind:
-        form.role === "admin"
-          ? "global"
-          : useFolderPrefix
-            ? "folder_prefix"
-            : "project",
-      project:
-        form.role === "admin"
-          ? undefined
-          : (target.currentGrants[0]?.project ?? activeProject ?? undefined),
-      environment:
-        form.role === "admin"
-          ? undefined
-          : useFolderPrefix
-            ? activeEnvironment
-            : undefined,
-      pathPrefix:
-        form.role === "admin"
-          ? undefined
-          : useFolderPrefix
-            ? form.pathPrefix
-            : undefined,
-    };
-    const updatedGrants =
-      target.currentGrants.length > 1
-        ? [
-            editedGrant,
-            ...target.currentGrants.slice(1).map((g) => ({
-              role: g.role,
-              scopeKind: g.scopeKind,
-              project: g.project ?? undefined,
-              environment: g.environment ?? undefined,
-              pathPrefix: g.pathPrefix ?? undefined,
-            })),
-          ]
-        : [editedGrant];
     dispatch({ type: "error", message: null });
     try {
-      await updateGrants(target.userId, updatedGrants);
+      await updateGrants(
+        target.userId,
+        createUpdatedGrants({
+          role: form.role,
+          pathPrefix: form.pathPrefix,
+          currentGrants: target.currentGrants,
+          activeProject,
+          activeEnvironment,
+        }),
+      );
       onSaved(target.userName);
       onOpenChange(false);
     } catch (err) {
@@ -472,26 +548,31 @@ function EditRoleDialogOpen({
 
   return (
     <Dialog open onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Edit role</DialogTitle>
-          <DialogDescription>
-            Change the role for {target?.userName}.
+      <DialogContent className="gap-0 overflow-hidden rounded-lg border-border bg-card p-0 sm:max-w-[480px]">
+        <DialogHeader className="px-6 pb-3 pt-5">
+          <DialogTitle className="font-heading text-[22px] font-bold leading-tight">
+            Edit role
+          </DialogTitle>
+          <DialogDescription className="text-[13px] leading-5 text-foreground-muted">
+            Change the role and scope for {target.userName}.
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-4 py-4">
-          <div className="space-y-2">
-            <Label>Role</Label>
+        <div className="flex flex-col gap-4 px-6 pb-5 pt-2">
+          <div className="space-y-1.5">
+            <Label className="font-mono text-[10px] uppercase tracking-[0.08em] text-foreground-muted">
+              Role
+            </Label>
             <Select
               value={form.role}
               onValueChange={(value) =>
-                dispatch({ type: "role-change", value })
+                dispatch({ type: "role", value: value as Role })
               }
             >
-              <SelectTrigger>
+              <SelectTrigger className="h-9 rounded-sm border-border bg-background text-[13px]">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
+                <SelectItem value="owner">Owner</SelectItem>
                 <SelectItem value="admin">Admin</SelectItem>
                 <SelectItem value="editor">Editor</SelectItem>
                 <SelectItem value="viewer">Viewer</SelectItem>
@@ -499,38 +580,62 @@ function EditRoleDialogOpen({
             </Select>
           </div>
           {(form.role === "editor" || form.role === "viewer") && (
-            <div className="space-y-2">
-              <Label htmlFor="edit-role-path-prefix">
-                Folder prefix (optional)
+            <div className="space-y-1.5">
+              <Label
+                htmlFor="edit-role-path-prefix"
+                className="font-mono text-[10px] uppercase tracking-[0.08em] text-foreground-muted"
+              >
+                Folder prefix
               </Label>
               <Input
                 id="edit-role-path-prefix"
                 placeholder="e.g. content/blog"
                 value={form.pathPrefix}
-                onChange={(e) =>
+                onChange={(event) =>
                   dispatch({
-                    type: "path-prefix-change",
-                    value: e.target.value,
+                    type: "path-prefix",
+                    value: event.target.value,
                   })
                 }
-                className="font-mono"
+                className="h-9 rounded-sm border-border bg-background font-mono text-[12px]"
               />
-              <p className="text-xs text-foreground-muted">
-                Restricts access to content under this path only. Leave empty
-                for full project access.
+              <p className="font-mono text-[10px] leading-4 text-foreground-muted">
+                Optional. Leave empty for full project access.
               </p>
             </div>
           )}
+          {(form.role === "owner" || form.role === "admin") && (
+            <p className="rounded-sm bg-background-subtle px-3 py-2 font-mono text-[10px] leading-4 text-foreground-muted">
+              {roleConfig[form.role].label} uses global scope.
+            </p>
+          )}
           {form.error && (
-            <p className="text-sm text-destructive">{form.error}</p>
+            <p className="rounded-sm bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {form.error}
+            </p>
           )}
         </div>
-        <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+        <DialogFooter className="border-t border-divider bg-background-subtle px-6 py-3">
+          <Button
+            variant="ghost"
+            className="rounded-sm"
+            onClick={() => onOpenChange(false)}
+          >
             Cancel
           </Button>
-          <Button disabled={isUpdatingGrants} onClick={handleSave}>
-            {isUpdatingGrants ? "Saving..." : "Save"}
+          <Button
+            className="rounded-sm"
+            disabled={isUpdatingGrants}
+            onClick={handleSave}
+          >
+            {isUpdatingGrants ? (
+              <>
+                <Loader2 className="size-4 animate-spin" />
+                Saving
+              </>
+            ) : (
+              "Save"
+            )}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -552,46 +657,54 @@ function PendingInvitesList({
   onRevoke: (inviteId: string, email: string) => void;
 }) {
   if (invites.length === 0) return null;
+
   return (
-    <div className="space-y-3">
-      <h2 className="text-sm font-medium text-foreground-muted">
-        Pending Invitations ({invites.length})
-      </h2>
-      <div className="rounded-lg border border-border divide-y divide-border">
-        {invites.map((invite) => (
-          <div
-            key={invite.id}
-            className="flex items-center justify-between px-4 py-3"
-          >
-            <div className="flex items-center gap-3">
-              <div className="flex size-8 items-center justify-center rounded-full bg-background-subtle">
-                <Clock className="size-4 text-foreground-muted" />
+    <SectionCard
+      eyebrow="Awaiting acceptance"
+      title="Pending invitations"
+      hint={formatCount(invites.length, "pending", "pending")}
+    >
+      <div className="divide-y divide-divider">
+        {invites.map((invite) => {
+          const role = getHighestRole(invite.grants);
+          return (
+            <div
+              key={invite.id}
+              className="flex flex-wrap items-center gap-3 px-4 py-3 sm:px-[18px]"
+            >
+              <div className="grid size-8 shrink-0 place-items-center rounded-full bg-background-subtle text-foreground-muted">
+                <Clock className="size-4" />
               </div>
-              <div>
-                <p className="text-sm font-medium">{invite.email}</p>
-                <p className="text-xs text-foreground-muted">
-                  Expires {formatJoinedDate(invite.expiresAt)}
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-[13px] font-semibold text-foreground">
+                  {invite.email}
+                </p>
+                <p className="mt-0.5 font-mono text-[11px] text-foreground-muted">
+                  Expires {formatDate(invite.expiresAt)}
                 </p>
               </div>
+              <div className="ml-auto flex shrink-0 items-center gap-2">
+                <RoleBadge role={role} />
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="rounded-sm text-foreground-muted hover:text-destructive"
+                  disabled={isRevoking}
+                  aria-label={`Revoke invitation for ${invite.email}`}
+                  onClick={() => onRevoke(invite.id, invite.email)}
+                >
+                  {isRevoking ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <X className="size-4" />
+                  )}
+                </Button>
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              <Badge variant="outline" className="text-xs">
-                {invite.grants[0]?.role ?? "editor"}
-              </Badge>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-8 text-foreground-muted hover:text-destructive"
-                disabled={isRevoking}
-                onClick={() => onRevoke(invite.id, invite.email)}
-              >
-                <X className="size-4" />
-              </Button>
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
-    </div>
+    </SectionCard>
   );
 }
 
@@ -615,77 +728,116 @@ function UsersTable({
   onRemoveUser: (userId: string, userName: string) => void;
 }) {
   return (
-    <div className="rounded-lg border border-border">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>User</TableHead>
-            <TableHead className="w-28">Role</TableHead>
-            <TableHead className="w-32">Scope</TableHead>
-            <TableHead className="w-28">Joined</TableHead>
-            <TableHead className="w-14"></TableHead>
+    <SectionCard
+      eyebrow="Active members"
+      title="Users"
+      hint={formatCount(users.length, "entry", "entries")}
+    >
+      <Table className="min-w-[760px]">
+        <TableHeader className="bg-background-subtle">
+          <TableRow className="border-divider hover:bg-background-subtle">
+            <TableHead className="h-10 px-4 font-mono text-[10px] font-medium uppercase tracking-[0.08em] text-foreground-muted">
+              User
+            </TableHead>
+            <TableHead className="h-10 w-28 px-4 font-mono text-[10px] font-medium uppercase tracking-[0.08em] text-foreground-muted">
+              Role
+            </TableHead>
+            <TableHead className="h-10 w-48 px-4 font-mono text-[10px] font-medium uppercase tracking-[0.08em] text-foreground-muted">
+              Scope
+            </TableHead>
+            <TableHead className="h-10 w-32 px-4 font-mono text-[10px] font-medium uppercase tracking-[0.08em] text-foreground-muted">
+              Joined
+            </TableHead>
+            <TableHead className="h-10 w-20 px-4 text-right font-mono text-[10px] font-medium uppercase tracking-[0.08em] text-foreground-muted">
+              Actions
+            </TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {users.map((user) => {
             const role = getHighestRole(user.grants);
+            const scope = getScopeDisplay(user.grants);
+            const canUseProtectedActions = canUseOwnerProtectedAction(role);
             return (
-              <TableRow key={user.id}>
-                <TableCell>
-                  <div className="flex items-center gap-3">
-                    <Avatar className="size-8">
-                      <AvatarFallback>
-                        {user.name
-                          .split(" ")
-                          .map((n) => n[0])
-                          .join("")}
+              <TableRow
+                key={user.id}
+                className="border-divider hover:bg-background-subtle/60"
+              >
+                <TableCell className="max-w-[280px] px-4 py-3.5">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <Avatar className="size-8 shrink-0">
+                      <AvatarFallback
+                        className={cn(
+                          "font-heading text-[11px] font-bold",
+                          roleConfig[role].avatarClassName,
+                        )}
+                      >
+                        {deriveInitials(user.name, user.email)}
                       </AvatarFallback>
                     </Avatar>
-                    <div>
-                      <p className="font-medium">{user.name}</p>
-                      <p className="text-sm text-foreground-muted">
+                    <div className="min-w-0">
+                      <p className="truncate text-[13px] font-semibold text-foreground">
+                        {user.name}
+                      </p>
+                      <p className="truncate text-xs text-foreground-muted">
                         {user.email}
                       </p>
                     </div>
                   </div>
                 </TableCell>
-                <TableCell>
-                  <Badge
-                    variant="outline"
-                    className={cn("text-xs", roleConfig[role].className)}
-                  >
-                    {roleConfig[role].label}
-                  </Badge>
+                <TableCell className="px-4 py-3.5">
+                  <RoleBadge role={role} />
                 </TableCell>
-                <TableCell className="text-sm text-foreground-muted">
-                  {getScopeLabel(user.grants)}
+                <TableCell className="px-4 py-3.5">
+                  <ScopeChip display={scope} />
                 </TableCell>
-                <TableCell className="text-sm text-foreground-muted">
-                  {formatJoinedDate(user.createdAt)}
+                <TableCell className="px-4 py-3.5 font-mono text-[11px] text-foreground-muted">
+                  {formatDate(user.createdAt)}
                 </TableCell>
-                <TableCell>
+                <TableCell className="px-4 py-3.5 text-right">
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon" className="size-8">
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        className="rounded-sm text-foreground-muted"
+                        aria-label={`Actions for ${user.name}`}
+                      >
                         <MoreHorizontal className="size-4" />
                       </Button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
+                    <DropdownMenuContent align="end" className="w-52">
                       <TooltipProvider>
-                        <DropdownMenuItem
-                          disabled={role === "owner"}
-                          onClick={() =>
-                            onEditRole({
-                              userId: user.id,
-                              userName: user.name,
-                              currentRole: role,
-                              currentGrants: user.grants,
-                            })
-                          }
-                        >
-                          <Edit className="mr-2 size-4" />
-                          Edit role
-                        </DropdownMenuItem>
+                        {canUseProtectedActions ? (
+                          <DropdownMenuItem
+                            onClick={() =>
+                              onEditRole({
+                                userId: user.id,
+                                userName: user.name,
+                                currentRole: role,
+                                currentGrants: user.grants,
+                              })
+                            }
+                          >
+                            <Edit className="mr-2 size-4" />
+                            Edit role
+                          </DropdownMenuItem>
+                        ) : (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="block">
+                                <DropdownMenuItem disabled>
+                                  <Edit className="mr-2 size-4" />
+                                  Edit role
+                                </DropdownMenuItem>
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent side="left">
+                              Owner role changes must leave at least one active
+                              owner.
+                            </TooltipContent>
+                          </Tooltip>
+                        )}
                         <DropdownMenuItem
                           disabled={isRevokingSessions}
                           onClick={() => onRevokeSessions(user.id, user.name)}
@@ -694,10 +846,19 @@ function UsersTable({
                           Revoke sessions
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
-                        {role === "owner" ? (
+                        {canUseProtectedActions ? (
+                          <DropdownMenuItem
+                            className="text-destructive focus:text-destructive"
+                            disabled={isRemoving}
+                            onClick={() => onRemoveUser(user.id, user.name)}
+                          >
+                            <Trash2 className="mr-2 size-4" />
+                            Remove user
+                          </DropdownMenuItem>
+                        ) : (
                           <Tooltip>
                             <TooltipTrigger asChild>
-                              <span className="w-full">
+                              <span className="block">
                                 <DropdownMenuItem
                                   className="text-destructive focus:text-destructive"
                                   disabled
@@ -708,21 +869,10 @@ function UsersTable({
                               </span>
                             </TooltipTrigger>
                             <TooltipContent side="left">
-                              <p>
-                                Owners cannot be removed. Transfer ownership
-                                first.
-                              </p>
+                              Owners cannot be removed. Transfer ownership
+                              first.
                             </TooltipContent>
                           </Tooltip>
-                        ) : (
-                          <DropdownMenuItem
-                            className="text-destructive focus:text-destructive"
-                            disabled={isRemoving}
-                            onClick={() => onRemoveUser(user.id, user.name)}
-                          >
-                            <Trash2 className="mr-2 size-4" />
-                            Remove user
-                          </DropdownMenuItem>
                         )}
                       </TooltipProvider>
                     </DropdownMenuContent>
@@ -733,7 +883,7 @@ function UsersTable({
           })}
         </TableBody>
       </Table>
-    </div>
+    </SectionCard>
   );
 }
 
@@ -772,14 +922,14 @@ export default function UsersPage() {
 
   if (!canManageUsers) {
     return (
-      <div className="min-h-screen">
+      <div className="min-h-screen bg-background">
         <PageHeader breadcrumbs={[{ label: "Users" }]} />
-        <div className="flex flex-col items-center justify-center py-16 text-center">
-          <ShieldOff className="mb-4 size-8 text-foreground-muted" />
-          <h3 className="mb-2 text-lg font-semibold">Access denied</h3>
-          <p className="text-sm text-foreground-muted">
-            You don&apos;t have permission to manage users.
-          </p>
+        <div className="p-6">
+          <StatePanel
+            icon={<ShieldOff className="size-5" />}
+            title="Access denied"
+            description="You don't have permission to manage users."
+          />
         </div>
       </div>
     );
@@ -822,13 +972,28 @@ export default function UsersPage() {
     }
   }
 
+  const memberCount = formatCount(users.length, "member", "members");
+  const inviteCount = formatCount(
+    pendingInvites.length,
+    "pending invitation",
+    "pending invitations",
+  );
+  const projectScope = activeProject ?? "current project";
+
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen bg-background">
       <PageHeader breadcrumbs={[{ label: "Users" }]} />
 
-      <div className="p-6 space-y-6">
-        <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-semibold">Users</h1>
+      <div className="space-y-5 p-4 sm:p-6">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div className="min-w-0">
+            <h1 className="font-heading text-[36px] font-bold leading-[1.05] tracking-normal text-foreground">
+              Users
+            </h1>
+            <p className="mt-1.5 font-mono text-[12px] leading-5 text-foreground-muted">
+              {memberCount} · {inviteCount} · scoped to {projectScope}
+            </p>
+          </div>
           <InviteUserDialog
             open={inviteDialogOpen}
             onOpenChange={setInviteDialogOpen}
@@ -841,39 +1006,41 @@ export default function UsersPage() {
         </div>
 
         {status === "loading" && (
-          <div className="flex items-center justify-center py-16">
-            <Loader2 className="size-6 animate-spin text-foreground-muted" />
-          </div>
+          <StatePanel
+            icon={<Loader2 className="size-5 animate-spin" />}
+            title="Loading users"
+            description="Fetching members and pending invitations for this project."
+          />
         )}
 
         {status === "error" && (
-          <div className="flex flex-col items-center justify-center py-16 text-center">
-            <AlertCircle className="mb-4 size-8 text-destructive" />
-            <h3 className="mb-2 text-lg font-semibold">Failed to load users</h3>
-            <p className="mb-4 text-sm text-foreground-muted">{errorMessage}</p>
-            <Button variant="ghost" onClick={refresh}>
-              Try again
-            </Button>
-          </div>
+          <StatePanel
+            icon={<AlertCircle className="size-5 text-destructive" />}
+            title="Failed to load users"
+            description={errorMessage ?? "Failed to load users."}
+            action={
+              <Button variant="ghost" className="rounded-sm" onClick={refresh}>
+                Try again
+              </Button>
+            }
+          />
+        )}
+
+        {status !== "error" && (
+          <PendingInvitesList
+            invites={pendingInvites}
+            isRevoking={isRevokingInvite}
+            onRevoke={handleRevokeInvite}
+          />
         )}
 
         {status === "empty" && (
-          <div className="flex flex-col items-center justify-center py-16 text-center">
-            <div className="mb-4 rounded-full bg-background-subtle p-4">
-              <Users className="size-8 text-foreground-muted" />
-            </div>
-            <h3 className="mb-2 text-lg font-semibold">No users found</h3>
-            <p className="text-sm text-foreground-muted">
-              Invite someone to get started.
-            </p>
-          </div>
+          <StatePanel
+            icon={<Users className="size-5" />}
+            title="No users found"
+            description="Invite someone to give them access to this project."
+          />
         )}
-
-        <PendingInvitesList
-          invites={pendingInvites}
-          isRevoking={isRevokingInvite}
-          onRevoke={handleRevokeInvite}
-        />
 
         {status === "ready" && (
           <UsersTable

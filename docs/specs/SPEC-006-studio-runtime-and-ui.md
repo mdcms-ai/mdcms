@@ -207,6 +207,54 @@ permits Studio-runtime-owned shell rendering backed by local mock state or
 placeholder content while their future live data and mutation contracts remain
 deferred to the owning work for those domains.
 
+### User Management Route
+
+The `/admin/users` route is the Studio user-management surface for the active
+mounted project. It is visible from the admin navigation when the target
+capability snapshot exposes `capabilities.users.manage`.
+
+Normative behavior:
+
+- The route uses `GET /api/v1/auth/users` and `GET /api/v1/auth/invites` as
+  its initial data sources.
+- When the caller lacks `capabilities.users.manage`, the route renders a
+  forbidden state and does not render invite, grant update, session revocation,
+  invite revocation, or remove-user controls.
+- The ready state renders a terse members-and-invitations layout on the
+  offwhite Studio canvas:
+  - a page title with member and pending-invitation counts,
+  - a pending invitations strip when invites exist, with invite email, expiry,
+    highest pending role, and a revoke action,
+  - an active members table with avatar initials, user email, highest-role
+    badge, scope chip, joined metadata, and per-row actions.
+- Role display is derived from all active grants using the order `owner`,
+  `admin`, `editor`, `viewer`; the table shows the highest role.
+- Scope display is truthful to grant data. A grant with `pathPrefix` is shown as
+  a folder-prefix scope chip; multiple folder-prefix grants are summarized as
+  the first prefix plus the remaining count. Users without folder-prefix grants
+  show `Full project`.
+- Inviting a user sends `POST /api/v1/auth/users/invite` with exactly one grant.
+  Admin invites use `global` scope. Editor and viewer invites use `project`
+  scope when no path prefix is entered, or `folder_prefix` scope when a prefix
+  and active environment are present. The invite dialog does not offer Owner,
+  because owner invitations are forbidden by the auth contract.
+- Editing grants sends `PATCH /api/v1/auth/users/:userId/grants`. The role
+  picker supports Owner, Admin, Editor, and Viewer. Owner and Admin updates use
+  `global` scope; Editor and Viewer updates use `project` scope without a path
+  prefix or `folder_prefix` scope with a path prefix and active environment.
+- Existing owner rows render owner-safe actions: remove is disabled with
+  actionable feedback, and the server remains the enforcement boundary for
+  final-owner demotion/removal and owner-only role assignment.
+- Session revocation uses
+  `POST /api/v1/auth/users/:userId/sessions/revoke-all`; invite revocation uses
+  `DELETE /api/v1/auth/invites/:inviteId`; user removal uses
+  `DELETE /api/v1/auth/users/:userId`.
+- Loading, empty, error, forbidden, pending-invite, and mutation states use the
+  same flat Studio treatment: 1 px hairline borders, 8 px card surfaces, 4 px
+  action buttons, mono labels, and minimal non-bouncy transitions.
+- At narrow widths, the table is horizontally scrollable and primary text uses
+  truncation instead of overlapping adjacent controls.
+
 The `/admin/schema` route is a live read-only schema browser for the active
 `(project, environment)` target. It is backed by `GET /api/v1/schema`, is
 visible when the current caller has `schema.read`, and never authors schema
