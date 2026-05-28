@@ -545,6 +545,69 @@ describe("mountAiRoutes — proposals/:id/apply", () => {
     assert.equal(setup.updateCalls.length, 1);
   });
 
+  test("returns source-not-found conflict when stale replace proposal cannot reanchor", async () => {
+    const proposal: AiProposal = {
+      proposalId: "p_reanchor_missing",
+      kind: "replace_selection",
+      project: "demo",
+      environment: "draft",
+      documentId: "doc_1",
+      baseDraftRevision: 4,
+      type: "post",
+      locale: "en",
+      summary: "Rewrite.",
+      operations: [
+        {
+          op: "replace_selection",
+          selectionId: "sel_anchor",
+          originalText: "Welcome to the site.",
+          replacementText: "Hi there!",
+        },
+      ],
+      validation: { status: "valid" },
+      expiresAt: "2026-05-01T00:05:00.000Z",
+      provider: {
+        providerId: "echo",
+        model: "echo-1",
+        promptTemplateId: "copy_improvement.v1",
+      },
+    };
+    const setup = createTestSetup({
+      document: buildDocument({
+        draftRevision: 6,
+        body: "The intro has already changed.",
+      }),
+    });
+
+    const response = await setup.app.fetch(
+      "POST",
+      `https://test.local/api/v1/ai/proposals/${proposal.proposalId}/apply`,
+      {
+        method: "POST",
+        headers: TARGET_HEADERS,
+        body: JSON.stringify({
+          proposal,
+          schemaHash: "hash_1",
+          draftRevision: 6,
+        }),
+      },
+    );
+
+    assert.equal(response.status, 409);
+    const body = (await response.json()) as {
+      code: string;
+      message: string;
+      details?: Record<string, unknown>;
+    };
+    assert.equal(body.code, "AI_PROPOSAL_CONFLICT");
+    assert.equal(
+      body.message,
+      "Original selection text was not found in the current draft body.",
+    );
+    assert.equal(body.details?.selectionId, "sel_anchor");
+    assert.equal(setup.updateCalls.length, 0);
+  });
+
   test("expired proposal returns 410 and emits expired audit", async () => {
     const orchestrator = createAiOrchestrator({
       provider: createEchoAiProvider({

@@ -169,10 +169,15 @@ function ensureSingleOperation(proposal: AiProposal): AiProposalOperation {
   return operation;
 }
 
-function applyReplaceSelection(
+type ReplaceSelectionOperation = Extract<
+  AiProposalOperation,
+  { op: "replace_selection" }
+>;
+
+function findReplaceSelectionMatch(
   body: string,
-  operation: Extract<AiProposalOperation, { op: "replace_selection" }>,
-): string {
+  operation: ReplaceSelectionOperation,
+): number {
   const original = operation.originalText;
   const index = body.indexOf(original);
 
@@ -195,6 +200,16 @@ function applyReplaceSelection(
       },
     );
   }
+
+  return index;
+}
+
+function applyReplaceSelection(
+  body: string,
+  operation: ReplaceSelectionOperation,
+): string {
+  const original = operation.originalText;
+  const index = findReplaceSelectionMatch(body, operation);
 
   return (
     body.slice(0, index) +
@@ -325,6 +340,14 @@ export async function applyAiProposal(
     !baseDraftRevisionMatches &&
     operation.op === "replace_selection" &&
     textAppearsExactlyOnce(existing.body, operation.originalText);
+
+  if (
+    !baseDraftRevisionMatches &&
+    operation.op === "replace_selection" &&
+    !canApplyReplaceSelectionAgainstLiveRevision
+  ) {
+    findReplaceSelectionMatch(existing.body, operation);
+  }
 
   if (
     !baseDraftRevisionMatches &&
