@@ -9,6 +9,9 @@ import type {
   SchemaRegistryFieldSnapshot,
   SchemaRegistryTypeSnapshot,
 } from "@mdcms/shared";
+import { fromMarkdown } from "mdast-util-from-markdown";
+import { mdxFromMarkdown } from "mdast-util-mdx";
+import { mdx } from "micromark-extension-mdx";
 
 /**
  * Looks up a content type's schema for a given project + environment.
@@ -64,8 +67,8 @@ export type DocumentLookup = (input: {
  * Replace-selection body-anchor validation is layered in per active
  * document by `createReplaceSelectionApplyabilityValidator`, because
  * the current draft body is turn-specific rather than schema state.
- * Insert-block proposals are left shape-valid here; full MDX
- * validation is supplied by `createMdxCatalogProposalValidator`.
+ * MDX-bearing operations are parsed here with the same parser family
+ * as Studio so syntax-invalid proposals cannot be marked valid.
  */
 export function createSchemaAwareProposalValidator(input: {
   schemaLookup: SchemaLookup;
@@ -79,11 +82,14 @@ export function createSchemaAwareProposalValidator(input: {
   ): Promise<AiProposalValidation> => {
     switch (candidate.kind) {
       case "create_document":
-        return validateCreateDocument(
-          candidate,
-          schemaLookup,
-          pathExists,
-          documentExists,
+        return mergeValidation(
+          await validateCreateDocument(
+            candidate,
+            schemaLookup,
+            pathExists,
+            documentExists,
+          ),
+          validateMdxTargetsAgainstStudioParser(collectMdxTargets(candidate)),
         );
       case "update_frontmatter":
         return validateUpdateFrontmatter(
@@ -94,12 +100,13 @@ export function createSchemaAwareProposalValidator(input: {
       case "delete_document":
       case "replace_selection":
       case "insert_block":
-        // Shape-only for now. delete_document's published-version
+        // delete_document's published-version
         // check is already done by chat-tools at proposal-build time
         // and re-enforced by apply.ts at apply time. replace_selection
-        // anchor checks and MDX catalog checks are layered separately
-        // because both require per-request context.
-        return { status: "valid" };
+        // anchor checks and MDX catalog checks are layered separately.
+        return validationFromErrors(
+          validateMdxTargetsAgainstStudioParser(collectMdxTargets(candidate)),
+        );
     }
   };
 }
@@ -184,6 +191,71 @@ function mergeValidation(
     return { status: "invalid", errors: [...base.errors, ...errors] };
   }
   return { status: "invalid", errors };
+}
+
+function validationFromErrors(errors: ValidationError[]): AiProposalValidation {
+  return errors.length === 0
+    ? { status: "valid" }
+    : { status: "invalid", errors };
+}
+
+function validateMdxTargetsAgainstStudioParser(
+  targets: readonly MdxValidationTarget[],
+): ValidationError[] {
+  const errors: ValidationError[] = [];
+
+  for (const target of targets) {
+    try {
+      fromMarkdown(target.source, {
+        extensions: [mdx()],
+        mdastExtensions: [mdxFromMarkdown()],
+      });
+    } catch (error) {
+      errors.push({
+        code: "MDX_PARSE_FAILED",
+        message: formatMdxParseFailure(error),
+        path: target.path,
+      });
+    }
+  }
+
+  return errors;
+}
+
+function formatMdxParseFailure(error: unknown): string {
+  const reason =
+    typeof error === "object" &&
+    error !== null &&
+    "reason" in error &&
+    typeof error.reason === "string"
+      ? error.reason
+      : error instanceof Error && error.message
+        ? error.message
+        : "Unknown MDX parse error.";
+  const place =
+    typeof error === "object" && error !== null && "place" in error
+      ? error.place
+      : undefined;
+  const line =
+    typeof place === "object" &&
+    place !== null &&
+    "line" in place &&
+    typeof place.line === "number"
+      ? place.line
+      : undefined;
+  const column =
+    typeof place === "object" &&
+    place !== null &&
+    "column" in place &&
+    typeof place.column === "number"
+      ? place.column
+      : undefined;
+
+  if (typeof line === "number" && typeof column === "number") {
+    return `Generated MDX failed Studio MDX parser validation at line ${line}, column ${column}: ${reason}`;
+  }
+
+  return `Generated MDX failed Studio MDX parser validation: ${reason}`;
 }
 
 /** RFC4122-ish UUID literal — mirrors the apply-time check in `reference-validation.ts`. */
