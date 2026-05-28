@@ -19,6 +19,7 @@
 
 - Modify: `docs/specs/SPEC-005-auth-authorization-and-request-routing.md`
 - Modify: `docs/specs/SPEC-006-studio-runtime-and-ui.md`
+- Modify: `packages/studio/src/lib/runtime-ui/app/admin/users-page-model.ts`
 - Modify: `packages/studio/src/lib/runtime-ui/app/admin/users-page.tsx`
 - Modify: `packages/studio/src/lib/runtime-ui/app/admin/users-page.test.tsx`
 
@@ -59,7 +60,7 @@ Expected: FAIL because the new helper exports and layout labels do not exist yet
 
 - [x] **Step 1: Implement helper exports**
 
-Add exported helpers in `users-page.tsx`:
+Add exported helpers in `users-page-model.ts`:
 
 ```typescript
 export function getHighestRole(grants: UserWithGrants["grants"]): Role

@@ -13,13 +13,14 @@ import {
 } from "./capabilities-context.js";
 import { StudioMountInfoProvider } from "./mount-info-context.js";
 import { StudioSessionProvider } from "./session-context.js";
-import UsersPage, {
+import UsersPage from "./users-page.js";
+import {
   canUseOwnerProtectedAction,
   createGrantInput,
   createUpdatedGrants,
   getHighestRole,
   getScopeDisplay,
-} from "./users-page.js";
+} from "./users-page-model.js";
 import type { PendingInvite, UserWithGrants } from "../../../users-api.js";
 
 const API_BASE_URL = "https://api.example.com";
