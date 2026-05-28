@@ -89,10 +89,18 @@ export {
 export {
   AI_MODEL_ENV_KEY,
   AI_PROVIDER_ENV_KEY,
+  ANTHROPIC_API_KEY_ENV_KEY,
+  ANTHROPIC_BASE_URL_ENV_KEY,
   GROQ_API_KEY_ENV_KEY,
   GROQ_BASE_URL_ENV_KEY,
   resolveAiProvider,
 } from "./server/providers/factory.js";
+export {
+  ANTHROPIC_PROVIDER_DEFAULT_MODEL,
+  ANTHROPIC_PROVIDER_ID,
+  createAnthropicAiProvider,
+  type AnthropicProviderOptions,
+} from "./server/providers/anthropic.js";
 export {
   createNullAiProvider,
   NULL_PROVIDER_ID,

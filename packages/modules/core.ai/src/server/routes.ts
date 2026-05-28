@@ -1984,7 +1984,7 @@ async function handleChatMessage(
         unwrapped instanceof RuntimeError ? unwrapped.code : undefined;
       if (code === "AI_DISABLED") {
         assistantText =
-          "AI is not yet configured for this server. Set AI_PROVIDER=groq and GROQ_API_KEY=<your key> in the server environment to enable chat replies.";
+          "AI is not yet configured for this server. Set AI_PROVIDER=groq with GROQ_API_KEY=<your key>, or AI_PROVIDER=anthropic with ANTHROPIC_API_KEY=<your key>, in the server environment to enable chat replies.";
       } else if (code === "AI_PROVIDER_UNAVAILABLE") {
         // Surface the underlying provider error to the user in the
         // chat thread (turn-level) rather than failing the whole HTTP

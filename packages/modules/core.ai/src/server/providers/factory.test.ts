@@ -7,6 +7,7 @@ import { ECHO_PROVIDER_ID } from "./echo.js";
 import {
   AI_MODEL_ENV_KEY,
   AI_PROVIDER_ENV_KEY,
+  ANTHROPIC_API_KEY_ENV_KEY,
   GROQ_API_KEY_ENV_KEY,
   resolveAiProvider,
 } from "./factory.js";
@@ -45,6 +46,55 @@ describe("resolveAiProvider", () => {
       () =>
         resolveAiProvider({
           env: { [AI_PROVIDER_ENV_KEY]: "openai" },
+        }),
+      (error) =>
+        error instanceof RuntimeError &&
+        error.code === "AI_PROVIDER_UNAVAILABLE",
+    );
+  });
+
+  test("returns anthropic provider with default model when API key is set", () => {
+    const provider = resolveAiProvider({
+      env: {
+        [AI_PROVIDER_ENV_KEY]: "anthropic",
+        [ANTHROPIC_API_KEY_ENV_KEY]: "sk-ant-test-key",
+      },
+    });
+    assert.equal(provider.id, "anthropic");
+    assert.equal(provider.languageModel?.modelId, "claude-sonnet-4-6");
+  });
+
+  test("respects AI_MODEL override for anthropic", () => {
+    const provider = resolveAiProvider({
+      env: {
+        [AI_PROVIDER_ENV_KEY]: "anthropic",
+        [ANTHROPIC_API_KEY_ENV_KEY]: "sk-ant-test-key",
+        [AI_MODEL_ENV_KEY]: "claude-opus-4-6",
+      },
+    });
+    assert.equal(provider.languageModel?.modelId, "claude-opus-4-6");
+  });
+
+  test("anthropic without ANTHROPIC_API_KEY raises AI_PROVIDER_UNAVAILABLE", () => {
+    assert.throws(
+      () =>
+        resolveAiProvider({
+          env: { [AI_PROVIDER_ENV_KEY]: "anthropic" },
+        }),
+      (error) =>
+        error instanceof RuntimeError &&
+        error.code === "AI_PROVIDER_UNAVAILABLE",
+    );
+  });
+
+  test("anthropic with whitespace-only ANTHROPIC_API_KEY raises AI_PROVIDER_UNAVAILABLE", () => {
+    assert.throws(
+      () =>
+        resolveAiProvider({
+          env: {
+            [AI_PROVIDER_ENV_KEY]: "anthropic",
+            [ANTHROPIC_API_KEY_ENV_KEY]: "   ",
+          },
         }),
       (error) =>
         error instanceof RuntimeError &&

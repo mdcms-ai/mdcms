@@ -670,6 +670,23 @@ unchanged and still discards a single proposal id.
 AI provider credentials are server-side only. Studio never receives provider API
 keys or raw provider request payloads.
 
+Provider selection is an operator-controlled server startup concern. The server
+reads `AI_PROVIDER` and normalizes it case-insensitively:
+
+- missing, empty, or `disabled` disables AI and endpoints return or render
+  `AI_DISABLED`
+- `echo` enables the deterministic local/test provider
+- `groq` enables the Groq AI SDK provider and requires `GROQ_API_KEY`
+- `anthropic` enables the Anthropic AI SDK provider and requires
+  `ANTHROPIC_API_KEY`
+
+`AI_MODEL` overrides the provider's default model when set. When `AI_MODEL` is
+absent, the direct Anthropic provider defaults to `claude-sonnet-4-6`, and the
+Groq provider uses its server-defined default. Provider-specific base URL
+overrides are server-only operator settings: `GROQ_BASE_URL` for Groq and
+`ANTHROPIC_BASE_URL` for Anthropic. Missing or blank required provider
+credentials must fail deterministically as `AI_PROVIDER_UNAVAILABLE`.
+
 The orchestration layer must support task-specific prompt templates or
 equivalent workflow definitions for at least:
 
