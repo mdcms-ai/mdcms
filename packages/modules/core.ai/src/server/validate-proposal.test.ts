@@ -430,6 +430,41 @@ describe("createSchemaAwareProposalValidator — other kinds", () => {
     assert.equal(result.status, "valid");
   });
 
+  test("rejects insert_block MDX that the Studio parser cannot parse", async () => {
+    const validator = createSchemaAwareProposalValidator({
+      schemaLookup: lookup,
+    });
+    const result = await validator({
+      proposalId: "p1",
+      kind: "insert_block",
+      project: "demo",
+      environment: "draft",
+      type: "page",
+      locale: "en",
+      summary: "Insert feature grid",
+      operations: [
+        {
+          op: "insert_block",
+          bodyMdx:
+            '<FeatureGrid features=\'[{"title":"Drop","description":"Once they\\\'re gone, they\\\'re gone."}]\' />',
+        },
+      ],
+      expiresAt: "2026-05-15T00:05:00.000Z",
+      provider: {
+        providerId: "echo",
+        model: "echo-1",
+        promptTemplateId: "chat_tools.v1",
+      },
+    });
+
+    assert.equal(result.status, "invalid");
+    if (result.status === "invalid") {
+      assert.equal(result.errors[0]?.code, "MDX_PARSE_FAILED");
+      assert.equal(result.errors[0]?.path, "operations[0].bodyMdx");
+      assert.match(result.errors[0]?.message ?? "", /Studio MDX parser/);
+    }
+  });
+
   test("delete_document is shape-valid (chat-tools handles published-version check)", async () => {
     const validator = createSchemaAwareProposalValidator({
       schemaLookup: lookup,

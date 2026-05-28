@@ -6,6 +6,12 @@ Entries are reverse-chronological (newest first).
 
 ---
 
+## 2026-05-28 — parse AI-generated MDX before marking proposals valid
+
+**Rule:** AI proposal validation must run generated body MDX through the Studio MDX parser family, not only scan component tags or props.
+**Why:** JSX string attributes do not treat `\'` as a safe escape inside single-quoted MDX attributes, so JSON-looking prop strings can pass ad hoc catalog validation while crashing Studio during document parse.
+**How to apply:** For every proposal operation that writes body text (`create_document.body`, `insert_block.bodyMdx`, `replace_selection.replacementText`), validate with micromark/mdast MDX parsing before returning `valid`; use entities such as `&apos;` or JSX expression props for apostrophes inside single-quoted attributes.
+
 ## 2026-05-22 — keep model-visible MDX body text raw
 
 **Rule:** Active draft body and selected markdown sent to the AI model must preserve literal MDX syntax such as `<Box>` and `<Text>`; bound it with explicit content markers instead of XML entity escaping it.
