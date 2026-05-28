@@ -592,7 +592,7 @@ Schema authorization semantics:
 }
 ```
 
-**Grant input (invite/update):**
+**Invite grant input:**
 
 ```typescript
 {
@@ -603,6 +603,25 @@ Schema authorization semantics:
   pathPrefix?: string;    // required when scopeKind is "folder_prefix"
 }
 ```
+
+Invite grants never accept `owner`; ownership is assigned only through explicit
+grant updates by an existing owner.
+
+**User grant update input:**
+
+```typescript
+{
+  role: "owner" | "admin" | "editor" | "viewer";
+  scopeKind: "global" | "project" | "folder_prefix";
+  project?: string;       // required when scopeKind is "project" or "folder_prefix"
+  environment?: string;   // required when scopeKind is "folder_prefix"
+  pathPrefix?: string;    // required when scopeKind is "folder_prefix"
+}
+```
+
+`owner` and `admin` grants must use `global` scope. Only an existing global
+owner may grant the `owner` role. Updates that would remove or demote the final
+active owner are rejected deterministically.
 
 **ProjectSummary:**
 
