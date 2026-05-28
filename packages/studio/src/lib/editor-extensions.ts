@@ -13,6 +13,7 @@ import StarterKit from "@tiptap/starter-kit";
 import { common, createLowlight } from "lowlight";
 
 import { MdxComponentExtension } from "./mdx-component-extension.js";
+import { MdxIntrinsicElementExtension } from "./mdx-intrinsic-element-extension.js";
 import { MdxRawJsxExtension } from "./mdx-raw-jsx-extension.js";
 
 // Returns a lowlight instance seeded with the common language set and with
@@ -173,6 +174,7 @@ const HeadlessCodeBlock = CodeBlockLowlight.configure({
 export function createEditorExtensions(options?: {
   mdxRawJsx?: Extensions[number];
   mdxComponent?: Extensions[number];
+  mdxIntrinsicElement?: Extensions[number];
   codeBlock?: Extensions[number];
 }): Extensions {
   return [
@@ -203,8 +205,9 @@ export function createEditorExtensions(options?: {
       nested: true,
     }),
     options?.codeBlock ?? HeadlessCodeBlock,
-    options?.mdxRawJsx ?? MdxRawJsxExtension,
     options?.mdxComponent ?? MdxComponentExtension,
+    options?.mdxIntrinsicElement ?? MdxIntrinsicElementExtension,
+    options?.mdxRawJsx ?? MdxRawJsxExtension,
     Markdown,
   ];
 }

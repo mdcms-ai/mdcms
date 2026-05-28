@@ -200,18 +200,66 @@ test("markdown pipeline parses indented nested MDX components inside wrapper chi
   );
 });
 
-test("markdown pipeline preserves lowercase raw MDX islands inside wrapper children", () => {
+test("markdown pipeline parses lowercase intrinsic wrappers as structured blocks", () => {
+  const source = [
+    '<div style={{display: "flex", gap: "2rem"}}>',
+    '  <Hero headlineLead="AI-native CMS for" />',
+    '  <FeatureGrid headingLead="Built for teams that" />',
+    "</div>",
+  ].join("\n");
+
+  const parsed = parseMarkdownToDocument(source);
+  const wrapper = parsed.content?.[0];
+  const wrapperChildren = wrapper?.content ?? [];
+
+  assert.equal(wrapper?.type, "mdxIntrinsicElement");
+  assert.equal(wrapper?.attrs?.tagName, "div");
+  assert.equal(wrapper?.attrs?.isVoid, false);
+  assert.deepEqual(wrapper?.attrs?.props, {
+    style: {
+      display: "flex",
+      gap: "2rem",
+    },
+  });
+  assert.equal(wrapperChildren.length, 2);
+  assert.equal(wrapperChildren[0]?.type, "mdxComponent");
+  assert.equal(wrapperChildren[0]?.attrs?.componentName, "Hero");
+  assert.equal(wrapperChildren[1]?.type, "mdxComponent");
+  assert.equal(wrapperChildren[1]?.attrs?.componentName, "FeatureGrid");
+});
+
+test("markdown pipeline round-trips native form elements as structured intrinsic blocks", () => {
+  const source = [
+    '<form name="contact">',
+    "<label>",
+    "Name",
+    '<input type="text" name="name" required />',
+    "</label>",
+    '<button type="submit">Send</button>',
+    "</form>",
+  ].join("\n");
+
+  const parsed = parseMarkdownToDocument(source);
+  const serialized = serializeDocumentToMarkdown(parsed);
+
+  assert.equal(parsed.content?.[0]?.type, "mdxIntrinsicElement");
+  assert.equal(parsed.content?.[0]?.attrs?.tagName, "form");
+  assert.match(serialized, /<form name="contact">/);
+  assert.match(serialized, /<label>/);
+  assert.match(
+    serialized,
+    /<input type="text" name="name" required=\{true\} \/>/,
+  );
+  assert.match(serialized, /<button type="submit">/);
+  assert.doesNotMatch(JSON.stringify(parsed), /mdxRawJsx/);
+});
+
+test("markdown pipeline preserves unsupported raw MDX islands inside wrapper children", () => {
   const source = [
     '<HomeSection eyebrow="Content layer" title="Contact Us">',
-    '<form name="contact" method="POST" netlify>',
-    "<label>",
-    "Name<br />",
-    '<input type="text" name="name" required style={{ width: "100%" }} />',
-    "</label>",
-    '<button type="submit" style={{ padding: "0.75rem 1.5rem", backgroundColor: "#0070f3", color: "#fff" }}>',
-    "Send Message",
-    "</button>",
-    "</form>",
+    "<div {...dynamicProps}>",
+    "Unsupported dynamic attributes are preserved.",
+    "</div>",
     "</HomeSection>",
   ].join("\n");
 
@@ -232,15 +280,9 @@ test("markdown pipeline preserves lowercase raw MDX islands inside wrapper child
         type: "mdxRawJsx",
         attrs: {
           source: [
-            '<form name="contact" method="POST" netlify>',
-            "<label>",
-            "Name<br />",
-            '<input type="text" name="name" required style={{ width: "100%" }} />',
-            "</label>",
-            '<button type="submit" style={{ padding: "0.75rem 1.5rem", backgroundColor: "#0070f3", color: "#fff" }}>',
-            "Send Message",
-            "</button>",
-            "</form>",
+            "<div {...dynamicProps}>",
+            "Unsupported dynamic attributes are preserved.",
+            "</div>",
           ].join("\n"),
         },
       },

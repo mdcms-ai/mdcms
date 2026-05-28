@@ -13,6 +13,10 @@ import { VisualStyleInspector } from "./visual-style-inspector.js";
 type MdxCatalogComponent = NonNullable<
   StudioMountContext["mdx"]
 >["catalog"]["components"][number];
+type StyleInspectableComponent = Pick<
+  MdxCatalogComponent,
+  "name" | "extractedProps"
+>;
 
 const COMPONENT_PANEL_HIDDEN_PROP_FIELDS = ["style"] as const;
 const COMPONENT_PANEL_HIDDEN_PROP_FIELD_NAMES = new Set<string>(
@@ -21,6 +25,7 @@ const COMPONENT_PANEL_HIDDEN_PROP_FIELD_NAMES = new Set<string>(
 const MDX_CHILDREN_PROP_NAME = "children";
 
 export type MdxPropsPanelSelection = {
+  kind?: "component" | "intrinsic";
   component: MdxCatalogComponent | undefined;
   componentName: string;
   isVoid: boolean;
@@ -48,6 +53,30 @@ export function MdxPropsPanel({
             Select an MDX component block to inspect or edit its props.
           </p>
         </div>
+      </section>
+    );
+  }
+
+  if (selection.kind === "intrinsic") {
+    const component = createIntrinsicStyleComponent(selection.componentName);
+
+    return (
+      <section
+        data-mdcms-mdx-props-panel={selection.componentName}
+        className="space-y-3"
+      >
+        <p className="text-sm font-medium text-foreground">
+          {"<"}
+          {selection.componentName}
+          {" />"}
+        </p>
+
+        <VisualStyleInspector
+          component={component}
+          value={selection.props}
+          onChange={selection.onPropsChange}
+          readOnly={selection.readOnly || selection.forbidden}
+        />
       </section>
     );
   }
@@ -97,6 +126,20 @@ export function MdxPropsPanel({
       />
     </section>
   );
+}
+
+function createIntrinsicStyleComponent(
+  tagName: string,
+): StyleInspectableComponent {
+  return {
+    name: tagName,
+    extractedProps: {
+      style: {
+        type: "style",
+        required: false,
+      },
+    },
+  };
 }
 
 function hasConcreteComponentPanelProps(

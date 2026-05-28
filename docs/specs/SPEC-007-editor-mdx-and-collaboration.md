@@ -256,13 +256,24 @@ deterministic error when `config.components` declares `Box`, `Text`, `Image`, or
 `style` prop in the extracted catalog; built-in support does not imply a
 universal wrapper or style injection layer for host components.
 
-Raw lowercase MDX/HTML elements such as `<div>`, `<form>`, `<label>`,
-`<input>`, and `<button>` remain valid advanced MDX authoring syntax. They are
-not catalog components and are not shown as first-class visual composition
-blocks. Studio preserves them as raw MDX islands, renders an inert preview where
-possible, and serializes them back to their original MDX source. Built-ins are
-therefore the supported visual-editing primitives, not the only HTML that can
-exist in a document.
+Lowercase intrinsic MDX/HTML elements such as `<div>`, `<form>`, `<label>`,
+`<input>`, and `<button>` remain valid advanced MDX authoring syntax. When their
+attributes can be represented as Studio props, Studio parses them into
+first-class visual composition blocks with their tag name, props, void status,
+and editable children. Intrinsic blocks are not catalog components, are not
+shown in the insert component palette by default, and do not participate in host
+component prop-schema validation. They still render in the canvas with the same
+block affordances as MDX components so editors never see a partial raw HTML
+preview as the normal editing surface.
+
+Studio preserves intrinsic HTML semantics during serialization: an intrinsic
+`div` block serializes as `<div>`, a `form` block serializes as `<form>`, and
+void intrinsic elements such as `<input />` serialize as self-closing lowercase
+HTML. Built-ins are the supported visual-editing primitives for common layout
+and inline content, while intrinsic blocks cover valid native HTML semantics and
+legacy MDX content. Raw MDX islands are a last-resort preservation fallback only
+for unparseable or unsupported syntax; they must be clearly labeled as
+unsupported content rather than rendered as a half-raw inline preview.
 
 The legacy `/` slash menu lists only host-registered components and is
 positioned inline near the active cursor. Built-ins remain hidden from that

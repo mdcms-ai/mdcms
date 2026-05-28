@@ -39,6 +39,10 @@ import {
 type MdxCatalogComponent = NonNullable<
   StudioMountContext["mdx"]
 >["catalog"]["components"][number];
+type StyleInspectableComponent = Pick<
+  MdxCatalogComponent,
+  "name" | "extractedProps"
+>;
 
 const DISPLAY_OPTIONS = [
   { value: "block", label: "Block", icon: Square },
@@ -88,7 +92,7 @@ export function VisualStyleInspector({
   readOnly,
   onChange,
 }: {
-  component: MdxCatalogComponent;
+  component: StyleInspectableComponent;
   value: Record<string, unknown>;
   readOnly: boolean;
   onChange: PropsEditorChangeHandler;

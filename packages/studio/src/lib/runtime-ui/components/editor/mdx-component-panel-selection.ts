@@ -1,6 +1,7 @@
 import type { SelectedMdxComponent } from "./mdx-component-selection.js";
 
 export type PublishedMdxComponentSelectionSnapshot = {
+  kind: SelectedMdxComponent["kind"];
   component: SelectedMdxComponent["component"];
   componentName: string;
   isVoid: boolean;
@@ -16,6 +17,7 @@ export function createPublishedMdxComponentSelectionSnapshot(input: {
   forbidden: boolean;
 }): PublishedMdxComponentSelectionSnapshot {
   return {
+    kind: input.selected.kind,
     component: input.selected.component,
     componentName: input.selected.componentName,
     isVoid: input.selected.isVoid,
@@ -40,6 +42,7 @@ export function hasPublishedMdxComponentSelectionChanged(
 
   return !(
     previous.component === next.component &&
+    previous.kind === next.kind &&
     previous.componentName === next.componentName &&
     previous.isVoid === next.isVoid &&
     previous.pos === next.pos &&
