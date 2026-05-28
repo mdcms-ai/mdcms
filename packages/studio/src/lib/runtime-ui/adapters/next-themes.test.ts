@@ -9,7 +9,7 @@ import {
   readStoredThemePreference,
   resolveAppliedTheme,
   resolveThemePreference,
-} from "./next-themes.js";
+} from "./next-themes-state.js";
 
 function createStorage() {
   const values = new Map<string, string>();

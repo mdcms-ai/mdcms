@@ -31,6 +31,13 @@
       "types": "./dist/react.d.ts",
       "import": "./dist/react.js",
       "default": "./dist/react.js"
+    },
+    "./react-primitives": {
+      "@mdcms/source": "./src/react-primitives.ts",
+      "bun": "./src/react-primitives.ts",
+      "types": "./dist/react-primitives.d.ts",
+      "import": "./dist/react-primitives.js",
+      "default": "./dist/react-primitives.js"
     }
   },
   "nx": {

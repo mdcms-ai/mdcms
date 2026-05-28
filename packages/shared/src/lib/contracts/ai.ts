@@ -357,6 +357,24 @@ export type AiChatConversationTurn = z.infer<
   typeof aiChatConversationTurnSchema
 >;
 
+export type AiComponentReference = {
+  componentName: string;
+  source: "studio_host_preview";
+  renderedHtml: string;
+  text?: string;
+  styleSummary?: string;
+};
+
+export const aiComponentReferenceSchema = z
+  .object({
+    componentName: nonEmptyString,
+    source: z.literal("studio_host_preview"),
+    renderedHtml: z.string().max(20_000),
+    text: z.string().max(5_000).optional(),
+    styleSummary: z.string().max(5_000).optional(),
+  })
+  .strict();
+
 export const aiChatMessageRequestSchema = z
   .object({
     message: nonEmptyString,
@@ -381,6 +399,15 @@ export const aiChatMessageRequestSchema = z
      * invalid props before the user can accept it.
      */
     mdxCatalog: mdxComponentCatalogSchema.optional(),
+    /**
+     * Studio-host-rendered MDX component reference snapshots. These
+     * are read-only grounding material for the model-facing
+     * `get_component_reference` tool, used when the user asks to clone
+     * or visually match an existing component. The AI server treats
+     * them as opaque sanitized references; it does not import host app
+     * component source.
+     */
+    componentReferences: z.array(aiComponentReferenceSchema).max(50).optional(),
     /**
      * Prior turns from the same conversation, oldest first. The server is
      * stateless per request — the client owns conversation memory — so it

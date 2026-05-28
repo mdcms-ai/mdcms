@@ -2,10 +2,9 @@ import type { ContentDocumentResponse } from "@mdcms/shared";
 
 import type { StudioContentListApi } from "../../content-list-api.js";
 
-export const CONTENT_TRANSLATION_COVERAGE_QUERY_KEY =
-  "content-translation-coverage";
-export const CONTENT_TRANSLATION_COVERAGE_PAGE_SIZE = 100;
-export const MAX_CONTENT_TRANSLATION_COVERAGE_PAGES = 1000;
+const CONTENT_TRANSLATION_COVERAGE_QUERY_KEY = "content-translation-coverage";
+const CONTENT_TRANSLATION_COVERAGE_PAGE_SIZE = 100;
+const MAX_CONTENT_TRANSLATION_COVERAGE_PAGES = 1000;
 
 export type ContentTranslationCoverage = {
   translatedLocales: number;

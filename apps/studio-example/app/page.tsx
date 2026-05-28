@@ -1,24 +1,30 @@
-import Link from "next/link";
+import { fetchRenderedHomePage } from "../lib/example-documents";
+import { RequestError, SiteHeader } from "./site-components";
 
-export default function HomePage() {
+export const metadata = {
+  title: "MDCMS Demo",
+  description: "Rendered MDCMS home page managed from draft content.",
+};
+
+export default async function HomePage() {
+  const home = await fetchRenderedHomePage();
+
   return (
-    <main>
-      <h1>Sample Host App</h1>
-      <p>Open /admin to load the MDCMS Studio embed shell.</p>
-      <p>
-        Demo routes: <Link href="/admin">/admin</Link>
-      </p>
-      <p>
-        <Link href="/demo/content">Raw Content API</Link>
-        {" | "}
-        <Link href="/demo/sdk-content">SDK Client</Link>
-      </p>
-      <p>
-        Rendered previews:{" "}
-        <Link href="/preview/post/hello-mdcms">sample post</Link>
-        {" | "}
-        <Link href="/preview/page/about">sample page</Link>
-      </p>
+    <main className="site-shell">
+      <SiteHeader active="home" />
+
+      {home.ok ? (
+        home.renderedBody
+      ) : (
+        <section className="library-content">
+          <RequestError
+            code={home.code}
+            message={home.message}
+            status={home.status}
+            title="Home page could not be rendered"
+          />
+        </section>
+      )}
     </main>
   );
 }

@@ -199,6 +199,9 @@ function renderMdxComponentEntry(
   component: MdxComponentCatalog["components"][number],
 ): string[] {
   const lines = [`- **${sanitizeForPrompt(component.name)}**`];
+  if (component.builtIn) {
+    lines[0] += " (built-in)";
+  }
   if (component.description) {
     lines[0] += ` — ${sanitizeUserText(component.description)}`;
   }

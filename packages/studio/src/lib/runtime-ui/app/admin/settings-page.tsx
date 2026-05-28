@@ -36,16 +36,14 @@ function ApiKeyStatusBadge({
   expiresAt: string | null;
   revokedAt: string | null;
 }) {
-  const [now, setNow] = useState<number | null>(null);
+  const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    setNow(Date.now());
     // Refresh once a minute so a key crossing its expiry while this page
     // is open flips from Active → Expired without a manual reload.
     const id = setInterval(() => setNow(Date.now()), 60_000);
     return () => clearInterval(id);
   }, []);
-  const isExpired =
-    now !== null && expiresAt !== null && new Date(expiresAt).getTime() < now;
+  const isExpired = expiresAt !== null && new Date(expiresAt).getTime() < now;
   const label =
     revokedAt !== null ? "Revoked" : isExpired ? "Expired" : "Active";
   const isActive = label === "Active";
@@ -111,6 +109,7 @@ export default function SettingsPage({
           <nav className="space-y-1">
             {settingsTabs.map((tab) => (
               <button
+                type="button"
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
                 className={cn(

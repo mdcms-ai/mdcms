@@ -90,7 +90,7 @@ export type InlineAiPanelProps = {
   className?: string;
 };
 
-export function intentForInlineAction(
+function intentForInlineAction(
   action: StudioAiInlineAction,
   detail: string,
 ): InlineAiTransformIntent {
@@ -106,8 +106,8 @@ function StateMessage(props: {
   children: ReactNode;
 }) {
   return (
-    <div
-      role="status"
+    <output
+      aria-live="polite"
       className={cn(
         "flex items-start gap-2 rounded-md border px-3 py-2 text-xs",
         props.tone === "info" &&
@@ -120,7 +120,7 @@ function StateMessage(props: {
     >
       <AlertCircle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
       <span className="leading-snug">{props.children}</span>
-    </div>
+    </output>
   );
 }
 
@@ -150,14 +150,13 @@ export function InlineAiResultBody(props: InlineAiResultBodyProps) {
 
   if (state.status === "loading") {
     return (
-      <div
-        role="status"
+      <output
         aria-live="polite"
         className="flex items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground"
       >
         <Loader2 className="size-3.5 animate-spin" aria-hidden />
         Generating…
-      </div>
+      </output>
     );
   }
 
@@ -196,14 +195,13 @@ export function InlineAiResultBody(props: InlineAiResultBodyProps) {
 
   if (state.status === "applying") {
     return (
-      <div
-        role="status"
+      <output
         aria-live="polite"
         className="flex items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground"
       >
         <Loader2 className="size-3.5 animate-spin" aria-hidden />
         Applying…
-      </div>
+      </output>
     );
   }
 
@@ -338,6 +336,7 @@ function ToneFlyout(props: {
     <div
       ref={setRefs}
       role="menu"
+      tabIndex={-1}
       aria-label="Target tone"
       data-testid="inline-ai-tone-flyout"
       style={floatingStyles}
@@ -449,6 +448,10 @@ function ActionRow(props: {
 }
 
 export function InlineAiPanel(props: InlineAiPanelProps) {
+  return <InlineAiPanelStateful {...props} />;
+}
+
+function InlineAiPanelStateful(props: InlineAiPanelProps) {
   const {
     transform,
     hasSelection,
@@ -547,14 +550,6 @@ export function InlineAiPanel(props: InlineAiPanelProps) {
 
   // Last fired intent — used by retry to re-fire the same action.
   const lastIntentRef = useRef<InlineAiTransformIntent | null>(null);
-
-  // When transform settles back to idle (e.g. after reject + reopen),
-  // collapse the tone flyout so the picker reopens cleanly.
-  useEffect(() => {
-    if (transform.state.status === "idle") {
-      setToneOpen(false);
-    }
-  }, [transform.state.status]);
 
   const fire = (intent: InlineAiTransformIntent) => {
     lastIntentRef.current = intent;

@@ -1,8 +1,10 @@
 import type { ReactNode } from "react";
 
+import "./site.css";
+
 export const metadata = {
-  title: "MDCMS Studio Embed Smoke",
-  description: "Sample host app for CMS-47 Studio embed smoke verification.",
+  title: "MDCMS Demo",
+  description: "Rendered example site backed by MDCMS content documents.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

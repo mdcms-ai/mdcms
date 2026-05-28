@@ -12,6 +12,17 @@ export function Chart({ data, type, title, color }: ChartProps) {
   const peak = Math.max(...values, 1);
   const accent = color?.trim() || DEFAULT_COLOR;
   const kind = type ?? "bar";
+  const typeBadgeStyle = {
+    borderRadius: "999px",
+    border: `1px solid ${accent}33`,
+    background: `${accent}1a`,
+    padding: "6px 10px",
+    fontSize: "12px",
+    fontWeight: 700,
+    letterSpacing: "0.12em",
+    textTransform: "uppercase",
+    color: "#1e3a8a",
+  } as const;
 
   return (
     <section
@@ -38,7 +49,7 @@ export function Chart({ data, type, title, color }: ChartProps) {
           <p
             style={{
               margin: 0,
-              fontSize: "11px",
+              fontSize: "12px",
               fontWeight: 700,
               letterSpacing: "0.18em",
               textTransform: "uppercase",
@@ -57,21 +68,7 @@ export function Chart({ data, type, title, color }: ChartProps) {
             {title?.trim() || "Quarterly momentum"}
           </h3>
         </div>
-        <span
-          style={{
-            borderRadius: "999px",
-            border: `1px solid ${accent}33`,
-            background: `${accent}1a`,
-            padding: "6px 10px",
-            fontSize: "11px",
-            fontWeight: 700,
-            letterSpacing: "0.12em",
-            textTransform: "uppercase",
-            color: "#1e3a8a",
-          }}
-        >
-          {kind}
-        </span>
+        <span style={typeBadgeStyle}>{kind}</span>
       </div>
 
       <div

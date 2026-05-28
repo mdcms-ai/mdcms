@@ -126,6 +126,7 @@ export function useInlineAiTransform(
       setState({ status: "loading", intent });
 
       try {
+        // react-doctor-disable-next-line react-doctor/async-defer-await -- stale inline transforms are discarded by the abort guard immediately after this await.
         const result = await api.inlineTransform({
           ...resolved.payload,
           action: intent.action,

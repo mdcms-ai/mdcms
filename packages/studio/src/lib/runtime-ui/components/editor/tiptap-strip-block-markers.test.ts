@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "bun:test";
 
-import { stripBlockMarkers } from "./tiptap-editor.js";
+import { stripBlockMarkers } from "./tiptap-editor-utils.js";
 
 describe("stripBlockMarkers — guards plain-text apply against stray markdown", () => {
   test("strips bullet markers from each line", () => {

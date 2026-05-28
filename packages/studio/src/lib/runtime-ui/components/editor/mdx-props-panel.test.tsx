@@ -76,7 +76,10 @@ test("MdxPropsPanel renders the selected component instead of an arbitrary catal
   );
 
   assert.match(markup, /data-mdcms-mdx-props-panel="HeroBanner"/);
-  assert.match(markup, /Selected component/);
+  assert.match(markup, />HeroBanner</);
+  assert.doesNotMatch(markup, /MDX component props/);
+  assert.doesNotMatch(markup, /Selected component/);
+  assert.doesNotMatch(markup, /A hero banner/);
   assert.match(markup, /data-mdcms-mdx-auto-form="HeroBanner"/);
   assert.doesNotMatch(markup, />Void</);
   assert.doesNotMatch(markup, />Auto</);
@@ -97,4 +100,64 @@ test("MdxPropsPanel renders an unresolved state when the selected component is m
 
   assert.match(markup, /data-mdcms-mdx-props-panel="unregistered"/);
   assert.match(markup, /UnknownWidget/);
+});
+
+test("MdxPropsPanel renders visual style controls for selected components with a style prop", () => {
+  const component = createContext().mdx!.catalog.components[0]!;
+  const styledComponent = {
+    ...component,
+    extractedProps: {
+      ...component.extractedProps,
+      style: { type: "style" as const, required: false },
+    },
+  };
+  const context = createContext();
+  context.mdx!.catalog.components = [styledComponent];
+
+  const markup = renderToStaticMarkup(
+    createElement(MdxPropsPanel, {
+      context,
+      selection: createSelection({
+        component: styledComponent,
+        props: { title: "Launch", style: { padding: "16px" } },
+      }),
+    }),
+  );
+
+  assert.match(markup, /data-mdcms-visual-style-inspector="HeroBanner"/);
+  assert.doesNotMatch(markup, /HeroBanner:style:style/);
+});
+
+test("MdxPropsPanel omits wrapper-only placeholder copy when there are no concrete props", () => {
+  const component = {
+    name: "Box",
+    importPath: "@mdcms/sdk/react-primitives",
+    description: "Layout wrapper.",
+    extractedProps: {
+      style: { type: "style" as const, required: false },
+      children: { type: "rich-text" as const, required: false },
+    },
+  };
+  const context = createContext();
+  context.mdx!.catalog.components = [component];
+
+  const markup = renderToStaticMarkup(
+    createElement(MdxPropsPanel, {
+      context,
+      selection: createSelection({
+        component,
+        componentName: "Box",
+        isVoid: false,
+        props: { style: { padding: "16px" } },
+      }),
+    }),
+  );
+
+  assert.match(markup, /data-mdcms-mdx-props-panel="Box"/);
+  assert.match(markup, /data-mdcms-visual-style-inspector="Box"/);
+  assert.doesNotMatch(markup, /This wrapper component is edited/);
+  assert.doesNotMatch(
+    markup,
+    /data-mdcms-mdx-props-editor-state="Box:content-only"/,
+  );
 });

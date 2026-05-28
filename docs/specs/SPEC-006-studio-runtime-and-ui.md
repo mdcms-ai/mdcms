@@ -127,6 +127,13 @@ and `renderMdxPreview(...)`. The backend bootstrap/runtime publication model
 stays unchanged; it still serves the signed runtime bundle and does not publish
 the component catalog.
 
+MDCMS built-in MDX components defined by `SPEC-007` are injected by the Studio
+shell/runtime without host registration. Studio resolves their preview
+components from MDCMS-owned React code before falling back to host-registered
+component loaders. The host bridge remains the contract for host components;
+built-ins do not require host `load` callbacks and do not change the signed
+runtime bootstrap contract.
+
 The backend may live on a different origin from the host app. Cross-origin Studio embedding is a first-class path; a same-origin reverse proxy is optional, not required. Browser access to the backend follows the Studio origin allowlist and CORS contract defined in `SPEC-005`.
 
 Studio runtime publication selection is server-owned:
@@ -382,6 +389,18 @@ Normative behavior:
   to that mutable head snapshot.
 - The primary canvas edits the document `body` through the editor engine owned
   by SPEC-007.
+- On desktop, the document editor may expose the visual composition palette to
+  the left of the canvas. The palette is part of the body editor surface and
+  follows the MDX visual composition behavior owned by SPEC-007. It is
+  collapsed by default, opens and closes through the editor toolbar's Insert
+  Component control, and lets the central canvas fill the available width while
+  closed. It must be hidden on narrow screens where touch/mobile composition is
+  not supported.
+- The document editor route starts in a focused editing layout on desktop:
+  the global Studio navigation sidebar is collapsed by default for this route,
+  and the document's right sidebar is also collapsed by default. Both sidebars
+  remain available through their existing expand/collapse controls, and manual
+  user toggles must not require a page reload.
 - The editor topbar exposes, in order from leading edge: a breadcrumb trail
   (`Content` → routed type label → document label), an `UNPUBLISHED CHANGES`
   status pill that is rendered only while the document has unpublished
@@ -415,15 +434,52 @@ Normative behavior:
 - The right sidebar exposes these tabs in order:
   - `Info` for the document's read-only system metadata
   - `Properties` for schema-driven frontmatter editing
-  - `Component` for the currently selected MDX component props
+  - `Component` for the currently selected MDX/component block inspector
   - `History` for publish history and version comparison
 - `Component` appears only while an MDX component node is selected in the
   editor canvas. Selecting a component switches the sidebar to that tab.
+- The `Component` tab is one continuous selected-block inspector. It shows
+  required prop and validation issues first, component props next, style
+  groups next, and the advanced style object editor last. It must not hide
+  current validation problems behind nested tabs. When a component is selected,
+  the inspector identifies it with the component name instead of repeating
+  generic labels such as "MDX component props" or "Selected component".
+- Visual style controls in the `Component` tab use an intentional inspector UI,
+  not a generated grid of raw CSS property names. Common controls are grouped
+  into compact layout, spacing, fill, and typography sections with segmented
+  controls, box-model spacing controls, color swatches, and small value inputs.
+  Segmented controls should use familiar icons with accessible labels when the
+  value is visually standard, such as layout mode, wrapping, alignment,
+  justification, grid flow, and text alignment. The layout mode control combines
+  flex display and direction into `row` and `column` options instead of exposing
+  a separate flex-direction row. Color-valued fields
+  expose a native color picker through the swatch while retaining the text input
+  for exact CSS strings such as variables and functional color values. The full
+  inline style object remains available as a collapsed advanced escape hatch for
+  supported flat style keys that do not yet have first-class controls. The
+  style inspector does not render redundant explanatory copy or badges above
+  those concrete controls.
+- The `Component` tab does not show placeholder copy for wrapper-only
+  components whose editable surface is their nested canvas content. When a
+  component has no editable non-style props, Studio omits the generic props
+  editor area and shows only the sections that have concrete controls.
+- Wrapper MDX components use a single visual editing surface in the canvas.
+  Studio renders the component chrome once, then places the editable rich-text
+  child slot where the component's `children` render. Studio must not render a
+  separate read-only child preview above or beside a second editable child
+  editor. Wrapper component canvases do not render persistent `Drop inside`
+  text in normal editing. Drag/drop feedback may use drag-state-only outlines
+  or highlights, but it must not place text over the editable caret or reserve
+  content layout space. Host-rendered wrapper DOM outside the nested
+  `children` slot is not editable document content; clicking prop-rendered
+  headings, labels, links, or other component-owned DOM selects the component
+  for prop editing rather than placing a caret inside that DOM.
 - `Properties` is dedicated to schema-derived frontmatter fields for the
   current type in the active environment.
 - `Properties` does not render document system metadata such as `status`,
   `publishedVersion`, `locale`, `updatedAt`, or `path`.
-- `Properties` does not render MDX component prop editors.
+- `Properties` does not render MDX component prop editors or visual style
+  controls.
 - `Info` shows the read-only document metadata as a monospace key/value
   block (`status`, `type`, `locale`, `publishedVersion`, `updatedAt`,
   `path`).

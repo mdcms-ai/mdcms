@@ -4,8 +4,9 @@ import { test } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
 test("SDK content detail page clearly identifies the SDK data source", async () => {
-  process.env.MDCMS_DEMO_API_KEY = "mdcms_key_test";
+  const originalApiKey = process.env.MDCMS_DEMO_API_KEY;
   const originalFetch = globalThis.fetch;
+  process.env.MDCMS_DEMO_API_KEY = "mdcms_key_test";
   globalThis.fetch = async (
     input: string | URL | Request,
     init?: RequestInit,
@@ -62,24 +63,30 @@ test("SDK content detail page clearly identifies the SDK data source", async () 
     );
   };
 
-  const module = await import("./page");
-  const element = await module.default({
-    params: Promise.resolve({
-      documentId: "11111111-1111-1111-1111-111111111111",
-    }),
-  });
-  const markup = renderToStaticMarkup(element);
+  try {
+    const module = await import("./page");
+    const element = await module.default({
+      params: Promise.resolve({
+        documentId: "11111111-1111-1111-1111-111111111111",
+      }),
+    });
+    const markup = renderToStaticMarkup(element);
 
-  assert.match(markup, /SDK Content Document/i);
-  assert.match(markup, /Data source:\s*<strong>@mdcms\/sdk<\/strong>/i);
-  assert.match(markup, /\/demo\/sdk-content/i);
-  assert.match(markup, /\/demo\/content/i);
-  assert.match(markup, /\/preview\/post\/hello-world/i);
-  assert.match(markup, /Hello World/);
-  assert.match(markup, /Rendered body/i);
-  assert.match(markup, /<h1>Hello <strong>rendered<\/strong><\/h1>/i);
-  assert.match(markup, /body \(raw\):/i);
-
-  globalThis.fetch = originalFetch;
-  delete process.env.MDCMS_DEMO_API_KEY;
+    assert.match(markup, /SDK detail/i);
+    assert.match(markup, /@mdcms\/sdk/i);
+    assert.match(markup, /\/demo\/sdk-content/i);
+    assert.match(markup, /\/demo\/content/i);
+    assert.match(markup, /\/preview\/post\/hello-world/i);
+    assert.match(markup, /Hello World/);
+    assert.match(markup, /<h1>Hello <strong>rendered<\/strong><\/h1>/i);
+    assert.doesNotMatch(markup, /body \(raw\):/i);
+    assert.doesNotMatch(markup, /frontmatter \(raw JSON\):/i);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalApiKey === undefined) {
+      delete process.env.MDCMS_DEMO_API_KEY;
+    } else {
+      process.env.MDCMS_DEMO_API_KEY = originalApiKey;
+    }
+  }
 });

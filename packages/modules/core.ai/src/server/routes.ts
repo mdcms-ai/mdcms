@@ -6,6 +6,7 @@ import {
   type AiChatAllowedAction,
   type AiChatMessage,
   type AiChatMessageRequest,
+  type AiComponentReference,
   type AiProposal,
   type AiProposalKind,
   type AiTaskKind,
@@ -656,6 +657,16 @@ function mapKindToTask(kind: AiProposalKind): AiTaskKind {
   return "copy_improvement";
 }
 
+function canReanchorProposalBySourceText(proposal: AiProposal): boolean {
+  const [operation] = proposal.operations;
+
+  return (
+    proposal.operations.length === 1 &&
+    proposal.kind === "replace_selection" &&
+    operation?.op === "replace_selection"
+  );
+}
+
 async function handleProposalApply(
   request: Request,
   proposalId: string,
@@ -733,7 +744,8 @@ async function handleProposalApply(
     if (
       typeof requestDraftRevision === "number" &&
       typeof proposal.baseDraftRevision === "number" &&
-      requestDraftRevision !== proposal.baseDraftRevision
+      requestDraftRevision !== proposal.baseDraftRevision &&
+      !canReanchorProposalBySourceText(proposal)
     ) {
       throw new RuntimeError({
         code: "AI_PROPOSAL_CONFLICT",
@@ -1338,6 +1350,23 @@ function resolveFreshChatSelection(
     : undefined;
 }
 
+function buildComponentReferenceBackend(
+  references: readonly AiComponentReference[] | undefined,
+): import("./chat-tools.js").ChatToolDeps["getComponentReferenceBackend"] {
+  if (!references || references.length === 0) {
+    return undefined;
+  }
+
+  const byName = new Map<string, AiComponentReference>();
+  for (const reference of references) {
+    if (!byName.has(reference.componentName)) {
+      byName.set(reference.componentName, reference);
+    }
+  }
+
+  return async ({ componentName }) => byName.get(componentName);
+}
+
 /**
  * Shared chat-turn prep: CSRF, parsing, auth + capability probe,
  * regenerate-prefix resolution, attached-doc loading, project-knowledge
@@ -1536,6 +1565,9 @@ async function prepareChatTurn(
       ? options.userLookup({ userId: aiAuth.actorId }).catch(() => undefined)
       : Promise.resolve(undefined),
   ]);
+  const getComponentReference = buildComponentReferenceBackend(
+    body.componentReferences,
+  );
 
   const chatInput: import("./orchestrator.js").AiChatInput = {
     message: `${regenerateInstructionPrefix}${body.message}`,
@@ -1574,7 +1606,7 @@ async function prepareChatTurn(
       ...(currentUser ? { currentUser } : {}),
     },
     ...(body.mdxCatalog ? { mdxCatalog: body.mdxCatalog } : {}),
-    ...(options.listEntries || options.getEntry
+    ...(options.listEntries || options.getEntry || getComponentReference
       ? {
           toolBackends: {
             ...(options.listEntries
@@ -1602,6 +1634,7 @@ async function prepareChatTurn(
                     }),
                 }
               : {}),
+            ...(getComponentReference ? { getComponentReference } : {}),
           },
         }
       : {}),
@@ -1852,6 +1885,9 @@ async function handleChatMessage(
         ? options.userLookup({ userId: aiAuth.actorId }).catch(() => undefined)
         : Promise.resolve(undefined),
     ]);
+    const getComponentReference = buildComponentReferenceBackend(
+      body.componentReferences,
+    );
 
     let newProposals: AiProposal[] = [];
     let assistantText: string | undefined;
@@ -1894,7 +1930,7 @@ async function handleChatMessage(
           ...(currentUser ? { currentUser } : {}),
         },
         ...(body.mdxCatalog ? { mdxCatalog: body.mdxCatalog } : {}),
-        ...(options.listEntries || options.getEntry
+        ...(options.listEntries || options.getEntry || getComponentReference
           ? {
               toolBackends: {
                 ...(options.listEntries
@@ -1922,6 +1958,7 @@ async function handleChatMessage(
                         }),
                     }
                   : {}),
+                ...(getComponentReference ? { getComponentReference } : {}),
               },
             }
           : {}),
@@ -2075,6 +2112,20 @@ async function handleChatMessageStream(
       const collectedProposals: AiProposal[] = [];
       let assistantText = "";
       let finalAudit: AiAuditRecord | undefined;
+      const emitTurnAudit = (audit: AiAuditRecord | undefined) => {
+        if (!audit) {
+          return;
+        }
+        emitAudit(options.emitAudit, {
+          ...audit,
+          project,
+          environment,
+          actorId: aiAuth.actorId,
+          ...(attachedDocument?.documentId
+            ? { documentId: attachedDocument.documentId }
+            : {}),
+        });
+      };
       // SSE keepalive: fire a comment-only frame every 15s while the
       // LLM is mid-think. Bun's per-connection idle timeout (default
       // 10s, raised to 255s in http-server.ts) and most proxies
@@ -2095,7 +2146,9 @@ async function handleChatMessageStream(
         for await (const event of options.orchestrator.runChatStream(
           chatInput,
         )) {
-          if (event.type === "text-delta") {
+          if (event.type === "progress") {
+            controller.enqueue(encodeSse("progress", event));
+          } else if (event.type === "text-delta") {
             controller.enqueue(encodeSse("text-delta", { text: event.text }));
           } else if (event.type === "done") {
             assistantText = event.text;
@@ -2109,6 +2162,7 @@ async function handleChatMessageStream(
                 message: event.message,
               }),
             );
+            emitTurnAudit(finalAudit);
             // No `done` after an `error` — the client closes.
             clearInterval(keepalive);
             controller.close();
@@ -2154,17 +2208,7 @@ async function handleChatMessageStream(
           : {}),
       };
 
-      if (finalAudit) {
-        emitAudit(options.emitAudit, {
-          ...finalAudit,
-          project,
-          environment,
-          actorId: aiAuth.actorId,
-          ...(attachedDocument?.documentId
-            ? { documentId: attachedDocument.documentId }
-            : {}),
-        });
-      }
+      emitTurnAudit(finalAudit);
 
       controller.enqueue(
         encodeSse("done", {

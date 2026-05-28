@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  type CSSProperties,
+} from "react";
 import {
   autoUpdate,
   flip,
@@ -8,14 +15,7 @@ import {
   shift,
   useFloating,
 } from "@floating-ui/react-dom";
-import {
-  ArrowDown,
-  ArrowUp,
-  Check,
-  Loader2,
-  RotateCcw,
-  Sparkles,
-} from "lucide-react";
+import { Check, Loader2, RotateCcw, Sparkles } from "lucide-react";
 
 import { InlineAiPanel } from "./inline-ai-panel.js";
 import {
@@ -30,6 +30,7 @@ import type {
   TipTapEditorHandle,
   TipTapEditorSelectionInfo,
 } from "./tiptap-editor.js";
+import { PickerOffscreenHint } from "./inline-ai-offscreen-hint.js";
 import { Popover, PopoverAnchor, PopoverContent } from "../ui/popover.js";
 import { cn } from "../../lib/utils.js";
 
@@ -78,6 +79,70 @@ type PreviewState = {
   revert: () => void;
 };
 
+type InlineAiBubbleUiState = {
+  pickerOpen: boolean;
+  preview: PreviewState | null;
+  settledSelection: TipTapEditorSelectionInfo | null;
+  lastSelectionId: string | null;
+};
+
+type InlineAiBubbleUiAction =
+  | { type: "selection-settled"; selection: TipTapEditorSelectionInfo | null }
+  | { type: "picker-open-change"; open: boolean }
+  | { type: "picker-toggle" }
+  | { type: "preview-ready"; preview: PreviewState }
+  | { type: "preview-applied" }
+  | { type: "preview-rejected"; reopenPicker: boolean };
+
+const INLINE_AI_BUBBLE_INITIAL_UI: InlineAiBubbleUiState = {
+  pickerOpen: false,
+  preview: null,
+  settledSelection: null,
+  lastSelectionId: null,
+};
+
+function inlineAiBubbleUiReducer(
+  state: InlineAiBubbleUiState,
+  action: InlineAiBubbleUiAction,
+): InlineAiBubbleUiState {
+  switch (action.type) {
+    case "selection-settled": {
+      if (state.preview) return state;
+      if (!action.selection) {
+        return {
+          ...state,
+          pickerOpen: false,
+          settledSelection: null,
+          lastSelectionId: null,
+        };
+      }
+      return {
+        ...state,
+        pickerOpen:
+          state.lastSelectionId !== action.selection.selectionId
+            ? false
+            : state.pickerOpen,
+        settledSelection: action.selection,
+        lastSelectionId: action.selection.selectionId,
+      };
+    }
+    case "picker-open-change":
+      return { ...state, pickerOpen: action.open };
+    case "picker-toggle":
+      return { ...state, pickerOpen: !state.pickerOpen };
+    case "preview-ready":
+      return { ...state, pickerOpen: false, preview: action.preview };
+    case "preview-applied":
+      return { ...state, preview: null };
+    case "preview-rejected":
+      return {
+        ...state,
+        preview: null,
+        pickerOpen: action.reopenPicker,
+      };
+  }
+}
+
 function rectToBoundingClientRect(rect: AnchorRect): DOMRect {
   const { top, left, right, bottom, width, height } = rect;
   return {
@@ -112,6 +177,10 @@ function rectToBoundingClientRect(rect: AnchorRect): DOMRect {
  *        try a different action or detail.
  */
 export function InlineAiBubble(props: InlineAiBubbleProps) {
+  return useInlineAiBubbleElement(props);
+}
+
+function useInlineAiBubbleElement(props: InlineAiBubbleProps) {
   const {
     selection,
     enabled,
@@ -122,18 +191,17 @@ export function InlineAiBubble(props: InlineAiBubbleProps) {
     onApplied,
   } = props;
 
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [preview, setPreview] = useState<PreviewState | null>(null);
+  const [uiState, dispatchUi] = useReducer(
+    inlineAiBubbleUiReducer,
+    INLINE_AI_BUBBLE_INITIAL_UI,
+  );
+  const { pickerOpen, preview, settledSelection } = uiState;
 
   // The "settled" selection drives the bubble's visible state. While
   // the user is actively extending a selection (drag, shift+arrow),
   // the upstream `selection` prop changes on every animation frame,
   // but `settledSelection` only catches up after `appearDelayMs` of
   // quiet — so the trigger doesn't flash and re-anchor mid-drag.
-  const [settledSelection, setSettledSelection] =
-    useState<TipTapEditorSelectionInfo | null>(null);
-  const lastSelectionIdRef = useRef<string | null>(null);
-
   useEffect(() => {
     // Skip debounce while the editor is showing a preview — the
     // preview replaces selection text and the editor publishes a new
@@ -144,41 +212,21 @@ export function InlineAiBubble(props: InlineAiBubbleProps) {
     }
 
     if (!selection) {
-      setSettledSelection(null);
+      dispatchUi({ type: "selection-settled", selection: null });
       return;
     }
 
     if (appearDelayMs <= 0) {
-      setSettledSelection(selection);
+      dispatchUi({ type: "selection-settled", selection });
       return;
     }
 
     const handle = setTimeout(() => {
-      setSettledSelection(selection);
+      dispatchUi({ type: "selection-settled", selection });
     }, appearDelayMs);
 
     return () => clearTimeout(handle);
   }, [selection, appearDelayMs, preview]);
-
-  // Close the picker and clear preview state when the underlying
-  // range changes mid-flow. Each fresh selection re-anchors and
-  // resets the picker.
-  useEffect(() => {
-    if (preview) {
-      return;
-    }
-
-    if (!settledSelection) {
-      lastSelectionIdRef.current = null;
-      setPickerOpen(false);
-      return;
-    }
-
-    if (lastSelectionIdRef.current !== settledSelection.selectionId) {
-      lastSelectionIdRef.current = settledSelection.selectionId;
-      setPickerOpen(false);
-    }
-  }, [settledSelection, preview]);
 
   // Serialize the selection for AI input. Whole-block selections get
   // full markdown round-tripping (lists, headings preserved); mid-
@@ -264,17 +312,26 @@ export function InlineAiBubble(props: InlineAiBubbleProps) {
       return;
     }
 
-    setPreview({
-      proposal: transform.state.proposal,
-      previewFrom: result.previewFrom,
-      previewTo: result.previewTo,
-      anchorRect: result.anchorRect,
-      revert: () => {
-        result.revert();
+    dispatchUi({
+      type: "preview-ready",
+      preview: {
+        proposal: transform.state.proposal,
+        previewFrom: result.previewFrom,
+        previewTo: result.previewTo,
+        anchorRect: result.anchorRect,
+        revert: () => {
+          result.revert();
+        },
       },
     });
-    setPickerOpen(false);
-  }, [transform.state, preview, editorRef, settledSelection]);
+    return () => {};
+  }, [
+    transform.state,
+    preview,
+    editorRef,
+    settledSelection,
+    selectionPayload?.mode,
+  ]);
 
   // After accept resolves, drop the inline preview. On success
   // ("applied") the bubble falls back to the trigger pill at the new
@@ -288,7 +345,7 @@ export function InlineAiBubble(props: InlineAiBubbleProps) {
     if (!preview) return;
     const status = transform.state.status;
     if (status === "applied") {
-      setPreview(null);
+      dispatchUi({ type: "preview-applied" });
       return;
     }
     if (
@@ -298,9 +355,9 @@ export function InlineAiBubble(props: InlineAiBubbleProps) {
       status === "validation_invalid"
     ) {
       preview.revert();
-      setPreview(null);
-      setPickerOpen(true);
+      dispatchUi({ type: "preview-rejected", reopenPicker: true });
     }
+    return () => {};
   }, [transform.state, preview]);
 
   // Accept → call apply through the hook. The page-level `onApplied`
@@ -317,11 +374,8 @@ export function InlineAiBubble(props: InlineAiBubbleProps) {
       return;
     }
     preview.revert();
-    setPreview(null);
+    dispatchUi({ type: "preview-rejected", reopenPicker: true });
     void transform.reject();
-    // Open the picker after the revert so the user can adjust their
-    // request without losing context.
-    setPickerOpen(true);
   }, [preview, transform]);
 
   const reference = useMemo(() => {
@@ -354,6 +408,7 @@ export function InlineAiBubble(props: InlineAiBubbleProps) {
 
   useEffect(() => {
     refs.setReference(reference as never);
+    return () => {};
   }, [refs, reference]);
 
   const handleSubmit = useCallback(
@@ -377,7 +432,7 @@ export function InlineAiBubble(props: InlineAiBubbleProps) {
         return;
       }
       event.preventDefault();
-      setPickerOpen((open) => !open);
+      dispatchUi({ type: "picker-toggle" });
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
@@ -393,61 +448,13 @@ export function InlineAiBubble(props: InlineAiBubbleProps) {
   // legible in both light and dark themes.
   if (preview) {
     const isApplying = transform.state.status === "applying";
-    return (
-      <div
-        ref={refs.setFloating}
-        style={floatingStyles}
-        data-mdcms-ai-bubble="preview"
-        className="z-50"
-      >
-        <div
-          className={cn(
-            "inline-flex items-center overflow-hidden rounded-full",
-            "border border-border bg-popover text-popover-foreground",
-            "shadow-lg",
-          )}
-        >
-          <span className="inline-flex items-center gap-1.5 border-r border-border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
-            <Sparkles className="size-3 text-primary" aria-hidden />
-            Proposed
-          </span>
-          <button
-            type="button"
-            onClick={handleAccept}
-            disabled={isApplying}
-            data-testid="inline-ai-preview-accept"
-            aria-label="Accept AI replacement"
-            className={cn(
-              "inline-flex items-center gap-1.5 border-r border-border px-3 py-1.5",
-              "text-xs font-semibold text-success transition-colors",
-              "hover:bg-success-subtle disabled:cursor-not-allowed disabled:opacity-60",
-            )}
-          >
-            {isApplying ? (
-              <Loader2 className="size-3.5 animate-spin" aria-hidden />
-            ) : (
-              <Check className="size-3.5" aria-hidden />
-            )}
-            {isApplying ? "Applying" : "Accept"}
-          </button>
-          <button
-            type="button"
-            onClick={handleReject}
-            disabled={isApplying}
-            data-testid="inline-ai-preview-reject"
-            aria-label="Reject AI replacement and reopen picker"
-            className={cn(
-              "inline-flex items-center gap-1.5 px-3 py-1.5",
-              "text-xs font-semibold text-destructive transition-colors",
-              "hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-60",
-            )}
-          >
-            <RotateCcw className="size-3.5" aria-hidden />
-            Reject
-          </button>
-        </div>
-      </div>
-    );
+    return renderInlineAiPreviewBubble({
+      floatingRef: refs.setFloating,
+      floatingStyles,
+      isApplying,
+      onAccept: handleAccept,
+      onReject: handleReject,
+    });
   }
 
   // Stages 1 & 2: trigger pill + picker popover. The pill anchors to
@@ -464,17 +471,123 @@ export function InlineAiBubble(props: InlineAiBubbleProps) {
   // div would mis-anchor the picker. Lifting both Popover and Anchor
   // up to the bubble root keeps the anchor's fixed coords viewport-
   // relative as expected.
+  return renderInlineAiTriggerBubble({
+    floatingRef: refs.setFloating,
+    floatingStyles,
+    pickerOpen,
+    selection: settledSelection,
+    transform,
+    onClosePicker: () =>
+      dispatchUi({ type: "picker-open-change", open: false }),
+    onPickerOpenChange: (open) =>
+      dispatchUi({ type: "picker-open-change", open }),
+    onSubmit: handleSubmit,
+    onTogglePicker: () => dispatchUi({ type: "picker-toggle" }),
+  });
+}
+
+function renderInlineAiPreviewBubble({
+  floatingRef,
+  floatingStyles,
+  isApplying,
+  onAccept,
+  onReject,
+}: {
+  floatingRef: (node: HTMLDivElement | null) => void;
+  floatingStyles: CSSProperties;
+  isApplying: boolean;
+  onAccept: () => void;
+  onReject: () => void;
+}) {
+  return (
+    <div
+      ref={floatingRef}
+      style={floatingStyles}
+      data-mdcms-ai-bubble="preview"
+      className="z-50"
+    >
+      <div
+        className={cn(
+          "inline-flex items-center overflow-hidden rounded-full",
+          "border border-border bg-popover text-popover-foreground",
+          "shadow-lg",
+        )}
+      >
+        <span className="inline-flex items-center gap-1.5 border-r border-border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
+          <Sparkles className="size-3 text-primary" aria-hidden />
+          Proposed
+        </span>
+        <button
+          type="button"
+          onClick={onAccept}
+          disabled={isApplying}
+          data-testid="inline-ai-preview-accept"
+          aria-label="Accept AI replacement"
+          className={cn(
+            "inline-flex items-center gap-1.5 border-r border-border px-3 py-1.5",
+            "text-xs font-semibold text-success transition-colors",
+            "hover:bg-success-subtle disabled:cursor-not-allowed disabled:opacity-60",
+          )}
+        >
+          {isApplying ? (
+            <Loader2 className="size-3.5 animate-spin" aria-hidden />
+          ) : (
+            <Check className="size-3.5" aria-hidden />
+          )}
+          {isApplying ? "Applying" : "Accept"}
+        </button>
+        <button
+          type="button"
+          onClick={onReject}
+          disabled={isApplying}
+          data-testid="inline-ai-preview-reject"
+          aria-label="Reject AI replacement and reopen picker"
+          className={cn(
+            "inline-flex items-center gap-1.5 px-3 py-1.5",
+            "text-xs font-semibold text-destructive transition-colors",
+            "hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-60",
+          )}
+        >
+          <RotateCcw className="size-3.5" aria-hidden />
+          Reject
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function renderInlineAiTriggerBubble({
+  floatingRef,
+  floatingStyles,
+  pickerOpen,
+  selection,
+  transform,
+  onClosePicker,
+  onPickerOpenChange,
+  onSubmit,
+  onTogglePicker,
+}: {
+  floatingRef: (node: HTMLDivElement | null) => void;
+  floatingStyles: CSSProperties;
+  pickerOpen: boolean;
+  selection: TipTapEditorSelectionInfo;
+  transform: ReturnType<typeof useInlineAiTransform>;
+  onClosePicker: () => void;
+  onPickerOpenChange: (open: boolean) => void;
+  onSubmit: (intent: InlineAiTransformIntent) => void;
+  onTogglePicker: () => void;
+}) {
   return (
     <>
-      <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
+      <Popover open={pickerOpen} onOpenChange={onPickerOpenChange}>
         <PopoverAnchor asChild>
           <div
             aria-hidden
             style={{
               position: "fixed",
-              top: settledSelection.anchorRect.bottom,
-              left: settledSelection.anchorRect.left,
-              width: settledSelection.anchorRect.width,
+              top: selection.anchorRect.bottom,
+              left: selection.anchorRect.left,
+              width: selection.anchorRect.width,
               height: 0,
               pointerEvents: "none",
             }}
@@ -485,56 +598,36 @@ export function InlineAiBubble(props: InlineAiBubbleProps) {
           side="bottom"
           sideOffset={8}
           collisionPadding={8}
-          // Always render below the selection. Don't flip / shift to
-          // a different placement when the bottom is constrained — if
-          // the picker doesn't fit, we let the InlineAiPanel scroll
-          // (max-h tied to --radix-popover-content-available-height)
-          // and surface the off-screen hint inside the editor surface.
           avoidCollisions={false}
           data-mdcms-ai-bubble="panel"
           className="w-[240px] overflow-visible p-0"
         >
           <InlineAiPanel
             transform={transform}
-            hasSelection={Boolean(settledSelection)}
-            onSubmit={handleSubmit}
-            onClose={() => setPickerOpen(false)}
-            // The proposal preview lives in the editor now — hide the
-            // in-popover proposal/applying/applied views so we don't
-            // double up the UI.
+            hasSelection
+            onSubmit={onSubmit}
+            onClose={onClosePicker}
             hideProposalResult
             className="border-0 shadow-none"
           />
         </PopoverContent>
       </Popover>
 
-      <PickerOffscreenHint
-        selection={settledSelection}
-        pickerOpen={pickerOpen}
-      />
+      <PickerOffscreenHint selection={selection} pickerOpen={pickerOpen} />
 
       <div
-        ref={refs.setFloating}
+        ref={floatingRef}
         style={floatingStyles}
         data-mdcms-ai-bubble="trigger"
-        className={cn(
-          "z-50",
-          // Hide the pill while the picker is open so the affordance
-          // doesn't double up. Kept in the DOM so floating-ui can
-          // continue tracking the selection rect via autoUpdate.
-          pickerOpen && "pointer-events-none opacity-0",
-        )}
+        className={cn("z-50", pickerOpen && "pointer-events-none opacity-0")}
       >
         <button
           type="button"
           aria-haspopup="menu"
           aria-expanded={pickerOpen}
-          onClick={() => setPickerOpen((open) => !open)}
+          onClick={onTogglePicker}
           data-testid="inline-ai-bubble-trigger"
           aria-label="Open AI edit menu"
-          // Glassy backdrop-blur pill, primary-tinted border + glow,
-          // sparkle leading icon. Reads as an AI affordance, not a
-          // primary CTA.
           className={cn(
             "group inline-flex items-center gap-1.5 rounded-full",
             "px-3 py-1.5 text-xs font-semibold",
@@ -563,118 +656,5 @@ export function InlineAiBubble(props: InlineAiBubbleProps) {
         </button>
       </div>
     </>
-  );
-}
-
-/**
- * Hint pill shown when the picker is open but its anchor (the
- * selection) has scrolled out of view. Anchored inside the editor
- * surface, centered horizontally on the relevant edge. Clicking
- * scrolls the selection back so the picker is on screen again.
- */
-function PickerOffscreenHint(props: {
-  selection: TipTapEditorSelectionInfo | null;
-  pickerOpen: boolean;
-}) {
-  const { selection, pickerOpen } = props;
-  const [, force] = useState(0);
-  const editorEl = useMemo(() => {
-    if (typeof document === "undefined") return null;
-    return document.querySelector<HTMLElement>(
-      '[data-mdcms-editor-pane="canvas"]',
-    );
-  }, []);
-
-  // Re-render on viewport scroll/resize so visibility tracks the
-  // selection rect as the user scrolls past it.
-  useEffect(() => {
-    if (!pickerOpen) return;
-    const handler = () => force((n) => n + 1);
-    window.addEventListener("scroll", handler, true);
-    window.addEventListener("resize", handler);
-    return () => {
-      window.removeEventListener("scroll", handler, true);
-      window.removeEventListener("resize", handler);
-    };
-  }, [pickerOpen]);
-
-  if (!pickerOpen || !selection) return null;
-
-  const anchor = selection.anchorRect;
-  const viewportTop = 0;
-  const viewportBottom =
-    typeof window === "undefined" ? Infinity : window.innerHeight;
-
-  // Picker sits below selection; we treat it as ~280px tall when
-  // computing visibility (real height varies with scroll).
-  const ASSUMED_PICKER_HEIGHT = 280;
-  const pickerTop = anchor.bottom + 8;
-  const pickerBottom = pickerTop + ASSUMED_PICKER_HEIGHT;
-
-  const visibleTop = Math.max(pickerTop, viewportTop);
-  const visibleBottom = Math.min(pickerBottom, viewportBottom);
-  const visiblePx = Math.max(0, visibleBottom - visibleTop);
-  const visibleFrac = visiblePx / ASSUMED_PICKER_HEIGHT;
-
-  // Don't surface the hint until most of the picker is clipped.
-  if (visibleFrac > 0.6) return null;
-
-  const aboveViewport = anchor.bottom < viewportTop + 40;
-  const direction: "up" | "down" = aboveViewport ? "up" : "down";
-
-  const onClick = () => {
-    if (!editorEl) {
-      // Fall back to scrolling the selection rect into the viewport.
-      const targetTop = aboveViewport
-        ? Math.max(0, anchor.top - 80)
-        : window.scrollY + (anchor.bottom - viewportBottom + 320);
-      window.scrollTo({ top: targetTop, behavior: "smooth" });
-      return;
-    }
-    if (aboveViewport) {
-      editorEl.scrollBy({ top: anchor.top - 80, behavior: "smooth" });
-    } else {
-      editorEl.scrollBy({
-        top: pickerBottom - viewportBottom + 24,
-        behavior: "smooth",
-      });
-    }
-  };
-
-  // Anchor the hint inside the editor surface when present, else
-  // fall back to viewport edge.
-  const surfaceRect = editorEl?.getBoundingClientRect();
-  const left = surfaceRect
-    ? surfaceRect.left + surfaceRect.width / 2
-    : viewportBottom / 2;
-  const top = aboveViewport
-    ? (surfaceRect?.top ?? 16) + 16
-    : (surfaceRect?.bottom ?? viewportBottom - 16) - 48;
-
-  const Arrow = direction === "up" ? ArrowUp : ArrowDown;
-
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      data-testid="inline-ai-offscreen-hint"
-      aria-label={`Picker ${direction === "up" ? "above" : "below"} viewport — scroll to view`}
-      style={{
-        position: "fixed",
-        top,
-        left,
-        transform: "translateX(-50%)",
-        zIndex: 70,
-      }}
-      className={cn(
-        "inline-flex items-center gap-2 rounded-full px-3.5 py-1.5",
-        "border border-border bg-popover/95 backdrop-blur-md shadow-lg",
-        "font-mono text-[11px] uppercase tracking-[0.04em] text-popover-foreground",
-        "hover:bg-popover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
-      )}
-    >
-      <Arrow className="size-3.5 text-primary" aria-hidden />
-      Picker {direction === "up" ? "above" : "below"} · scroll to view
-    </button>
   );
 }

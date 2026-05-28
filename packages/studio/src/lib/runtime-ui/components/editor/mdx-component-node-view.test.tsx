@@ -1,15 +1,46 @@
 import assert from "node:assert/strict";
 import { test } from "bun:test";
-import { createElement } from "react";
+import { createElement, isValidElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import {
-  createMdxComponentPreviewProps,
-  formatMdxComponentPropsSummary,
+  MdxComponentNodeView,
   MdxComponentNodeFrame,
 } from "./mdx-component-node-view.js";
+import { formatMdxComponentPropsSummary } from "./mdx-component-node-view-utils.js";
 
-test("MdxComponentNodeFrame renders wrapper component chrome with nested slot", () => {
+function findElementByAriaLabel(
+  node: ReactNode,
+  ariaLabel: string,
+): { props: Record<string, unknown> } | null {
+  if (!isValidElement(node)) {
+    return null;
+  }
+
+  const props = node.props as {
+    "aria-label"?: string;
+    children?: ReactNode;
+  };
+
+  if (props["aria-label"] === ariaLabel) {
+    return { props: node.props as Record<string, unknown> };
+  }
+
+  const children = Array.isArray(props.children)
+    ? props.children
+    : [props.children];
+
+  for (const child of children) {
+    const found = findElementByAriaLabel(child, ariaLabel);
+    if (found) {
+      return found;
+    }
+  }
+
+  return null;
+}
+
+test("MdxComponentNodeFrame renders wrapper content once as the editable surface", () => {
   const markup = renderToStaticMarkup(
     createElement(
       MdxComponentNodeFrame,
@@ -18,7 +49,11 @@ test("MdxComponentNodeFrame renders wrapper component chrome with nested slot", 
         isVoid: false,
         propsSummary: 'type="warning"',
         previewState: "ready",
-        previewSurface: createElement("div", { "data-test-preview": "ready" }),
+        previewSurface: createElement(
+          "div",
+          { "data-test-preview": "ready" },
+          "Child content",
+        ),
       },
       createElement("div", { "data-test-slot": "children" }, "Child content"),
     ),
@@ -26,10 +61,11 @@ test("MdxComponentNodeFrame renders wrapper component chrome with nested slot", 
 
   assert.match(markup, /data-mdcms-mdx-component-frame="Callout"/);
   assert.match(markup, /data-mdcms-mdx-component-kind="wrapper"/);
-  assert.match(markup, /data-mdcms-mdx-preview-state="ready"/);
-  assert.match(markup, /data-test-preview="ready"/);
   assert.match(markup, /&lt;Callout \/&gt;/);
   assert.match(markup, /data-test-slot="children"/);
+  assert.doesNotMatch(markup, /data-mdcms-mdx-preview-state="ready"/);
+  assert.doesNotMatch(markup, /data-test-preview="ready"/);
+  assert.equal(markup.match(/Child content/g)?.length, 1);
   assert.doesNotMatch(markup, />Wrapper</);
   assert.doesNotMatch(markup, /type=&quot;warning&quot;/);
 });
@@ -59,23 +95,6 @@ test("formatMdxComponentPropsSummary distinguishes empty props from non-editable
   assert.equal(formatMdxComponentPropsSummary(undefined), "No props set yet");
 });
 
-test("createMdxComponentPreviewProps injects wrapper children into preview props", () => {
-  const previewProps = createMdxComponentPreviewProps({
-    props: { tone: "warning" },
-    isVoid: false,
-    childrenHtml: "<p><strong>Body</strong></p>",
-  });
-
-  assert.equal(previewProps.tone, "warning");
-  assert.ok("children" in previewProps);
-
-  const markup = renderToStaticMarkup(
-    createElement("section", null, previewProps.children as never),
-  );
-
-  assert.match(markup, /<strong>Body<\/strong>/);
-});
-
 test("MdxComponentNodeFrame renders content-label data attribute for wrapper components", () => {
   const markup = renderToStaticMarkup(
     createElement(
@@ -93,6 +112,24 @@ test("MdxComponentNodeFrame renders content-label data attribute for wrapper com
   assert.match(markup, /data-mdcms-mdx-content-label="Callout"/);
   assert.doesNotMatch(markup, />Inner content</);
   assert.doesNotMatch(markup, /Edit nested markdown directly in this block/);
+});
+
+test("MdxComponentNodeFrame does not draw a separator before wrapper children", () => {
+  const markup = renderToStaticMarkup(
+    createElement(
+      MdxComponentNodeFrame,
+      {
+        componentName: "Box",
+        isVoid: false,
+        propsSummary: "",
+        previewState: "ready",
+        previewSurface: null,
+      },
+      createElement("div", { "data-test-slot": "children" }),
+    ),
+  );
+
+  assert.doesNotMatch(markup, /border-t border-border/);
 });
 
 test("MdxComponentNodeFrame does not render content label for void components", () => {
@@ -117,11 +154,65 @@ test("MdxComponentNodeFrame renders action buttons when callbacks are provided",
       previewState: "empty",
       onEditProps: () => {},
       onDelete: () => {},
+      onDuplicate: () => {},
+      onWrapInBox: () => {},
+      ...({
+        onMoveUp: () => {},
+        onMoveDown: () => {},
+      } as Record<string, unknown>),
     }),
   );
 
   assert.match(markup, /aria-label="Edit Alert props"/);
   assert.match(markup, /aria-label="Delete Alert"/);
+  assert.match(markup, /aria-label="Duplicate Alert"/);
+  assert.match(markup, /aria-label="Wrap Alert in Box"/);
+  assert.doesNotMatch(markup, /aria-label="Move Alert up"/);
+  assert.doesNotMatch(markup, /aria-label="Move Alert down"/);
+});
+
+test("MdxComponentNodeFrame keeps component action mouse down from stealing editor focus", () => {
+  const frame = MdxComponentNodeFrame({
+    componentName: "Alert",
+    isVoid: true,
+    propsSummary: "",
+    previewState: "empty",
+    onEditProps: () => {},
+    onDelete: () => {},
+    onDuplicate: () => {},
+    onWrapInBox: () => {},
+  });
+
+  const deleteButton = findElementByAriaLabel(frame, "Delete Alert");
+  const duplicateButton = findElementByAriaLabel(frame, "Duplicate Alert");
+
+  assert.equal(typeof deleteButton?.props.onMouseDown, "function");
+  assert.equal(typeof duplicateButton?.props.onMouseDown, "function");
+
+  let deletePrevented = false;
+  (
+    deleteButton?.props.onMouseDown as (event: {
+      preventDefault: () => void;
+    }) => void
+  )({
+    preventDefault: () => {
+      deletePrevented = true;
+    },
+  });
+
+  let duplicatePrevented = false;
+  (
+    duplicateButton?.props.onMouseDown as (event: {
+      preventDefault: () => void;
+    }) => void
+  )({
+    preventDefault: () => {
+      duplicatePrevented = true;
+    },
+  });
+
+  assert.equal(deletePrevented, true);
+  assert.equal(duplicatePrevented, true);
 });
 
 test("MdxComponentNodeFrame omits action buttons when callbacks are not provided", () => {
@@ -136,6 +227,175 @@ test("MdxComponentNodeFrame omits action buttons when callbacks are not provided
 
   assert.doesNotMatch(markup, /aria-label="Edit Alert props"/);
   assert.doesNotMatch(markup, /aria-label="Delete Alert"/);
+  assert.doesNotMatch(markup, /aria-label="Duplicate Alert"/);
+});
+
+test("MdxComponentNodeFrame does not render persistent drop-inside text for wrappers", () => {
+  const propsWithLegacyDropFlag = {
+    componentName: "Callout",
+    isVoid: false,
+    propsSummary: "",
+    previewState: "empty",
+    canReceiveChildDrops: true,
+  } satisfies Parameters<typeof MdxComponentNodeFrame>[0] & {
+    canReceiveChildDrops?: boolean;
+  };
+
+  const markup = renderToStaticMarkup(
+    createElement(
+      MdxComponentNodeFrame,
+      propsWithLegacyDropFlag,
+      createElement("div", { "data-test-slot": "children" }, "Body"),
+    ),
+  );
+
+  assert.doesNotMatch(markup, /data-mdcms-visual-drop-target="inside"/);
+  assert.doesNotMatch(markup, /Drop inside/);
+  assert.match(markup, /data-test-slot="children"/);
+});
+
+test("MdxComponentNodeView keeps wrapper host output inert outside the editable child slot", () => {
+  function HeroPreview(props: { title?: string; children?: React.ReactNode }) {
+    return createElement(
+      "section",
+      { "data-test-host-wrapper": "HeroPreview" },
+      createElement("h1", null, props.title ?? "Fallback"),
+      props.children,
+    );
+  }
+
+  const markup = renderToStaticMarkup(
+    createElement(MdxComponentNodeView, {
+      node: {
+        attrs: {
+          componentName: "HeroPreview",
+          isVoid: false,
+          props: { title: "Prop-owned title" },
+        },
+      },
+      selected: false,
+      readOnly: false,
+      forbidden: false,
+      context: {
+        hostBridge: {
+          resolveComponent: () => HeroPreview,
+          renderMdxPreview: () => () => {},
+        },
+        mdx: {
+          catalog: { components: [] },
+        },
+      },
+      editor: {
+        commands: {
+          setNodeSelection: () => true,
+        },
+      },
+      getPos: () => 1,
+      deleteNode: () => {},
+    } as never),
+  );
+
+  assert.match(markup, /<h1>Prop-owned title<\/h1>/);
+  assert.match(
+    markup,
+    /data-mdcms-mdx-rendered-wrapper="HeroPreview"[^>]+class="select-none"/,
+  );
+  assert.match(markup, /data-mdcms-mdx-editable-slot="HeroPreview"/);
+  assert.doesNotMatch(
+    markup,
+    /data-mdcms-mdx-rendered-wrapper="HeroPreview"[^>]+contentEditable="false"/,
+  );
+});
+
+test("MdxComponentNodeView makes the ProseMirror content DOM the editable wrapper slot", () => {
+  function BoxPreview(props: { children?: React.ReactNode }) {
+    return createElement("section", null, props.children);
+  }
+
+  const markup = renderToStaticMarkup(
+    createElement(MdxComponentNodeView, {
+      node: {
+        attrs: {
+          componentName: "BoxPreview",
+          isVoid: false,
+          props: {},
+        },
+      },
+      selected: false,
+      readOnly: false,
+      forbidden: false,
+      context: {
+        hostBridge: {
+          resolveComponent: () => BoxPreview,
+          renderMdxPreview: () => () => {},
+        },
+        mdx: {
+          catalog: { components: [] },
+        },
+      },
+      editor: {
+        commands: {
+          setNodeSelection: () => true,
+        },
+      },
+      getPos: () => 1,
+      deleteNode: () => {},
+    } as never),
+  );
+
+  assert.match(
+    markup,
+    /<div(?=[^>]*data-node-view-content)(?=[^>]*data-mdcms-mdx-editable-slot="BoxPreview")[^>]*>/,
+  );
+  assert.doesNotMatch(
+    markup,
+    /<div(?=[^>]*data-mdcms-mdx-editable-slot="BoxPreview")[^>]*contentEditable="true"[^>]*>/,
+  );
+});
+
+test("MdxComponentNodeView keeps wrapper slot typography on the main editor scale", () => {
+  function BoxPreview(props: { children?: React.ReactNode }) {
+    return createElement("section", null, props.children);
+  }
+
+  const markup = renderToStaticMarkup(
+    createElement(MdxComponentNodeView, {
+      node: {
+        attrs: {
+          componentName: "BoxPreview",
+          isVoid: false,
+          props: {},
+        },
+      },
+      selected: false,
+      readOnly: false,
+      forbidden: false,
+      context: {
+        hostBridge: {
+          resolveComponent: () => BoxPreview,
+          renderMdxPreview: () => () => {},
+        },
+        mdx: {
+          catalog: { components: [] },
+        },
+      },
+      editor: {
+        commands: {
+          setNodeSelection: () => true,
+        },
+      },
+      getPos: () => 1,
+      deleteNode: () => {},
+    } as never),
+  );
+
+  const slotTag = markup.match(
+    /<div(?=[^>]*data-node-view-content)(?=[^>]*data-mdcms-mdx-editable-slot="BoxPreview")[^>]*>/,
+  )?.[0];
+
+  assert.ok(slotTag);
+  assert.doesNotMatch(slotTag, /\bprose-sm\b/);
+  assert.doesNotMatch(slotTag, /\btext-sm\b/);
 });
 
 test("MdxComponentNodeFrame applies selected styles when selected", () => {
@@ -197,7 +457,7 @@ test("MdxComponentNodeFrame omits collapse toggle when handler is not provided",
   assert.doesNotMatch(markup, /aria-label="Expand Hero"/);
 });
 
-test("MdxComponentNodeFrame collapsed wrapper hides preview and content but keeps them mounted", () => {
+test("MdxComponentNodeFrame collapsed wrapper hides editable content but keeps it mounted", () => {
   const markup = renderToStaticMarkup(
     createElement(
       MdxComponentNodeFrame,
@@ -218,11 +478,11 @@ test("MdxComponentNodeFrame collapsed wrapper hides preview and content but keep
   assert.match(markup, /aria-label="Expand Hero"/);
   assert.match(markup, /aria-expanded="false"/);
 
-  // The preview surface and the editable child slot remain in the DOM —
-  // ProseMirror tracks the editable region through the live node, so
-  // unmounting it on collapse would break re-expansion. Hiding via a
-  // `hidden` Tailwind utility on the wrapper is what we expect instead.
-  assert.match(markup, /data-test-preview="ready"/);
+  // The editable child slot remains in the DOM — ProseMirror tracks the
+  // editable region through the live node, so unmounting it on collapse would
+  // break re-expansion. Hiding via a `hidden` Tailwind utility on the wrapper
+  // is what we expect instead.
+  assert.doesNotMatch(markup, /data-test-preview="ready"/);
   assert.match(markup, /data-test-slot="children"/);
   assert.match(markup, /class="hidden"/);
 

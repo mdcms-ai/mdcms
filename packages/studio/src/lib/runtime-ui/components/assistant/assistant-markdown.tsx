@@ -1,8 +1,14 @@
 "use client";
 
-import { Streamdown } from "streamdown";
+import * as React from "react";
+import { Check, Copy, Download } from "lucide-react";
+import { Streamdown, type Components } from "streamdown";
 
 import { cn } from "../../lib/utils.js";
+import {
+  copyCodeToClipboard,
+  downloadCodeBlock,
+} from "./assistant-markdown-actions.js";
 
 export type AssistantMarkdownProps = {
   text: string;
@@ -15,6 +21,172 @@ export type AssistantMarkdownProps = {
    */
   streaming?: boolean;
   className?: string;
+};
+
+type AssistantCodeProps = React.ComponentProps<"code"> & {
+  node?: unknown;
+  "data-block"?: boolean | string;
+};
+
+const codeLanguagePattern = /(?:^|\s)language-([^\s]+)/;
+
+function extractLanguage(className?: string): string | null {
+  const match = className?.match(codeLanguagePattern);
+  return match?.[1]?.toLowerCase() ?? null;
+}
+
+function codeTextFromChildren(children: React.ReactNode): string {
+  return React.Children.toArray(children).join("").replace(/\n+$/, "");
+}
+
+function AssistantCodeAction({
+  label,
+  onClick,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      className="inline-flex size-8 items-center justify-center rounded-md border border-transparent text-foreground-muted transition-colors hover:border-border hover:bg-muted hover:text-foreground focus-visible:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35"
+    >
+      {children}
+    </button>
+  );
+}
+
+function AssistantCodeBlock({
+  code,
+  language,
+}: {
+  code: string;
+  language: string;
+}) {
+  const [copyState, setCopyState] = React.useState<"idle" | "copied" | "error">(
+    "idle",
+  );
+  const [downloadState, setDownloadState] = React.useState<"idle" | "error">(
+    "idle",
+  );
+  const resetTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  React.useEffect(() => {
+    const timer = resetTimer;
+    return () => {
+      if (timer.current !== null) {
+        clearTimeout(timer.current);
+      }
+    };
+  }, []);
+
+  const scheduleCopyReset = React.useCallback(() => {
+    if (resetTimer.current !== null) {
+      clearTimeout(resetTimer.current);
+    }
+    resetTimer.current = setTimeout(() => {
+      setCopyState("idle");
+      resetTimer.current = null;
+    }, 1800);
+  }, []);
+
+  const handleCopy = React.useCallback(() => {
+    void copyCodeToClipboard(code)
+      .then(() => {
+        setCopyState("copied");
+        scheduleCopyReset();
+      })
+      .catch(() => {
+        setCopyState("error");
+      });
+  }, [code, scheduleCopyReset]);
+
+  const handleDownload = React.useCallback(() => {
+    try {
+      downloadCodeBlock(code, language);
+      setDownloadState("idle");
+    } catch {
+      setDownloadState("error");
+    }
+  }, [code, language]);
+
+  const statusText =
+    copyState === "copied"
+      ? "Code copied"
+      : copyState === "error"
+        ? "Code copy failed"
+        : downloadState === "error"
+          ? "Code download failed"
+          : "";
+
+  return (
+    <div
+      data-mdcms-assistant-code-block=""
+      data-language={language}
+      className="not-prose my-3 overflow-hidden rounded-lg border border-border/70 bg-[var(--code-bg)] text-foreground shadow-sm"
+    >
+      <div className="flex min-h-10 items-center justify-between gap-3 border-b border-border/60 bg-card/70 px-3 py-1.5">
+        <span className="truncate font-mono text-[11px] font-medium uppercase text-foreground-muted">
+          {language}
+        </span>
+        <div className="flex shrink-0 items-center gap-1">
+          <AssistantCodeAction
+            label="Download code block"
+            onClick={handleDownload}
+          >
+            <Download className="size-4" aria-hidden="true" />
+          </AssistantCodeAction>
+          <AssistantCodeAction label="Copy code block" onClick={handleCopy}>
+            {copyState === "copied" ? (
+              <Check className="size-4" aria-hidden="true" />
+            ) : (
+              <Copy className="size-4" aria-hidden="true" />
+            )}
+          </AssistantCodeAction>
+        </div>
+      </div>
+      <pre className="m-0 max-h-[420px] overflow-auto whitespace-pre-wrap break-words bg-transparent px-4 py-3 font-mono text-[12.5px] leading-6 text-foreground">
+        <code>{code}</code>
+      </pre>
+      <span className="sr-only" aria-live="polite">
+        {statusText}
+      </span>
+    </div>
+  );
+}
+
+function AssistantCode({ children, className, ...props }: AssistantCodeProps) {
+  const language = extractLanguage(className);
+  const isBlock = Boolean(props["data-block"]) || language !== null;
+
+  if (!isBlock) {
+    return (
+      <code
+        className={cn(
+          "rounded bg-[var(--code-bg)] px-1.5 py-0.5 font-mono text-[0.95em] text-foreground",
+          className,
+        )}
+      >
+        {children}
+      </code>
+    );
+  }
+
+  return (
+    <AssistantCodeBlock
+      code={codeTextFromChildren(children)}
+      language={language ?? "text"}
+    />
+  );
+}
+
+const assistantMarkdownComponents: Components = {
+  code: AssistantCode,
 };
 
 /**
@@ -50,6 +222,8 @@ export function AssistantMarkdown({
       <Streamdown
         mode={streaming ? "streaming" : "static"}
         parseIncompleteMarkdown={streaming}
+        components={assistantMarkdownComponents}
+        controls={{ code: false }}
       >
         {text}
       </Streamdown>

@@ -7,7 +7,6 @@ import type { StudioMountContext } from "@mdcms/shared";
 import {
   createStudioContentOverviewLoadingState,
   loadStudioContentOverviewState,
-  type LoadStudioContentOverviewStateInput,
   type StudioContentOverviewEntry,
   type StudioContentOverviewState,
 } from "../../content-overview-state.js";
@@ -15,7 +14,8 @@ import { useStudioMountInfo } from "../app/admin/mount-info-context.js";
 import { useStudioContentOverview } from "../hooks/use-content-overview.js";
 import Link from "../adapters/next-link.js";
 import { Skeleton } from "../components/ui/skeleton.js";
-import { resolveStudioHref, useBasePath } from "../navigation.js";
+import { resolveStudioHref } from "../navigation-paths.js";
+import { useBasePath } from "../navigation.js";
 import {
   PageHeader,
   PageHeaderDescription,
@@ -23,8 +23,6 @@ import {
 } from "../components/layout/page-header.js";
 import { Badge } from "../components/ui/badge.js";
 import { cn } from "../lib/utils.js";
-
-type ContentPageLoadInput = LoadStudioContentOverviewStateInput;
 
 function findMetricValue(
   entry: StudioContentOverviewEntry,
@@ -188,26 +186,6 @@ function ContentCardGrid({
       ))}
     </div>
   );
-}
-
-export function createContentPageLoadInput(
-  context: StudioMountContext,
-): ContentPageLoadInput | null {
-  const route = context.documentRoute;
-
-  if (!route) {
-    return null;
-  }
-
-  return {
-    config: {
-      project: route.project,
-      environment: route.initialEnvironment,
-      serverUrl: context.apiBaseUrl,
-      supportedLocales: route.supportedLocales,
-    },
-    auth: context.auth,
-  };
 }
 
 function createContentPageMissingRouteState(): StudioContentOverviewState {

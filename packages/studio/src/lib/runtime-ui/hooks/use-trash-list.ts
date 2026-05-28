@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useMemo, useCallback, useEffect, useReducer } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type {
   ContentDocumentResponse,
@@ -107,12 +107,43 @@ function hasActiveFilters(filters: TrashListFilters): boolean {
   return Boolean(filters.q || filters.type);
 }
 
+type TrashListState = {
+  filters: TrashListFilters;
+  offset: number;
+};
+
+type TrashListAction =
+  | { type: "filters-change"; filters: Partial<TrashListFilters> }
+  | { type: "page-change"; offset: number }
+  | { type: "offset-clamp"; offset: number };
+
+function trashListReducer(
+  state: TrashListState,
+  action: TrashListAction,
+): TrashListState {
+  switch (action.type) {
+    case "filters-change":
+      return {
+        filters: { ...state.filters, ...action.filters },
+        offset: 0,
+      };
+    case "page-change":
+    case "offset-clamp":
+      return { ...state, offset: action.offset };
+  }
+}
+
+const initialTrashListState: TrashListState = {
+  filters: { sort: "updated" },
+  offset: 0,
+};
+
 export function useTrashList() {
   const mountInfo = useStudioMountInfo();
-  const [filters, setFiltersState] = useState<TrashListFilters>({
-    sort: "updated",
-  });
-  const [offset, setOffset] = useState(0);
+  const [{ filters, offset }, dispatch] = useReducer(
+    trashListReducer,
+    initialTrashListState,
+  );
 
   const api = useMemo(() => {
     if (!mountInfo.project || !mountInfo.environment || !mountInfo.apiBaseUrl) {
@@ -170,7 +201,7 @@ export function useTrashList() {
       const lastPageStart =
         Math.max(0, Math.floor((pagination.total - 1) / TRASH_PAGE_SIZE)) *
         TRASH_PAGE_SIZE;
-      setOffset(lastPageStart);
+      dispatch({ type: "offset-clamp", offset: lastPageStart });
     }
   }, [pagination, offset]);
 
@@ -197,12 +228,11 @@ export function useTrashList() {
   }, [query.error]);
 
   const setFilters = useCallback((next: Partial<TrashListFilters>) => {
-    setFiltersState((prev) => ({ ...prev, ...next }));
-    setOffset(0);
+    dispatch({ type: "filters-change", filters: next });
   }, []);
 
   const setPage = useCallback((nextOffset: number) => {
-    setOffset(nextOffset);
+    dispatch({ type: "page-change", offset: nextOffset });
   }, []);
 
   const refresh = useCallback(() => {

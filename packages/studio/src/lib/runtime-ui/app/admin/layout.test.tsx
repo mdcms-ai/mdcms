@@ -11,6 +11,9 @@ import {
   createAdminLayoutSessionLoadInput,
   createAdminLayoutTokenErrorState,
   createAdminLayoutTokenSessionState,
+  getDefaultAdminSidebarCollapsed,
+  getAdminSidebarStorageKey,
+  isDocumentEditorPathname,
 } from "./layout.js";
 
 function createContext(): StudioMountContext {
@@ -107,6 +110,42 @@ test("createAdminLayoutTokenSessionState returns token-error when token is undef
   assert.equal(
     result && "reason" in result ? result.reason : undefined,
     "missing",
+  );
+});
+
+test("document editor routes use a focused collapsed app sidebar default", () => {
+  assert.equal(
+    isDocumentEditorPathname("/admin/content/page/home", "/admin"),
+    true,
+  );
+  assert.equal(
+    isDocumentEditorPathname(
+      "/review/editor/admin/content/page/home",
+      "/review/editor/admin",
+    ),
+    true,
+  );
+  assert.equal(isDocumentEditorPathname("/admin/content", "/admin"), false);
+  assert.equal(
+    isDocumentEditorPathname("/admin/content/page", "/admin"),
+    false,
+  );
+
+  assert.equal(
+    getDefaultAdminSidebarCollapsed("/admin/content/page/home", "/admin"),
+    true,
+  );
+  assert.equal(
+    getDefaultAdminSidebarCollapsed("/admin/content", "/admin"),
+    false,
+  );
+  assert.equal(
+    getAdminSidebarStorageKey("/admin/content/page/home", "/admin"),
+    "sidebar-collapsed:document-editor",
+  );
+  assert.equal(
+    getAdminSidebarStorageKey("/admin/content", "/admin"),
+    "sidebar-collapsed",
   );
 });
 

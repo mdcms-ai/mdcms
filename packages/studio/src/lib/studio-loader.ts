@@ -19,6 +19,10 @@ import {
 
 import { assertStudioRuntimePublication } from "./bootstrap-verification.js";
 import {
+  isBuiltInMdxComponentName,
+  withBuiltInMdxComponents,
+} from "./built-in-mdx-components.js";
+import {
   resolveStudioDocumentRouteSchemaCapability,
   resolveStudioDocumentRoutePreparedMetadata,
   type StudioDocumentRoutePreparedMetadata,
@@ -130,9 +134,19 @@ function composeHostBridges(input: {
   return {
     version: HOST_BRIDGE_VERSION,
     resolveComponent: (name) =>
-      input.primary.resolveComponent(name) ??
-      input.fallback.resolveComponent(name),
+      isBuiltInMdxComponentName(name)
+        ? (input.fallback.resolveComponent(name) ??
+          input.primary.resolveComponent(name))
+        : (input.primary.resolveComponent(name) ??
+          input.fallback.resolveComponent(name)),
     renderMdxPreview: (previewInput) => {
+      if (
+        isBuiltInMdxComponentName(previewInput.componentName) &&
+        hasResolvedComponent(input.fallback, previewInput.componentName)
+      ) {
+        return input.fallback.renderMdxPreview(previewInput);
+      }
+
       if (hasResolvedComponent(input.primary, previewInput.componentName)) {
         return input.primary.renderMdxPreview(previewInput);
       }
@@ -149,11 +163,7 @@ function composeHostBridges(input: {
 async function createLoadedLocalMdxRuntime(
   config: MdcmsConfig,
 ): Promise<LoadedLocalMdxRuntime | undefined> {
-  const components = config.components ?? [];
-
-  if (components.length === 0) {
-    return undefined;
-  }
+  const components = withBuiltInMdxComponents(config.components ?? []);
 
   const previewComponents: LocalMdxPreviewMap = new Map();
   const propsEditorLoaders: LocalMdxPropsEditorLoaderMap = new Map();
@@ -189,6 +199,9 @@ async function createLoadedLocalMdxRuntime(
           : {}),
         ...(component.extractedProps !== undefined
           ? { extractedProps: component.extractedProps }
+          : {}),
+        ...("builtIn" in component && component.builtIn === true
+          ? { builtIn: true as const }
           : {}),
       };
     }),
@@ -488,6 +501,7 @@ function createStudioLoadFailure(input: {
 }
 
 async function defaultLoadRemoteModule(entryUrl: string): Promise<unknown> {
+  // react-doctor-disable-next-line react-doctor/no-dynamic-import-path -- the Studio runtime loader imports the server-provided bundle URL at runtime.
   return import(/* webpackIgnore: true */ entryUrl);
 }
 
@@ -516,6 +530,7 @@ async function fetchStudioBootstrapReadyResponse(input: {
 
   for (let attempt = 0; ; attempt += 1) {
     try {
+      // react-doctor-disable-next-line react-doctor/async-await-in-loop -- bootstrap retries must be sequential so delay/backoff and the final failure reason stay deterministic.
       bootstrapResponse = await input.fetcher(bootstrapUrl);
       break;
     } catch (error) {

@@ -334,12 +334,13 @@ testWithDatabase(
 testWithDatabase(
   "demo:seed completes successfully for a fresh staging scope",
   async () => {
-    const project = uniqueProject("demo-seed-script");
+    const project = "marketing-site";
+    const runId = uniqueProject("demo-seed-script");
     const result = await runDemoSeed({
       MDCMS_DEMO_PROJECT: project,
       MDCMS_DEMO_ENVIRONMENT: "staging",
-      MDCMS_DEMO_API_KEY: `mdcms_key_${project.replace(/[^a-z0-9]/gi, "").slice(0, 24)}_demo`,
-      MDCMS_DEMO_SEED_USER_EMAIL: `${project}@mdcms.local`,
+      MDCMS_DEMO_API_KEY: `mdcms_key_${runId.replace(/[^a-z0-9]/gi, "").slice(0, 24)}_demo`,
+      MDCMS_DEMO_SEED_USER_EMAIL: `${runId}@mdcms.local`,
       MDCMS_DEMO_SEED_USER_NAME: "Demo Seed Test",
       MDCMS_DEMO_SEED_USER_PASSWORD: "Demo12345!",
     });

@@ -1,11 +1,17 @@
 "use client";
 
 import {
+  cloneElement,
   createElement,
+  isValidElement,
   useEffect,
+  useReducer,
   useRef,
   useState,
+  type ComponentType,
+  type MouseEvent,
   type ReactNode,
+  type SyntheticEvent,
 } from "react";
 
 import type { StudioMountContext } from "@mdcms/shared";
@@ -13,41 +19,31 @@ import type { ReactNodeViewProps } from "@tiptap/react";
 import { NodeViewContent, NodeViewWrapper } from "@tiptap/react";
 
 import {
+  Box as BoxIcon,
   ChevronDown,
   ChevronRight,
+  Copy,
   GripVertical,
+  Scissors,
   Settings,
   Trash2,
 } from "lucide-react";
 
-import { isMdxExpressionValue } from "../../../mdx-component-extension.js";
 import { cn } from "../../lib/utils.js";
 import { useMdxComponentCollapseSnapshot } from "./mdx-component-collapse.js";
+import { formatMdxComponentPropsSummary } from "./mdx-component-node-view-utils.js";
+import {
+  duplicateSelectedMdxComponent,
+  unwrapSelectedMdxComponent,
+  wrapSelectedBlockInBox,
+} from "./visual-composition-commands.js";
 
-export function formatMdxComponentPropsSummary(
-  props: Record<string, unknown> | undefined,
-): string {
-  const entries = Object.entries(props ?? {}).filter(
-    ([, value]) => value !== undefined,
-  );
+const MDX_EDITABLE_SLOT_SELECTOR = "[data-mdcms-mdx-editable-slot]";
 
-  if (entries.length === 0) {
-    return "No props set yet";
-  }
-
-  return entries
-    .map(([name, value]) => {
-      if (isMdxExpressionValue(value)) {
-        return `${name}={${value.__mdxExpression}}`;
-      }
-
-      if (typeof value === "string") {
-        return `${name}="${value}"`;
-      }
-
-      return `${name}={${JSON.stringify(value)}}`;
-    })
-    .join(" ");
+function preventEditorChromeButtonMouseDown(
+  event: MouseEvent<HTMLButtonElement>,
+) {
+  event.preventDefault();
 }
 
 export function MdxComponentNodeFrame(props: {
@@ -57,11 +53,15 @@ export function MdxComponentNodeFrame(props: {
   selected?: boolean;
   previewState?: "ready" | "empty" | "error";
   previewSurface?: ReactNode;
+  previewSurfaceOwnsChrome?: boolean;
   readOnly?: boolean;
   forbidden?: boolean;
   collapsed?: boolean;
   onToggleCollapsed?: () => void;
   onEditProps?: () => void;
+  onDuplicate?: () => void;
+  onWrapInBox?: () => void;
+  onUnwrap?: () => void;
   onDelete?: () => void;
   children?: ReactNode;
 }) {
@@ -127,6 +127,7 @@ export function MdxComponentNodeFrame(props: {
           {props.onToggleCollapsed ? (
             <button
               type="button"
+              onMouseDown={preventEditorChromeButtonMouseDown}
               onClick={props.onToggleCollapsed}
               aria-label={
                 collapsed
@@ -196,6 +197,7 @@ export function MdxComponentNodeFrame(props: {
           {props.onEditProps ? (
             <button
               type="button"
+              onMouseDown={preventEditorChromeButtonMouseDown}
               onClick={props.onEditProps}
               aria-label={`Edit ${props.componentName} props`}
               title="Edit props"
@@ -204,9 +206,46 @@ export function MdxComponentNodeFrame(props: {
               <Settings className="size-3.5" />
             </button>
           ) : null}
+          {props.onDuplicate ? (
+            <button
+              type="button"
+              onMouseDown={preventEditorChromeButtonMouseDown}
+              onClick={props.onDuplicate}
+              aria-label={`Duplicate ${props.componentName}`}
+              title="Duplicate"
+              className="inline-flex size-6 items-center justify-center rounded text-foreground-muted hover:bg-background-subtle hover:text-foreground"
+            >
+              <Copy className="size-3.5" />
+            </button>
+          ) : null}
+          {props.onWrapInBox ? (
+            <button
+              type="button"
+              onMouseDown={preventEditorChromeButtonMouseDown}
+              onClick={props.onWrapInBox}
+              aria-label={`Wrap ${props.componentName} in Box`}
+              title="Wrap in Box"
+              className="inline-flex size-6 items-center justify-center rounded text-foreground-muted hover:bg-background-subtle hover:text-foreground"
+            >
+              <BoxIcon className="size-3.5" />
+            </button>
+          ) : null}
+          {props.onUnwrap ? (
+            <button
+              type="button"
+              onMouseDown={preventEditorChromeButtonMouseDown}
+              onClick={props.onUnwrap}
+              aria-label={`Unwrap ${props.componentName}`}
+              title="Unwrap"
+              className="inline-flex size-6 items-center justify-center rounded text-foreground-muted hover:bg-background-subtle hover:text-foreground"
+            >
+              <Scissors className="size-3.5" />
+            </button>
+          ) : null}
           {props.onDelete ? (
             <button
               type="button"
+              onMouseDown={preventEditorChromeButtonMouseDown}
               onClick={props.onDelete}
               aria-label={`Delete ${props.componentName}`}
               title="Delete component"
@@ -228,29 +267,29 @@ export function MdxComponentNodeFrame(props: {
             contentEditable=false or the browser lets the caret land inside
             the rendered DOM (headings, labels, table cells) and corrupts the
             preview on the next keystroke. */}
-        <div
-          data-mdcms-mdx-preview-state={props.previewState ?? "empty"}
-          contentEditable={false}
-          suppressContentEditableWarning
-        >
-          {props.previewSurface}
-          {props.previewState === "error" ? (
-            <p className="text-xs text-destructive">
-              Preview failed to render.
-            </p>
-          ) : null}
-        </div>
+        {props.isVoid && props.previewSurfaceOwnsChrome ? (
+          props.previewSurface
+        ) : props.isVoid ? (
+          <div
+            data-mdcms-mdx-preview-state={props.previewState ?? "empty"}
+            contentEditable={false}
+            suppressContentEditableWarning
+          >
+            {props.previewSurface}
+            {props.previewState === "error" ? (
+              <p className="text-xs text-destructive">
+                Preview failed to render.
+              </p>
+            ) : null}
+          </div>
+        ) : null}
 
         {/* Wrapper children — the inner NodeViewContent is the ONE place
             inside this frame that must stay editable. */}
         {props.isVoid ? null : (
           <div
             data-mdcms-mdx-content-label={props.componentName}
-            className={
-              props.previewState === "ready"
-                ? "mt-2 border-t border-border pt-2"
-                : undefined
-            }
+            className="relative"
           >
             {props.children}
           </div>
@@ -260,48 +299,182 @@ export function MdxComponentNodeFrame(props: {
   );
 }
 
-export function createMdxComponentPreviewProps(input: {
-  props: Record<string, unknown>;
-  isVoid: boolean;
-  childrenHtml?: string;
-}): Record<string, unknown> {
-  if (input.isVoid) {
-    return input.props;
+function getElementFromEventTarget(target: EventTarget | null): Element | null {
+  if (target instanceof Element) {
+    return target;
   }
 
-  const childrenHtml = input.childrenHtml?.trim() ?? "";
-
-  if (childrenHtml.length === 0) {
-    return input.props;
+  if (target instanceof Node) {
+    return target.parentElement;
   }
 
-  // The HTML is extracted from the TipTap editor's own preview surface
-  // (see getMdxComponentPreviewChildrenHtml). It originates from the same
-  // user who is authoring and viewing the document, and TipTap's schema
-  // sanitization runs on input. This is the preview pane only; the
-  // published output goes through the MDX pipeline, not this path.
-  return {
-    ...input.props,
-    children: createElement("div", {
-      dangerouslySetInnerHTML: {
-        __html: childrenHtml,
-      },
-    }),
-  };
+  return null;
 }
 
-function getMdxComponentPreviewChildrenHtml(
-  container: HTMLDivElement | null,
-): string | undefined {
-  if (!container) {
-    return undefined;
+function isInsideEditableSlot(
+  target: EventTarget | null,
+  currentTarget: EventTarget | null,
+): boolean {
+  const targetElement = getElementFromEventTarget(target);
+
+  if (!(currentTarget instanceof Element) || !targetElement) {
+    return false;
   }
 
-  if (container.firstElementChild instanceof HTMLElement) {
-    return container.firstElementChild.innerHTML;
+  const editableSlot = targetElement.closest(MDX_EDITABLE_SLOT_SELECTOR);
+
+  return editableSlot !== null && currentTarget.contains(editableSlot);
+}
+
+function MdxComponentEditableSurface(input: {
+  component: unknown;
+  componentName: string;
+  props: Record<string, unknown>;
+  children: ReactNode;
+  onSelectPreview?: () => void;
+}) {
+  if (!input.component) {
+    return (
+      <div data-mdcms-mdx-unresolved-wrapper={input.componentName}>
+        {input.children}
+      </div>
+    );
   }
 
-  return container.innerHTML;
+  const Component = input.component as ComponentType<
+    Record<string, unknown> & { children?: ReactNode }
+  >;
+  const editableSlot = renderEditableSlot(input.componentName, input.children);
+
+  const keepHostPreviewInert = (event: SyntheticEvent<HTMLElement>) => {
+    if (isInsideEditableSlot(event.target, event.currentTarget)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    input.onSelectPreview?.();
+  };
+
+  return (
+    <div
+      data-mdcms-mdx-rendered-wrapper={input.componentName}
+      className="select-none"
+      onPointerDownCapture={keepHostPreviewInert}
+      onMouseDownCapture={keepHostPreviewInert}
+      onBeforeInputCapture={keepHostPreviewInert}
+      onCompositionStartCapture={keepHostPreviewInert}
+      onInputCapture={keepHostPreviewInert}
+      onKeyDownCapture={keepHostPreviewInert}
+      onPasteCapture={keepHostPreviewInert}
+    >
+      {createElement(Component, input.props, editableSlot)}
+    </div>
+  );
+}
+
+type EditableSlotProps = {
+  className?: string;
+  suppressContentEditableWarning?: boolean;
+  "data-mdcms-mdx-editable-slot"?: string;
+};
+
+const EMPTY_MDX_PROPS: Record<string, unknown> = {};
+
+type MdxVoidPreviewState = "ready" | "empty" | "error";
+
+function mdxVoidPreviewStateReducer(
+  _state: MdxVoidPreviewState,
+  nextState: MdxVoidPreviewState,
+): MdxVoidPreviewState {
+  return nextState;
+}
+
+function MdxVoidPreviewSurface(props: {
+  componentName: string;
+  hostBridge?: StudioMountContext["hostBridge"];
+  mdxProps: Record<string, unknown>;
+  serializedPreviewProps: string;
+}) {
+  const { componentName, hostBridge, mdxProps, serializedPreviewProps } = props;
+  const previewContainerRef = useRef<HTMLDivElement | null>(null);
+  const [previewState, setPreviewState] = useReducer(
+    mdxVoidPreviewStateReducer,
+    "empty" as MdxVoidPreviewState,
+  );
+
+  useEffect(() => {
+    const container = previewContainerRef.current;
+    let cleanup: (() => void) | undefined;
+    let nextState: MdxVoidPreviewState = "empty";
+
+    if (container && hostBridge?.resolveComponent(componentName)) {
+      try {
+        cleanup = hostBridge.renderMdxPreview({
+          container,
+          componentName,
+          props: mdxProps,
+          key: `mdx-component:${componentName}:${serializedPreviewProps}`,
+        });
+        nextState = "ready";
+      } catch {
+        nextState = "error";
+      }
+    }
+
+    setPreviewState(nextState);
+
+    return () => {
+      cleanup?.();
+    };
+  }, [componentName, hostBridge, mdxProps, serializedPreviewProps]);
+
+  return (
+    <div
+      data-mdcms-mdx-preview-state={previewState}
+      contentEditable={false}
+      suppressContentEditableWarning
+    >
+      <div
+        ref={previewContainerRef}
+        data-mdcms-mdx-preview-surface={componentName}
+        // Keep host-rendered output out of the surrounding editor prose rules.
+        className={cn(
+          "not-prose",
+          previewState === "ready" ? "min-h-[3rem]" : "hidden",
+        )}
+      />
+      {previewState === "error" ? (
+        <p className="text-xs text-destructive">Preview failed to render.</p>
+      ) : null}
+    </div>
+  );
+}
+
+function renderEditableSlot(
+  componentName: string,
+  children: ReactNode,
+): ReactNode {
+  const slotProps = {
+    "data-mdcms-mdx-editable-slot": componentName,
+    suppressContentEditableWarning: true,
+  } satisfies Omit<EditableSlotProps, "className">;
+
+  if (isValidElement<EditableSlotProps>(children)) {
+    return cloneElement(children, {
+      ...slotProps,
+      className: cn(
+        children.props.className,
+        "mdcms-mdx-editable-slot select-text",
+      ),
+    });
+  }
+
+  return (
+    <div {...slotProps} className="mdcms-mdx-editable-slot select-text">
+      {children}
+    </div>
+  );
 }
 
 export function MdxComponentNodeView(
@@ -316,11 +489,6 @@ export function MdxComponentNodeView(
       ? props.node.attrs.componentName
       : "Component";
   const isVoid = props.node.attrs.isVoid === true;
-  const previewContainerRef = useRef<HTMLDivElement | null>(null);
-  const contentContainerRef = useRef<HTMLDivElement | null>(null);
-  const [previewState, setPreviewState] = useState<"ready" | "empty" | "error">(
-    "empty",
-  );
   const collapseSnapshot = useMdxComponentCollapseSnapshot();
   // Seed `collapsed` from the snapshot so node views mounted *after* a
   // global broadcast (e.g. inserting a new component while everything is
@@ -349,57 +517,12 @@ export function MdxComponentNodeView(
     }
   }, [collapseSnapshot.generation, collapseSnapshot.globalState]);
 
+  const hostBridge = props.context?.hostBridge;
   const mdxProps =
-    (props.node.attrs.props as Record<string, unknown> | undefined) ?? {};
+    (props.node.attrs.props as Record<string, unknown> | undefined) ??
+    EMPTY_MDX_PROPS;
   const serializedPreviewProps = JSON.stringify(mdxProps);
-  const serializedChildren = JSON.stringify(props.node.content.toJSON());
   const propsSummary = formatMdxComponentPropsSummary(mdxProps);
-
-  useEffect(() => {
-    const container = previewContainerRef.current;
-
-    if (!container || !props.context) {
-      setPreviewState("empty");
-      return;
-    }
-
-    if (props.context.hostBridge.resolveComponent(componentName) == null) {
-      setPreviewState("empty");
-      return;
-    }
-
-    try {
-      const previewProps = createMdxComponentPreviewProps({
-        props: mdxProps,
-        isVoid,
-        childrenHtml: getMdxComponentPreviewChildrenHtml(
-          contentContainerRef.current,
-        ),
-      });
-      const cleanup = props.context.hostBridge.renderMdxPreview({
-        container,
-        componentName,
-        props: previewProps,
-        key: `mdx-component:${componentName}:${serializedPreviewProps}:${serializedChildren}`,
-      });
-
-      setPreviewState("ready");
-
-      return () => {
-        cleanup();
-      };
-    } catch {
-      setPreviewState("error");
-      return;
-    }
-  }, [
-    componentName,
-    isVoid,
-    mdxProps,
-    props.context,
-    serializedChildren,
-    serializedPreviewProps,
-  ]);
 
   const handleEditProps = () => {
     const pos = props.getPos();
@@ -408,8 +531,19 @@ export function MdxComponentNodeView(
     }
   };
 
+  const selectThisNode = (): number | null => {
+    const pos = props.getPos();
+    if (typeof pos !== "number") {
+      return null;
+    }
+
+    props.editor.commands.setNodeSelection(pos);
+    return pos;
+  };
+
   const handleDelete = () => {
     props.deleteNode();
+    props.editor.commands.focus();
   };
 
   const handleToggleCollapsed = () => {
@@ -417,6 +551,22 @@ export function MdxComponentNodeView(
   };
 
   const isEditable = !props.readOnly && !props.forbidden;
+  const boxComponent = props.context?.mdx?.catalog.components.find(
+    (component) => component.name === "Box",
+  );
+  const resolvedWrapperComponent = !isVoid
+    ? props.context?.hostBridge.resolveComponent(componentName)
+    : null;
+
+  const runSelectedAction = (action: () => boolean) => {
+    if (selectThisNode() === null) {
+      return;
+    }
+
+    if (action()) {
+      props.editor.commands.focus();
+    }
+  };
 
   return (
     <NodeViewWrapper as="div">
@@ -424,42 +574,62 @@ export function MdxComponentNodeView(
         componentName={componentName}
         isVoid={isVoid}
         propsSummary={propsSummary}
-        previewState={previewState}
         selected={props.selected}
         collapsed={collapsed}
         onToggleCollapsed={handleToggleCollapsed}
         onEditProps={isEditable ? handleEditProps : undefined}
+        onDuplicate={
+          isEditable
+            ? () =>
+                runSelectedAction(() =>
+                  duplicateSelectedMdxComponent(props.editor),
+                )
+            : undefined
+        }
+        onWrapInBox={
+          isEditable && boxComponent
+            ? () =>
+                runSelectedAction(() =>
+                  wrapSelectedBlockInBox(props.editor, boxComponent),
+                )
+            : undefined
+        }
+        onUnwrap={
+          isEditable && !isVoid
+            ? () =>
+                runSelectedAction(() =>
+                  unwrapSelectedMdxComponent(props.editor),
+                )
+            : undefined
+        }
         onDelete={isEditable ? handleDelete : undefined}
         previewSurface={
-          <div
-            ref={previewContainerRef}
-            data-mdcms-mdx-preview-surface={componentName}
-            // `not-prose` opts the host-rendered component out of the
-            // editor's surrounding `.prose` typography rules. Without this,
-            // selectors like `.prose h1`, `.prose h2`, `.prose p` win on
-            // specificity (0,1,1) over the host component's own utility
-            // classes (0,1,0) — so a marketing component using
-            // `text-dark` on a light section would silently render with
-            // the editor's dark-mode prose heading color (light/white) and
-            // appear white-on-light. Resetting prose at the preview
-            // boundary lets the host component own its own typography.
-            className={cn(
-              "not-prose",
-              previewState === "ready" ? "min-h-[3rem]" : "hidden",
-            )}
+          <MdxVoidPreviewSurface
+            componentName={componentName}
+            hostBridge={hostBridge}
+            mdxProps={mdxProps}
+            serializedPreviewProps={serializedPreviewProps}
           />
         }
+        previewSurfaceOwnsChrome
         readOnly={props.readOnly}
         forbidden={props.forbidden}
       >
         {isVoid ? null : (
-          <div ref={contentContainerRef}>
+          <MdxComponentEditableSurface
+            component={resolvedWrapperComponent}
+            componentName={componentName}
+            props={mdxProps}
+            onSelectPreview={() => {
+              selectThisNode();
+            }}
+          >
             <NodeViewContent
               as="div"
               data-placeholder="Type content here..."
-              className="prose prose-sm max-w-none min-h-[3rem] rounded-md bg-background p-3 text-sm before:pointer-events-none before:float-left before:h-0 before:text-sm before:text-foreground-muted/60 before:content-[attr(data-placeholder)] has-[>:first-child:not(.is-empty)]:before:content-none"
+              className="max-w-none min-h-[3rem] before:pointer-events-none before:float-left before:h-0 before:text-foreground-muted/60 before:content-[attr(data-placeholder)] has-[>:first-child:not(.is-empty)]:before:content-none"
             />
-          </div>
+          </MdxComponentEditableSurface>
         )}
       </MdxComponentNodeFrame>
     </NodeViewWrapper>

@@ -4,12 +4,12 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ActionCatalogItem, StudioMountContext } from "@mdcms/shared";
 
+import { RemoteStudioApp } from "./remote-studio-app.js";
 import {
-  RemoteStudioApp,
   matchStudioRoute,
   startDocumentPreview,
   stripStudioBasePath,
-} from "./remote-studio-app.js";
+} from "./remote-studio-routing.js";
 
 test("stripStudioBasePath resolves internal routes under an explicit base path", () => {
   assert.equal(stripStudioBasePath("/admin", "/admin"), "/");

@@ -1,7 +1,9 @@
 import Link from "next/link";
 
 import { getPreviewHrefForDocument } from "../../../lib/preview-routing";
+import { RenderedContent } from "../../../lib/rendered-content";
 import config from "../../../mdcms.config";
+import { RequestError, SiteHeader } from "../../site-components";
 
 type ContentDocument = {
   documentId: string;
@@ -146,88 +148,78 @@ export default async function DemoContentPage() {
   const result = await fetchContentList();
 
   return (
-    <main>
-      <h1>Raw Content API Demo</h1>
-      <p>
-        Scope: <strong>{config.project}</strong> /{" "}
-        <strong>{config.environment}</strong> (draft mode)
-      </p>
-      <p>
-        Data source: <strong>Direct API fetch</strong>
-      </p>
-      <p>
-        API source: <code>{config.serverUrl}/api/v1/content</code>
-      </p>
-      <p>
-        Auth: set <code>MDCMS_DEMO_API_KEY</code> in your environment for
-        non-session requests.
-      </p>
-      <p>
-        Compare with: <Link href="/demo/sdk-content">SDK content demo</Link>
-      </p>
+    <main className="site-shell">
+      <SiteHeader active="sdk" />
 
-      {!result.ok ? (
-        <section>
-          <h2>Request failed</h2>
-          <p>
-            {result.code} ({result.status})
-          </p>
-          <p>{result.message}</p>
-        </section>
-      ) : result.documents.length === 0 ? (
-        <section>
-          <h2>No documents</h2>
-          <p>The target scope has no content documents yet.</p>
-        </section>
-      ) : (
-        <section>
-          <h2>Documents ({result.total})</h2>
-          <ul>
-            {result.documents.map((document) => {
-              const previewHref = getPreviewHrefForDocument(document);
+      <section className="library-hero">
+        <p className="eyebrow">Direct API</p>
+        <h1>Rendered documents from the content API.</h1>
+        <p>
+          Scope: <strong>{config.project}</strong> /{" "}
+          <strong>{config.environment}</strong>. This diagnostic route fetches
+          draft documents directly from <strong>{config.serverUrl}</strong>.
+        </p>
+        <p>
+          <Link href="/demo/sdk-content">Open the SDK-rendered library</Link>
+        </p>
+      </section>
 
-              return (
-                <li key={document.documentId}>
-                  <h3>
-                    <Link href={`/demo/content/${document.documentId}`}>
-                      {document.documentId}
-                    </Link>
-                  </h3>
-                  <p>
-                    type=<code>{document.type}</code> path=
-                    <code>{document.path}</code> locale=
-                    <code>{document.locale}</code> format=
-                    <code>{document.format}</code>
-                  </p>
-                  <p>
-                    draftRevision=<code>{document.draftRevision}</code>{" "}
-                    publishedVersion=
-                    <code>{document.publishedVersion ?? "-"}</code>
-                  </p>
-                  <p>
-                    Also inspect the SDK view:{" "}
-                    <Link
-                      href={`/demo/sdk-content/${document.documentId}?type=${encodeURIComponent(document.type)}`}
-                    >
-                      /demo/sdk-content/{document.documentId}
-                    </Link>
-                    {previewHref ? (
-                      <>
-                        {" | "}
-                        <Link href={previewHref}>Rendered preview</Link>
-                      </>
-                    ) : null}
-                  </p>
-                  <p>frontmatter (raw JSON):</p>
-                  <pre>{JSON.stringify(document.frontmatter, null, 2)}</pre>
-                  <p>body (raw):</p>
-                  <pre>{document.body}</pre>
-                </li>
-              );
-            })}
-          </ul>
-        </section>
-      )}
+      <section className="library-content">
+        {!result.ok ? (
+          <RequestError
+            code={result.code}
+            message={result.message}
+            status={result.status}
+            title="Documents could not be loaded"
+          />
+        ) : result.documents.length === 0 ? (
+          <section className="empty-state">
+            <h2>No documents</h2>
+            <p>The target scope has no content documents yet.</p>
+          </section>
+        ) : (
+          <section className="document-group">
+            <div className="section-heading">
+              <p className="eyebrow">all types</p>
+              <h2>Documents</h2>
+              <span>{result.total}</span>
+            </div>
+            <div className="document-grid">
+              {result.documents.map((document) => {
+                const previewHref = getPreviewHrefForDocument(document);
+
+                return (
+                  <article className="document-card" key={document.documentId}>
+                    <div className="document-card-header">
+                      <div>
+                        <p className="document-type">{document.type}</p>
+                        <h3>{document.path}</h3>
+                      </div>
+                      <span>{document.locale}</span>
+                    </div>
+                    <div className="rendered-preview">
+                      <RenderedContent body={document.body} />
+                    </div>
+                    <div className="document-actions">
+                      <Link href={`/demo/content/${document.documentId}`}>
+                        API detail
+                      </Link>
+                      <Link
+                        href={`/demo/sdk-content/${document.documentId}?type=${encodeURIComponent(document.type)}`}
+                      >
+                        SDK detail
+                      </Link>
+                      {previewHref ? (
+                        <Link href={previewHref}>Open preview</Link>
+                      ) : null}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+        )}
+      </section>
     </main>
   );
 }

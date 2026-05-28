@@ -236,6 +236,14 @@ describe("createStudioAiRouteApi", () => {
           },
         ],
       },
+      componentReferences: [
+        {
+          componentName: "HomeHero",
+          source: "studio_host_preview",
+          renderedHtml: '<section class="landing-hero">Hero</section>',
+          text: "Hero",
+        },
+      ],
     });
 
     assert.match(capturedUrl ?? "", /\/api\/v1\/ai\/chat\/messages$/);
@@ -249,12 +257,14 @@ describe("createStudioAiRouteApi", () => {
       attachedSelection?: { documentId: string };
       allowedActions?: string[];
       mdxCatalog?: { components: Array<{ name: string }> };
+      componentReferences?: Array<{ componentName: string }>;
     };
     assert.equal(sent.message, "Tighten the lede");
     assert.equal(sent.conversationId, "conv_1");
     assert.equal(sent.attachedSelection?.documentId, "doc_1");
     assert.deepEqual(sent.allowedActions, ["edit_document"]);
     assert.equal(sent.mdxCatalog?.components[0]?.name, "Callout");
+    assert.equal(sent.componentReferences?.[0]?.componentName, "HomeHero");
 
     assert.equal(result.conversationId, "conv_1");
     assert.equal(result.message.id, "m_1");

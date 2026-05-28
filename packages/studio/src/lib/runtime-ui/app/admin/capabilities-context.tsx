@@ -47,26 +47,10 @@ export function useCanReadSchema(): boolean {
   return useAdminCapabilities().canReadSchema;
 }
 
-export function useCanCreateContent(): boolean {
-  return useAdminCapabilities().canCreateContent;
-}
-
 export function useCanManageUsers(): boolean {
   return useAdminCapabilities().canManageUsers;
 }
 
 export function useCanManageSettings(): boolean {
   return useAdminCapabilities().canManageSettings;
-}
-
-export function useCanPublishContent(): boolean {
-  return useAdminCapabilities().canPublishContent;
-}
-
-export function useCanUnpublishContent(): boolean {
-  return useAdminCapabilities().canUnpublishContent;
-}
-
-export function useCanDeleteContent(): boolean {
-  return useAdminCapabilities().canDeleteContent;
 }

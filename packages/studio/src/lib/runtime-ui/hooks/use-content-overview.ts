@@ -11,7 +11,7 @@ import {
 import type { StudioRuntimeAuth } from "../../request-auth.js";
 import { useStudioMountInfo } from "../app/admin/mount-info-context.js";
 
-export function getContentOverviewQueryKey(
+function getContentOverviewQueryKey(
   project: string | null | undefined,
   environment: string | null | undefined,
   apiBaseUrl: string | null | undefined,

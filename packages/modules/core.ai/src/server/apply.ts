@@ -203,6 +203,16 @@ function applyReplaceSelection(
   );
 }
 
+function textAppearsExactlyOnce(body: string, text: string): boolean {
+  const index = body.indexOf(text);
+
+  if (index < 0) {
+    return false;
+  }
+
+  return index === body.lastIndexOf(text);
+}
+
 function applyInsertBlock(
   body: string,
   operation: Extract<AiProposalOperation, { op: "insert_block" }>,
@@ -307,9 +317,18 @@ export async function applyAiProposal(
     });
   }
 
+  const hasBaseDraftRevision = typeof proposal.baseDraftRevision === "number";
+  const baseDraftRevisionMatches =
+    !hasBaseDraftRevision ||
+    existing.draftRevision === proposal.baseDraftRevision;
+  const canApplyReplaceSelectionAgainstLiveRevision =
+    !baseDraftRevisionMatches &&
+    operation.op === "replace_selection" &&
+    textAppearsExactlyOnce(existing.body, operation.originalText);
+
   if (
-    typeof proposal.baseDraftRevision === "number" &&
-    existing.draftRevision !== proposal.baseDraftRevision
+    !baseDraftRevisionMatches &&
+    !canApplyReplaceSelectionAgainstLiveRevision
   ) {
     throw aiProposalConflict(
       "Proposal base draft revision no longer matches the live draft.",
@@ -396,7 +415,11 @@ export async function applyAiProposal(
     },
     {
       expectedSchemaHash,
-      expectedDraftRevision: proposal.baseDraftRevision,
+      expectedDraftRevision: hasBaseDraftRevision
+        ? canApplyReplaceSelectionAgainstLiveRevision
+          ? existing.draftRevision
+          : proposal.baseDraftRevision
+        : undefined,
     },
   );
   return { document, priorDraft };

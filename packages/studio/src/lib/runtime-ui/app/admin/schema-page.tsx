@@ -1,8 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useReducer,
+  useState,
+  type ReactNode,
+} from "react";
 
-import type { SchemaRegistryEntry, StudioMountContext } from "@mdcms/shared";
+import type { SchemaRegistryEntry } from "@mdcms/shared";
 
 import { useStudioMountInfo } from "./mount-info-context.js";
 import {
@@ -17,15 +23,7 @@ import {
 } from "../../components/layout/page-header.js";
 import { Badge } from "../../components/ui/badge.js";
 import { cn } from "../../lib/utils.js";
-
-type SchemaPageLoadInput = {
-  config: {
-    project: string;
-    environment: string;
-    serverUrl: string;
-  };
-  auth: StudioMountContext["auth"];
-};
+import type { SchemaPageLoadInput } from "./schema-page-state.js";
 
 type SchemaFieldSnapshot =
   SchemaRegistryEntry["resolvedSchema"]["fields"][string];
@@ -201,26 +199,6 @@ function SchemaConstraintFlags({
 
 function jsonStringify(value: unknown): string {
   return JSON.stringify(value, null, 2);
-}
-
-/** Maps a StudioMountContext to a schema load input. Exported for tests. */
-export function createSchemaPageLoadInput(
-  context: StudioMountContext,
-): SchemaPageLoadInput | null {
-  const route = context.documentRoute;
-
-  if (!route) {
-    return null;
-  }
-
-  return {
-    config: {
-      project: route.project,
-      environment: route.initialEnvironment,
-      serverUrl: context.apiBaseUrl,
-    },
-    auth: context.auth,
-  };
 }
 
 function createSchemaPageLoadingState(): StudioSchemaState {
@@ -586,13 +564,14 @@ function SchemaSplitPane({ entries }: { entries: SchemaRegistryEntry[] }) {
 
 export default function SchemaPage() {
   const mountInfo = useStudioMountInfo();
-  const [state, setState] = useState<StudioSchemaState>(() =>
+  const [state, dispatchState] = useReducer(
+    (_state: StudioSchemaState, nextState: StudioSchemaState) => nextState,
     createSchemaPageLoadingState(),
   );
 
   useEffect(() => {
     if (!mountInfo.project || !mountInfo.environment) {
-      setState(createSchemaPageMissingRouteState());
+      dispatchState(createSchemaPageMissingRouteState());
       return;
     }
 
@@ -606,12 +585,12 @@ export default function SchemaPage() {
     };
 
     let active = true;
-    setState(createSchemaPageLoadingState());
+    dispatchState(createSchemaPageLoadingState());
 
     void loadStudioSchemaState(loadInput)
       .then((nextState) => {
         if (active) {
-          setState(nextState);
+          dispatchState(nextState);
         }
       })
       .catch((error: unknown) => {
@@ -619,7 +598,7 @@ export default function SchemaPage() {
           return;
         }
 
-        setState({
+        dispatchState({
           status: "error",
           project: loadInput.config.project,
           environment: loadInput.config.environment,

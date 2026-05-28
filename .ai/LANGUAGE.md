@@ -38,12 +38,13 @@ Use these terms exactly. Do not coin synonyms. If a needed concept is missing, a
 
 ## Codebase shape
 
-| Term                          | Meaning                                                             | Don't say                                                 |
-| ----------------------------- | ------------------------------------------------------------------- | --------------------------------------------------------- |
-| **Workspace**                 | A Bun + Nx package in the monorepo                                  | project (overloaded), package (use only for npm packages) |
-| **`@mdcms/source` condition** | Custom export condition that resolves to TypeScript source for dev  | source export, dev export                                 |
-| **Studio**                    | The embeddable React component (`@mdcms/studio`)                    | admin UI, dashboard, panel                                |
-| **Studio review**             | `apps/studio-review` — internal contract-consumer for preview mocks | studio test, review app                                   |
+| Term                          | Meaning                                                               | Don't say                                                 |
+| ----------------------------- | --------------------------------------------------------------------- | --------------------------------------------------------- |
+| **Workspace**                 | A Bun + Nx package in the monorepo                                    | project (overloaded), package (use only for npm packages) |
+| **`@mdcms/source` condition** | Custom export condition that resolves to TypeScript source for dev    | source export, dev export                                 |
+| **Studio**                    | The embeddable React component (`@mdcms/studio`)                      | admin UI, dashboard, panel                                |
+| **Studio review**             | `apps/studio-review` — internal contract-consumer for preview mocks   | studio test, review app                                   |
+| **Built-in MDX component**    | MDCMS-provided MDX component auto-injected into the local MDX catalog | primitive, basic component                                |
 
 ## Forbidden
 

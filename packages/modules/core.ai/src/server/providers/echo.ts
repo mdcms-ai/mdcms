@@ -1,6 +1,8 @@
 import type {
   LanguageModelV3CallOptions,
   LanguageModelV3Content,
+  LanguageModelV3StreamPart,
+  LanguageModelV3Usage,
 } from "@ai-sdk/provider";
 import { MockLanguageModelV3 } from "ai/test";
 
@@ -132,11 +134,100 @@ export function createEchoAiProvider(
         warnings: [],
       };
     },
+    doStream: async (callOptions) => {
+      if (options.throwOnGenerate) {
+        throw options.throwOnGenerate;
+      }
+
+      if (options.steps && stepCursor < options.steps.length) {
+        const step = options.steps[stepCursor]!;
+        stepCursor += 1;
+        return streamFromStep(step, stepCursor, options.usage);
+      }
+
+      const text = options.respond
+        ? options.respond(callOptions)
+        : extractUserPrompt(callOptions);
+      return streamFromStep({ type: "text", text }, stepCursor, options.usage);
+    },
   });
 
   return {
     id: ECHO_PROVIDER_ID,
     languageModel,
+  };
+}
+
+function streamFromStep(
+  step: EchoStepResponse,
+  stepCursor: number,
+  usage: AiProviderUsage | undefined,
+) {
+  const parts: LanguageModelV3StreamPart[] = [
+    { type: "stream-start", warnings: [] },
+  ];
+
+  if (step.type === "tool-calls") {
+    for (const [idx, call] of step.calls.entries()) {
+      parts.push({
+        type: "tool-call",
+        toolCallId: call.toolCallId ?? `tc_${stepCursor}_${idx + 1}`,
+        toolName: call.toolName,
+        input: call.input,
+      });
+    }
+    if (step.trailingText) {
+      parts.push(
+        { type: "text-start", id: `txt_${stepCursor}` },
+        {
+          type: "text-delta",
+          id: `txt_${stepCursor}`,
+          delta: step.trailingText,
+        },
+        { type: "text-end", id: `txt_${stepCursor}` },
+      );
+    }
+    parts.push({
+      type: "finish",
+      finishReason: { unified: "tool-calls", raw: "tool-calls" },
+      usage: streamUsage(usage),
+    });
+  } else {
+    parts.push(
+      { type: "text-start", id: `txt_${stepCursor}` },
+      { type: "text-delta", id: `txt_${stepCursor}`, delta: step.text },
+      { type: "text-end", id: `txt_${stepCursor}` },
+      {
+        type: "finish",
+        finishReason: { unified: "stop", raw: "stop" },
+        usage: streamUsage(usage),
+      },
+    );
+  }
+
+  return {
+    stream: new ReadableStream<LanguageModelV3StreamPart>({
+      start(controller) {
+        for (const part of parts) controller.enqueue(part);
+        controller.close();
+      },
+    }),
+  };
+}
+
+function streamUsage(usage: AiProviderUsage | undefined): LanguageModelV3Usage {
+  return {
+    inputTokens: {
+      total: usage?.inputTokens,
+      noCache: usage?.inputTokens,
+      cacheRead: undefined,
+      cacheWrite: undefined,
+    },
+    outputTokens: {
+      total: usage?.outputTokens,
+      text: usage?.outputTokens,
+      reasoning: undefined,
+    },
   };
 }
 

@@ -188,7 +188,33 @@ describe("applyAiProposal", () => {
     assert.equal(state.updateCalls.length, 0);
   });
 
-  test("base draft revision mismatch is reported as conflict", async () => {
+  test("replace_selection applies when base draft revision changed but source text still exists", async () => {
+    const state: StubStoreState = {
+      document: buildDocument({
+        draftRevision: 6,
+        body: "Draft prefix.\n\nWelcome to the site.",
+      }),
+      updateCalls: [],
+      createCalls: [],
+      softDeleteCalls: [],
+    };
+    const store = createStubStore(state);
+
+    const result = await applyAiProposal({
+      proposal: buildProposal({ baseDraftRevision: 4 }),
+      expectedSchemaHash: "hash_1",
+      actorId: "user_99",
+      store,
+    });
+
+    assert.equal(state.updateCalls.length, 1);
+    const call = state.updateCalls[0]!;
+    assert.equal(call.payload.body, "Draft prefix.\n\nHi there!");
+    assert.equal(call.options.expectedDraftRevision, 6);
+    assert.equal(result.document.body, "Draft prefix.\n\nHi there!");
+  });
+
+  test("insert_block base draft revision mismatch is reported as conflict", async () => {
     const state: StubStoreState = {
       document: buildDocument({ draftRevision: 6 }),
       updateCalls: [],
@@ -200,7 +226,17 @@ describe("applyAiProposal", () => {
     await assert.rejects(
       () =>
         applyAiProposal({
-          proposal: buildProposal({ baseDraftRevision: 4 }),
+          proposal: buildProposal({
+            kind: "insert_block",
+            baseDraftRevision: 4,
+            operations: [
+              {
+                op: "insert_block",
+                afterSelectionId: "sel_1",
+                bodyMdx: "New block.",
+              },
+            ],
+          }),
           expectedSchemaHash: "hash_1",
           actorId: "user_99",
           store,

@@ -96,12 +96,15 @@ export type MdxComponentCatalogEntry = Pick<
   MdcmsComponentRegistration,
   "name" | "importPath" | "description" | "propHints" | "propsEditor"
 > & {
+  builtIn?: true;
   extractedProps?: MdxExtractedProps;
 };
 
 export type MdxComponentCatalog = {
   components: MdxComponentCatalogEntry[];
 };
+
+export type MdcmsInlineStyle = Record<string, string | number>;
 
 export type MdxExtractedProp =
   | { type: "string"; required: boolean; format?: "url" }
@@ -110,6 +113,7 @@ export type MdxExtractedProp =
   | { type: "date"; required: boolean }
   | { type: "enum"; required: boolean; values: string[] }
   | { type: "array"; required: boolean; items: "string" | "number" }
+  | { type: "style"; required: boolean }
   | { type: "json"; required: boolean }
   | { type: "rich-text"; required: boolean };
 
@@ -411,12 +415,21 @@ const mdxExtractedPropSchema = z.discriminatedUnion("type", [
     items: z.enum(["string", "number"]),
   }),
   mdxExtractedPropRequiredSchema.extend({
+    type: z.literal("style"),
+  }),
+  mdxExtractedPropRequiredSchema.extend({
     type: z.literal("json"),
   }),
   mdxExtractedPropRequiredSchema.extend({
     type: z.literal("rich-text"),
   }),
 ]);
+
+export const mdcmsInlineStyleSchema = z
+  .record(z.string(), z.union([z.string(), z.number().finite()]))
+  .refine((value) => !Array.isArray(value), {
+    message: "must be a flat object with string or number values.",
+  });
 
 const mdxSelectOptionValueSchema = z.union([
   nonEmptyStringSchema,
@@ -497,6 +510,7 @@ export const mdxComponentCatalogEntrySchema = z
     name: nonEmptyStringSchema,
     importPath: nonEmptyStringSchema,
     description: nonEmptyStringSchema.optional(),
+    builtIn: z.literal(true).optional(),
     propHints: z.record(z.string(), mdxPropHintSchema).optional(),
     propsEditor: nonEmptyStringSchema.optional(),
     extractedProps: z.record(z.string(), mdxExtractedPropSchema).optional(),
@@ -815,6 +829,19 @@ export function assertHostBridgeV1(
     value,
     path,
     "INVALID_STUDIO_RUNTIME_CONTRACT",
+    `${path} is invalid.`,
+  );
+}
+
+export function assertMdcmsInlineStyle(
+  value: unknown,
+  path = "inlineStyle",
+): asserts value is MdcmsInlineStyle {
+  assertWithSchema(
+    mdcmsInlineStyleSchema,
+    value,
+    path,
+    "INVALID_MDCMS_INLINE_STYLE",
     `${path} is invalid.`,
   );
 }

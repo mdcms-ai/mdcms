@@ -2,7 +2,7 @@
 status: live
 canonical: true
 created: 2026-05-01
-last_updated: 2026-05-18
+last_updated: 2026-05-22
 ---
 
 # SPEC-014 AI-Assisted Studio Editing
@@ -111,9 +111,23 @@ The assistant surface presents:
 - A persistent right-side rail that can expand into a fullscreen workspace
   while the editor remains visible behind the chat in the rail state and is
   hidden in the fullscreen state.
+- In rail state, the assistant width is user-resizable from its left edge. The
+  rail defaults to 420px, is bounded to a usable range, and Studio reserves the
+  same width on the main editor area so content does not slide underneath the
+  chat. The chosen rail width is persisted with the assistant's local thread
+  state for the active project and environment. Fullscreen mode ignores the
+  rail width and continues to occupy the available Studio workspace.
 - A thread list with conversation persistence across navigation.
 - A composer that auto-attaches the active document and any current editor
   selection as removable context chips.
+- While a chat turn is pending, the composer remains editable so the user can
+  draft the next message. Studio must block sending that draft until the
+  pending turn completes or is stopped; the pending affordance remains Stop,
+  not Send.
+- If the provider or model fails after the streaming response has opened, the
+  server must send a terminal SSE `error` event, emit a non-success audit record
+  for the turn, and Studio must render that error in the assistant thread. A
+  stream failure must never be audited or displayed as a succeeded turn.
 - One proposal card per generated proposal, rendered inline in the assistant
   thread next to the model turn that produced it.
 
@@ -131,9 +145,24 @@ the target document path, locale, kind chip, and a unified diff: removed lines
 single-sided `+N / −0` diff. Single-suggestion turns expand the diff by
 default; multi-proposal turns collapse all rows by default and let the user
 expand individual rows inline. Create-document proposals additionally show
-frontmatter and a body preview when present. Invalid proposals show the diff
-plus a list of validation errors below it and disable Accept until the user
-either retries or edits manually.
+frontmatter and a body preview when present.
+
+Chat-generated proposals that fail validation are auto-rejected by the server
+before they are returned to Studio. The assistant receives the validation
+errors as a tool result and gets one correction attempt in the same chat turn.
+If the correction also fails validation, Studio receives no actionable proposal
+card for that failed change; the assistant should explain the failure in text.
+
+Inline-transform proposals that fail validation show the diff plus a list of
+validation errors below it and disable Accept until the user retries or edits
+manually.
+
+While a chat turn is pending, Studio shows bounded progress events streamed
+from the server. These events may say that the model is thinking, name the
+tool it is calling, report whether a proposal tool queued or rejected a
+proposal, and show per-step token usage when the provider reports it. Progress
+events must not expose hidden chain-of-thought or raw tool arguments; they are
+status summaries only.
 
 Rejecting a proposal does not silently discard the model's turn. Reject opens
 an inline feedback textarea on the card; the user types what should change and
@@ -150,8 +179,13 @@ AI output is always mediated through proposals:
 3. Studio renders the proposal with validation status and accept/reject
    controls.
 4. User explicitly accepts a proposal.
-5. Server applies the accepted proposal as a draft write if the target still
-   matches the proposal's base revision and validation passes.
+5. Server applies the accepted proposal as a draft write if validation passes
+   and the proposal still has an unambiguous live target. For
+   `replace_selection`, a changed draft revision is not by itself a conflict:
+   apply may proceed when the operation's `originalText` still appears exactly
+   once in the current draft body. Proposal kinds without an exact source-text
+   replacement anchor continue to require the live draft revision to match the
+   proposal's base revision.
 6. Studio reconciles local editor state from the accepted draft response.
 
 Rejecting a proposal has no content side effects. Proposals expire after a short
@@ -160,16 +194,18 @@ server-defined lifetime and may also become stale when a draft revision changes.
 ### Post-Accept Undo Window
 
 After a proposal is successfully applied, Studio offers a bounded undo window
-in place of the proposal card. The window is the only opportunity to revert an
-applied proposal through the AI surface; once it expires, restore must go
-through the normal version history and trash endpoints.
+and keeps the accepted proposal available as an expandable, read-only history
+detail. The window is the only opportunity to revert an applied proposal
+through the AI surface; once it expires, restore must go through the normal
+version history and trash endpoints.
 
 Window behaviour:
 
 - The window is **6 seconds** long, opens when the apply endpoint returns
   success, and is per-proposal (each accepted proposal opens its own window).
 - During the window, Studio renders an `Applied` banner with a visible
-  countdown and an `Undo` affordance in place of the proposal card.
+  countdown and an `Undo` affordance above the read-only applied-change
+  details. Accept and reject controls are removed after apply.
 - Hovering the banner pauses the countdown. Hiding the tab pauses the
   countdown. Reloading the page inside the window resumes the remaining time;
   reloading after the window expires lands directly in the past-tense
@@ -178,8 +214,9 @@ Window behaviour:
   undo on the most recent still-open window when focus is inside the assistant
   panel. Outside the assistant panel the shortcut falls through to the
   surrounding editor or browser default.
-- When the window expires, the banner morphs into a quiet past-tense log line
-  and the affordance is no longer offered.
+- When the window expires, the banner morphs into a quiet past-tense log line,
+  the undo affordance is no longer offered, and the applied-change details
+  remain expandable for chat history review.
 
 Undo is routed through a single dedicated endpoint
 `POST /api/v1/ai/proposals/:proposalId/undo` that the client invokes with
@@ -244,9 +281,19 @@ Allowed context:
 - Nearby editor context needed to produce a coherent replacement.
 - Registered MDX component catalog metadata supplied through the Studio host
   bridge and normalized into serializable component names, prop schemas, prop
-  hints, and child-content rules.
+  hints, built-in provenance, and child-content rules. The catalog includes
+  MDCMS built-ins (`Box`, `Text`, `Image`, `Link`) even when the host app does
+  not register them.
 - Action-specific instructions for copy, SEO, MDX component insertion, or
   document creation workflows.
+
+The active draft body and attached selection are serialized to the model as
+raw markdown/MDX bounded by explicit content markers. MDCMS does not entity
+escape `<`, `>`, or `&` inside those content blocks, because the model must be
+able to copy exact MDX component syntax back into proposal operations.
+Prompt-control content such as the current user message, conversation history,
+project knowledge, and referenced-document excerpts remains escaped or
+summarized so document text cannot create new prompt sections.
 
 Disallowed context:
 
@@ -380,9 +427,27 @@ The chat assistant grounds the model in real project data via three layers:
   `type` parameter is enum-constrained to the project's registered content types,
   so the model cannot query for types that don't exist.
 - `get_entry({ documentId })` — fetch full body + frontmatter for a specific doc.
+- `get_component_reference({ componentName })` — fetch a Studio-host-rendered
+  reference snapshot for a registered MDX component. The tool returns sanitized
+  static HTML and visible text for design grounding. It is read-only and is used
+  when the user asks to clone, imitate, restyle, or design something similar to
+  an existing component.
 
-Both tools are capability-gated on `content:read:draft`; absent capability removes
-the tool from the model's surface and the model gracefully responds in text.
+When proposing UI-like MDX such as sections, heroes, cards, forms, calls to
+action, or component-heavy blocks, the assistant preserves the host site's
+existing visual language unless the user explicitly asks for a new direction.
+Registered catalog components and built-ins are the default building blocks for
+visually editable composition. When `get_component_reference` is available and
+the user names, implies, or asks to match an existing component, the assistant
+uses that reference before proposing the edit so the result follows the existing
+aesthetic instead of inventing a disconnected one-off visual system.
+
+Document lookup tools are capability-gated on `content:read:draft`; absent
+capability removes the tool from the model's surface and the model gracefully
+responds in text. The component reference tool is available only when the
+request supplies component reference snapshots for the active Studio host.
+The server never imports host app component source to render references inside
+the AI module.
 
 **Document context policy:**
 
@@ -457,6 +522,18 @@ Rules:
   passthrough props.
 - Wrapper components must follow their declared child-content rules.
 - Studio must show validation failures before the user can accept a proposal.
+- Built-in components marked with `builtIn: true` are valid output. The flag
+  does not create different validation semantics; it only distinguishes
+  MDCMS-provided components from host-registered components for Studio
+  discoverability.
+- Lowercase intrinsic MDX/HTML elements are valid raw MDX output. They are not
+  catalog components, so the catalog validator does not require them to be
+  registered. The assistant should prefer catalog components and built-ins when
+  the user asks for visually editable composition, and use raw intrinsic HTML
+  only when the requested result needs native HTML semantics such as forms or
+  inputs.
+- Inline styles are valid only through first-class `style` props. Style values
+  must be flat objects whose values are strings or numbers.
 
 The chat request carries the active catalog as a serializable `mdxCatalog`
 snapshot. The server uses that snapshot as validation input for proposals in
@@ -464,6 +541,16 @@ the same turn; it must not persist the catalog as backend-owned project state.
 
 Invalid MDX proposals are never silently repaired on apply. The user may request
 another proposal or edit manually.
+
+Valid inline style example:
+
+```mdx
+<Box style={{ padding: "24px", backgroundColor: "#fff" }}>Content</Box>
+```
+
+AI must not generate `className`, CSS strings, nested style objects, hover
+styles, responsive breakpoints, selectors, event handlers, or JavaScript
+functions in MDX props.
 
 ## SEO Assistance
 

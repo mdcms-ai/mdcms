@@ -3,9 +3,11 @@ import Link from "next/link";
 import type { ContentDocumentResponse } from "@mdcms/cli";
 import { createMdcmsRenderer } from "@mdcms/sdk/react";
 
+import { getDocumentTitle } from "../../../../lib/example-documents";
 import { getPreviewHrefForDocument } from "../../../../lib/preview-routing";
 import config from "../../../../mdcms.config";
 import { createDemoSdkClient, toDemoRequestFailure } from "../sdk-demo-client";
+import { RequestError, SiteHeader } from "../../../site-components";
 
 const contentRenderer = createMdcmsRenderer(config);
 
@@ -66,56 +68,51 @@ export default async function DemoSdkContentDocumentPage({
     : null;
 
   return (
-    <main>
-      <h1>SDK Content Document</h1>
-      <p>
-        Data source: <strong>@mdcms/sdk</strong>
-      </p>
-      <p>
-        SDK call:{" "}
-        <code>{`createClient(...).get("${type}", { id, draft: true })`}</code>
-      </p>
-      <p>
-        <Link href="/demo/sdk-content">Back to /demo/sdk-content</Link>
-        {" | "}
-        <Link href={`/demo/content/${documentId}`}>Open raw API detail</Link>
-      </p>
+    <main className="site-shell">
+      <SiteHeader active="sdk" />
 
-      {!result.ok ? (
-        <section>
-          <h2>Request failed</h2>
-          <p>
-            {result.code} ({result.status})
-          </p>
-          <p>{result.message}</p>
-        </section>
-      ) : (
-        <section>
-          <h2>{result.document.documentId}</h2>
-          <p>
-            type=<code>{result.document.type}</code> path=
-            <code>{result.document.path}</code> locale=
-            <code>{result.document.locale}</code> format=
-            <code>{result.document.format}</code>
-          </p>
-          <p>
-            draftRevision=<code>{result.document.draftRevision}</code>{" "}
-            publishedVersion=
-            <code>{result.document.publishedVersion ?? "-"}</code>
-          </p>
+      <section className="library-hero">
+        <p className="eyebrow">SDK detail</p>
+        <h1>{result.ok ? getDocumentTitle(result.document) : documentId}</h1>
+        <p>
+          Rendered with <strong>@mdcms/sdk</strong> from draft content in{" "}
+          <strong>{config.project}</strong> /{" "}
+          <strong>{config.environment}</strong>.
+        </p>
+        <p>
+          <Link href="/demo/sdk-content">Back to SDK documents</Link>
+          {" | "}
+          <Link href={`/demo/content/${documentId}`}>API metadata</Link>
           {previewHref ? (
-            <p>
-              <Link href={previewHref}>Open rendered preview</Link>
-            </p>
+            <>
+              {" | "}
+              <Link href={previewHref}>Open preview route</Link>
+            </>
           ) : null}
-          <h3>Rendered body</h3>
-          <div>{renderedBody}</div>
-          <p>frontmatter (raw JSON):</p>
-          <pre>{JSON.stringify(result.document.frontmatter, null, 2)}</pre>
-          <p>body (raw):</p>
-          <pre>{result.document.body}</pre>
-        </section>
-      )}
+        </p>
+      </section>
+
+      <section className="library-content">
+        {!result.ok ? (
+          <RequestError
+            code={result.code}
+            message={result.message}
+            status={result.status}
+            title="Document could not be loaded"
+          />
+        ) : (
+          <article className="rendered-surface">
+            <div className="document-card-header">
+              <div>
+                <p className="document-type">{result.document.type}</p>
+                <h2>{result.document.path}</h2>
+              </div>
+              <span>{result.document.locale}</span>
+            </div>
+            <div className="rendered-preview">{renderedBody}</div>
+          </article>
+        )}
+      </section>
     </main>
   );
 }

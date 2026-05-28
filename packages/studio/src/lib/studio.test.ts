@@ -17,11 +17,11 @@ import {
   resolveStudioEnv,
 } from "./studio.js";
 import { createStudioActionCatalogAdapter } from "./action-catalog-adapter.js";
+import { StudioShellFrame } from "./studio-component.js";
 import {
-  StudioShellFrame,
   describeStudioStartupError,
   resolveShellAppliedTheme,
-} from "./studio-component.js";
+} from "./studio-shell-state.js";
 import { loadStudioDocumentShell } from "./document-shell.js";
 
 const TYPECHECK_TEST_TIMEOUT_MS = 20_000;
@@ -257,14 +257,74 @@ test("prepareStudioConfig enriches mdx component metadata from source files", as
       },
     );
 
-    assert.equal(preparedConfig.components?.[0]?.load, loadChart);
-    assert.deepEqual(preparedConfig.components?.[0]?.extractedProps, {
+    const preparedChart = preparedConfig.components?.find(
+      (component) => component.name === "Chart",
+    );
+
+    assert.equal(preparedChart?.load, loadChart);
+    assert.deepEqual(preparedChart?.extractedProps, {
       title: { type: "string", required: false },
       kind: { type: "enum", required: true, values: ["bar", "line"] },
     });
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
+});
+
+test("prepareStudioConfig injects built-in mdx components without host registration", async () => {
+  const preparedConfig = await prepareStudioConfig(
+    {
+      project: "marketing-site",
+      environment: "staging",
+      serverUrl: "http://localhost:4000",
+    },
+    {
+      cwd: dirname(fileURLToPath(import.meta.url)),
+    },
+  );
+
+  assert.deepEqual(
+    preparedConfig.components
+      ?.filter(
+        (component) => "builtIn" in component && component.builtIn === true,
+      )
+      .map((component) => component.name),
+    ["Box", "Text", "Image", "Link"],
+  );
+  assert.deepEqual(preparedConfig.components?.[0], {
+    name: "Box",
+    importPath: "@mdcms/sdk/react-primitives",
+    builtIn: true,
+    extractedProps: {
+      style: { type: "style", required: false },
+      children: { type: "rich-text", required: false },
+    },
+    load: preparedConfig.components?.[0]?.load,
+  });
+});
+
+test("prepareStudioConfig rejects host components that use reserved built-in names", async () => {
+  await assert.rejects(
+    () =>
+      prepareStudioConfig(
+        {
+          project: "marketing-site",
+          environment: "staging",
+          serverUrl: "http://localhost:4000",
+          components: [
+            {
+              name: "Box",
+              importPath: "@/components/mdx/Box",
+              builtIn: true,
+            },
+          ] as never,
+        },
+        {
+          cwd: dirname(fileURLToPath(import.meta.url)),
+        },
+      ),
+    /reserved for an MDCMS built-in component/,
+  );
 });
 
 test("prepareStudioConfig preserves valid propHints alongside extracted props", async () => {
@@ -315,11 +375,15 @@ test("prepareStudioConfig preserves valid propHints alongside extracted props", 
       },
     );
 
-    assert.deepEqual(preparedConfig.components?.[0]?.propHints, {
+    const preparedChart = preparedConfig.components?.find(
+      (component) => component.name === "Chart",
+    );
+
+    assert.deepEqual(preparedChart?.propHints, {
       title: { widget: "textarea" },
       website: { format: "url" },
     });
-    assert.deepEqual(preparedConfig.components?.[0]?.extractedProps, {
+    assert.deepEqual(preparedChart?.extractedProps, {
       title: { type: "string", required: false },
       website: { type: "string", required: false, format: "url" },
       kind: { type: "enum", required: true, values: ["bar", "line"] },
@@ -426,7 +490,11 @@ test("prepareStudioConfig resolves directory imports through index files", async
       },
     );
 
-    assert.deepEqual(preparedConfig.components?.[0]?.extractedProps, {
+    const preparedChart = preparedConfig.components?.find(
+      (component) => component.name === "Chart",
+    );
+
+    assert.deepEqual(preparedChart?.extractedProps, {
       title: { type: "string", required: true },
     });
   } finally {

@@ -61,9 +61,11 @@ export type DocumentLookup = (input: {
  *      doesn't match the schema field's declared `kind` (e.g. a
  *      string field receiving a number).
  *
- * Replace-selection and insert-block proposals are left shape-valid
- * for now — full MDX validation requires an MDX component catalog
- * that doesn't exist yet (tracked separately).
+ * Replace-selection body-anchor validation is layered in per active
+ * document by `createReplaceSelectionApplyabilityValidator`, because
+ * the current draft body is turn-specific rather than schema state.
+ * Insert-block proposals are left shape-valid here; full MDX
+ * validation is supplied by `createMdxCatalogProposalValidator`.
  */
 export function createSchemaAwareProposalValidator(input: {
   schemaLookup: SchemaLookup;
@@ -94,8 +96,9 @@ export function createSchemaAwareProposalValidator(input: {
       case "insert_block":
         // Shape-only for now. delete_document's published-version
         // check is already done by chat-tools at proposal-build time
-        // and re-enforced by apply.ts at apply time. MDX component
-        // validation requires the catalog (separate ticket).
+        // and re-enforced by apply.ts at apply time. replace_selection
+        // anchor checks and MDX catalog checks are layered separately
+        // because both require per-request context.
         return { status: "valid" };
     }
   };
@@ -122,6 +125,66 @@ type MdxAttributeValue =
   | { kind: "boolean"; value: boolean }
   | { kind: "string"; value: string }
   | { kind: "expression"; value: string };
+
+export function createReplaceSelectionApplyabilityValidator(input: {
+  validator?: AiProposalValidator;
+  body: string;
+}): AiProposalValidator {
+  const { validator, body } = input;
+
+  return async (candidate) => {
+    const base = validator
+      ? await validator(candidate)
+      : ({ status: "valid" } satisfies AiProposalValidation);
+    const errors = validateReplaceSelectionAgainstBody(candidate, body);
+    return mergeValidation(base, errors);
+  };
+}
+
+function validateReplaceSelectionAgainstBody(
+  candidate: AiProposalCandidate,
+  body: string,
+): ValidationError[] {
+  if (candidate.kind !== "replace_selection") return [];
+
+  const errors: ValidationError[] = [];
+  candidate.operations.forEach((operation, index) => {
+    if (operation.op !== "replace_selection") return;
+
+    const first = body.indexOf(operation.originalText);
+    if (first < 0) {
+      errors.push({
+        code: "REPLACE_SELECTION_SOURCE_NOT_FOUND",
+        message:
+          "Original selection text was not found in the current draft body.",
+        path: `operations[${index}].originalText`,
+      });
+      return;
+    }
+
+    if (first !== body.lastIndexOf(operation.originalText)) {
+      errors.push({
+        code: "REPLACE_SELECTION_SOURCE_AMBIGUOUS",
+        message:
+          "Original selection text appears more than once in the current draft body; refusing to apply ambiguously.",
+        path: `operations[${index}].originalText`,
+      });
+    }
+  });
+
+  return errors;
+}
+
+function mergeValidation(
+  base: AiProposalValidation,
+  errors: ValidationError[],
+): AiProposalValidation {
+  if (errors.length === 0) return base;
+  if (base.status === "invalid") {
+    return { status: "invalid", errors: [...base.errors, ...errors] };
+  }
+  return { status: "invalid", errors };
+}
 
 /** RFC4122-ish UUID literal — mirrors the apply-time check in `reference-validation.ts`. */
 const UUID_PATTERN =
@@ -912,6 +975,17 @@ function validateMdxPropValue(
         );
       }
       return undefined;
+    case "style": {
+      const styleValue = normalizeMdxStyleAttributeValue(attr);
+      return isValidMdxStyleValue(styleValue)
+        ? undefined
+        : invalidMdxPropType(
+            componentName,
+            propName,
+            "flat style object with string or number values",
+            jsKindOf(styleValue),
+          );
+    }
     case "json":
       return value !== undefined
         ? undefined
@@ -919,6 +993,127 @@ function validateMdxPropValue(
     case "rich-text":
       return undefined;
   }
+}
+
+function isValidMdxStyleValue(value: unknown): boolean {
+  if (value === null || Array.isArray(value) || typeof value !== "object") {
+    return false;
+  }
+
+  return Object.values(value).every(
+    (styleValue) =>
+      typeof styleValue === "string" ||
+      (typeof styleValue === "number" && Number.isFinite(styleValue)),
+  );
+}
+
+function normalizeMdxStyleAttributeValue(attr: MdxAttributeValue): unknown {
+  const normalized = normalizeMdxAttributeValue(attr);
+  if (isValidMdxStyleValue(normalized) || attr.kind !== "expression") {
+    return normalized;
+  }
+
+  return parseMdxStyleObjectLiteral(attr.value.trim());
+}
+
+function parseMdxStyleObjectLiteral(
+  expression: string,
+): Record<string, string | number> | undefined {
+  if (!expression.startsWith("{") || !expression.endsWith("}")) {
+    return undefined;
+  }
+
+  const style: Record<string, string | number> = {};
+  const source = expression.slice(1, -1);
+  let index = 0;
+
+  while (index < source.length) {
+    index = skipWhitespace(source, index);
+    if (index >= source.length) return style;
+
+    const key = readStyleObjectKey(source, index);
+    if (!key) return undefined;
+    index = skipWhitespace(source, key.nextIndex);
+
+    if (source[index] !== ":") return undefined;
+    index = skipWhitespace(source, index + 1);
+
+    const value = readStyleObjectValue(source, index);
+    if (!value) return undefined;
+    style[key.value] = value.value;
+    index = skipWhitespace(source, value.nextIndex);
+
+    if (index >= source.length) return style;
+    if (source[index] !== ",") return undefined;
+    index += 1;
+  }
+
+  return style;
+}
+
+function readStyleObjectKey(
+  source: string,
+  index: number,
+): { value: string; nextIndex: number } | undefined {
+  const first = source[index];
+  if (first === '"' || first === "'") {
+    return readQuotedStyleString(source, index);
+  }
+
+  const match = /^[$A-Z_a-z][$\w]*/.exec(source.slice(index));
+  if (!match) return undefined;
+
+  return {
+    value: match[0],
+    nextIndex: index + match[0].length,
+  };
+}
+
+function readStyleObjectValue(
+  source: string,
+  index: number,
+): { value: string | number; nextIndex: number } | undefined {
+  const first = source[index];
+  if (first === '"' || first === "'") {
+    return readQuotedStyleString(source, index);
+  }
+
+  const match = /^-?(?:(?:\d+\.?\d*)|(?:\.\d+))(?:[eE][+-]?\d+)?/.exec(
+    source.slice(index),
+  );
+  if (!match) return undefined;
+
+  return {
+    value: Number(match[0]),
+    nextIndex: index + match[0].length,
+  };
+}
+
+function readQuotedStyleString(
+  source: string,
+  index: number,
+): { value: string; nextIndex: number } | undefined {
+  const quote = source[index];
+  if (quote !== '"' && quote !== "'") return undefined;
+
+  let cursor = index + 1;
+  let value = "";
+  while (cursor < source.length) {
+    const char = source[cursor];
+    if (char === quote && source[cursor - 1] !== "\\") {
+      return { value, nextIndex: cursor + 1 };
+    }
+    value += char;
+    cursor += 1;
+  }
+
+  return undefined;
+}
+
+function skipWhitespace(source: string, index: number): number {
+  let cursor = index;
+  while (/\s/.test(source[cursor] ?? "")) cursor += 1;
+  return cursor;
 }
 
 function normalizeMdxAttributeValue(attr: MdxAttributeValue): unknown {

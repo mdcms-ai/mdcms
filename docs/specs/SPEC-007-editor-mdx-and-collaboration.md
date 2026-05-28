@@ -19,15 +19,16 @@ The content editor is built on **TipTap**. MVP ships a single-user editor with M
 
 #### Markdown Serialization
 
-Content is stored as Markdown/MDX text (`body` column) but edited via TipTap's internal document model. Bidirectional conversion between the two representations uses **`@tiptap/markdown`** (the official TipTap markdown extension, shipped in TipTap 3.7.0). It uses **Marked.js** as the parser/lexer and provides per-extension `markdown.parse` and `markdown.render` handlers.
+Content is stored as Markdown/MDX text (`body` column) but edited via TipTap's internal document model. The parse path uses **micromark/mdast MDX parsing** (`micromark-extension-mdx` plus `mdast-util-from-markdown` and `mdast-util-mdx`) to produce an MDX syntax tree, then a Studio-owned adapter converts that tree into TipTap JSON. This uses the same underlying MDX parser family as the SDK renderer without bundling the full MDX evaluator into the Studio browser runtime. The serialization path uses **`@tiptap/markdown`** (the official TipTap markdown extension, shipped in TipTap 3.7.0) and per-extension `markdown.render` handlers to render TipTap JSON back to Markdown/MDX.
 
-**MDX component serialization** is handled by a custom layer on top of `@tiptap/markdown`:
+**MDX component serialization** is handled by a custom layer around those parse/serialize boundaries:
 
-1. A **custom Marked.js tokenizer** recognizes JSX block and inline syntax (`<ComponentName prop="value">...</ComponentName>`) during parsing and emits tokens for them.
-2. A **custom TipTap extension** (`MdxComponent`) defines the node type with attrs (`componentName`, `props` as JSON) and provides the corresponding `markdown.parse` (token → node) and `markdown.render` (node → MDX string) handlers.
-3. For wrapper components with `children`, the node uses a content hole that allows nested rich-text editing inside the component block.
+1. The MDX processor recognizes JSX block and inline syntax (`<ComponentName prop="value">...</ComponentName>`) during parsing, including indented nested components and JSX expression props.
+2. The Studio parse adapter converts uppercase JSX elements into a custom TipTap node type (`MdxComponent`) with attrs (`componentName`, `props` as JSON, `isVoid`), and converts lowercase raw JSX islands into inert raw JSX preview nodes.
+3. The custom TipTap extension (`MdxComponent`) provides the corresponding `markdown.render` (node → MDX string) handler.
+4. For wrapper components with `children`, the node uses a content hole that allows nested rich-text editing inside the component block.
 
-This approach keeps MDX parsing/serialization within TipTap's standard extension model. If the custom Marked.js tokenizer proves insufficient for complex MDX (deeply nested components, JSX expressions in props), a fallback option is to swap the parsing layer to **remark + remark-mdx** (from the unified ecosystem) via `@handlewithcare/remark-prosemirror`, which provides a battle-tested MDX AST but is a smaller community project (~28 stars, from the NYT/moment.dev team).
+If the parser implementation changes again, it must be swapped behind the same adapter boundary. The TipTap node schema and Markdown/MDX serialization contract must remain unchanged.
 
 **Round-trip idempotency requirement:** The serialization pipeline must satisfy `serialize(parse(markdown)) === markdown` for all content the schema produces. This prevents phantom diffs, where a cold-start load/save cycle produces byte-different but semantically identical content and causes unnecessary `draft_revision` churn. The CI suite must include round-trip fidelity tests for each schema type.
 
@@ -167,6 +168,7 @@ export type MdxComponentCatalogEntry = {
   name: string;
   importPath: string;
   description?: string;
+  builtIn?: true;
   propHints?: Record<string, MdxPropHint>;
   propsEditor?: string;
   extractedProps?: MdxExtractedProps;
@@ -192,6 +194,8 @@ export type MdxComponentCatalog = {
   components: MdxComponentCatalogEntry[];
 };
 
+export type MdcmsInlineStyle = Record<string, string | number>;
+
 export type MdxExtractedProps = Record<string, MdxExtractedProp>;
 
 export type MdxExtractedProp =
@@ -201,6 +205,7 @@ export type MdxExtractedProp =
   | { type: "date"; required: boolean }
   | { type: "enum"; required: boolean; values: string[] }
   | { type: "array"; required: boolean; items: "string" | "number" }
+  | { type: "style"; required: boolean }
   | { type: "json"; required: boolean }
   | { type: "rich-text"; required: boolean };
 
@@ -224,6 +229,57 @@ In practice these are host-local React components resolved inside the embedding 
 URL intent is not a widget override. It is carried on extracted string props as
 `format: "url"` and maps to a URL input with validation in the auto-generated
 form contract.
+
+#### Built-In MDX Components
+
+MDCMS provides a small set of built-in MDX components for AI-authored and
+manual MDX composition. These components are part of the local MDX catalog even
+when the host app does not declare them in `mdcms.config.ts`:
+
+- `Box` renders a `div` and accepts `style?: MdcmsInlineStyle` and `children`.
+- `Text` renders a `span` and accepts `style?: MdcmsInlineStyle` and
+  `children`.
+- `Image` renders an `img` and accepts required `src`, required `alt`, and
+  optional `style?: MdcmsInlineStyle`.
+- `Link` renders an `a` and accepts required `href`, optional
+  `style?: MdcmsInlineStyle`, and `children`.
+
+Built-ins are catalog entries with `builtIn: true`. This flag is provenance and
+Studio discoverability metadata only: parsing, serialization, preview
+rendering, AI validation, and production rendering treat built-ins and
+host-registered components through the same component-name and prop-schema
+contracts.
+
+Built-in names are reserved. Host config preparation must fail with a
+deterministic error when `config.components` declares `Box`, `Text`, `Image`, or
+`Link`. Host components can support inline styling only by exposing their own
+`style` prop in the extracted catalog; built-in support does not imply a
+universal wrapper or style injection layer for host components.
+
+Raw lowercase MDX/HTML elements such as `<div>`, `<form>`, `<label>`,
+`<input>`, and `<button>` remain valid advanced MDX authoring syntax. They are
+not catalog components and are not shown as first-class visual composition
+blocks. Studio preserves them as raw MDX islands, renders an inert preview where
+possible, and serializes them back to their original MDX source. Built-ins are
+therefore the supported visual-editing primitives, not the only HTML that can
+exist in a document.
+
+The legacy `/` slash menu lists only host-registered components and is
+positioned inline near the active cursor. Built-ins remain hidden from that
+legacy insertion surface, but manual MDX editing, AI proposals, and the
+dedicated visual composition UI may use them. The editor toolbar's Insert
+Component control opens and closes the docked visual composition palette rather
+than rendering a second top-docked picker. The visual composition palette is
+the first Studio-owned insertion surface that intentionally exposes built-ins.
+
+Built-in React source lives in an internal private workspace package and is
+bundled into published consumers. App authors do not install that workspace
+package directly. Public application code may import built-ins from the SDK's
+browser-safe React primitive subpath:
+
+```typescript
+import { Box, Text, Image, Link } from "@mdcms/sdk/react-primitives";
+```
 
 The embedded Studio runtime never performs TypeScript analysis in the browser.
 When auto-generated props editing is needed, the host app prepares the local MDX
@@ -290,6 +346,8 @@ Extraction is deterministic and fail-closed:
 - A prop may normalize to `type: 'json'` only when the developer explicitly
   opts that prop into the `json` widget hint and the declared TypeScript shape
   is JSON-serializable.
+- A prop may normalize to `type: 'style'` only when it is a React inline style
+  object shape that can be represented as `MdcmsInlineStyle`.
 - A string prop may additionally carry `format: 'url'` when `propHints.<propName>.format = 'url'`; this maps to a URL input with validation and is not a widget.
 - `children` and props typed as `ReactNode` normalize to `type: 'rich-text'`.
 - A prop is omitted from `extractedProps` when it cannot be normalized
@@ -304,6 +362,8 @@ extracted schema:
 - React elements/components other than `children` / `ReactNode`
 - object, record, map, set, tuple, and class-instance shapes without an
   explicit `json` hint
+- CSS rule objects, responsive style objects, pseudo-state styles, functions,
+  arrays, and nested style values
 - mixed or non-literal unions, intersections, unresolved generics, and arrays
   of unsupported item types
 - any shape that is not JSON-serializable or cannot be normalized
@@ -325,6 +385,7 @@ Auto-detected prop types map to form controls as follows:
 | `number[]`                                 | Repeatable number input   | Add/remove number values |
 | `Date`                                     | Date picker               |                          |
 | `string` with `format: "url"`              | URL input with validation | Not a widget             |
+| `MdcmsInlineStyle`                         | Style editor              | Flat inline style only   |
 | `ReactNode` / `children`                   | Nested rich text editor   | See §18.5                |
 | Function types                             | **Hidden**                | Not CMS-editable         |
 | Ref types                                  | **Hidden**                | Not CMS-editable         |
@@ -386,6 +447,8 @@ Widget validation rules:
 - `hidden` is valid for any prop and suppresses that prop from the CMS form.
 - `json` is valid only for JSON-serializable props and does not make function,
   ref, or other non-serializable shapes editable.
+- `style` props do not support widget overrides in this phase. They remain
+  flat inline style objects with string or number values.
 
 ### Custom Props Editors
 
@@ -471,11 +534,174 @@ Components that accept `children` (content between opening and closing tags) are
 </Callout>
 ```
 
-In the editor, the children area is a **nested TipTap rich text editor** within the component's node view. This means content editors can use full markdown formatting (bold, links, lists, etc.) inside component blocks, and it participates in the Yjs collaboration session.
+MDX children are nested document content. Markdown block syntax and nested MDX
+components are valid inside wrapper component children when written as normal
+MDX:
+
+```mdx
+<Box style={{"padding":"24px"}}>
+  ## Heading
+
+  <Text style={{"fontWeight":600}}>
+    [Styled link](/pricing)
+  </Text>
+</Box>
+```
+
+In the current editor, the children area is a nested TipTap rich text surface
+within the component's node view. This means content editors can use full
+markdown formatting (bold, links, lists, etc.) inside component blocks.
+Dedicated visual composition controls can insert, move, wrap, unwrap,
+duplicate, delete, and style valid child nodes inside compatible wrapper
+components. AI proposals and manual MDX editing use the same persisted MDX
+shape and the same validation rules.
+
+When wrapper children contain raw lowercase MDX/HTML, Studio keeps that raw
+subtree as a selectable, non-inline-editable island inside the child surface.
+The island may be deleted, moved, or replaced as a block, but its internal HTML
+is edited through Markdown/MDX source editing rather than through the visual
+component controls. This preserves parity with SDK/public rendering without
+turning arbitrary HTML into Studio-owned components.
 
 Wrapper component chrome and the props panel must make this distinction clear:
 top-level props remain in the side panel, while nested markdown content is
 edited directly inside the component block in the canvas.
+
+### Visual Composition UI
+
+Studio provides a desktop visual composition surface for MDX documents. It is a
+document-flow builder layered over the TipTap document model, not a freeform
+absolute-positioning canvas. Drag/drop changes the normal Markdown/MDX document
+tree order and never persists layout coordinates.
+
+The visual composition surface has three regions:
+
+1. A collapsible left block palette on desktop, hidden by default and toggled
+   by the editor toolbar's Insert Component control.
+2. The central editor canvas with selection chrome, drag handles, contextual
+   drop targets, and host-rendered component previews where available.
+3. The selected-block inspector in the document sidebar.
+
+The palette exposes atomic blocks/components only:
+
+- Text: paragraph, heading, list, quote.
+- Layout: `Box`.
+- Media: `Image`.
+- Actions: `Link`.
+- Components: host-registered MDX components.
+
+The palette may expose search/filtering by block name, description, and
+category. It uses editor-facing categories; provenance such as Markdown,
+built-in, or host component is secondary metadata. Saved compositions,
+templates, named slots, responsive variants, touch drag/drop, and keyboard
+reorder/nesting parity are deferred.
+
+All document blocks participate in document-flow drag/drop:
+
+- markdown headings
+- paragraphs
+- lists
+- blockquotes
+- MDX component blocks
+- built-in MDX components
+- host-registered MDX components
+
+Visible drop targets are always valid. Studio must not render invalid parent,
+child, or sibling drop targets. Before/after drop targets appear for valid
+sibling positions. Inside drop targets appear only for wrapper components that
+expose `children` as a `rich-text` prop. Any wrapper component with rich-text
+`children` can receive child drops; this is not limited to `Box`. V1 supports
+only the default `children` zone. Host wrapper components receive one default
+child-drop overlay over the component body/children area; hosts do not need to
+map exact internal DOM slots.
+
+`Text` and `Link` are inline editing surfaces. They accept text and inline
+formatting edits but must not expose structural block drop targets for
+headings, lists, boxes, images, or other block-level content.
+
+Normal editing flows should avoid creating invalid nodes. Dragging a palette
+block with required props opens an insertion configuration surface before
+committing the node. The node is inserted only after required props are valid.
+Canceling leaves the document unchanged. Blocks/components with safe defaults
+insert immediately. If a component provides a custom props editor, the
+insertion surface uses that editor; otherwise it uses the generated prop form
+from catalog metadata.
+
+Selected blocks expose contextual chrome. Single click selects a block and
+double click edits text/content inside it. Dense text blocks show a left-gutter
+drag handle on hover or selection. The selected/hover toolbar includes drag,
+add before, add after, add inside when valid, duplicate, delete, wrap in `Box`,
+and unwrap. It does not expose separate move up/down arrow actions; document
+flow reordering is handled through drag/drop. Invalid actions are hidden, not
+disabled. Duplicate creates an exact copy of the selected block subtree. Delete
+is immediate and relies on the editor undo/redo stack for recovery. Unwrap
+applies to any wrapper component with children and lifts those children into the
+wrapper's parent.
+
+Visual composition edits participate in the same draft-editing lifecycle as
+normal body text edits. Drag, drop, reorder, prop edits, style edits, text
+edits, duplicate, delete, wrap, and unwrap update local editor state, mark the
+draft dirty, serialize through the same Markdown/MDX pipeline, and persist
+through the same draft save action. They also participate in the normal editor
+undo/redo stack. Studio must not introduce a separate autosave or
+composition-specific persistence mechanism.
+
+The visual canvas is an editor surface, not an exact public-page preview. It
+may add selection outlines, artificial spacing, handles, labels, and drop
+zones. Exact public rendering remains the responsibility of preview routes or
+dedicated preview surfaces. Valid components use host-rendered previews when
+possible. Studio-owned fallback shells handle loading, invalid content,
+unsupported MDX, and preview render errors while keeping the block selectable.
+
+AI proposals remain a separate chat/proposal flow. Visual editing does not
+dismiss, auto-reject, or rebase open AI proposals. If local edits happen while
+proposals are visible, Studio may show a stale-risk indicator, but apply-time
+proposal validation remains authoritative. Proposal previews are read-only;
+accepted proposal content becomes normal document content and can then be
+edited visually.
+
+Invalid or unsupported MDX should be virtually unreachable in normal editing:
+AI apply, CLI push, manual Markdown validation, and visual insertion flows all
+reject invalid component names, props, and child placement before persistence.
+If invalid or unsupported content appears anyway, Studio must keep it visible
+as a selectable fallback block with warning chrome, partial preview when
+possible, and repair guidance. Studio must not hide unsupported content or
+silently normalize risky MDX.
+
+#### Visual Style Editing
+
+Visual style editing persists to the existing first-class flat inline `style`
+prop. Studio does not introduce design tokens, generated CSS, selector-based
+overrides, `className`, responsive styles, pseudo-state styles, hover/focus
+styles, or JavaScript props in document content.
+
+Style controls are available for built-ins that support `style` and for
+host-registered components whose extracted prop metadata exposes a `style`
+prop. Components without a `style` prop do not receive universal style
+injection.
+
+The selected-block inspector groups visual style controls as:
+
+- Spacing: `padding`, individual padding sides, `margin`, individual margin
+  sides, and `gap` where valid.
+- Color: `color`, `backgroundColor`, swatches/color inputs, and raw value
+  entry.
+- Typography: `fontSize`, `fontWeight`, `lineHeight`, and `textAlign`.
+- Layout: base flex/grid controls.
+- Advanced style object: flat string/number style keys not covered by visual
+  controls.
+
+Layout controls edit base inline flex/grid keys only: `display`,
+`flexDirection`, `alignItems`, `justifyContent`, `gap`, `flexWrap`,
+`gridTemplateColumns`, `gridTemplateRows`, `gridAutoFlow`, `columnGap`, and
+`rowGap`. The primary layout mode control presents `block`, `row`, `column`,
+and `grid` as editor-facing options. `row` and `column` are convenience modes
+for `display: flex` with `flexDirection: row` or `flexDirection: column`; the
+inspector does not expose a separate flex-direction row when those modes are
+available.
+
+The advanced style object editor must preserve unknown-but-valid flat style
+keys. Changing one visual style control must not drop unrelated keys.
 
 ### Editor Integration (Node Views)
 
@@ -502,14 +728,21 @@ All registered MDX components share this single node type, differentiated by the
 
 **Insertion:**
 
-1. User opens the component insertion panel (toolbar button or `/` slash command).
-2. Panel lists all registered components from the local catalog with names and descriptions. When opened from `/`, the picker is positioned inline near the active cursor location instead of docking at the top of the editor.
+1. User opens an insertion surface: the toolbar Insert Component control toggles the docked visual composition palette, while `/` opens the inline component picker near the active cursor location.
+2. The inline picker lists host-registered components from the local catalog with names and descriptions; the docked visual composition palette lists Markdown blocks, built-ins, and host-registered components according to the visual composition rules above.
 3. User selects a component.
 4. The component is inserted into the document as a node view block.
 5. Props form appears (auto-generated or custom editor) for initial configuration.
 
 **Inline preview:**
 Since the Studio is embedded in the user's app, the **actual React component** is rendered inside the node view using the current prop values. This resolution happens locally in the host app context, so content editors see exactly what the component will look like on the live site.
+
+For void components, the entire rendered preview is non-editable chrome.
+For wrapper components, only the nested `children` slot is editable document
+content. Host-rendered DOM outside that slot, including headings, labels, links,
+cards, or other output derived from props/source code, must not accept a caret or
+text input. Clicking that DOM selects the component node so editors can update
+the component through its props panel.
 
 **Editing props:**
 
@@ -520,6 +753,10 @@ Since the Studio is embedded in the user's app, the **actual React component** i
   editor lifecycle above or the auto-generated/widget-override controls for
   that node; any accepted prop change updates node attrs immediately and
   re-renders the inline preview from the same local document state.
+- Component node-view chrome actions do not steal editor focus on mouse down.
+  Document-mutating component actions such as duplicate, wrap, unwrap, and
+  delete leave focus with the editor after the transaction so keyboard
+  shortcuts like undo and redo apply immediately.
 
 **Collapse / expand:**
 

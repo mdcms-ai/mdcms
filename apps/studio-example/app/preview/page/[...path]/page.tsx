@@ -1,6 +1,11 @@
 import { fetchPreviewPageByPath } from "../../../../lib/preview-content";
 import { PreviewDocumentView } from "../../preview-document-view";
 
+export const metadata = {
+  title: "Page Preview | MDCMS Demo",
+  description: "Preview a draft MDCMS page rendered through the SDK.",
+};
+
 type PagePreviewPageProps = {
   params: Promise<{
     path: string[];

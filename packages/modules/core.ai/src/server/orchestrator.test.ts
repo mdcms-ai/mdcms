@@ -1,19 +1,28 @@
 import assert from "node:assert/strict";
 import { describe, test } from "bun:test";
 
+import type {
+  LanguageModelV3StreamPart,
+  LanguageModelV3Usage,
+} from "@ai-sdk/provider";
 import { RuntimeError } from "@mdcms/shared";
+import { APICallError } from "ai";
+import { MockLanguageModelV3 } from "ai/test";
 
 import {
+  type AiChatStreamEvent,
   createAiOrchestrator,
   getOrchestratorFailureAudit,
   getOrchestratorFailureRuntimeError,
   OrchestratorFailure,
   type AiOrchestrationInput,
 } from "./orchestrator.js";
+import type { AiProvider } from "./provider.js";
 import {
   createEchoAiProvider,
   ECHO_PROVIDER_DEFAULT_MODEL,
   ECHO_PROVIDER_ID,
+  type EchoStepResponse,
 } from "./providers/echo.js";
 import { createNullAiProvider } from "./providers/null.js";
 
@@ -45,6 +54,40 @@ const idFactory = () => {
 
 function resetIds(): void {
   nextProposalId = 0;
+}
+
+function createStreamErrorAiProvider(error: unknown): AiProvider {
+  const usage: LanguageModelV3Usage = {
+    inputTokens: {
+      total: 0,
+      noCache: 0,
+      cacheRead: undefined,
+      cacheWrite: undefined,
+    },
+    outputTokens: { total: 0, text: 0, reasoning: undefined },
+  };
+  return {
+    id: ECHO_PROVIDER_ID,
+    languageModel: new MockLanguageModelV3({
+      provider: ECHO_PROVIDER_ID,
+      modelId: ECHO_PROVIDER_DEFAULT_MODEL,
+      doGenerate: async () => ({
+        content: [],
+        finishReason: { unified: "stop", raw: "stop" },
+        usage,
+        warnings: [],
+      }),
+      doStream: async () => ({
+        stream: new ReadableStream<LanguageModelV3StreamPart>({
+          start(controller) {
+            controller.enqueue({ type: "stream-start", warnings: [] });
+            controller.enqueue({ type: "error", error });
+            controller.close();
+          },
+        }),
+      }),
+    }),
+  };
 }
 
 function buildEchoOutput(): string {
@@ -291,6 +334,209 @@ describe("createAiOrchestrator", () => {
         return true;
       },
     );
+  });
+
+  test("chat replacement proposals retry once when source text is missing from the active draft", async () => {
+    resetIds();
+    const steps: EchoStepResponse[] = [
+      {
+        type: "tool-calls",
+        calls: [
+          {
+            toolName: "propose_replace_document_text",
+            input: JSON.stringify({
+              summary: "Replace contact block",
+              originalText: "## Contact us\n\nMissing text",
+              replacementText: "## Contact us\n\nUpdated text",
+            }),
+          },
+        ],
+      },
+      {
+        type: "tool-calls",
+        calls: [
+          {
+            toolName: "propose_replace_document_text",
+            input: JSON.stringify({
+              summary: "Replace contact block",
+              originalText: "## Contact us\n\nExisting text",
+              replacementText: "## Contact us\n\nUpdated text",
+            }),
+          },
+        ],
+      },
+      { type: "text", text: "I proposed the replacement." },
+    ];
+    const provider = createEchoAiProvider({ steps });
+    const orchestrator = createAiOrchestrator({
+      provider,
+      clock: fixedClock,
+      idFactory,
+    });
+
+    const result = await orchestrator.runChat({
+      message: "Update the contact section",
+      project: "demo",
+      environment: "draft",
+      activeDocument: {
+        documentId: "doc_1",
+        path: "content/pages/about",
+        type: "page",
+        locale: "en",
+        draftRevision: 4,
+        body: "## Contact us\n\nExisting text",
+        frontmatter: {},
+        hasPublishedVersion: false,
+      },
+      capabilities: {
+        canEditDocument: true,
+        canCreateDocument: false,
+        canDeleteDocument: false,
+        canReadEntries: false,
+      },
+    });
+
+    assert.equal(result.proposals.length, 1);
+    const proposal = result.proposals[0]!;
+    assert.equal(proposal.kind, "replace_selection");
+    assert.equal(proposal.validation.status, "valid");
+    const operation = proposal.operations[0];
+    assert.equal(operation?.op, "replace_selection");
+    if (operation?.op === "replace_selection") {
+      assert.equal(operation.originalText, "## Contact us\n\nExisting text");
+      assert.equal(operation.replacementText, "## Contact us\n\nUpdated text");
+    }
+  });
+
+  test("chat stream emits progress events for model steps and proposal tools", async () => {
+    resetIds();
+    const provider = createEchoAiProvider({
+      steps: [
+        {
+          type: "tool-calls",
+          calls: [
+            {
+              toolName: "propose_replace_document_text",
+              input: JSON.stringify({
+                summary: "Replace contact block",
+                originalText: "## Contact us\n\nExisting text",
+                replacementText: "## Contact us\n\nUpdated text",
+              }),
+            },
+          ],
+        },
+        { type: "text", text: "I proposed the replacement." },
+      ],
+    });
+    const orchestrator = createAiOrchestrator({
+      provider,
+      clock: fixedClock,
+      idFactory,
+    });
+
+    const events = [];
+    for await (const event of orchestrator.runChatStream({
+      message: "Update the contact section",
+      project: "demo",
+      environment: "draft",
+      activeDocument: {
+        documentId: "doc_1",
+        path: "content/pages/about",
+        type: "page",
+        locale: "en",
+        draftRevision: 4,
+        body: "## Contact us\n\nExisting text",
+        frontmatter: {},
+        hasPublishedVersion: false,
+      },
+      capabilities: {
+        canEditDocument: true,
+        canCreateDocument: false,
+        canDeleteDocument: false,
+        canReadEntries: false,
+      },
+    })) {
+      events.push(event);
+    }
+
+    const progress = events.filter((event) => event.type === "progress");
+    assert.ok(
+      progress.some((event) => event.phase === "thinking"),
+      "should surface model-step progress before text/proposals are done",
+    );
+    assert.ok(
+      progress.some(
+        (event) =>
+          event.phase === "tool-call" &&
+          event.toolName === "propose_replace_document_text",
+      ),
+      "should surface proposal tool calls",
+    );
+    assert.ok(
+      progress.some(
+        (event) =>
+          event.phase === "tool-result" &&
+          event.toolName === "propose_replace_document_text" &&
+          event.status === "queued",
+      ),
+      "should surface proposal tool results",
+    );
+    assert.ok(events.some((event) => event.type === "done"));
+  });
+
+  test("chat stream maps model error parts to a terminal error event", async () => {
+    const orchestrator = createAiOrchestrator({
+      provider: createStreamErrorAiProvider(
+        new APICallError({
+          message: "Request too large for model token budget",
+          url: "https://api.example.test/chat",
+          requestBodyValues: {},
+          statusCode: 429,
+          responseBody:
+            '{"error":{"message":"Request too large for model token budget"}}',
+          isRetryable: false,
+        }),
+      ),
+      clock: fixedClock,
+      idFactory,
+    });
+
+    const events: AiChatStreamEvent[] = [];
+    for await (const event of orchestrator.runChatStream({
+      message: "Build a larger section",
+      project: "demo",
+      environment: "draft",
+      activeDocument: {
+        documentId: "doc_1",
+        path: "content/pages/about",
+        type: "page",
+        locale: "en",
+        draftRevision: 4,
+        body: "## Contact us\n\nExisting text",
+        frontmatter: {},
+        hasPublishedVersion: false,
+      },
+      capabilities: {
+        canEditDocument: true,
+        canCreateDocument: false,
+        canDeleteDocument: false,
+        canReadEntries: false,
+      },
+    })) {
+      events.push(event);
+    }
+
+    const errorEvent = events.find((event) => event.type === "error");
+    assert.ok(errorEvent);
+    assert.equal(
+      events.some((event) => event.type === "done"),
+      false,
+      "stream errors must not fall through to a succeeded done event",
+    );
+    assert.equal(errorEvent.audit.outcome, "provider_error");
+    assert.equal(errorEvent.audit.errorCode, "AI_RATE_LIMITED");
+    assert.equal(errorEvent.code, "AI_RATE_LIMITED");
+    assert.match(errorEvent.message, /rate limit/i);
   });
 
   test("seo_improvement task only allows update_frontmatter operations", async () => {

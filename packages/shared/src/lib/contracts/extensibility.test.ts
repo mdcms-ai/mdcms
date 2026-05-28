@@ -4,6 +4,7 @@ import { test } from "bun:test";
 import { RuntimeError } from "../runtime/error.js";
 import {
   assertHostBridgeV1,
+  assertMdcmsInlineStyle,
   assertMdcmsModulePackage,
   assertModuleManifest,
   assertModuleManifestCompatibility,
@@ -552,6 +553,10 @@ test("assertStudioMountContext accepts supported extracted mdx prop shapes", () 
                   type: "json",
                   required: false,
                 },
+                style: {
+                  type: "style",
+                  required: false,
+                },
                 children: {
                   type: "rich-text",
                   required: false,
@@ -564,6 +569,74 @@ test("assertStudioMountContext accepts supported extracted mdx prop shapes", () 
       },
     }),
   );
+});
+
+test("assertStudioMountContext accepts built-in mdx catalog entries", () => {
+  assert.doesNotThrow(() =>
+    assertStudioMountContext({
+      apiBaseUrl: "http://localhost:4000",
+      basePath: "/admin",
+      auth: { mode: "cookie" },
+      hostBridge: validHostBridge,
+      mdx: {
+        catalog: {
+          components: [
+            {
+              name: "Box",
+              importPath: "@mdcms/sdk/react-primitives",
+              builtIn: true,
+              extractedProps: {
+                style: {
+                  type: "style",
+                  required: false,
+                },
+              },
+            },
+          ],
+        },
+        resolvePropsEditor: async () => null,
+      },
+    }),
+  );
+});
+
+test("assertMdcmsInlineStyle accepts flat string and number values", () => {
+  assert.doesNotThrow(() =>
+    assertMdcmsInlineStyle({
+      padding: "24px",
+      opacity: 0.8,
+      zIndex: 2,
+    }),
+  );
+});
+
+test("assertMdcmsInlineStyle rejects non-flat style values", () => {
+  assert.throws(
+    () =>
+      assertMdcmsInlineStyle({
+        padding: "24px",
+        hover: { color: "red" },
+      }),
+    /hover/,
+  );
+
+  assert.throws(
+    () =>
+      assertMdcmsInlineStyle({
+        margin: ["1rem"],
+      }),
+    /margin/,
+  );
+
+  assert.throws(
+    () =>
+      assertMdcmsInlineStyle({
+        transform: () => "scale(1)",
+      }),
+    /transform/,
+  );
+
+  assert.throws(() => assertMdcmsInlineStyle("padding: 24px;"), /inlineStyle/);
 });
 
 test("assertStudioMountContext rejects invalid extracted mdx prop shapes", () => {
@@ -738,6 +811,58 @@ test("assertStudioMountContext rejects invalid extracted mdx prop shapes", () =>
         },
       }),
     /unknown field\(s\): extra/,
+  );
+
+  assert.throws(
+    () =>
+      assertStudioMountContext({
+        apiBaseUrl: "http://localhost:4000",
+        basePath: "/admin",
+        auth: { mode: "cookie" },
+        hostBridge: validHostBridge,
+        mdx: {
+          catalog: {
+            components: [
+              {
+                name: "Box",
+                importPath: "@mdcms/sdk/react-primitives",
+                builtIn: false,
+              },
+            ],
+          },
+          resolvePropsEditor: async () => null,
+        },
+      }),
+    /builtIn/,
+  );
+
+  assert.throws(
+    () =>
+      assertStudioMountContext({
+        apiBaseUrl: "http://localhost:4000",
+        basePath: "/admin",
+        auth: { mode: "cookie" },
+        hostBridge: validHostBridge,
+        mdx: {
+          catalog: {
+            components: [
+              {
+                name: "Box",
+                importPath: "@mdcms/sdk/react-primitives",
+                extractedProps: {
+                  style: {
+                    type: "style",
+                    required: false,
+                    values: {},
+                  },
+                },
+              },
+            ],
+          },
+          resolvePropsEditor: async () => null,
+        },
+      }),
+    /unknown field\(s\): values/,
   );
 
   assert.throws(

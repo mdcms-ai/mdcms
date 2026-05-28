@@ -141,6 +141,7 @@ function ToastItem({
       <Icon className="size-4 shrink-0" />
       <p className="text-sm flex-1">{toast.message}</p>
       <button
+        type="button"
         onClick={() => onDismiss(toast.id)}
         className="shrink-0 opacity-50 hover:opacity-100"
         aria-label="Dismiss"

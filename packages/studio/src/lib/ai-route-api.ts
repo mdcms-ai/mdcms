@@ -1,5 +1,6 @@
 import {
   RuntimeError,
+  type AiComponentReference,
   type ContentDocumentResponse,
   type MdxComponentCatalog,
 } from "@mdcms/shared";
@@ -217,6 +218,7 @@ export type StudioAiChatMessageRequest = {
   rejectionFeedback?: string;
   allowedActions?: StudioAiChatAllowedAction[];
   mdxCatalog?: MdxComponentCatalog;
+  componentReferences?: AiComponentReference[];
   /**
    * Prior conversation turns from the same thread, oldest first. The
    * server is stateless per request — the client owns conversation
@@ -242,6 +244,25 @@ export type StudioAiChatMessageResult = {
   proposals?: StudioAiProposal[];
 };
 
+export type StudioAiChatProgressEvent = {
+  type: "progress";
+  phase:
+    | "thinking"
+    | "tool-call"
+    | "tool-result"
+    | "tool-error"
+    | "step-finished";
+  message: string;
+  toolCallId?: string;
+  toolName?: string;
+  status?: "started" | "completed" | "queued" | "rejected" | "failed";
+  usage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+  };
+};
+
 /**
  * Wire-shape of a Server-Sent Event emitted by the chat stream
  * endpoint. The client accumulates `text-delta` events into the
@@ -249,6 +270,7 @@ export type StudioAiChatMessageResult = {
  * (or renders a turn-level error on `error`).
  */
 export type StudioAiChatStreamEvent =
+  | StudioAiChatProgressEvent
   | { type: "text-delta"; text: string }
   | {
       type: "done";
@@ -615,6 +637,12 @@ export function createStudioAiRouteApi(
       if (input.mdxCatalog !== undefined) {
         body.mdxCatalog = input.mdxCatalog;
       }
+      if (
+        input.componentReferences !== undefined &&
+        input.componentReferences.length > 0
+      ) {
+        body.componentReferences = input.componentReferences;
+      }
       if (input.conversationHistory && input.conversationHistory.length > 0) {
         body.conversationHistory = input.conversationHistory;
       }
@@ -672,6 +700,12 @@ export function createStudioAiRouteApi(
       if (input.mdxCatalog !== undefined) {
         body.mdxCatalog = input.mdxCatalog;
       }
+      if (
+        input.componentReferences !== undefined &&
+        input.componentReferences.length > 0
+      ) {
+        body.componentReferences = input.componentReferences;
+      }
       if (input.conversationHistory && input.conversationHistory.length > 0) {
         body.conversationHistory = input.conversationHistory;
       }
@@ -712,6 +746,7 @@ export function createStudioAiRouteApi(
       let buffer = "";
       try {
         while (true) {
+          // react-doctor-disable-next-line react-doctor/async-await-in-loop -- stream chunks must be read in order from a single reader.
           const { done, value } = await reader.read();
           if (done) break;
           buffer += decoder.decode(value, { stream: true });

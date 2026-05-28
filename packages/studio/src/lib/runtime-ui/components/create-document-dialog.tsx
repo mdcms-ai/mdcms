@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import {
   Dialog,
   DialogContent,
@@ -40,8 +40,11 @@ function slugify(value: string): string {
     .replace(/^-|-$/g, "");
 }
 
-export function CreateDocumentDialog({
-  isOpen,
+function resolveDirectoryPrefix(typeDirectory: string): string {
+  return typeDirectory.endsWith("/") ? typeDirectory : `${typeDirectory}/`;
+}
+
+function CreateDocumentForm({
   isSubmitting,
   error,
   typeDirectory,
@@ -49,33 +52,12 @@ export function CreateDocumentDialog({
   locales,
   onClose,
   onSubmit,
-}: CreateDocumentDialogProps) {
-  const prefix = useMemo(
-    () => (typeDirectory.endsWith("/") ? typeDirectory : `${typeDirectory}/`),
-    [typeDirectory],
-  );
+}: Omit<CreateDocumentDialogProps, "isOpen">) {
+  const prefix = resolveDirectoryPrefix(typeDirectory);
   const [title, setTitle] = useState("");
-  const [pathEdited, setPathEdited] = useState(false);
   const [path, setPath] = useState(prefix);
   const [locale, setLocale] = useState<string | undefined>(locales?.[0]);
-
-  useEffect(() => {
-    if (isOpen) {
-      setTitle("");
-      setPath(prefix);
-      setPathEdited(false);
-      setLocale(locales?.[0]);
-    }
-  }, [isOpen, prefix, locales]);
-
-  // Auto-derive path from title unless user manually edited it
-  useEffect(() => {
-    if (!pathEdited && title) {
-      setPath(`${prefix}${slugify(title)}`);
-    } else if (!pathEdited && !title) {
-      setPath(prefix);
-    }
-  }, [title, prefix, pathEdited]);
+  const pathEditedRef = useRef(false);
 
   const hasPrefix = path.startsWith(prefix);
   const slug = hasPrefix ? path.slice(prefix.length) : "";
@@ -88,7 +70,19 @@ export function CreateDocumentDialog({
     !isSubmitting &&
     (!needsLocale || !!locale);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleTitleChange = (value: string) => {
+    setTitle(value);
+    if (!pathEditedRef.current) {
+      setPath(value ? `${prefix}${slugify(value)}` : prefix);
+    }
+  };
+
+  const handlePathChange = (value: string) => {
+    pathEditedRef.current = true;
+    setPath(value);
+  };
+
+  const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     if (!canSubmit) return;
     onSubmit({
@@ -99,90 +93,112 @@ export function CreateDocumentDialog({
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent>
-        <form onSubmit={handleSubmit}>
-          <DialogHeader>
-            <DialogTitle>New Document</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="doc-title">Title</Label>
-              <Input
-                id="doc-title"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="My new document"
-                disabled={isSubmitting}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="doc-path">
-                Path
-                <span className="ml-1 text-xs text-foreground-muted font-normal">
-                  (auto-generated)
-                </span>
-              </Label>
-              <Input
-                id="doc-path"
-                value={path}
-                onChange={(e) => {
-                  setPath(e.target.value);
-                  setPathEdited(true);
-                }}
-                placeholder={`${prefix}my-document`}
-                disabled={isSubmitting}
-              />
-              {!hasValidSlug && path.length > 0 && (
-                <p className="text-xs text-foreground-muted">
-                  {!hasPrefix
-                    ? `Path must start with "${prefix}".`
-                    : "Path needs a document name after the directory prefix."}
-                </p>
-              )}
-            </div>
-            {localized && locales && locales.length > 0 && (
-              <div className="space-y-2">
-                <Label htmlFor="doc-locale">Locale</Label>
-                <Select
-                  value={locale}
-                  onValueChange={setLocale}
-                  disabled={isSubmitting}
-                >
-                  <SelectTrigger id="doc-locale">
-                    <SelectValue placeholder="Select locale" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {locales.map((loc) => (
-                      <SelectItem key={loc} value={loc}>
-                        {loc}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-            {error && <p className="text-sm text-destructive">{error}</p>}
-          </div>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={onClose}
+    <DialogContent>
+      <form onSubmit={handleSubmit}>
+        <DialogHeader>
+          <DialogTitle>New Document</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 py-4">
+          <div className="space-y-2">
+            <Label htmlFor="doc-title">Title</Label>
+            <Input
+              id="doc-title"
+              value={title}
+              onChange={(e) => handleTitleChange(e.target.value)}
+              placeholder="My new document"
               disabled={isSubmitting}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              className="bg-primary hover:bg-primary/90 text-primary-foreground"
-              disabled={!canSubmit}
-            >
-              {isSubmitting ? "Creating..." : "Create"}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="doc-path">
+              Path
+              <span className="ml-1 text-xs text-foreground-muted font-normal">
+                (auto-generated)
+              </span>
+            </Label>
+            <Input
+              id="doc-path"
+              value={path}
+              onChange={(e) => handlePathChange(e.target.value)}
+              placeholder={`${prefix}my-document`}
+              disabled={isSubmitting}
+            />
+            {!hasValidSlug && path.length > 0 && (
+              <p className="text-xs text-foreground-muted">
+                {!hasPrefix
+                  ? `Path must start with "${prefix}".`
+                  : "Path needs a document name after the directory prefix."}
+              </p>
+            )}
+          </div>
+          {localized && locales && locales.length > 0 && (
+            <div className="space-y-2">
+              <Label htmlFor="doc-locale">Locale</Label>
+              <Select
+                value={locale}
+                onValueChange={setLocale}
+                disabled={isSubmitting}
+              >
+                <SelectTrigger id="doc-locale">
+                  <SelectValue placeholder="Select locale" />
+                </SelectTrigger>
+                <SelectContent>
+                  {locales.map((loc) => (
+                    <SelectItem key={loc} value={loc}>
+                      {loc}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          {error && <p className="text-sm text-destructive">{error}</p>}
+        </div>
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={onClose}
+            disabled={isSubmitting}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            className="bg-primary hover:bg-primary/90 text-primary-foreground"
+            disabled={!canSubmit}
+          >
+            {isSubmitting ? "Creating..." : "Create"}
+          </Button>
+        </DialogFooter>
+      </form>
+    </DialogContent>
+  );
+}
+
+export function CreateDocumentDialog({
+  isOpen,
+  isSubmitting,
+  error,
+  typeDirectory,
+  localized,
+  locales,
+  onClose,
+  onSubmit,
+}: CreateDocumentDialogProps) {
+  return (
+    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+      {isOpen ? (
+        <CreateDocumentForm
+          error={error}
+          isSubmitting={isSubmitting}
+          localized={localized}
+          locales={locales}
+          onClose={onClose}
+          onSubmit={onSubmit}
+          typeDirectory={typeDirectory}
+        />
+      ) : null}
     </Dialog>
   );
 }

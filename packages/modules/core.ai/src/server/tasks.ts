@@ -254,8 +254,16 @@ function escapePromptAttribute(value: string): string {
   return escapePromptText(value).replace(/"/g, "&quot;");
 }
 
+function cdataContent(value: string): string {
+  return value.replace(/]]>/g, "]]]]><![CDATA[>");
+}
+
 function xmlBlock(tagName: string, content: string): string {
   return `<${tagName}>\n${content}\n</${tagName}>`;
+}
+
+function xmlCdataBlock(tagName: string, content: string): string {
+  return `<${tagName}>\n<![CDATA[\n${cdataContent(content)}\n]]>\n</${tagName}>`;
 }
 
 function xmlLine(tagName: string, content: string): string {
@@ -529,6 +537,7 @@ export function buildChatSystemPrompt(input: {
     "Decide what the user wants and act:",
     "- If they want a content change, call the matching tool (one tool per change, multiple tools allowed per turn).",
     "- If they're chatting or asking a question, just reply in text. Never call a tool the user didn't ask for.",
+    "- If a proposal tool returns `rejected: true` with `retryable: true`, correct the tool arguments and call the proposal tool once more. If it returns `retryable: false`, stop calling proposal tools for that change and explain the validation failure briefly.",
   ].join("\n");
   const availableTools =
     input.registeredToolNames.length > 0
@@ -639,7 +648,14 @@ export function buildChatSystemPrompt(input: {
     "The server does not expose tools for these. They are out of scope for the assistant entirely, regardless of role:",
     "- Publishing or unpublishing drafts.",
     "- Schema, role/permission, environment, project, or provider changes.",
-    "- Unbounded autonomous crawling of the document library. Use `find_entries` and `get_entry` only when the user's request needs a specific lookup, duplicate check, reference resolution, or referenced-document read.",
+    "- Unbounded autonomous crawling of the document library. Use `find_entries`, `get_entry`, and `get_component_reference` only when the user's request needs a specific lookup, duplicate check, reference resolution, referenced-document read, or component design reference.",
+  ].join("\n");
+
+  const visualDesignGuidance = [
+    "When proposing UI-like MDX (sections, heroes, cards, forms, calls to action, or component-heavy blocks), preserve the host site's existing visual language unless the user explicitly asks for a new direction.",
+    "Use registered catalog components and built-ins as the default building blocks for visually editable composition.",
+    "If `get_component_reference` is listed in available tools and the user names, implies, or asks to match an existing component, call it before proposing so the result follows the existing aesthetic.",
+    "Do not invent a one-off visual system when the active document, catalog, or component references already show the site's style.",
   ].join("\n");
 
   const responseStyle =
@@ -656,6 +672,7 @@ export function buildChatSystemPrompt(input: {
     ),
     xmlBlock("available_tools", availableTools),
     xmlBlock("action_availability", actionAvailability),
+    xmlBlock("visual_design_guidance", visualDesignGuidance),
     xmlBlock("hard_limits", hardLimits),
     xmlBlock("response_style", responseStyle),
   ].join("\n\n");
@@ -694,16 +711,14 @@ export function buildChatUserPrompt(input: {
       );
     }
     if (input.activeDocument.body) {
-      documentLines.push(
-        xmlBlock("body", escapePromptText(input.activeDocument.body)),
-      );
+      documentLines.push(xmlCdataBlock("body", input.activeDocument.body));
     }
     sections.push(xmlBlock("active_document", documentLines.join("\n")));
   }
 
   if (input.attachedSelection) {
     sections.push(
-      `<selection selectionId="${escapePromptAttribute(input.attachedSelection.selectionId)}">\n${escapePromptText(input.attachedSelection.text)}\n</selection>`,
+      `<selection selectionId="${escapePromptAttribute(input.attachedSelection.selectionId)}">\n<![CDATA[\n${cdataContent(input.attachedSelection.text)}\n]]>\n</selection>`,
     );
   }
 

@@ -55,4 +55,41 @@ export const studioExampleMdxComponents = [
         (module) => module.default,
       ),
   },
+  {
+    name: "HomeHero",
+    importPath: "./components/mdx/Homepage",
+    description: "Homepage hero section for the rendered example site.",
+    load: () =>
+      import("../components/mdx/Homepage").then((module) => module.HomeHero),
+  },
+  {
+    name: "HomeSection",
+    importPath: "./components/mdx/Homepage",
+    description: "Homepage content band with heading and nested content.",
+    load: () =>
+      import("../components/mdx/Homepage").then((module) => module.HomeSection),
+  },
+  {
+    name: "HomeFeatureGrid",
+    importPath: "./components/mdx/Homepage",
+    description: "Homepage feature grid wrapper.",
+    load: () =>
+      import("../components/mdx/Homepage").then(
+        (module) => module.HomeFeatureGrid,
+      ),
+  },
+  {
+    name: "HomeFeature",
+    importPath: "./components/mdx/Homepage",
+    description: "Homepage feature card for nested feature grids.",
+    load: () =>
+      import("../components/mdx/Homepage").then((module) => module.HomeFeature),
+  },
+  {
+    name: "HomeCta",
+    importPath: "./components/mdx/Homepage",
+    description: "Homepage call-to-action band.",
+    load: () =>
+      import("../components/mdx/Homepage").then((module) => module.HomeCta),
+  },
 ] as const;

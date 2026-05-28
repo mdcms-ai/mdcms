@@ -203,6 +203,7 @@ function RejectFeedback({ onCancel, onSend }: RejectFeedbackProps) {
         Rejected: what should change?
       </div>
       <textarea
+        aria-label="Rejection feedback"
         value={feedback}
         onChange={(e) => setFeedback(e.target.value)}
         placeholder="e.g. Keep it under 12 words, no em dashes."
@@ -274,12 +275,7 @@ function CollapseHeader({
   removed: number;
 }) {
   return (
-    <div
-      className={cn(
-        "flex items-center gap-2.5 px-3 py-2 text-left",
-        collapsed ? "pb-2.5" : "pb-1",
-      )}
-    >
+    <div className="flex items-center gap-2.5 px-3 py-2 text-left">
       <ChevronRight
         className={cn(
           "size-3 shrink-0 text-foreground-muted transition-transform",
@@ -660,7 +656,7 @@ export type ProposalCardProps = {
 };
 
 /** 6-second window — Sonia's design + the AI Elements reference both use this. */
-export const UNDO_WINDOW_MS = 6000;
+const UNDO_WINDOW_MS = 6000;
 
 /**
  * Countdown timer that pauses on hover and when the tab is hidden.
@@ -684,6 +680,10 @@ function useUndoCountdown(
   });
   const expiredRef = React.useRef(false);
   const onExpireRef = React.useRef(onExpire);
+  const progressRef = React.useRef(progress);
+  React.useEffect(() => {
+    progressRef.current = progress;
+  }, [progress]);
   React.useEffect(() => {
     onExpireRef.current = onExpire;
   }, [onExpire]);
@@ -706,7 +706,7 @@ function useUndoCountdown(
     if (expiredRef.current) return;
     if (effectivePaused) return;
     const startedAtMs = performance.now();
-    const startProgress = progress;
+    const startProgress = progressRef.current;
     const tick = () => {
       const elapsed = performance.now() - startedAtMs;
       const next = Math.max(0, startProgress - elapsed / durationMs);
@@ -719,10 +719,6 @@ function useUndoCountdown(
     };
     const id = setInterval(tick, 80);
     return () => clearInterval(id);
-    // We intentionally skip `progress` as a dep — re-running on every
-    // tick would keep restarting the timer. `progress` is read once
-    // when this effect mounts; from there the local closure drives it.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [durationMs, effectivePaused]);
 
   return progress;
@@ -756,9 +752,9 @@ export type AppliedBannerProps = {
 };
 
 /**
- * Lime-tinted "Applied" banner with a 6s undo countdown. Renders in
- * place of the full proposal card the moment the apply call
- * succeeds, then morphs to the quiet `AppliedLogLine` when the
+ * Lime-tinted "Applied" banner with a 6s undo countdown. Renders
+ * above the read-only applied-change details the moment the apply
+ * call succeeds, then morphs to the quiet `AppliedLogLine` when the
  * window expires (via `onExpire`). Hover pauses the countdown;
  * clicking Undo fires `onUndo` and dismisses the banner.
  */
@@ -779,19 +775,16 @@ export function AppliedBanner({
   // banner at the top of the stack every render and break LIFO
   // ordering relative to sibling banners).
   const onUndoRef = React.useRef(onUndo);
+  const canRegisterUndo = canUndo && Boolean(onUndo);
   React.useEffect(() => {
     onUndoRef.current = onUndo;
   }, [onUndo]);
   React.useEffect(() => {
-    if (!canUndo || !onUndo) return;
+    if (!canRegisterUndo) return;
     return pushAppliedUndoHandler(() => {
       onUndoRef.current?.();
     });
-    // We intentionally re-register only when the "is undo available"
-    // signal flips, not on every onUndo identity change — the ref
-    // above already keeps the handler current.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canUndo]);
+  }, [canRegisterUndo]);
   // `acceptedAt` is required for this banner to render — the caller
   // gates on it, but TypeScript needs the narrowing here so the hook
   // doesn't see a possibly-undefined value. Pause the countdown
@@ -875,7 +868,8 @@ export function AppliedBanner({
 /**
  * Two-stage post-accept render: `AppliedBanner` (lime tint + countdown)
  * for the 6s undo window, then `AppliedLogLine` for the quiet
- * past-tense history entry. State is local to the component so a
+ * past-tense history entry. Both states keep a read-only expandable
+ * view of the applied change. State is local to the component so a
  * single accepted proposal lives in one DOM subtree that doesn't get
  * remounted as the timer ticks. Page reloads inside the window resume
  * the remaining time correctly; reloads after the window land
@@ -925,40 +919,154 @@ export function AcceptedView({
         Boolean(proposal.priorDraft)),
   );
   if (expired || !acceptedAt) {
-    return <AppliedLogLine proposal={proposal} />;
+    return (
+      <div className="space-y-2">
+        <AppliedLogLine proposal={proposal} />
+        <AppliedHistoryDetails proposal={proposal} />
+      </div>
+    );
   }
   return (
-    <AppliedBanner
-      proposal={proposal}
-      onExpire={() => setExpired(true)}
-      canUndo={canUndo}
-      pending={pending}
-      {...(errorMessage ? { errorMessage } : {})}
-      {...(canUndo && onUndo
-        ? {
-            onUndo: () => {
-              if (pending) return;
-              setPending(true);
-              setErrorMessage(undefined);
-              onUndo().then(
-                () => {
-                  // Success: the reducer's `mark-proposal-undone`
-                  // strips the proposal record and the component
-                  // unmounts. Nothing to do locally — clearing
-                  // state on an about-to-unmount component would
-                  // trigger a stale setState warning.
-                },
-                (error: unknown) => {
-                  const message = extractUndoErrorMessage(error);
-                  setErrorMessage(message);
-                  setPending(false);
-                },
-              );
-            },
-          }
-        : {})}
-    />
+    <div className="space-y-2">
+      <AppliedBanner
+        proposal={proposal}
+        onExpire={() => setExpired(true)}
+        canUndo={canUndo}
+        pending={pending}
+        {...(errorMessage ? { errorMessage } : {})}
+        {...(canUndo && onUndo
+          ? {
+              onUndo: () => {
+                if (pending) return;
+                setPending(true);
+                setErrorMessage(undefined);
+                onUndo().then(
+                  () => {
+                    // Success: the reducer's `mark-proposal-undone`
+                    // strips the proposal record and the component
+                    // unmounts. Nothing to do locally — clearing
+                    // state on an about-to-unmount component would
+                    // trigger a stale setState warning.
+                  },
+                  (error: unknown) => {
+                    const message = extractUndoErrorMessage(error);
+                    setErrorMessage(message);
+                    setPending(false);
+                  },
+                );
+              },
+            }
+          : {})}
+      />
+      <AppliedHistoryDetails proposal={proposal} />
+    </div>
   );
+}
+
+function AppliedHistoryDetails({ proposal }: { proposal: AssistantProposal }) {
+  const stats = inferDiffStats(proposal);
+  return (
+    <details className="group overflow-hidden rounded-md border border-divider/60 bg-background-subtle">
+      <summary className="flex cursor-pointer list-none items-center gap-2.5 px-3 py-2 font-mono text-[11px] text-foreground-muted transition-colors hover:bg-accent-subtle/40 [&::-webkit-details-marker]:hidden">
+        <ChevronRight
+          className="size-3 shrink-0 transition-transform group-open:rotate-90"
+          aria-hidden
+        />
+        <span className="flex-1">View applied change</span>
+        <span className="shrink-0 tabular-nums">
+          <span className="text-success">+{stats.added}</span>{" "}
+          <span className="text-destructive">−{stats.removed}</span>
+        </span>
+      </summary>
+      <div className="border-t border-divider/50 p-3">
+        <AppliedHistoryBody proposal={proposal} />
+      </div>
+    </details>
+  );
+}
+
+function AppliedHistoryBody({ proposal }: { proposal: AssistantProposal }) {
+  if (proposal.kind === "replace_selection") {
+    return (
+      <DiffBody
+        removed={proposal.op.originalText}
+        added={proposal.op.replacementText}
+      />
+    );
+  }
+  if (proposal.kind === "insert_block") {
+    return (
+      <DiffBody
+        added={proposal.op.bodyMdx}
+        emptyLeftLabel="(no existing content — new block)"
+      />
+    );
+  }
+  if (proposal.kind === "create_document") {
+    return (
+      <div className="space-y-2.5">
+        {Object.keys(proposal.op.frontmatter).length > 0 && (
+          <JsonPatchBlock label="frontmatter" value={proposal.op.frontmatter} />
+        )}
+        <DiffBody
+          added={proposal.op.bodyPreview || "(empty body)"}
+          emptyLeftLabel="(no existing content — new document)"
+        />
+      </div>
+    );
+  }
+  if (proposal.kind === "delete_document") {
+    return (
+      <div className="space-y-2.5">
+        <RemovedOnlyBody removed={proposal.docPath} />
+        {proposal.op.reason && (
+          <p className="text-[12px] text-foreground-muted">
+            {proposal.op.reason}
+          </p>
+        )}
+      </div>
+    );
+  }
+  return <JsonPatchBlock label="frontmatter patch" value={proposal.op.patch} />;
+}
+
+function RemovedOnlyBody({ removed }: { removed: string }) {
+  return (
+    <div className="overflow-hidden rounded-md border border-divider/60 bg-background-subtle font-mono text-[12px] leading-snug">
+      <div className="flex gap-2 border-l-2 border-destructive bg-destructive/5 px-2.5 py-1 text-foreground-muted line-through">
+        <span className="w-2.5 shrink-0 text-center text-foreground-muted/80">
+          −
+        </span>
+        <span className="whitespace-pre-wrap">{removed}</span>
+      </div>
+    </div>
+  );
+}
+
+function JsonPatchBlock({ label, value }: { label: string; value: unknown }) {
+  return (
+    <div className="overflow-hidden rounded-md border border-divider/60 bg-background-subtle font-mono text-[12px] leading-snug">
+      <div className="border-b border-divider/40 px-2.5 py-1 text-[10px] uppercase tracking-wider text-foreground-muted">
+        {label}
+      </div>
+      <div className="flex gap-2 border-l-2 border-success bg-success/8 px-2.5 py-1 text-foreground">
+        <span className="w-2.5 shrink-0 text-center text-foreground-muted/80">
+          +
+        </span>
+        <pre className="whitespace-pre-wrap break-words font-mono">
+          {formatJson(value)}
+        </pre>
+      </div>
+    </div>
+  );
+}
+
+function formatJson(value: unknown): string {
+  try {
+    return JSON.stringify(value, null, 2) ?? "null";
+  } catch {
+    return String(value);
+  }
 }
 
 /**
@@ -989,7 +1097,7 @@ function extractUndoErrorMessage(error: unknown): string {
  * the chat rhythm reads as "happening now vs. already history" without
  * the row vanishing. Matches the design's `LoggedLine` shape.
  */
-export function AppliedLogLine({ proposal }: { proposal: AssistantProposal }) {
+function AppliedLogLine({ proposal }: { proposal: AssistantProposal }) {
   const docPath = "docPath" in proposal ? proposal.docPath : undefined;
   const acceptedAt = proposal.acceptedAt
     ? formatLoggedTime(proposal.acceptedAt)

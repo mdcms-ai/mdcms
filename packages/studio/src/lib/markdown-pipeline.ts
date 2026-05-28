@@ -2,6 +2,7 @@ import { RuntimeError } from "@mdcms/shared";
 import { Editor, type JSONContent } from "@tiptap/core";
 
 import { createEditorExtensions } from "./editor-extensions.js";
+import { parseMdxMarkdownToTipTapDocument } from "./mdx-markdown-parser.js";
 
 function createMarkdownEditor(content: string | JSONContent): Editor {
   // TipTap's core editor can parse/serialize markdown in the Bun test runtime,
@@ -57,13 +58,7 @@ export function extractMarkdownFromEditor(editor: Editor): string {
 }
 
 export function parseMarkdownToDocument(markdown: string): JSONContent {
-  const editor = createMarkdownEditor(markdown);
-
-  try {
-    return editor.getJSON();
-  } finally {
-    editor.destroy();
-  }
+  return parseMdxMarkdownToTipTapDocument(markdown);
 }
 
 export function serializeDocumentToMarkdown(document: JSONContent): string {

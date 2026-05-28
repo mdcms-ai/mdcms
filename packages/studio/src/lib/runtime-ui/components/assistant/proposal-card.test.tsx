@@ -3,7 +3,7 @@ import { test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { AppliedBanner } from "./proposal-card.js";
+import { AppliedBanner, ProposalCard } from "./proposal-card.js";
 import type { AssistantProposalEdit } from "./assistant-types.js";
 
 function buildAcceptedEditProposal(
@@ -40,4 +40,49 @@ test("AppliedBanner uses the bright lime token for the check icon", () => {
 
   assert.match(markup, /text-vibrant-green/);
   assert.doesNotMatch(markup, /text-vibrant-green-foreground/);
+});
+
+test("ProposalCard keeps collapse header padding stable when expanded or collapsed", () => {
+  const collapsed = renderToStaticMarkup(
+    createElement(ProposalCard, {
+      proposal: buildAcceptedEditProposal({ acceptedAt: undefined }),
+      defaultCollapsed: true,
+      onAccept: () => {},
+      onReject: () => {},
+    }),
+  );
+  const expanded = renderToStaticMarkup(
+    createElement(ProposalCard, {
+      proposal: buildAcceptedEditProposal({ acceptedAt: undefined }),
+      defaultCollapsed: false,
+      onAccept: () => {},
+      onReject: () => {},
+    }),
+  );
+
+  assert.doesNotMatch(collapsed, /pb-2\.5|pb-1/);
+  assert.doesNotMatch(expanded, /pb-2\.5|pb-1/);
+});
+
+test("ProposalCard keeps accepted proposal details expandable for history", () => {
+  const markup = renderToStaticMarkup(
+    createElement(ProposalCard, {
+      proposal: buildAcceptedEditProposal({
+        diffStats: { added: 1, removed: 1 },
+        op: {
+          op: "replace_selection",
+          selectionId: "sel_1",
+          originalText: "Old homepage copy",
+          replacementText: "New homepage copy",
+        },
+      }),
+      onAccept: () => {},
+      onReject: () => {},
+    }),
+  );
+
+  assert.match(markup, /View applied change/);
+  assert.match(markup, /Old homepage copy/);
+  assert.match(markup, /New homepage copy/);
+  assert.doesNotMatch(markup, />Accept</);
 });

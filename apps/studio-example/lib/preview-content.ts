@@ -93,7 +93,7 @@ export async function fetchPreviewPostBySlug(
   }
 }
 
-export function getPageDocumentPath(pathSegments: string[]): string {
+function getPageDocumentPath(pathSegments: string[]): string {
   return `content/pages/${pathSegments.filter(Boolean).join("/")}`;
 }
 

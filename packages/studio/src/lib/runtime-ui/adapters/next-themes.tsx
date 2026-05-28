@@ -8,9 +8,13 @@ import {
   type PropsWithChildren,
 } from "react";
 
-type Theme = "light" | "dark" | "system";
-type AppliedTheme = "light" | "dark";
-type ThemeStorage = Pick<Storage, "getItem" | "setItem">;
+import {
+  applyThemePreferencePersistence,
+  readStoredThemePreference,
+  resolveAppliedTheme,
+  resolveThemePreference,
+  type Theme,
+} from "./next-themes-state.js";
 
 export type ThemeProviderProps = PropsWithChildren<{
   attribute?: string;
@@ -26,55 +30,6 @@ type ThemeContextValue = {
 
 const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
 
-export const STUDIO_THEME_STORAGE_KEY = "mdcms-studio-theme";
-
-function isTheme(value: unknown): value is Theme {
-  return value === "light" || value === "dark" || value === "system";
-}
-
-export function readStoredThemePreference(
-  storage: ThemeStorage | null | undefined,
-): Theme | null {
-  if (!storage) {
-    return null;
-  }
-
-  try {
-    const value = storage.getItem(STUDIO_THEME_STORAGE_KEY);
-    return isTheme(value) ? value : null;
-  } catch {
-    return null;
-  }
-}
-
-export function persistStoredThemePreference(
-  storage: ThemeStorage | null | undefined,
-  theme: Theme,
-): void {
-  if (!storage) {
-    return;
-  }
-
-  try {
-    storage.setItem(STUDIO_THEME_STORAGE_KEY, theme);
-  } catch {
-    // Ignore browser storage failures and keep the in-memory preference active.
-  }
-}
-
-export function applyThemePreferencePersistence(input: {
-  storage: ThemeStorage | null | undefined;
-  theme: Theme;
-  hasMounted: boolean;
-}): boolean {
-  if (!input.hasMounted) {
-    return true;
-  }
-
-  persistStoredThemePreference(input.storage, input.theme);
-  return true;
-}
-
 function readSystemPrefersDark(): boolean {
   if (
     typeof window === "undefined" ||
@@ -84,42 +39,6 @@ function readSystemPrefersDark(): boolean {
   }
 
   return window.matchMedia("(prefers-color-scheme: dark)").matches;
-}
-
-export function resolveThemePreference(input: {
-  storedTheme: Theme | null;
-  defaultTheme: Theme | undefined;
-  enableSystem: boolean | undefined;
-  systemPrefersDark: boolean;
-}): Theme {
-  if (input.storedTheme) {
-    return input.storedTheme;
-  }
-
-  if (input.defaultTheme === "light" || input.defaultTheme === "dark") {
-    return input.defaultTheme;
-  }
-
-  if (input.defaultTheme === "system" && input.enableSystem) {
-    return "system";
-  }
-
-  if (input.enableSystem) {
-    return "system";
-  }
-
-  return "light";
-}
-
-export function resolveAppliedTheme(
-  theme: Theme,
-  systemPrefersDark: boolean,
-): AppliedTheme {
-  if (theme === "system") {
-    return systemPrefersDark ? "dark" : "light";
-  }
-
-  return theme === "dark" ? "dark" : "light";
 }
 
 function resolveInitialTheme(input: {
@@ -138,6 +57,25 @@ function resolveInitialTheme(input: {
   });
 }
 
+function applyDocumentTheme(
+  attribute: string,
+  theme: Theme,
+  systemPrefersDark: boolean,
+): void {
+  if (typeof document === "undefined") {
+    return;
+  }
+
+  const nextTheme = resolveAppliedTheme(theme, systemPrefersDark);
+
+  if (attribute === "class") {
+    document.documentElement.classList.toggle("dark", nextTheme === "dark");
+    return;
+  }
+
+  document.documentElement.setAttribute(attribute, nextTheme);
+}
+
 export function ThemeProvider({
   children,
   attribute = "class",
@@ -150,10 +88,13 @@ export function ThemeProvider({
       enableSystem,
     }),
   );
-  const [systemPrefersDark, setSystemPrefersDark] = useState<boolean>(() =>
-    readSystemPrefersDark(),
-  );
+  const systemPrefersDarkRef = useRef(readSystemPrefersDark());
+  const themeRef = useRef(theme);
   const hasMountedThemePersistence = useRef(false);
+
+  useEffect(() => {
+    themeRef.current = theme;
+  }, [theme]);
 
   useEffect(() => {
     if (
@@ -166,10 +107,12 @@ export function ThemeProvider({
 
     const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
     const handleChange = (event: MediaQueryListEvent) => {
-      setSystemPrefersDark(event.matches);
+      systemPrefersDarkRef.current = event.matches;
+      applyDocumentTheme(attribute, themeRef.current, event.matches);
     };
 
-    setSystemPrefersDark(mediaQuery.matches);
+    systemPrefersDarkRef.current = mediaQuery.matches;
+    applyDocumentTheme(attribute, themeRef.current, mediaQuery.matches);
 
     if (typeof mediaQuery.addEventListener === "function") {
       mediaQuery.addEventListener("change", handleChange);
@@ -184,22 +127,11 @@ export function ThemeProvider({
     return () => {
       mediaQuery.removeListener(handleChange);
     };
-  }, [enableSystem]);
+  }, [attribute, enableSystem]);
 
   useEffect(() => {
-    if (typeof document === "undefined") {
-      return;
-    }
-
-    const nextTheme = resolveAppliedTheme(theme, systemPrefersDark);
-
-    if (attribute === "class") {
-      document.documentElement.classList.toggle("dark", nextTheme === "dark");
-      return;
-    }
-
-    document.documentElement.setAttribute(attribute, nextTheme);
-  }, [attribute, systemPrefersDark, theme]);
+    applyDocumentTheme(attribute, theme, systemPrefersDarkRef.current);
+  }, [attribute, theme]);
 
   useEffect(() => {
     if (typeof window === "undefined") {

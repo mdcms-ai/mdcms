@@ -130,6 +130,35 @@ describe("renderProjectKnowledgeBlock", () => {
     assert.ok(block.includes('tone (enum "info" | "warning", required)'));
     assert.ok(block.includes("title (string, optional)"));
   });
+
+  test("marks built-in MDX components and renders style props", () => {
+    const mdxCatalog: MdxComponentCatalog = {
+      components: [
+        {
+          name: "Box",
+          importPath: "@mdcms/sdk/react-primitives",
+          description: "Layout wrapper",
+          builtIn: true,
+          extractedProps: {
+            style: {
+              type: "style",
+              required: false,
+            },
+          },
+        },
+      ],
+    };
+    const block = renderProjectKnowledgeBlock({
+      project: "p",
+      environment: "e",
+      registeredTypes: [],
+      supportedLocales: [],
+      mdxCatalog,
+    });
+
+    assert.ok(block.includes("- **Box** (built-in) — Layout wrapper"));
+    assert.ok(block.includes("style (style, optional)"));
+  });
 });
 
 const POST_SCHEMA: SchemaRegistryTypeSnapshot = {

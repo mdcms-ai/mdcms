@@ -403,6 +403,17 @@ test("aiChatMessageRequestSchema accepts a fully populated request", () => {
         },
       ],
     },
+    componentReferences: [
+      {
+        componentName: "HomeHero",
+        source: "studio_host_preview",
+        renderedHtml:
+          '<section class="landing-hero"><h1>Content operations</h1></section>',
+        text: "Content operations",
+        styleSummary:
+          "section.landing-hero { display: block; backgroundColor: rgb(15, 23, 42); color: rgb(248, 250, 252) }",
+      },
+    ],
   });
   assert.equal(parsed.success, true);
 });

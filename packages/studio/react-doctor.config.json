@@ -1,0 +1,10 @@
+{
+  "ignore": {
+    "overrides": [
+      {
+        "files": ["src/lib/remote-module.ts"],
+        "rules": ["deslop/unused-file"]
+      }
+    ]
+  }
+}

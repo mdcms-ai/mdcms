@@ -328,8 +328,13 @@ export async function buildStudioRuntimeArtifacts(
   const buildIdHash = createHash("sha256");
   buildIdHash.update(entryBytes);
   buildIdHash.update(new TextEncoder().encode(stylesheetResult.css));
-  for (const [srcPath] of stylesheetResult.fontAssets) {
-    buildIdHash.update(await readFile(srcPath));
+  const fontAssetBytes = await Promise.all(
+    Array.from(stylesheetResult.fontAssets.keys(), (srcPath) =>
+      readFile(srcPath),
+    ),
+  );
+  for (const bytes of fontAssetBytes) {
+    buildIdHash.update(bytes);
   }
   const buildId = buildIdHash.digest("hex").slice(0, 16);
 

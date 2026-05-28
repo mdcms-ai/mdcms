@@ -36,6 +36,16 @@ const TONE_STYLES: Record<
 export function Callout({ tone, title, children }: CalloutProps) {
   const normalizedTone = tone ?? "info";
   const style = TONE_STYLES[normalizedTone] ?? TONE_STYLES.info;
+  const badgeStyle = {
+    borderRadius: "999px",
+    background: style.badge,
+    padding: "4px 10px",
+    fontSize: "12px",
+    fontWeight: 700,
+    letterSpacing: "0.14em",
+    textTransform: "uppercase",
+    color: style.title,
+  } as const;
 
   return (
     <aside
@@ -56,20 +66,7 @@ export function Callout({ tone, title, children }: CalloutProps) {
           marginBottom: "12px",
         }}
       >
-        <span
-          style={{
-            borderRadius: "999px",
-            background: style.badge,
-            padding: "4px 10px",
-            fontSize: "11px",
-            fontWeight: 700,
-            letterSpacing: "0.14em",
-            textTransform: "uppercase",
-            color: style.title,
-          }}
-        >
-          {normalizedTone}
-        </span>
+        <span style={badgeStyle}>{normalizedTone}</span>
         <strong style={{ fontSize: "16px", color: style.title }}>
           {title?.trim() || "Important update"}
         </strong>

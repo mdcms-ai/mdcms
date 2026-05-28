@@ -6,7 +6,7 @@ import {
 } from "./request-auth.js";
 import { resolveStudioRelativeUrl } from "./url-resolution.js";
 
-export const API_KEY_OPERATION_SCOPES = [
+const API_KEY_OPERATION_SCOPES = [
   "content:read",
   "content:read:draft",
   "content:write",

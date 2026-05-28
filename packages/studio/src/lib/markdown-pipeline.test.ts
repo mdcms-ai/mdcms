@@ -106,6 +106,149 @@ test("markdown pipeline preserves wrapper MDX blocks with nested markdown childr
   assert.match(serialized, /<\/Callout>/);
 });
 
+test("markdown pipeline parses nested MDX components inside wrapper children", () => {
+  const source = [
+    '<Box style={{backgroundColor: "#101010", padding: "2rem"}}>',
+    '<Text style={{fontSize: "2.5rem", fontWeight: "bold"}}>Welcome to Our Platform</Text>',
+    '<Link href="/signup" style={{color: "#fff"}}>Get Started</Link>',
+    "</Box>",
+  ].join("\n");
+
+  const parsed = parseMarkdownToDocument(source);
+
+  assert.deepEqual(parsed.content?.[0], {
+    type: "mdxComponent",
+    attrs: {
+      componentName: "Box",
+      isVoid: false,
+      props: {
+        style: {
+          backgroundColor: "#101010",
+          padding: "2rem",
+        },
+      },
+    },
+    content: [
+      {
+        type: "mdxComponent",
+        attrs: {
+          componentName: "Text",
+          isVoid: false,
+          props: {
+            style: {
+              fontSize: "2.5rem",
+              fontWeight: "bold",
+            },
+          },
+        },
+        content: [
+          {
+            type: "paragraph",
+            content: [{ type: "text", text: "Welcome to Our Platform" }],
+          },
+        ],
+      },
+      {
+        type: "mdxComponent",
+        attrs: {
+          componentName: "Link",
+          isVoid: false,
+          props: {
+            href: "/signup",
+            style: {
+              color: "#fff",
+            },
+          },
+        },
+        content: [
+          {
+            type: "paragraph",
+            content: [{ type: "text", text: "Get Started" }],
+          },
+        ],
+      },
+    ],
+  });
+});
+
+test("markdown pipeline parses indented nested MDX components inside wrapper children", () => {
+  const source = [
+    '<Box style={{display: "grid", gap: "1rem"}}>',
+    '  <Box style={{backgroundColor: "#f3f4f6", padding: "1rem"}}>',
+    '    <Text style={{fontWeight: "bold"}}>2020</Text>',
+    "    Company founded.",
+    "  </Box>",
+    '  <Box style={{backgroundColor: "#f3f4f6", padding: "1rem"}}>',
+    '    <Text style={{fontWeight: "bold"}}>2021</Text>',
+    "    Launched first product.",
+    "  </Box>",
+    "</Box>",
+  ].join("\n");
+
+  const parsed = parseMarkdownToDocument(source);
+  const wrapperChildren = parsed.content?.[0]?.content ?? [];
+
+  assert.equal(parsed.content?.[0]?.type, "mdxComponent");
+  assert.equal(wrapperChildren.length, 2);
+  assert.equal(wrapperChildren[0]?.type, "mdxComponent");
+  assert.equal(wrapperChildren[1]?.type, "mdxComponent");
+  assert.equal(wrapperChildren[0]?.attrs?.componentName, "Box");
+  assert.equal(wrapperChildren[1]?.attrs?.componentName, "Box");
+  assert.equal(
+    wrapperChildren.some((child) => JSON.stringify(child).includes("<Text")),
+    false,
+  );
+});
+
+test("markdown pipeline preserves lowercase raw MDX islands inside wrapper children", () => {
+  const source = [
+    '<HomeSection eyebrow="Content layer" title="Contact Us">',
+    '<form name="contact" method="POST" netlify>',
+    "<label>",
+    "Name<br />",
+    '<input type="text" name="name" required style={{ width: "100%" }} />',
+    "</label>",
+    '<button type="submit" style={{ padding: "0.75rem 1.5rem", backgroundColor: "#0070f3", color: "#fff" }}>',
+    "Send Message",
+    "</button>",
+    "</form>",
+    "</HomeSection>",
+  ].join("\n");
+
+  const parsed = parseMarkdownToDocument(source);
+
+  assert.deepEqual(parsed.content?.[0], {
+    type: "mdxComponent",
+    attrs: {
+      componentName: "HomeSection",
+      isVoid: false,
+      props: {
+        eyebrow: "Content layer",
+        title: "Contact Us",
+      },
+    },
+    content: [
+      {
+        type: "mdxRawJsx",
+        attrs: {
+          source: [
+            '<form name="contact" method="POST" netlify>',
+            "<label>",
+            "Name<br />",
+            '<input type="text" name="name" required style={{ width: "100%" }} />',
+            "</label>",
+            '<button type="submit" style={{ padding: "0.75rem 1.5rem", backgroundColor: "#0070f3", color: "#fff" }}>',
+            "Send Message",
+            "</button>",
+            "</form>",
+          ].join("\n"),
+        },
+      },
+    ],
+  });
+  assert.equal(serializeDocumentToMarkdown(parsed), source);
+});
+
 test("markdown pipeline keeps wrapper MDX serialization stable after first pass", () => {
   const source = [
     '<Callout type="warning">',
@@ -140,8 +283,8 @@ test("markdown pipeline preserves raw JSX prop expressions instead of throwing",
   assert.equal(roundTripMarkdown(source).markdown, source);
 });
 
-test("markdown pipeline keeps escaped quotes in string props stable", () => {
-  const source = '<Callout title="He said \\"hi\\"" />';
+test("markdown pipeline keeps quoted string props stable", () => {
+  const source = '<Callout title="He said &quot;hi&quot;" />';
 
   assert.equal(roundTripMarkdown(source).markdown, source);
 });

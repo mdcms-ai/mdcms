@@ -8,12 +8,6 @@ export function isStudioCookieAuth(
   return auth?.mode === "cookie";
 }
 
-export function isStudioTokenAuth(
-  auth: StudioRuntimeAuth | undefined,
-): auth is Extract<StudioRuntimeAuth, { mode: "token" }> {
-  return auth?.mode === "token" && typeof auth.token === "string";
-}
-
 /**
  * applyStudioAuthToRequestInit normalizes browser request options for the
  * selected Studio auth mode.

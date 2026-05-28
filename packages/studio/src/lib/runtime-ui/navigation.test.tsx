@@ -5,11 +5,11 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import {
-  resolveStudioHref,
   RuntimeLink,
   StudioNavigationProvider,
   useRouter,
 } from "./navigation.js";
+import { resolveStudioHref } from "./navigation-paths.js";
 
 test("resolveStudioHref keeps scenario-scoped review paths when links target /admin", () => {
   assert.equal(
@@ -41,10 +41,7 @@ test("RuntimeLink renders scenario-scoped hrefs for review deployments", () => {
           back: () => {},
         },
       },
-      createElement(RuntimeLink, {
-        href: "/admin/schema",
-        children: "Schema",
-      }),
+      createElement(RuntimeLink, { href: "/admin/schema" }, "Schema"),
     ),
   );
 

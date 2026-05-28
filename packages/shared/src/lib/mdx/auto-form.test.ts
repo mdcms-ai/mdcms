@@ -16,6 +16,7 @@ test("createMdxAutoFormFields maps extracted props to default controls in order"
     data: { type: "array", required: true, items: "number" },
     publishedAt: { type: "date", required: false },
     children: { type: "rich-text", required: true },
+    style: { type: "style", required: false },
     options: { type: "json", required: false },
   });
 
@@ -34,6 +35,7 @@ test("createMdxAutoFormFields maps extracted props to default controls in order"
     { name: "data", control: "number-list", required: true },
     { name: "publishedAt", control: "date", required: false },
     { name: "children", control: "rich-text", required: true },
+    { name: "style", control: "style", required: false },
   ]);
 
   const selectField = fields.find((field) => field.name === "kind");

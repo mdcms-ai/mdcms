@@ -16,6 +16,9 @@
       "path": "./packages/sdk"
     },
     {
+      "path": "./packages/react-primitives"
+    },
+    {
       "path": "./apps/cli"
     },
     {

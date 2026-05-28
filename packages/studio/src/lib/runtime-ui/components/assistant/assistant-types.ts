@@ -193,6 +193,23 @@ export type AssistantProposal =
 
 export type AssistantMessageRole = "user" | "assistant";
 
+export type AssistantProgressEvent = {
+  phase:
+    | "thinking"
+    | "tool-call"
+    | "tool-result"
+    | "tool-error"
+    | "step-finished";
+  message: string;
+  toolName?: string;
+  status?: "started" | "completed" | "queued" | "rejected" | "failed";
+  usage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+  };
+};
+
 export type AssistantMessage = {
   id: string;
   role: AssistantMessageRole;
@@ -200,6 +217,7 @@ export type AssistantMessage = {
   text?: string;
   /** Context chips that were attached when this user turn was sent. */
   context?: AssistantMessageContextSnapshot;
+  progress?: AssistantProgressEvent[];
   proposals?: string[];
   at: string;
   /**

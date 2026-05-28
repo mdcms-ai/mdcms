@@ -252,6 +252,16 @@ function createNotFoundResponse(): Response {
   return new Response("Route not found.", { status: 404 });
 }
 
+function shouldPreserveHtmlErrorResponse(
+  request: Request,
+  contentType: string | null,
+): boolean {
+  return (
+    contentType?.includes("text/html") === true &&
+    resolvePathname(request) === "/api/v1/auth/cli/login/authorize"
+  );
+}
+
 const STUDIO_ASSET_CACHE_CONTROL = "public, max-age=31536000, immutable";
 const STUDIO_ASSET_COMPRESS_MIN_BYTES = 1024;
 const STUDIO_ASSET_CACHE_MAX_ENTRIES = 32;
@@ -711,6 +721,10 @@ async function normalizeElysiaErrorResponse(input: {
   const contentType = input.response.headers.get("content-type");
 
   if (contentType?.includes("application/json")) {
+    return input.response;
+  }
+
+  if (shouldPreserveHtmlErrorResponse(input.request, contentType)) {
     return input.response;
   }
 

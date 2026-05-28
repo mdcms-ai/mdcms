@@ -14,6 +14,10 @@ import {
 } from "@mdcms/shared";
 import { extractMdxComponentProps } from "@mdcms/shared/mdx";
 import {
+  assertNoBuiltInMdxComponentNames,
+  withBuiltInMdxComponents,
+} from "./built-in-mdx-components.js";
+import {
   resolveStudioDocumentRoutePreparedMetadata,
   resolveStudioDocumentRouteSchemaCapability,
   type StudioDocumentRoutePreparedMetadata,
@@ -82,6 +86,7 @@ export async function prepareStudioConfig(
   options: PrepareStudioConfigOptions,
 ): Promise<MdcmsConfig> {
   const environment = readStudioEnvironment(config);
+  assertNoBuiltInMdxComponentNames(config.components);
   const components = config.components
     ? await Promise.all(
         config.components.map(async (component) => {
@@ -103,7 +108,7 @@ export async function prepareStudioConfig(
           };
         }),
       )
-    : undefined;
+    : [];
 
   // Pre-compute the schema hash while the full config (with Zod types,
   // environments, etc.) is available. Client-side code may receive a
@@ -123,7 +128,7 @@ export async function prepareStudioConfig(
   return {
     ...config,
     environment,
-    ...(components !== undefined ? { components } : {}),
+    components: withBuiltInMdxComponents(components),
     ...(schemaCapability.canWrite
       ? { _schemaHash: schemaCapability.schemaHash }
       : {}),

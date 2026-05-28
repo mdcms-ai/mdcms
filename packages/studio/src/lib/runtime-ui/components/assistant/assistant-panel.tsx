@@ -5,10 +5,14 @@ import {
   AtSign,
   Check,
   ChevronRight,
+  CircleDashed,
+  CheckCircle2,
   Maximize2,
   Minimize2,
   MoreHorizontal,
   Plus,
+  TriangleAlert,
+  Wrench,
   X,
 } from "lucide-react";
 
@@ -32,6 +36,7 @@ import {
 } from "./assistant-context.js";
 import type {
   AssistantMessage,
+  AssistantProgressEvent,
   AssistantProposal,
   AssistantThread,
 } from "./assistant-types.js";
@@ -125,6 +130,34 @@ type MentionCandidate = {
   locale: string;
 };
 
+type MentionCandidateState = {
+  candidates: MentionCandidate[];
+  loading: boolean;
+  error: string | null;
+};
+
+type MentionCandidateAction =
+  | { type: "reset" }
+  | { type: "loading" }
+  | { type: "success"; candidates: MentionCandidate[] }
+  | { type: "error"; message: string };
+
+function mentionCandidateReducer(
+  state: MentionCandidateState,
+  action: MentionCandidateAction,
+): MentionCandidateState {
+  switch (action.type) {
+    case "reset":
+      return { candidates: [], loading: false, error: null };
+    case "loading":
+      return { ...state, loading: true, error: null };
+    case "success":
+      return { candidates: action.candidates, loading: false, error: null };
+    case "error":
+      return { candidates: [], loading: false, error: action.message };
+  }
+}
+
 /**
  * Server-backed mention candidate fetch. Debounces the query so the
  * picker doesn't fan out a request per keystroke, aborts in-flight
@@ -138,18 +171,18 @@ function useServerMentionCandidates(query: string): {
   error: string | null;
 } {
   const apiConfig = useStudioApiConfig();
-  const [state, setState] = React.useState<{
-    candidates: MentionCandidate[];
-    loading: boolean;
-    error: string | null;
-  }>({ candidates: [], loading: false, error: null });
+  const [state, dispatch] = React.useReducer(mentionCandidateReducer, {
+    candidates: [],
+    loading: false,
+    error: null,
+  });
 
   React.useEffect(() => {
     if (!apiConfig) {
-      setState({ candidates: [], loading: false, error: null });
+      dispatch({ type: "reset" });
       return;
     }
-    setState((s) => ({ ...s, loading: true, error: null }));
+    dispatch({ type: "loading" });
     const controller = new AbortController();
     const timeout = setTimeout(() => {
       const api = createStudioDocumentRouteApi(
@@ -170,7 +203,7 @@ function useServerMentionCandidates(query: string): {
             type: doc.type,
             locale: doc.locale,
           }));
-          setState({ candidates: mapped, loading: false, error: null });
+          dispatch({ type: "success", candidates: mapped });
         })
         .catch((error: unknown) => {
           if (controller.signal.aborted) return;
@@ -178,7 +211,7 @@ function useServerMentionCandidates(query: string): {
             error instanceof Error
               ? error.message
               : "Failed to load documents.";
-          setState({ candidates: [], loading: false, error: message });
+          dispatch({ type: "error", message });
         });
     }, 200);
 
@@ -211,7 +244,6 @@ function MentionPicker({
   if (error) {
     return (
       <div
-        role="listbox"
         aria-label="Document picker"
         className="absolute bottom-full left-3 right-3 mb-1 rounded-md border border-divider/60 bg-popover p-3 text-[12px] text-destructive shadow-lg"
       >
@@ -230,7 +262,6 @@ function MentionPicker({
   if (filtered.length === 0) {
     return (
       <div
-        role="listbox"
         aria-label="Document picker"
         className="absolute bottom-full left-3 right-3 mb-1 rounded-md border border-divider/60 bg-popover p-3 text-[12px] text-foreground-muted shadow-lg"
       >
@@ -255,6 +286,7 @@ function MentionPicker({
   }
 
   return (
+    // react-doctor-disable-next-line react-doctor/prefer-tag-over-role -- this custom popover contains buttons and status rows, so datalist cannot represent its interaction model.
     <div
       role="listbox"
       aria-label="Document picker"
@@ -412,12 +444,90 @@ function UserBubble({ message }: { message: AssistantMessage }) {
   );
 }
 
+function formatProgressUsage(
+  usage: AssistantProgressEvent["usage"],
+): string | null {
+  if (!usage) return null;
+  const parts: string[] = [];
+  if (typeof usage.inputTokens === "number") {
+    parts.push(`${usage.inputTokens} in`);
+  }
+  if (typeof usage.outputTokens === "number") {
+    parts.push(`${usage.outputTokens} out`);
+  }
+  if (typeof usage.totalTokens === "number") {
+    parts.push(`${usage.totalTokens} total`);
+  }
+  return parts.length > 0 ? `${parts.join(" / ")} tokens` : null;
+}
+
+function progressIcon(event: AssistantProgressEvent) {
+  if (event.status === "failed" || event.phase === "tool-error") {
+    return <TriangleAlert className="size-3.5" aria-hidden="true" />;
+  }
+  if (event.status === "queued" || event.status === "completed") {
+    return <CheckCircle2 className="size-3.5" aria-hidden="true" />;
+  }
+  if (event.phase === "tool-call") {
+    return <Wrench className="size-3.5" aria-hidden="true" />;
+  }
+  return <CircleDashed className="size-3.5 animate-spin" aria-hidden="true" />;
+}
+
+function progressTone(event: AssistantProgressEvent): string {
+  if (event.status === "failed" || event.phase === "tool-error") {
+    return "text-destructive";
+  }
+  if (event.status === "rejected") {
+    return "text-accent-amber";
+  }
+  if (event.status === "queued" || event.status === "completed") {
+    return "text-success";
+  }
+  return "text-primary";
+}
+
+function AssistantProgressTimeline({
+  events,
+}: {
+  events: AssistantProgressEvent[];
+}) {
+  if (events.length === 0) return null;
+  const visible = events.slice(-6);
+  return (
+    <div
+      className="mt-1 flex max-w-[92%] flex-col gap-1.5 border-l border-divider/60 pl-3"
+      aria-label="AI progress"
+    >
+      {visible.map((event, idx) => {
+        const usage = formatProgressUsage(event.usage);
+        return (
+          <div
+            key={`${event.phase}-${event.toolName ?? "model"}-${idx}`}
+            className="flex min-w-0 items-center gap-2 text-[12px] leading-5 text-foreground-muted"
+          >
+            <span className={cn("shrink-0", progressTone(event))}>
+              {progressIcon(event)}
+            </span>
+            <span className="min-w-0 flex-1 truncate">{event.message}</span>
+            {usage ? (
+              <span className="shrink-0 font-mono text-[10px] uppercase tracking-wide text-foreground-subtle">
+                {usage}
+              </span>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // Assistant turns sit in a two-column layout: a fixed 24px gutter that
 // holds the blue ✦ identity glyph, and a flex content column with the
 // prose + proposal cards. The fixed gutter keeps proposals aligned to
 // a consistent left edge across an entire turn instead of just the
 // first prose paragraph.
-function AssistantBubble({
+export function AssistantBubble({
   message,
   proposalsById,
   documentPathById,
@@ -448,7 +558,15 @@ function AssistantBubble({
 }) {
   const proposalIds = message.proposals ?? [];
   const text = message.text?.trim();
-  if (proposalIds.length === 0 && !text && !isStreamingPlaceholder) return null;
+  const progressEvents = isStreamingPlaceholder ? (message.progress ?? []) : [];
+  if (
+    proposalIds.length === 0 &&
+    !text &&
+    !isStreamingPlaceholder &&
+    progressEvents.length === 0
+  ) {
+    return null;
+  }
   const proposals = proposalIds.flatMap((pid) => {
     const proposal = proposalsById[pid];
     return proposal
@@ -458,7 +576,7 @@ function AssistantBubble({
   const isMultiTurn = proposals.length > 1;
   return (
     <div className="mb-6 flex items-start gap-0">
-      <div className="w-6 shrink-0 pt-0.5 text-primary" aria-hidden="true">
+      <div className="w-6 shrink-0 pt-2 text-primary" aria-hidden="true">
         <SparkleMark size={14} />
       </div>
       <div className="flex min-w-0 flex-1 flex-col gap-2">
@@ -466,7 +584,7 @@ function AssistantBubble({
           <div className="max-w-[92%] py-0.5">
             <AssistantMarkdown text={text} />
           </div>
-        ) : isStreamingPlaceholder ? (
+        ) : isStreamingPlaceholder && progressEvents.length === 0 ? (
           <div
             className="inline-flex max-w-[92%] items-center gap-1 py-1.5 text-foreground-muted"
             aria-label="Generating response"
@@ -475,6 +593,9 @@ function AssistantBubble({
             <span className="size-1.5 animate-pulse rounded-full bg-primary" />
             <span className="size-1.5 animate-pulse rounded-full bg-primary [animation-delay:0.2s]" />
           </div>
+        ) : null}
+        {isStreamingPlaceholder && progressEvents.length > 0 ? (
+          <AssistantProgressTimeline events={progressEvents} />
         ) : null}
         {!isMultiTurn &&
           proposals.map((proposal) => (
@@ -754,19 +875,15 @@ function TurnRow({
   onAccept: () => void;
   onReject: () => void;
 }) {
-  const rowAria = `Proposal — ${TURN_KIND_LABEL[proposal.kind]} in ${
-    proposal.docPath
-  }, +${stats.added} −${stats.removed}`;
   return (
-    <div
-      role="group"
-      aria-label={rowAria}
-      className="flex flex-col gap-1.5 px-3 py-2"
-    >
+    <div className="flex flex-col gap-1.5 px-3 py-2">
       <button
         type="button"
         onClick={onToggle}
         title={proposal.docPath}
+        aria-label={`Proposal — ${TURN_KIND_LABEL[proposal.kind]} in ${
+          proposal.docPath
+        }, +${stats.added} −${stats.removed}`}
         aria-expanded={isExpanded}
         className="block w-full truncate text-left font-mono text-[12px] text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
         dir="rtl"
@@ -894,6 +1011,7 @@ function TurnRejectFeedback({
   return (
     <div className="space-y-2 border-t border-divider/40 bg-background-subtle px-3 py-2.5">
       <textarea
+        aria-label="Turn rejection feedback"
         value={text}
         onChange={(e) => setText(e.target.value)}
         placeholder="Why are you rejecting these? (optional — sent back to the model on regenerate)"
@@ -956,7 +1074,34 @@ function Composer({
     ta.setSelectionRange(end, end);
   }, [textareaRef]);
 
+  // Auto-grow the textarea to fit content up to a max height. The min
+  // matches the visual `rows={2}` baseline; beyond max, the textarea
+  // scrolls internally instead of pushing the layout further. Recompute
+  // on draft changes *and* whenever the textarea's width changes (rail
+  // resize), since wrapping changes the required line count.
+  const resizeTextarea = React.useCallback(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    ta.style.height = "auto";
+    const max = 180;
+    ta.style.height = `${Math.min(ta.scrollHeight, max)}px`;
+    ta.style.overflowY = ta.scrollHeight > max ? "auto" : "hidden";
+  }, [textareaRef]);
+
+  React.useLayoutEffect(() => {
+    resizeTextarea();
+  }, [draft, resizeTextarea]);
+
+  React.useEffect(() => {
+    const ta = textareaRef.current;
+    if (!ta || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => resizeTextarea());
+    observer.observe(ta);
+    return () => observer.disconnect();
+  }, [textareaRef, resizeTextarea]);
+
   const submit = () => {
+    if (assistant.isPending) return;
     if (!draft.trim()) return;
     assistant.sendMessage(draft);
     setDraft("");
@@ -1020,6 +1165,7 @@ function Composer({
   };
 
   return (
+    // react-doctor-disable-next-line react-doctor/no-prevent-default -- chat submission is handled by the mounted Studio client, not a server action.
     <form
       onSubmit={(e) => {
         e.preventDefault();
@@ -1038,20 +1184,17 @@ function Composer({
         className="rounded-b-lg border border-divider/60 bg-card px-3 py-2.5 transition-colors focus-within:border-primary/60 focus-within:ring-1 focus-within:ring-primary/30"
       >
         <textarea
+          aria-label="Assistant message"
           ref={textareaRef}
           value={draft}
           onChange={onChange}
           rows={2}
-          disabled={assistant.isPending}
           placeholder={
             assistant.isPending
-              ? "Generating response… Esc to stop"
+              ? "Draft your next message…"
               : "Ask about any doc, propose edits, draft new posts…"
           }
-          className={cn(
-            "w-full resize-none border-none bg-transparent text-[13.5px] leading-snug text-foreground outline-none placeholder:text-foreground-muted",
-            assistant.isPending && "cursor-not-allowed opacity-55",
-          )}
+          className="w-full resize-none border-none bg-transparent text-[13.5px] leading-snug text-foreground outline-none placeholder:text-foreground-muted"
           onKeyDown={(e) => {
             if (e.key === "Escape" && assistant.isPending) {
               e.preventDefault();
@@ -1076,7 +1219,7 @@ function Composer({
         <div className="mt-1.5 flex items-center gap-2">
           <span className="flex-1 font-mono text-[10px] text-foreground-muted">
             {assistant.isPending
-              ? "Streaming… Esc to stop"
+              ? "Streaming… Esc to stop · send after response finishes"
               : "⌘ ↵ to send · @ to reference a doc"}
           </span>
           <button

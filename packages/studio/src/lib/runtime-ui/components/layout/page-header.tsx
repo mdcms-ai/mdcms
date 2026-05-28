@@ -82,18 +82,6 @@ export function PageHeaderDescription({
   );
 }
 
-export function PageHeaderActions({
-  children,
-  className,
-  ...props
-}: React.HTMLAttributes<HTMLDivElement>) {
-  return (
-    <div className={cn("flex items-center gap-2", className)} {...props}>
-      {children}
-    </div>
-  );
-}
-
 // App Header (breadcrumb navigation bar)
 interface AppHeaderProps {
   breadcrumbs?: BreadcrumbItem[];
@@ -110,7 +98,7 @@ export function BreadcrumbTrail({
     <nav className={cn("flex min-w-0 items-center gap-1.5", className)}>
       {breadcrumbs.map((crumb, index) => (
         <div
-          key={`${crumb.href ?? crumb.label}-${index}`}
+          key={crumb.href ?? crumb.label}
           className="flex min-w-0 items-center gap-1.5"
         >
           {index > 0 && (
@@ -193,7 +181,7 @@ function deriveInitials(email: string): string {
   return local.slice(0, 2).toUpperCase();
 }
 
-export function AppHeader({ breadcrumbs = EMPTY_BREADCRUMBS }: AppHeaderProps) {
+function AppHeader({ breadcrumbs = EMPTY_BREADCRUMBS }: AppHeaderProps) {
   const sessionState = useStudioSession();
   const mountInfo = useStudioMountInfo();
 

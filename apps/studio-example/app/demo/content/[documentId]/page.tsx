@@ -1,7 +1,9 @@
 import Link from "next/link";
 
 import { getPreviewHrefForDocument } from "../../../../lib/preview-routing";
+import { RenderedContent } from "../../../../lib/rendered-content";
 import config from "../../../../mdcms.config";
+import { RequestError, SiteHeader } from "../../../site-components";
 
 type ContentDocument = {
   documentId: string;
@@ -143,50 +145,60 @@ export default async function DemoContentDocumentPage({
     : undefined;
 
   return (
-    <main>
-      <h1>Raw Content API Document</h1>
-      <p>
-        Data source: <strong>Direct API fetch</strong>
-      </p>
-      <p>
-        <Link href="/demo/content">Back to /demo/content</Link>
-        {" | "}
-        <Link href={`/demo/sdk-content/${documentId}`}>Open SDK detail</Link>
-      </p>
+    <main className="site-shell">
+      <SiteHeader active="sdk" />
 
-      {!result.ok ? (
-        <section>
-          <h2>Request failed</h2>
-          <p>
-            {result.code} ({result.status})
-          </p>
-          <p>{result.message}</p>
-        </section>
-      ) : (
-        <section>
-          <h2>{result.document.documentId}</h2>
-          <p>
-            type=<code>{result.document.type}</code> path=
-            <code>{result.document.path}</code> locale=
-            <code>{result.document.locale}</code> format=
-            <code>{result.document.format}</code>
-          </p>
-          <p>
-            draftRevision=<code>{result.document.draftRevision}</code>{" "}
-            publishedVersion=
-            <code>{result.document.publishedVersion ?? "-"}</code>
-          </p>
+      <section className="library-hero">
+        <p className="eyebrow">API detail</p>
+        <h1>{result.ok ? result.document.path : documentId}</h1>
+        <p>
+          Direct content API response for <strong>{config.project}</strong> /{" "}
+          <strong>{config.environment}</strong>, rendered for inspection.
+        </p>
+        <p>
+          <Link href="/demo/content">Back to API documents</Link>
+          {" | "}
+          <Link
+            href={
+              result.ok
+                ? `/demo/sdk-content/${documentId}?type=${encodeURIComponent(result.document.type)}`
+                : `/demo/sdk-content/${documentId}`
+            }
+          >
+            SDK detail
+          </Link>
           {previewHref ? (
-            <p>
-              <Link href={previewHref}>Open rendered preview</Link>
-            </p>
+            <>
+              {" | "}
+              <Link href={previewHref}>Open preview route</Link>
+            </>
           ) : null}
-          <p>frontmatter (raw JSON):</p>
-          <pre>{JSON.stringify(result.document.frontmatter, null, 2)}</pre>
-          <p>body (raw):</p>
-          <pre>{result.document.body}</pre>
-        </section>
-      )}
+        </p>
+      </section>
+
+      <section className="library-content">
+        {!result.ok ? (
+          <RequestError
+            code={result.code}
+            message={result.message}
+            status={result.status}
+            title="Document could not be loaded"
+          />
+        ) : (
+          <article className="rendered-surface">
+            <div className="document-card-header">
+              <div>
+                <p className="document-type">{result.document.type}</p>
+                <h2>{result.document.path}</h2>
+              </div>
+              <span>{result.document.locale}</span>
+            </div>
+            <div className="rendered-preview">
+              <RenderedContent body={result.document.body} />
+            </div>
+          </article>
+        )}
+      </section>
     </main>
   );
 }
