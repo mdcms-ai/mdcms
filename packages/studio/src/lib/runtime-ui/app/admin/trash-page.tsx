@@ -451,7 +451,6 @@ export default function TrashPage() {
     },
   });
 
-  // Pagination
   const totalPages = list.pagination
     ? Math.ceil(list.pagination.total / TRASH_PAGE_SIZE)
     : 0;
@@ -469,7 +468,6 @@ export default function TrashPage() {
       <PageHeader breadcrumbs={[{ label: "Trash" }]} />
 
       <div className="p-6 space-y-6">
-        {/* Header */}
         <div>
           <h1 className="text-2xl font-semibold">Deleted Content</h1>
           <p className="mt-1 text-sm text-foreground-muted">
@@ -505,7 +503,6 @@ export default function TrashPage() {
           </div>
         )}
 
-        {/* Content area */}
         {list.status === "loading" && (
           <div className="flex items-center justify-center py-16">
             <Loader2 className="size-6 animate-spin text-foreground-muted" />

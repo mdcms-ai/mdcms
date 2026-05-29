@@ -113,11 +113,11 @@ function validateSessionResponse(
   return {
     csrfToken,
     session: {
-      id: session.id as string,
-      userId: session.userId as string,
-      email: session.email as string,
-      issuedAt: session.issuedAt as string,
-      expiresAt: session.expiresAt as string,
+      id: session.id,
+      userId: session.userId,
+      email: session.email,
+      issuedAt: session.issuedAt,
+      expiresAt: session.expiresAt,
     },
   };
 }

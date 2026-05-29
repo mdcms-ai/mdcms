@@ -57,7 +57,6 @@ function renderType(type: InferredType): string {
 export function generateConfigSource(input: GenerateConfigInput): string {
   const lines: string[] = [];
 
-  // Imports
   const sharedImports = ["defineConfig", "defineType"];
   if (hasReferences(input.types)) {
     sharedImports.push("reference");
@@ -77,7 +76,6 @@ export function generateConfigSource(input: GenerateConfigInput): string {
     `  contentDirectories: [${input.contentDirectories.map((d) => JSON.stringify(d)).join(", ")}],`,
   );
 
-  // Locales
   if (input.localeConfig) {
     const lc = input.localeConfig;
     lines.push("  locales: {");
@@ -95,12 +93,10 @@ export function generateConfigSource(input: GenerateConfigInput): string {
     lines.push("  },");
   }
 
-  // Environments
   lines.push("  environments: {");
   lines.push(`    ${input.environment}: {},`);
   lines.push("  },");
 
-  // Types
   if (input.types.length > 0) {
     lines.push("  types: [");
     for (const type of input.types) {

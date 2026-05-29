@@ -95,8 +95,7 @@ function validateField(
     return [];
   }
 
-  const kindErrors = validateKind(value, schema, path);
-  return kindErrors;
+  return validateKind(value, schema, path);
 }
 
 function validateKind(

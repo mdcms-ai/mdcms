@@ -1196,9 +1196,7 @@ async function handleProposalReject(
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────
 // Chat-message endpoint — POST /api/v1/ai/chat/messages
-// ─────────────────────────────────────────────────────────────────────
 
 /**
  * Actions the client could conceivably ask for that the chat surface
@@ -1583,9 +1581,7 @@ async function prepareChatTurn(
             draftRevision: attachedDocument.draftRevision,
             body: attachedDocument.body,
             frontmatter: attachedDocument.frontmatter,
-            hasPublishedVersion:
-              attachedDocument.publishedVersion !== null &&
-              attachedDocument.publishedVersion !== undefined,
+            hasPublishedVersion: attachedDocument.publishedVersion !== null,
           },
         }
       : {}),
@@ -1907,9 +1903,7 @@ async function handleChatMessage(
                 draftRevision: attachedDocument.draftRevision,
                 body: attachedDocument.body,
                 frontmatter: attachedDocument.frontmatter,
-                hasPublishedVersion:
-                  attachedDocument.publishedVersion !== null &&
-                  attachedDocument.publishedVersion !== undefined,
+                hasPublishedVersion: attachedDocument.publishedVersion !== null,
               },
             }
           : {}),

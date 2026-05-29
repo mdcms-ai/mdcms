@@ -278,10 +278,6 @@ export function isPreparedDocumentRouteMetadata(
     return false;
   }
 
-  if (value.environmentFieldTargets === undefined) {
-    return false;
-  }
-
   if (!isRecord(value.environmentFieldTargets)) {
     return false;
   }

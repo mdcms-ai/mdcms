@@ -502,27 +502,6 @@ function resolvePropertyDescriptor(input: {
   const currentValue = input.state.draftFrontmatter[input.fieldName];
   const typeLabel = describePropertyFieldType(input.field);
 
-  if (
-    currentValue === undefined &&
-    input.field.options &&
-    canEditSelectField(input.field, currentValue)
-  ) {
-    return {
-      fieldName: input.fieldName,
-      field: input.field,
-      typeLabel,
-      badgeLabel,
-      error,
-      status: "editable",
-      control: {
-        kind: "select",
-        value: currentValue,
-        options: input.field.options,
-        canUnset: isUnsettableField(input.field),
-      },
-    };
-  }
-
   if (input.field.options && canEditSelectField(input.field, currentValue)) {
     return {
       fieldName: input.fieldName,

@@ -66,7 +66,7 @@ export function mapProviderError(error: unknown): RuntimeError {
   if (
     error instanceof RuntimeError &&
     isAiErrorCode(error.code) &&
-    PROVIDER_FACING_CODES.has(error.code as AiErrorCode)
+    PROVIDER_FACING_CODES.has(error.code)
   ) {
     return error;
   }

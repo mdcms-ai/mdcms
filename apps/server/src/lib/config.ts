@@ -19,16 +19,12 @@ export async function loadServerConfig(
     return undefined;
   }
 
-  try {
-    const configModule = await import(
-      `${pathToFileURL(configPath).href}?t=${Date.now()}`
-    );
+  const configModule = await import(
+    `${pathToFileURL(configPath).href}?t=${Date.now()}`
+  );
 
-    return {
-      config: parseMdcmsConfig(configModule.default ?? configModule),
-      configPath,
-    };
-  } catch (error) {
-    throw error;
-  }
+  return {
+    config: parseMdcmsConfig(configModule.default ?? configModule),
+    configPath,
+  };
 }

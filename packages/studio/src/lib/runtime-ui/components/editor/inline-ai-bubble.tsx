@@ -324,7 +324,6 @@ function useInlineAiBubbleElement(props: InlineAiBubbleProps) {
         },
       },
     });
-    return () => {};
   }, [
     transform.state,
     preview,
@@ -357,7 +356,6 @@ function useInlineAiBubbleElement(props: InlineAiBubbleProps) {
       preview.revert();
       dispatchUi({ type: "preview-rejected", reopenPicker: true });
     }
-    return () => {};
   }, [transform.state, preview]);
 
   // Accept → call apply through the hook. The page-level `onApplied`
@@ -408,7 +406,6 @@ function useInlineAiBubbleElement(props: InlineAiBubbleProps) {
 
   useEffect(() => {
     refs.setReference(reference as never);
-    return () => {};
   }, [refs, reference]);
 
   const handleSubmit = useCallback(

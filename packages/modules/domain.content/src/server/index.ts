@@ -18,7 +18,7 @@ export const domainContentServerSurface: ServerSurface<
       try {
         route = new URL(request.url).pathname;
       } catch {
-        route = "/api/v1/modules/domain-content/preview";
+        // keep the default route
       }
 
       return {

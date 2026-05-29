@@ -108,7 +108,7 @@ function originIsAllowed(
 ): boolean {
   const origin = request.headers.get("origin")?.trim();
 
-  if (!origin || origin.length === 0) {
+  if (!origin) {
     return false;
   }
 
