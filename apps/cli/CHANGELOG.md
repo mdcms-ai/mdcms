@@ -1,5 +1,13 @@
 # @mdcms/cli
 
+## 0.2.4
+
+### Patch Changes
+
+- fe2cf74: Remove AI-generated slop (redundant comments, dead code, gratuitous casts and defensive guards). No behavior change.
+- Updated dependencies [fe2cf74]
+  - @mdcms/shared@0.3.1
+
 ## 0.2.3
 
 ### Patch Changes

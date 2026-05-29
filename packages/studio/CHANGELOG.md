@@ -1,5 +1,14 @@
 # @mdcms/studio
 
+## 0.3.1
+
+### Patch Changes
+
+- fe2cf74: Remove AI-generated slop (redundant comments, dead code, gratuitous casts and defensive guards). No behavior change.
+- 89ccd9e: Render lowercase MDX/HTML elements as structured Studio blocks.
+- Updated dependencies [fe2cf74]
+  - @mdcms/shared@0.3.1
+
 ## 0.3.0
 
 ### Minor Changes

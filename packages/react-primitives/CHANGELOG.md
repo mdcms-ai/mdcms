@@ -1,5 +1,12 @@
 # @mdcms/react-primitives
 
+## 0.0.2
+
+### Patch Changes
+
+- Updated dependencies [fe2cf74]
+  - @mdcms/shared@0.3.1
+
 ## 0.0.1
 
 ### Patch Changes
