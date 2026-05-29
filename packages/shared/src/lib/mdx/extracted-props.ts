@@ -564,7 +564,6 @@ function getStringEnumValues(type: ts.Type): string[] | undefined {
       (candidate) => (candidate.flags & ts.TypeFlags.Undefined) === 0,
     );
     const values = definedTypes
-      .filter((candidate) => (candidate.flags & ts.TypeFlags.Undefined) === 0)
       .map((candidate) =>
         candidate.isStringLiteral() ? candidate.value : undefined,
       )

@@ -1081,7 +1081,7 @@ function extractUndoErrorMessage(error: unknown): string {
     error &&
     typeof error === "object" &&
     "code" in error &&
-    (error as { code?: unknown }).code === "AI_PROPOSAL_CONFLICT"
+    error.code === "AI_PROPOSAL_CONFLICT"
   ) {
     return "Can't undo — the document was edited after the apply.";
   }

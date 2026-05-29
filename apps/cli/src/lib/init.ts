@@ -678,7 +678,6 @@ export function createInitCommand(options?: InitCommandOptions): CliCommand {
         );
 
         if (!initOpts.noExamplePost) {
-          // Create example post
           const examplePath = join(cwd, dirName, "example.md");
           await mkdir(join(cwd, dirName), { recursive: true });
           await writeFile(

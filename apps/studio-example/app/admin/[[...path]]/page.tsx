@@ -25,9 +25,7 @@ export default async function AdminCatchAllPage() {
           : undefined
       }
       schemaHash={
-        "_schemaHash" in preparedConfig
-          ? (preparedConfig._schemaHash as string)
-          : undefined
+        "_schemaHash" in preparedConfig ? preparedConfig._schemaHash : undefined
       }
     />
   );

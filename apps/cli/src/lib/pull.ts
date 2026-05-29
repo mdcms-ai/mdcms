@@ -356,7 +356,6 @@ function printPlan(context: CliCommandContext, changes: PullChange[]): void {
     }
   }
 
-  // Guidance for locally modified (server unchanged) files
   const serverUnchanged = groups.get("Locally modified (server unchanged)");
   if (serverUnchanged && serverUnchanged.length > 0) {
     context.stdout.write(
@@ -364,7 +363,6 @@ function printPlan(context: CliCommandContext, changes: PullChange[]): void {
     );
   }
 
-  // Guidance for both-modified files
   const bothModified = groups.get("Both modified");
   if (bothModified && bothModified.length > 0) {
     context.stdout.write(

@@ -18,7 +18,7 @@ export const coreSystemServerSurface: ServerSurface<
       try {
         route = new URL(request.url).pathname;
       } catch {
-        route = "/api/v1/modules/core-system/ping";
+        // keep the default route
       }
 
       return {

@@ -19,7 +19,6 @@ export function ComingSoon({
       {/* Large watermark icon */}
       <Icon className="absolute size-64 text-foreground/[0.02] pointer-events-none" />
 
-      {/* Content */}
       <div className="relative z-10 flex flex-col items-center text-center max-w-md">
         <div className="mb-5 flex size-12 items-center justify-center rounded-lg bg-primary/10">
           <Icon className="size-6 text-primary" />

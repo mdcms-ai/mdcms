@@ -2047,12 +2047,10 @@ function useEnvironmentPageController(): EnvironmentManagementPageViewProps {
         { auth, csrfToken: sessionState.csrfToken },
       );
       const preallocatedTargetIds: Record<string, string> = {};
-      if (promoteState.preview.status === "ready") {
-        for (const entry of promoteState.preview.results) {
-          if (entry.status === "created" && entry.targetDocumentId) {
-            preallocatedTargetIds[entry.sourceDocumentId] =
-              entry.targetDocumentId;
-          }
+      for (const entry of promoteState.preview.results) {
+        if (entry.status === "created" && entry.targetDocumentId) {
+          preallocatedTargetIds[entry.sourceDocumentId] =
+            entry.targetDocumentId;
         }
       }
       const result = await environmentApi.promote(snapshot.targetEnvId, {

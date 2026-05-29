@@ -419,7 +419,6 @@ function useAdminLayoutRoutedElement({
     if (previousAuthTokenRef.current === context.auth.token) return;
     previousAuthTokenRef.current = context.auth.token;
     void queryClient.invalidateQueries({ queryKey: ["studio"] });
-    return () => {};
   }, [queryClient, context.auth.token]);
 
   // Capabilities
@@ -586,7 +585,6 @@ function useAdminLayoutRoutedElement({
     if (loginRedirectPath) {
       replace(loginRedirectPath);
     }
-    return () => {};
   }, [loginRedirectPath, replace]);
 
   const mdxCatalog = useMemo<MdxComponentCatalog>(

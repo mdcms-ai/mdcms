@@ -526,7 +526,6 @@ function useContentTypePageController() {
   const create = useCreateDocument(typeId);
   const showLoading = list.status === "loading";
 
-  // Debounced search
   useEffect(() => {
     const timer = setTimeout(() => {
       list.setFilters({ q: searchInput || undefined });
@@ -637,7 +636,6 @@ function useContentTypePageController() {
     duplicateMutation.isPending ||
     deleteMutation.isPending;
 
-  // Pagination
   const totalPages = list.pagination
     ? Math.ceil(list.pagination.total / PAGE_SIZE)
     : 0;

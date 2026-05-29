@@ -81,7 +81,7 @@ export function toVersionDocumentResponse(
 export function toIsoString(value: unknown): string {
   return value instanceof Date
     ? value.toISOString()
-    : new Date(value as any).toISOString();
+    : new Date(value as string | number).toISOString();
 }
 
 function getDatabaseErrorObjects(

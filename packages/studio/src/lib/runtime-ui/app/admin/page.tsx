@@ -183,7 +183,6 @@ export default function DashboardPage() {
       <PageHeader breadcrumbs={[{ label: "Dashboard" }]} />
 
       <div className="space-y-8 p-6 lg:p-8">
-        {/* Page Title */}
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <h1 className="font-heading text-[36px] font-semibold leading-[1.05] tracking-tight text-foreground">
@@ -202,7 +201,6 @@ export default function DashboardPage() {
           )}
         </div>
 
-        {/* Stats Row */}
         <div className="grid gap-4 md:grid-cols-3">
           <StatCard
             label="Total documents"
@@ -232,7 +230,6 @@ export default function DashboardPage() {
           />
         </div>
 
-        {/* Content Types & Recently updated */}
         <div className="grid gap-4 lg:grid-cols-[400px_1fr]">
           <ContentTypesCard data={data} />
           <RecentDraftsCard data={data} formatTime={formatRelativeTime} />

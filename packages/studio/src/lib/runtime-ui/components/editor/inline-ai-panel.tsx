@@ -491,32 +491,12 @@ function InlineAiPanelStateful(props: InlineAiPanelProps) {
     if (!flyout) return false;
     const rect = flyout.getBoundingClientRect();
     const { x: cx, y: cy } = cursorRef.current;
-    // Build the triangle (cursor, flyout-top-left, flyout-bottom-left)
-    // and test point-in-triangle via barycentric coords. Only relevant
-    // when cursor is to the left of the flyout — if the user has
-    // already moved past the flyout's left edge, they're inside or
-    // beyond the flyout and the triangle is moot.
+    // Only relevant when the cursor is left of the flyout — once the user
+    // has moved past its left edge they're inside or beyond it.
     if (cx >= rect.left) return false;
-    const ax = cx;
-    const ay = cy;
-    const bx = rect.left;
-    const by = rect.top;
-    const ccx = rect.left;
-    const ccy = rect.bottom;
-    const dx = bx - ax;
-    const dy = by - ay;
-    const ex = ccx - ax;
-    const ey = ccy - ay;
-    // We don't run a real point-in-tri on every mousemove; instead we
-    // approximate "heading toward flyout" as: the cursor's X is left
-    // of the flyout AND the cursor's Y is between rect.top and
-    // rect.bottom (with some slack), which is the bounding box of the
-    // safe area. This is the standard "rectangle approximation" used
-    // by libraries that don't want to do bary computations per move.
-    void dx;
-    void dy;
-    void ex;
-    void ey;
+    // Approximate "heading toward flyout" as the cursor's Y sitting within
+    // the flyout's vertical band (plus slack) — the rectangle approximation
+    // used by libraries that avoid per-move point-in-triangle tests.
     const slack = 24;
     return cy >= rect.top - slack && cy <= rect.bottom + slack;
   };

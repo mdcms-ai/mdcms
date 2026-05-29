@@ -1397,7 +1397,6 @@ async function runSchemaPreflight(
     return runSyncInline();
   }
 
-  // Non-interactive branch
   if (!options.syncSchema) {
     context.stderr.write(
       `SCHEMA_DRIFT: Local schema differs from server schema for ${context.project}/${context.environment}.\n` +

@@ -24,10 +24,6 @@ import type {
 } from "../../api-keys-api.js";
 import { useStudioMountInfo } from "../app/admin/mount-info-context.js";
 
-/* ------------------------------------------------------------------ */
-/*  Scope groups for organized display                                 */
-/* ------------------------------------------------------------------ */
-
 type ScopeGroup = {
   label: string;
   scopes: ApiKeyOperationScope[];
@@ -70,10 +66,6 @@ const SCOPE_GROUPS: ScopeGroup[] = [
     scopes: ["projects:read", "projects:write"],
   },
 ];
-
-/* ------------------------------------------------------------------ */
-/*  Component                                                          */
-/* ------------------------------------------------------------------ */
 
 export type ApiKeyCreateDialogProps = {
   open: boolean;
@@ -271,7 +263,6 @@ export function ApiKeyCreateDialog({
             </DialogHeader>
 
             <div className="space-y-4 py-4">
-              {/* Label input */}
               <div className="space-y-2">
                 <Label htmlFor="api-key-label">Label</Label>
                 <Input
@@ -285,7 +276,6 @@ export function ApiKeyCreateDialog({
                 />
               </div>
 
-              {/* Scope selection */}
               <div className="space-y-3">
                 <Label>Scopes</Label>
                 {SCOPE_GROUPS.map((group) => (
@@ -323,7 +313,6 @@ export function ApiKeyCreateDialog({
                 ))}
               </div>
 
-              {/* Expiration date */}
               <div className="space-y-2">
                 <Label htmlFor="api-key-expires">Expires</Label>
                 <Input
@@ -344,7 +333,6 @@ export function ApiKeyCreateDialog({
                 </p>
               </div>
 
-              {/* Error display */}
               {(error || submitError) && (
                 <p className="text-sm text-destructive">
                   {submitError ?? error?.message}

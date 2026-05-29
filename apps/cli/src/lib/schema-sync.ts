@@ -35,10 +35,7 @@ export async function performSchemaSync(
   const { config, serverUrl, project, environment, apiKey, cwd, fetcher } =
     input;
 
-  const payload = buildSchemaSyncPayload(
-    config as ParsedMdcmsConfig,
-    environment,
-  );
+  const payload = buildSchemaSyncPayload(config, environment);
 
   if (Object.keys(payload.resolvedSchema).length === 0) {
     return {

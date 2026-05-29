@@ -18,7 +18,7 @@ export type ProcessHealthPayloadInput = {
 
 /**
  * createProcessHealthPayload builds the process-level health response used
- * by the `/healthz` endpoint in CMS-2.
+ * by the `/healthz` endpoint.
  */
 export function createProcessHealthPayload(
   input: ProcessHealthPayloadInput,

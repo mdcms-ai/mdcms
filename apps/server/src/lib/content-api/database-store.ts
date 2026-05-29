@@ -253,11 +253,7 @@ export function createDatabaseContentStore(
     scopeIds: { projectId: string; environmentId: string },
     headRow: typeof documents.$inferSelect,
   ): Promise<ContentDocument | undefined> {
-    if (
-      headRow.isDeleted ||
-      headRow.publishedVersion === null ||
-      headRow.publishedVersion === undefined
-    ) {
+    if (headRow.isDeleted || headRow.publishedVersion === null) {
       return undefined;
     }
 

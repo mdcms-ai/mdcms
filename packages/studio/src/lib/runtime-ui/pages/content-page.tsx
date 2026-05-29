@@ -62,7 +62,6 @@ function ContentTypeCard({
         entry.canNavigate && "hover:border-primary/60",
       )}
     >
-      {/* Head: letter mark + name/dir + i18n */}
       <div className="flex items-center gap-3">
         <span className="grid size-9 shrink-0 place-items-center rounded-md bg-blue-100 font-heading text-base font-bold text-primary">
           {initial}
@@ -85,7 +84,6 @@ function ContentTypeCard({
         ) : null}
       </div>
 
-      {/* Stats: total/published/drafts */}
       {hasMetrics ? (
         <>
           <div className="mt-4 grid grid-cols-3 gap-3 border-t border-divider/60 pt-4">

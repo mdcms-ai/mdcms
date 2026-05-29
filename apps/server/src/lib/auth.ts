@@ -4582,7 +4582,6 @@ export function createAuthService(
           statusCode: 409,
         });
       }
-      // Check if user already exists
       const existingUser = await options.db.query.authUsers.findFirst({
         where: eq(authUsers.email, email),
       });
@@ -4948,7 +4947,6 @@ export function createAuthService(
             statusCode: 409,
           });
         }
-        // Check email not already registered
         const existingUser = await tx.query.authUsers.findFirst({
           where: eq(authUsers.email, invite.email),
         });

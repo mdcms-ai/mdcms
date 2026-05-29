@@ -181,7 +181,7 @@ export function createServerRequestHandlerWithModules(
       documentId,
       { draft: true },
     );
-    return doc !== null && doc !== undefined && !doc.isDeleted;
+    return doc !== undefined && !doc.isDeleted;
   };
 
   // Schema-aware proposal validator. The AI orchestrator's chat tools

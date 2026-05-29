@@ -949,7 +949,6 @@ function ContentDocumentPageSidebar(props: {
         ) : null}
       </div>
 
-      {/* Tab content */}
       <div className="flex-1 overflow-y-auto">
         {activeTab === "component" &&
         props.context &&
@@ -2095,13 +2094,11 @@ function useContentDocumentPageController({
       }
     }
 
-    // Check if variant exists
     const existingVariant = currentState.translationVariants.find(
       (v) => v.locale === targetLocale,
     );
 
     if (existingVariant) {
-      // Clear variant creation state and navigate to the existing variant
       setState((current) =>
         current.status === "ready"
           ? { ...current, variantCreation: undefined }

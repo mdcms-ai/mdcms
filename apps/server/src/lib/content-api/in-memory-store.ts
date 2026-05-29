@@ -167,11 +167,7 @@ export function createInMemoryContentStore(
       return input.document;
     }
 
-    if (
-      input.document.isDeleted ||
-      input.document.publishedVersion === null ||
-      input.document.publishedVersion === undefined
-    ) {
+    if (input.document.isDeleted || input.document.publishedVersion === null) {
       return undefined;
     }
 
