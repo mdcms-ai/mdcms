@@ -1,5 +1,11 @@
 # @mdcms/shared
 
+## 0.3.1
+
+### Patch Changes
+
+- fe2cf74: Remove AI-generated slop (redundant comments, dead code, gratuitous casts and defensive guards). No behavior change.
+
 ## 0.3.0
 
 ### Minor Changes
