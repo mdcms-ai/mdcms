@@ -236,6 +236,43 @@ export function shouldRefetchAdminLayoutSessionOnResume(input: {
   return !input.isTokenMode && input.sessionState.status === "authenticated";
 }
 
+type AdminLayoutSessionResumeWindowTarget = {
+  addEventListener: (event: "focus", handler: () => void) => void;
+  removeEventListener: (event: "focus", handler: () => void) => void;
+};
+
+type AdminLayoutSessionResumeDocumentTarget = {
+  readonly visibilityState: DocumentVisibilityState;
+  addEventListener: (event: "visibilitychange", handler: () => void) => void;
+  removeEventListener: (event: "visibilitychange", handler: () => void) => void;
+};
+
+export function registerAdminLayoutSessionResumeRefetch(input: {
+  windowTarget: AdminLayoutSessionResumeWindowTarget;
+  documentTarget: AdminLayoutSessionResumeDocumentTarget;
+  refetchSession: () => void;
+}): () => void {
+  const refetchVisibleSession = () => {
+    if (input.documentTarget.visibilityState === "visible") {
+      input.refetchSession();
+    }
+  };
+
+  input.windowTarget.addEventListener("focus", input.refetchSession);
+  input.documentTarget.addEventListener(
+    "visibilitychange",
+    refetchVisibleSession,
+  );
+
+  return () => {
+    input.windowTarget.removeEventListener("focus", input.refetchSession);
+    input.documentTarget.removeEventListener(
+      "visibilitychange",
+      refetchVisibleSession,
+    );
+  };
+}
+
 export function AdminTokenErrorStateView({
   state,
   context,
@@ -553,22 +590,26 @@ function useAdminLayoutRoutedElement({
       return;
     }
 
-    const refetchSession = () => {
-      void sessionQuery.refetch();
-    };
-    const refetchVisibleSession = () => {
-      if (document.visibilityState === "visible") {
-        refetchSession();
-      }
-    };
-
-    window.addEventListener("focus", refetchSession);
-    document.addEventListener("visibilitychange", refetchVisibleSession);
-
-    return () => {
-      window.removeEventListener("focus", refetchSession);
-      document.removeEventListener("visibilitychange", refetchVisibleSession);
-    };
+    return registerAdminLayoutSessionResumeRefetch({
+      windowTarget: {
+        addEventListener: (event, handler) =>
+          window.addEventListener(event, handler),
+        removeEventListener: (event, handler) =>
+          window.removeEventListener(event, handler),
+      },
+      documentTarget: {
+        addEventListener: (event, handler) =>
+          document.addEventListener(event, handler),
+        removeEventListener: (event, handler) =>
+          document.removeEventListener(event, handler),
+        get visibilityState() {
+          return document.visibilityState;
+        },
+      },
+      refetchSession: () => {
+        void sessionQuery.refetch();
+      },
+    });
   }, [sessionQuery.refetch, shouldRefetchSessionOnResume]);
 
   // Environments

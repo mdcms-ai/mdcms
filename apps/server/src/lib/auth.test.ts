@@ -2590,7 +2590,13 @@ testWithDatabase(
           },
         }),
       );
+      const currentSessionBody = (await currentSessionResponse.json()) as {
+        data: { session: { id: string; email: string } };
+      };
+
       assert.equal(currentSessionResponse.status, 200);
+      assert.equal(currentSessionBody.data.session.id, secondLogin.session.id);
+      assert.equal(currentSessionBody.data.session.email, email);
 
       const firstSessionResponse = await handler(
         new Request("http://localhost/api/v1/auth/session", {
