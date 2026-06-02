@@ -38,6 +38,7 @@ import type {
   AssistantMessage,
   AssistantProgressEvent,
   AssistantProposal,
+  AssistantStreamBlock,
   AssistantThread,
 } from "./assistant-types.js";
 import { triggerTopAppliedUndo } from "./applied-undo-stack.js";
@@ -487,19 +488,20 @@ function progressTone(event: AssistantProgressEvent): string {
   return "text-primary";
 }
 
-function AssistantProgressTimeline({
-  events,
-}: {
-  events: AssistantProgressEvent[];
-}) {
-  if (events.length === 0) return null;
-  const visible = events.slice(-6);
+function progressSummary(events: AssistantProgressEvent[]): string {
+  const toolCalls = events.filter(
+    (event) => event.phase === "tool-call",
+  ).length;
+  if (toolCalls > 0) {
+    return `${toolCalls} tool call${toolCalls === 1 ? "" : "s"} appended`;
+  }
+  return `${events.length} progress update${events.length === 1 ? "" : "s"} appended`;
+}
+
+function ProgressRows({ events }: { events: AssistantProgressEvent[] }) {
   return (
-    <div
-      className="mt-1 flex max-w-[92%] flex-col gap-1.5 border-l border-divider/60 pl-3"
-      aria-label="AI progress"
-    >
-      {visible.map((event, idx) => {
+    <>
+      {events.map((event, idx) => {
         const usage = formatProgressUsage(event.usage);
         return (
           <div
@@ -518,7 +520,92 @@ function AssistantProgressTimeline({
           </div>
         );
       })}
+    </>
+  );
+}
+
+function AssistantProgressTimeline({
+  events,
+  collapsed = false,
+}: {
+  events: AssistantProgressEvent[];
+  collapsed?: boolean;
+}) {
+  if (events.length === 0) return null;
+  if (collapsed) {
+    return (
+      <details
+        className="group mt-1 max-w-[92%] border-l border-divider/60 pl-3"
+        data-mdcms-assistant-progress-collapsed=""
+      >
+        <summary className="flex min-w-0 cursor-pointer list-none items-center gap-2 text-[12px] leading-5 text-foreground-muted marker:hidden">
+          <ChevronRight
+            className="size-3 shrink-0 text-foreground-subtle transition-transform group-open:rotate-90"
+            aria-hidden="true"
+          />
+          <span className="min-w-0 flex-1 truncate">
+            {progressSummary(events)}
+          </span>
+        </summary>
+        <div className="mt-1 flex flex-col gap-1.5">
+          <ProgressRows events={events} />
+        </div>
+      </details>
+    );
+  }
+  const visible = events.slice(-6);
+  return (
+    <div
+      className="mt-1 flex max-w-[92%] flex-col gap-1.5 border-l border-divider/60 pl-3"
+      aria-label="AI progress"
+    >
+      <ProgressRows events={visible} />
     </div>
+  );
+}
+
+function hasVisibleStreamContent(block: AssistantStreamBlock): boolean {
+  return block.kind === "text"
+    ? block.text.trim().length > 0
+    : block.events.length > 0;
+}
+
+function AssistantStreamBlocks({
+  blocks,
+  hasProposalContent,
+}: {
+  blocks: AssistantStreamBlock[];
+  hasProposalContent: boolean;
+}) {
+  const visibleBlocks = blocks.filter(hasVisibleStreamContent);
+  return (
+    <>
+      {visibleBlocks.map((block, idx) => {
+        if (block.kind === "text") {
+          return (
+            <div
+              key={`text-${idx}`}
+              className="max-w-[92%] py-0.5"
+              data-mdcms-assistant-stream-block="text"
+            >
+              <AssistantMarkdown text={block.text.trim()} />
+            </div>
+          );
+        }
+        const hasLaterContent =
+          visibleBlocks
+            .slice(idx + 1)
+            .some((candidate) => candidate.kind === "text") ||
+          hasProposalContent;
+        return (
+          <AssistantProgressTimeline
+            key={`progress-${idx}`}
+            events={block.events}
+            collapsed={hasLaterContent}
+          />
+        );
+      })}
+    </>
   );
 }
 
@@ -557,11 +644,18 @@ export function AssistantBubble({
   onUndo?: (proposalId: string) => Promise<void>;
 }) {
   const proposalIds = message.proposals ?? [];
-  const text = message.text?.trim();
-  const progressEvents = isStreamingPlaceholder ? (message.progress ?? []) : [];
+  const streamBlocks =
+    isStreamingPlaceholder && message.streamBlocks?.length
+      ? message.streamBlocks
+      : [];
+  const hasStreamBlocks = streamBlocks.some(hasVisibleStreamContent);
+  const text = hasStreamBlocks ? undefined : message.text?.trim();
+  const progressEvents =
+    isStreamingPlaceholder && !hasStreamBlocks ? (message.progress ?? []) : [];
   if (
     proposalIds.length === 0 &&
     !text &&
+    !hasStreamBlocks &&
     !isStreamingPlaceholder &&
     progressEvents.length === 0
   ) {
@@ -580,7 +674,12 @@ export function AssistantBubble({
         <SparkleMark size={14} />
       </div>
       <div className="flex min-w-0 flex-1 flex-col gap-2">
-        {text ? (
+        {hasStreamBlocks ? (
+          <AssistantStreamBlocks
+            blocks={streamBlocks}
+            hasProposalContent={proposalIds.length > 0}
+          />
+        ) : text ? (
           <div className="max-w-[92%] py-0.5">
             <AssistantMarkdown text={text} />
           </div>

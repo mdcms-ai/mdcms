@@ -201,6 +201,7 @@ export type AssistantProgressEvent = {
     | "tool-error"
     | "step-finished";
   message: string;
+  toolCallId?: string;
   toolName?: string;
   status?: "started" | "completed" | "queued" | "rejected" | "failed";
   usage?: {
@@ -210,6 +211,16 @@ export type AssistantProgressEvent = {
   };
 };
 
+export type AssistantStreamBlock =
+  | {
+      kind: "text";
+      text: string;
+    }
+  | {
+      kind: "progress";
+      events: AssistantProgressEvent[];
+    };
+
 export type AssistantMessage = {
   id: string;
   role: AssistantMessageRole;
@@ -218,6 +229,12 @@ export type AssistantMessage = {
   /** Context chips that were attached when this user turn was sent. */
   context?: AssistantMessageContextSnapshot;
   progress?: AssistantProgressEvent[];
+  /**
+   * Pending-stream-only render blocks. They preserve the order in
+   * which text deltas and progress events arrived so the assistant can
+   * show tool activity between prose blocks while a turn is streaming.
+   */
+  streamBlocks?: AssistantStreamBlock[];
   proposals?: string[];
   at: string;
   /**

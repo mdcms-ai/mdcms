@@ -164,6 +164,16 @@ proposal, and show per-step token usage when the provider reports it. Progress
 events must not expose hidden chain-of-thought or raw tool arguments; they are
 status summaries only.
 
+During a pending streaming turn, Studio renders assistant text and progress
+events in the same chronological order in which the stream emits them. A run of
+progress events that occurs between two assistant text runs is rendered between
+those text runs, not gathered below the whole assistant message. When later
+assistant text or proposal content appears after a progress run, Studio
+auto-collapses that earlier run into a summary row that names the number of
+tool calls or progress updates and can be expanded to inspect the individual
+status rows. The current trailing progress run remains expanded while the
+pending turn is still active.
+
 Rejecting a proposal does not silently discard the model's turn. Reject opens
 an inline feedback textarea on the card; the user types what should change and
 submits. Studio sends the original proposal id, the user's feedback, and the

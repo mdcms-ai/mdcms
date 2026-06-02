@@ -10,6 +10,7 @@ import {
   useAssistantMainPadding,
   useAssistantMainPaddingStyle,
 } from "./assistant-rail.js";
+import type { AssistantMessage } from "./assistant-types.js";
 
 function AssistantPaddingProbe() {
   return (
@@ -39,6 +40,97 @@ test("assistant message sparkle aligns with the first prose line", () => {
   );
 
   assert.match(markup, /w-6 shrink-0 pt-2 text-primary/);
+});
+
+test("assistant pending progress renders between streamed text blocks and collapses earlier groups", () => {
+  const message = {
+    id: "msg-stream",
+    role: "assistant",
+    text: "Let me check what components are available.\nGot what I need. Now I'll build the page.",
+    streamBlocks: [
+      {
+        kind: "text",
+        text: "Let me check what components are available.",
+      },
+      {
+        kind: "progress",
+        events: [
+          {
+            phase: "tool-call",
+            status: "started",
+            toolName: "component_reference",
+            message: "Read component reference tool started",
+          },
+          {
+            phase: "tool-result",
+            status: "completed",
+            toolName: "component_reference",
+            message: "Read component reference completed",
+          },
+          {
+            phase: "tool-call",
+            status: "started",
+            toolName: "component_reference",
+            message: "Read component reference tool started",
+          },
+          {
+            phase: "tool-result",
+            status: "completed",
+            toolName: "component_reference",
+            message: "Read component reference completed",
+          },
+        ],
+      },
+      {
+        kind: "text",
+        text: "Got what I need. Now I'll build the page.",
+      },
+      {
+        kind: "progress",
+        events: [
+          {
+            phase: "thinking",
+            message: "Thinking through the request",
+          },
+        ],
+      },
+    ],
+    progress: [
+      {
+        phase: "thinking",
+        message: "Thinking through the request",
+      },
+    ],
+    at: "2026-05-22T12:00:00.000Z",
+  } satisfies AssistantMessage;
+
+  const markup = renderToStaticMarkup(
+    <AssistantBubble
+      message={message}
+      proposalsById={{}}
+      documentPathById={new Map()}
+      isStreamingPlaceholder
+      onAccept={() => undefined}
+      onReject={() => undefined}
+    />,
+  );
+
+  assert.match(markup, /data-mdcms-assistant-progress-collapsed/);
+  assert.match(markup, /2 tool calls appended/);
+
+  const firstTextIndex = markup.indexOf(
+    "Let me check what components are available.",
+  );
+  const collapsedIndex = markup.indexOf("2 tool calls appended");
+  const secondTextIndex = markup.indexOf(
+    "Got what I need. Now I&#x27;ll build the page.",
+  );
+  const trailingProgressIndex = markup.indexOf("Thinking through the request");
+
+  assert.ok(firstTextIndex >= 0);
+  assert.ok(collapsedIndex > firstTextIndex);
+  assert.ok(secondTextIndex > collapsedIndex);
+  assert.ok(trailingProgressIndex > secondTextIndex);
 });
 
 test("assistant rail exposes a resize handle and default width", () => {
