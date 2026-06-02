@@ -1,5 +1,16 @@
 # @mdcms/sdk
 
+## 0.3.0
+
+### Minor Changes
+
+- a48b9d8: Add preview token verification helpers for draft previews
+
+### Patch Changes
+
+- Updated dependencies [a48b9d8]
+  - @mdcms/shared@0.4.0
+
 ## 0.2.0
 
 ### Minor Changes

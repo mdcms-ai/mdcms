@@ -1,6 +1,6 @@
 {
   "name": "@mdcms/shared",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Shared contracts, types, and validators for MDCMS",
   "type": "module",
   "main": "./dist/index.js",
