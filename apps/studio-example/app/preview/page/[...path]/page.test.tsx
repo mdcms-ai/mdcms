@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { signMdcmsPreviewToken } from "@mdcms/shared";
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderToReadableStream } from "react-dom/server";
 
 test("page preview route renders draft content after verifying a preview token", async () => {
   process.env.MDCMS_DEMO_API_KEY = "mdcms_key_test";
@@ -85,7 +85,8 @@ test("page preview route renders draft content after verifying a preview token",
     params: Promise.resolve({ path: ["about"] }),
     searchParams: Promise.resolve({ mdcms_preview_token: token }),
   });
-  const markup = renderToStaticMarkup(element);
+  const stream = await renderToReadableStream(element);
+  const markup = await new Response(stream).text();
 
   assert.match(markup, /Page Preview/);
   assert.match(markup, /About Demo/);

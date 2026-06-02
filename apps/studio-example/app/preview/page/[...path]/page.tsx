@@ -31,5 +31,5 @@ export default async function PagePreviewPage({
     ),
   );
 
-  return PreviewDocumentView({ heading: "Page Preview", result });
+  return <PreviewDocumentView heading="Page Preview" result={result} />;
 }
