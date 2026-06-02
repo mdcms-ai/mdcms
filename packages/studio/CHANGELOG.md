@@ -1,5 +1,11 @@
 # @mdcms/studio
 
+## 0.3.2
+
+### Patch Changes
+
+- f32f438: Fix Studio rendering for lowercase intrinsic MDX text elements
+
 ## 0.3.1
 
 ### Patch Changes
