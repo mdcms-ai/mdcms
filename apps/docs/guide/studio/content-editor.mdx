@@ -66,6 +66,12 @@ The document editor at `/admin/content/:type/:documentId` uses a two-panel layou
 
 When an MDX component node is selected in the editor, the sidebar also shows the MDX props panel below the tabs for editing component properties.
 
+## Live preview
+
+If a content type defines `resolvePreviewUrl` in `mdcms.config.ts`, the document editor can show a split or full-width real-app preview pane. The resolver receives the latest persisted draft snapshot and returns the host route that should render that document. Studio saves pending draft changes before manual preview refresh, requests a short-lived preview token from MDCMS, and loads the tokenized route in the iframe.
+
+When a content type has no resolver, or the server is not configured to mint preview tokens, Studio shows **Live preview not available** with integration guidance. Route mapping does not come from frontmatter fields or hardcoded Studio paths; keep it in `mdcms.config.ts` beside the model definition.
+
 ## Frontmatter editing
 
 The Fields tab generates form controls based on your schema field definitions. Each Zod type maps to a specific UI control:

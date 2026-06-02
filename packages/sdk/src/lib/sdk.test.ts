@@ -6,8 +6,17 @@ import type {
   ContentDocumentResponse,
   ErrorEnvelope,
 } from "@mdcms/shared";
+import {
+  appendMdcmsPreviewTokenToUrl,
+  signMdcmsPreviewToken,
+} from "@mdcms/shared";
 
-import { MdcmsApiError, MdcmsClientError, createClient } from "./sdk.js";
+import {
+  MdcmsApiError,
+  MdcmsClientError,
+  createClient,
+  verifyMdcmsPreviewRequest,
+} from "./sdk.js";
 
 function createContentListResponse(
   rows: ContentDocumentResponse[],
@@ -556,4 +565,152 @@ test("createClient get by slug serializes locale and repeated resolve query para
   });
 
   assert.equal(result.locale, "fr");
+});
+
+test("verifyMdcmsPreviewRequest extracts and verifies preview tokens from request URLs", async () => {
+  const previewUrl = "https://preview.example.com/blog/hello?preview=true";
+  const { token } = await signMdcmsPreviewToken({
+    secret: "test-preview-secret",
+    now: new Date("2026-06-02T10:00:00.000Z"),
+    claims: {
+      project: "marketing-site",
+      environment: "production",
+      documentId: "11111111-1111-1111-1111-111111111111",
+      type: "BlogPost",
+      path: "blog/hello-world",
+      locale: "en",
+      draftRevision: 5,
+      previewUrl,
+    },
+  });
+
+  const result = await verifyMdcmsPreviewRequest(
+    new Request(appendMdcmsPreviewTokenToUrl(previewUrl, token)),
+    {
+      secret: "test-preview-secret",
+      now: new Date("2026-06-02T10:01:00.000Z"),
+      expected: {
+        documentId: "11111111-1111-1111-1111-111111111111",
+        previewUrl,
+      },
+    },
+  );
+
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(result.claims.type, "BlogPost");
+    assert.equal(result.claims.draftRevision, 5);
+  }
+});
+
+test("createClient getPreviewDocumentFromRequest verifies the token and fetches the draft document", async () => {
+  const previewUrl = "https://preview.example.com/blog/hello?preview=true";
+  const { token } = await signMdcmsPreviewToken({
+    secret: "test-preview-secret",
+    now: new Date("2026-06-02T10:00:00.000Z"),
+    claims: {
+      project: "marketing-site",
+      environment: "staging",
+      documentId: "11111111-1111-1111-1111-111111111111",
+      type: "BlogPost",
+      path: "blog/hello-world",
+      locale: "en",
+      draftRevision: 5,
+      previewUrl,
+    },
+  });
+  const document: ContentDocumentResponse = {
+    documentId: "11111111-1111-1111-1111-111111111111",
+    translationGroupId: "22222222-2222-2222-2222-222222222222",
+    project: "marketing-site",
+    environment: "staging",
+    path: "blog/hello-world",
+    type: "BlogPost",
+    locale: "en",
+    format: "md",
+    isDeleted: false,
+    hasUnpublishedChanges: true,
+    version: 3,
+    publishedVersion: 2,
+    draftRevision: 5,
+    frontmatter: {
+      title: "Hello World",
+      slug: "hello-world",
+    },
+    body: "Draft body",
+    createdBy: "33333333-3333-3333-3333-333333333333",
+    createdAt: "2026-03-26T10:00:00.000Z",
+    updatedBy: "33333333-3333-3333-3333-333333333333",
+    updatedAt: "2026-03-26T12:00:00.000Z",
+  };
+  const client = createClient({
+    serverUrl: "http://localhost:4000",
+    apiKey: "mdcms_key_test",
+    project: "fallback-project",
+    environment: "fallback-environment",
+    fetch: async (input: string | URL | Request, init?: RequestInit) => {
+      assert.equal(
+        String(input),
+        "http://localhost:4000/api/v1/content/11111111-1111-1111-1111-111111111111?locale=en&resolve=author&draft=true",
+      );
+      assert.equal(
+        (init?.headers as Headers).get("x-mdcms-project"),
+        "marketing-site",
+      );
+      assert.equal(
+        (init?.headers as Headers).get("x-mdcms-environment"),
+        "staging",
+      );
+
+      return new Response(JSON.stringify({ data: document }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    },
+  });
+
+  const result = await client.getPreviewDocumentFromRequest(
+    new Request(appendMdcmsPreviewTokenToUrl(previewUrl, token)),
+    {
+      secret: "test-preview-secret",
+      now: new Date("2026-06-02T10:01:00.000Z"),
+      expected: { previewUrl },
+      resolve: ["author"],
+    },
+  );
+
+  assert.equal(result.documentId, document.documentId);
+  assert.equal(result.body, "Draft body");
+});
+
+test("createClient getPreviewDocumentFromRequest rejects invalid preview requests before fetching drafts", async () => {
+  const client = createClient({
+    serverUrl: "http://localhost:4000",
+    apiKey: "mdcms_key_test",
+    project: "marketing-site",
+    environment: "production",
+    fetch: async () => {
+      throw new Error("draft fetch should not run");
+    },
+  });
+
+  await assert.rejects(
+    () =>
+      client.getPreviewDocumentFromRequest(
+        new Request("https://preview.example.com/blog/hello?preview=true"),
+        { secret: "test-preview-secret" },
+      ),
+    (error: unknown) => {
+      assert.equal(error instanceof MdcmsClientError, true);
+      if (!(error instanceof MdcmsClientError)) {
+        return false;
+      }
+
+      assert.equal(error.code, "PREVIEW_TOKEN_INVALID");
+      assert.match(error.message, /missing/i);
+      return true;
+    },
+  );
 });

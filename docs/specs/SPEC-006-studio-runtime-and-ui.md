@@ -2,7 +2,7 @@
 status: live
 canonical: true
 created: 2026-03-11
-last_updated: 2026-04-10
+last_updated: 2026-06-02
 ---
 
 # SPEC-006 Studio Runtime and UI
@@ -66,6 +66,17 @@ export type StudioMountContext = {
   basePath: string;
   auth: { mode: "cookie" | "token"; token?: string };
   hostBridge: HostBridgeV1;
+  preview?: {
+    hasPreviewUrlResolver?: (contentType: string) => boolean;
+    resolvePreviewUrl: (document: {
+      documentId: string;
+      type: string;
+      path: string;
+      locale: string;
+      frontmatter: Record<string, unknown>;
+      draftRevision: number;
+    }) => string | null;
+  };
   mdx?: {
     catalog: MdxComponentCatalog; // Contract owned by SPEC-007
     resolvePropsEditor: (name: string) => unknown | null;
@@ -468,6 +479,53 @@ Normative behavior:
   for localized types with at least one supported locale), a `Read-only`
   badge when the active target denies writes, a ghost `Save draft` button,
   the primary `Publish` button, and the sidebar visibility toggle.
+- The document editor exposes an `Edit` / `Split` / `Preview` segmented
+  control in the topbar. `Edit` is the default authoring-only layout. `Split`
+  renders the editor and a real-app preview surface side by side on desktop.
+  `Preview` hides the editor canvas and gives the preview surface the available
+  document area. The mode is local UI state and does not change the document
+  body, frontmatter, publish state, sidebar state, or write authorization.
+- The real-app preview surface is a page renderer. It embeds a host route in an
+  iframe and must not render Studio-only component mocks. The existing inline
+  MDX component preview remains a node renderer owned by SPEC-007.
+- The preview pane chrome contains a read-only resolved-route chip, a manual
+  refresh control, viewport-size controls, and an open-in-new-tab link. The
+  open-in-new-tab link is always available when a route is resolved so editors
+  have a fallback when browser framing policy blocks embedding.
+- Refreshing the real-app preview first runs the normal draft persistence path
+  when local body or frontmatter edits are unsaved, then reloads the iframe only
+  after persistence succeeds. Route resolution uses the latest persisted draft
+  snapshot; local unsaved frontmatter changes must not navigate the iframe
+  before the canonical draft row is updated.
+- When route resolution returns a URL, Studio requests a signed preview token
+  from `POST /api/v1/content/:documentId/preview-token` before loading the
+  iframe. Studio sends the resolved URL as `previewUrl` when available, appends
+  the returned token to the host URL as `mdcms_preview_token`, and may also add
+  `preview=true` as a mode flag. Manual refresh repeats token minting after any
+  required draft persistence so the iframe sees a token bound to the latest
+  persisted draft revision.
+- Route resolution is deterministic and config-owned. A content type may define
+  `resolvePreviewUrl(document)` in `mdcms.config.ts`; Studio calls that resolver
+  with the active document id, content type, path, locale, persisted draft
+  frontmatter, and draft revision. The resolver returns a same-origin path or
+  absolute URL to embed, or `null`/`undefined` when the document has no route.
+  Studio must not derive preview routes from frontmatter fields such as
+  `previewUrl`, and it must not ship built-in route assumptions for content
+  types such as `post` or `page`.
+- Documents whose content type has no `resolvePreviewUrl` resolver render a
+  `Live preview not available` state with guidance to add the resolver to that
+  content type in `mdcms.config.ts`. If a resolver is present but returns no
+  URL for the active document, the pane renders an unavailable state that points
+  operators back to the resolver and document fields instead of guessing.
+- The iframe uses a restrictive sandbox for the first slice:
+  `allow-scripts allow-forms`, without `allow-same-origin` unless a future
+  same-origin adapter contract explicitly opts into it. The preview surface
+  must remain read-only from Studio's perspective.
+- Preview failure states are explicit and actionable. Studio distinguishes at
+  least: no route configured, no host adapter, framing blocked, unauthorized,
+  token/session expiry, invalid preview-token configuration, and invalid draft.
+  Cross-origin adapter failures are represented as unavailable states and an
+  open-in-new-tab fallback rather than implicit background retries.
 - `Save draft` calls the same draft-persistence routine that the auto-save
   debounce uses. It is enabled only while the draft is in `unsaved` state
   and a publish is not in flight; it is hidden when the active target denies

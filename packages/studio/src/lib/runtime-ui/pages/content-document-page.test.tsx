@@ -14,7 +14,13 @@ import type { StudioDocumentShell } from "../../document-shell.js";
 import { StudioNavigationProvider } from "../navigation.js";
 import {
   ContentDocumentPageView,
+  MDCMS_LIVE_PREVIEW_READY_MESSAGE,
   SidebarInfoTab,
+  createLivePreviewIframeRoute,
+  isLivePreviewReadyMessage,
+  resolveLivePreviewDocument,
+  runLivePreviewRefresh,
+  shouldPersistBeforeLivePreviewRefresh,
 } from "./content-document-page.js";
 import {
   applyFailedDraftSaveToReadyState,
@@ -36,6 +42,7 @@ import {
   saveContentDocumentReadyState,
   syncSchemaStateForGuard,
 } from "./content-document-page-state.js";
+import { resolveDocumentPreviewRoute } from "./document-preview-route.js";
 
 function createReadyShell(
   overrides: Partial<StudioDocumentShell["data"]> = {},
@@ -1719,6 +1726,386 @@ test("ContentDocumentPageView folds the unpublished-changes signal into the Publ
     /data-mdcms-document-unpublished-changes="true"/,
   );
   assert.doesNotMatch(publishedMarkup, />unpublished</);
+});
+
+test("resolveDocumentPreviewRoute uses configured content type preview URL resolvers only", () => {
+  assert.deepEqual(
+    resolveDocumentPreviewRoute({
+      document: {
+        documentId: "11111111-1111-4111-8111-111111111111",
+        type: "post",
+        path: "content/posts/launch-notes",
+        locale: "en",
+        frontmatter: { slug: "launch-notes", previewUrl: "/ignored" },
+        draftRevision: 8,
+      },
+      preview: {
+        hasPreviewUrlResolver: (type) => type === "post",
+        resolvePreviewUrl: (document) => {
+          const slug = document.frontmatter.slug;
+          return typeof slug === "string" ? `/configured/${slug}` : null;
+        },
+      },
+    }),
+    {
+      status: "ready",
+      href: "/configured/launch-notes",
+      label: "/configured/launch-notes",
+      source: "config",
+    },
+  );
+
+  assert.deepEqual(
+    resolveDocumentPreviewRoute({
+      document: {
+        documentId: "33333333-3333-4333-8333-333333333333",
+        type: "author",
+        path: "content/authors/ada",
+        locale: "en",
+        frontmatter: { slug: "ada", previewUrl: "/ignored" },
+        draftRevision: 2,
+      },
+      preview: {
+        hasPreviewUrlResolver: (type) => type === "post",
+        resolvePreviewUrl: () => null,
+      },
+    }),
+    {
+      status: "unavailable",
+      reason: "not-configured",
+      message:
+        'Live preview is not configured for content type "author". Add resolvePreviewUrl to this content type in mdcms.config.ts to enable route preview.',
+    },
+  );
+
+  assert.deepEqual(
+    resolveDocumentPreviewRoute({
+      document: {
+        documentId: "22222222-2222-4222-8222-222222222222",
+        type: "post",
+        path: "content/posts/launch-notes",
+        locale: "en",
+        frontmatter: { slug: "launch-notes", previewUrl: "/ignored" },
+        draftRevision: 8,
+      },
+    }),
+    {
+      status: "unavailable",
+      reason: "not-configured",
+      message:
+        'Live preview is not configured for content type "post". Add resolvePreviewUrl to this content type in mdcms.config.ts to enable route preview.',
+    },
+  );
+});
+
+test("ContentDocumentPageView prepares split live-preview mode until a tokenized route is ready", () => {
+  const baseState = createReadyState();
+  const state = createReadyState({
+    typeId: "post",
+    typeLabel: "Post",
+    document: {
+      ...baseState.document,
+      type: "post",
+      path: "content/posts/launch-notes",
+      frontmatter: {
+        title: "Launch Notes",
+        slug: "launch-notes",
+      },
+    },
+    draftFrontmatter: {
+      title: "Launch Notes",
+      slug: "launch-notes",
+    },
+  });
+
+  const markup = renderPageMarkup(state, {
+    previewMode: "split",
+    context: {
+      ...createMountContext(),
+      preview: {
+        hasPreviewUrlResolver: (type) => type === "post",
+        resolvePreviewUrl: (document) => {
+          const slug = document.frontmatter.slug;
+          return typeof slug === "string" ? `/configured/${slug}` : null;
+        },
+      },
+    },
+  });
+
+  assert.match(markup, /data-mdcms-editor-preview-mode="split"/);
+  assert.match(markup, /class="flex min-h-0 flex-1 flex-col lg:flex-row"/);
+  assert.match(
+    markup,
+    /data-mdcms-editor-authoring-pane="true" class="flex min-w-0 flex-col overflow-hidden w-full lg:w-1\/2 lg:border-r lg:border-border"/,
+  );
+  assert.match(
+    markup,
+    /data-mdcms-editor-host-preview-pane="true" class="min-w-0 overflow-hidden w-full lg:w-1\/2"/,
+  );
+  assert.match(markup, />Edit</);
+  assert.match(markup, />Split</);
+  assert.match(markup, />Preview</);
+  assert.match(markup, /data-mdcms-live-preview-pane="ready"/);
+  assert.match(markup, /data-mdcms-preview-viewport="medium"/);
+  assert.match(markup, /data-mdcms-preview-viewport-option="small"/);
+  assert.match(markup, /Preparing preview/);
+  assert.doesNotMatch(markup, /src="\/configured\/launch-notes"/);
+  assert.match(markup, /Open preview in new tab/);
+});
+
+test("createLivePreviewIframeRoute mints a token before returning an iframe href", async () => {
+  const calls: Array<{ documentId: string; previewUrl?: string }> = [];
+
+  const route = await createLivePreviewIframeRoute({
+    api: {
+      createPreviewToken: async (input) => {
+        calls.push({
+          documentId: input.documentId,
+          previewUrl: input.previewUrl,
+        });
+        return {
+          token: "preview-token",
+          expiresAt: "2026-06-02T10:05:00.000Z",
+        };
+      },
+    },
+    document: {
+      documentId: "11111111-1111-4111-8111-111111111111",
+    },
+    href: "/configured/launch-notes?preview=true",
+  });
+
+  assert.deepEqual(calls, [
+    {
+      documentId: "11111111-1111-4111-8111-111111111111",
+      previewUrl: "/configured/launch-notes?preview=true",
+    },
+  ]);
+  assert.equal(route.expiresAt, "2026-06-02T10:05:00.000Z");
+  assert.equal(
+    route.href,
+    "/configured/launch-notes?preview=true&mdcms_preview_token=preview-token",
+  );
+});
+
+test("isLivePreviewReadyMessage accepts only the active iframe ready handshake", () => {
+  const activeWindow = {} as Window;
+  const staleWindow = {} as Window;
+  const iframe = {
+    contentWindow: activeWindow,
+  } as Pick<HTMLIFrameElement, "contentWindow">;
+
+  assert.equal(
+    isLivePreviewReadyMessage(
+      {
+        data: {
+          type: MDCMS_LIVE_PREVIEW_READY_MESSAGE,
+          href: "/configured/launch-notes?preview=true",
+        },
+        source: activeWindow,
+      },
+      iframe,
+      "/configured/launch-notes?preview=true",
+    ),
+    true,
+  );
+  assert.equal(
+    isLivePreviewReadyMessage(
+      {
+        data: { type: MDCMS_LIVE_PREVIEW_READY_MESSAGE },
+        source: activeWindow,
+      },
+      iframe,
+      "/configured/launch-notes?preview=true",
+    ),
+    true,
+  );
+  assert.equal(
+    isLivePreviewReadyMessage(
+      {
+        data: {
+          type: MDCMS_LIVE_PREVIEW_READY_MESSAGE,
+          href: "/configured/other?preview=true",
+        },
+        source: activeWindow,
+      },
+      iframe,
+      "/configured/launch-notes?preview=true",
+    ),
+    false,
+  );
+  assert.equal(
+    isLivePreviewReadyMessage(
+      {
+        data: { type: MDCMS_LIVE_PREVIEW_READY_MESSAGE },
+        source: staleWindow,
+      },
+      iframe,
+      "/configured/launch-notes?preview=true",
+    ),
+    false,
+  );
+  assert.equal(
+    isLivePreviewReadyMessage(
+      {
+        data: { type: "mdcms:other-message" },
+        source: activeWindow,
+      },
+      iframe,
+      "/configured/launch-notes?preview=true",
+    ),
+    false,
+  );
+});
+
+test("resolveLivePreviewDocument uses the persisted draft snapshot for route resolution", () => {
+  const baseState = createReadyState();
+  const state = createReadyState({
+    typeId: "post",
+    typeLabel: "Post",
+    document: {
+      ...baseState.document,
+      type: "post",
+      body: "# Persisted body",
+      path: "content/posts/persisted-slug",
+      frontmatter: {
+        title: "Persisted title",
+        slug: "persisted-slug",
+      },
+    },
+    draftBody: "# Unsaved body",
+    draftFrontmatter: {
+      title: "Unsaved title",
+      slug: "unsaved-slug",
+    },
+    saveState: "unsaved",
+  });
+
+  assert.deepEqual(resolveLivePreviewDocument(state), {
+    documentId: state.document.documentId,
+    type: "post",
+    path: "content/posts/persisted-slug",
+    locale: "en",
+    frontmatter: {
+      title: "Persisted title",
+      slug: "persisted-slug",
+    },
+    draftRevision: state.document.draftRevision,
+  });
+});
+
+test("shouldPersistBeforeLivePreviewRefresh requires canonical draft persistence before reload", () => {
+  const baseState = createReadyState();
+  const unsavedState = createReadyState({
+    document: {
+      ...baseState.document,
+      body: "# Persisted body",
+      frontmatter: {
+        title: "Persisted title",
+      },
+    },
+    draftBody: "# Unsaved body",
+    draftFrontmatter: {
+      title: "Unsaved title",
+    },
+    saveState: "unsaved",
+  });
+
+  assert.equal(shouldPersistBeforeLivePreviewRefresh(unsavedState), true);
+  assert.equal(
+    shouldPersistBeforeLivePreviewRefresh({
+      ...unsavedState,
+      saveState: "saving",
+    }),
+    true,
+  );
+  assert.equal(
+    shouldPersistBeforeLivePreviewRefresh({
+      ...unsavedState,
+      draftBody: unsavedState.document.body,
+      draftFrontmatter: unsavedState.document.frontmatter,
+      saveState: "saved",
+    }),
+    false,
+  );
+  assert.equal(
+    shouldPersistBeforeLivePreviewRefresh({
+      ...unsavedState,
+      viewingVersion: {
+        version: 1,
+        body: "# Historical",
+        status: "ready",
+      },
+    }),
+    false,
+  );
+});
+
+test("runLivePreviewRefresh persists before reloading and skips reload when persistence fails", async () => {
+  const calls: string[] = [];
+
+  assert.equal(
+    await runLivePreviewRefresh({
+      beforeRefresh: async () => {
+        calls.push("save");
+        return true;
+      },
+      refresh: () => {
+        calls.push("reload");
+      },
+    }),
+    true,
+  );
+  assert.deepEqual(calls, ["save", "reload"]);
+
+  calls.length = 0;
+  assert.equal(
+    await runLivePreviewRefresh({
+      beforeRefresh: async () => {
+        calls.push("save");
+        return false;
+      },
+      refresh: () => {
+        calls.push("reload");
+      },
+    }),
+    false,
+  );
+  assert.deepEqual(calls, ["save"]);
+});
+
+test("ContentDocumentPageView renders unavailable guidance when a content type has no preview resolver", () => {
+  const baseState = createReadyState();
+  const state = createReadyState({
+    typeId: "post",
+    typeLabel: "Post",
+    document: {
+      ...baseState.document,
+      type: "post",
+      path: "content/posts/launch-notes",
+      frontmatter: {
+        title: "Launch Notes",
+        slug: "launch-notes",
+        previewUrl: "/ignored",
+      },
+    },
+    draftFrontmatter: {
+      title: "Launch Notes",
+      slug: "launch-notes",
+      previewUrl: "/ignored",
+    },
+  });
+
+  const markup = renderPageMarkup(state, {
+    previewMode: "preview",
+  });
+
+  assert.match(markup, /data-mdcms-editor-preview-mode="preview"/);
+  assert.match(markup, /data-mdcms-live-preview-pane="unavailable"/);
+  assert.match(markup, /Live preview not available/);
+  assert.match(markup, /resolvePreviewUrl/);
+  assert.match(markup, /mdcms\.config\.ts/);
+  assert.doesNotMatch(markup, /<iframe/);
 });
 
 test("ContentDocumentPageView blocks writes when the local schema hash capability is unavailable", () => {

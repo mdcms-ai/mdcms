@@ -252,6 +252,66 @@ const post = await client.get("BlogPost", {
 
 ---
 
+## Create Preview Token
+
+<ParamField method="POST" path="/api/v1/content/{documentId}/preview-token">
+  Mint a short-lived signed token for a host-app draft preview route.
+</ParamField>
+
+**Scope required:** `content:read:draft`
+
+**Required headers:** `X-MDCMS-CSRF-Token` (session auth)
+
+The token is bound to the persisted draft document, project, environment,
+locale, path, draft revision, and optional preview URL. It is not an API key.
+Host routes verify it with `@mdcms/sdk` before fetching `draft: true` content.
+
+### Path Parameters
+
+<ParamField path="documentId" type="string" required>
+  The document's UUID.
+</ParamField>
+
+### Request Body
+
+<ParamField body="previewUrl" type="string">
+  Host preview URL Studio intends to load. When provided, it is included in the
+  token claims so host routes can bind preview tokens to a route.
+</ParamField>
+
+### Example
+
+```bash cURL
+curl -X POST "https://cms.example.com/api/v1/content/550e8400-e29b-41d4-a716-446655440000/preview-token" \
+  -H "X-MDCMS-Project: marketing-site" \
+  -H "X-MDCMS-Environment: production" \
+  -H "Authorization: Bearer mdcms_key_preview_abc123" \
+  -H "Content-Type: application/json" \
+  -d '{"previewUrl":"/preview/blog/hello-world?preview=true"}'
+```
+
+**Response:**
+
+```json
+{
+  "data": {
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "expiresAt": "2026-06-02T10:05:00.000Z"
+  }
+}
+```
+
+### Errors
+
+| Code                        | Status | Description                                        |
+| --------------------------- | ------ | -------------------------------------------------- |
+| `PREVIEW_TOKEN_UNAVAILABLE` | 503    | The server has no preview token secret configured. |
+| `NOT_FOUND`                 | 404    | The document does not exist or is deleted.         |
+| `FORBIDDEN`                 | 403    | The caller lacks draft read access to the path.    |
+| `INVALID_INPUT`             | 400    | The request body is not valid.                     |
+
+---
+
 ## Create Document
 
 <ParamField method="POST" path="/api/v1/content">

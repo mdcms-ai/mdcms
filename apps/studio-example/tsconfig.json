@@ -23,10 +23,13 @@
   "exclude": ["node_modules"],
   "references": [
     {
-      "path": "../cli"
+      "path": "../../packages/shared"
     },
     {
       "path": "../../packages/sdk"
+    },
+    {
+      "path": "../cli"
     },
     {
       "path": "../../packages/studio"

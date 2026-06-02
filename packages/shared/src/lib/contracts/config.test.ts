@@ -96,6 +96,32 @@ test(
   },
 );
 
+test(
+  "defineType accepts runtime-only preview URL resolvers",
+  { timeout: TYPECHECK_TEST_TIMEOUT_MS },
+  () => {
+    typecheckSource(`
+    import { defineConfig, defineType } from "./config.ts";
+
+    const article = defineType("article", {
+      directory: "content/articles",
+      fields: {},
+      resolvePreviewUrl: (document) => {
+        const slug = document.frontmatter.slug;
+        return typeof slug === "string" ? "/articles/" + slug : null;
+      },
+    });
+
+    defineConfig({
+      project: "marketing-site",
+      serverUrl: "http://localhost:4000",
+      contentDirectories: ["content"],
+      types: [article],
+    });
+  `);
+  },
+);
+
 test("parseMdcmsConfig accepts typed propHints and preserves them", () => {
   const parsed = parseMdcmsConfig(
     defineConfig({
@@ -197,6 +223,35 @@ test("parseMdcmsConfig rejects malformed propHint shapes", () => {
         }),
       ),
     /components\[0\]\.propHints/,
+  );
+});
+
+test("parseMdcmsConfig preserves content type preview URL resolvers", () => {
+  const resolvePreviewUrl = () => "/preview/articles/launch-notes";
+  const article = defineType("article", {
+    directory: "content/articles",
+    fields: {
+      title: z.string().min(1),
+    },
+    resolvePreviewUrl,
+  });
+
+  const parsed = parseMdcmsConfig(
+    defineConfig({
+      project: "marketing-site",
+      serverUrl: "http://localhost:4000",
+      contentDirectories: ["content"],
+      environments: {
+        production: {},
+      },
+      types: [article],
+    }),
+  );
+
+  assert.equal(parsed.types[0]?.resolvePreviewUrl, resolvePreviewUrl);
+  assert.equal(
+    parsed.resolvedEnvironments.production?.types.article?.resolvePreviewUrl,
+    resolvePreviewUrl,
   );
 });
 

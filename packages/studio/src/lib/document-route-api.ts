@@ -2,6 +2,7 @@ import {
   RuntimeError,
   type ApiPaginatedEnvelope,
   type ContentDocumentResponse,
+  type ContentPreviewTokenResponse,
   type ContentVersionDocumentResponse,
   type ContentVersionSummaryResponse,
   type TranslationVariantsResponse,
@@ -103,6 +104,12 @@ export type StudioDocumentRouteRestoreInput = {
   signal?: AbortSignal;
 };
 
+export type StudioDocumentRoutePreviewTokenInput = {
+  documentId: string;
+  previewUrl?: string;
+  signal?: AbortSignal;
+};
+
 export type StudioDocumentRouteApiOptions = {
   auth?: StudioRuntimeAuth;
   fetcher?: typeof fetch;
@@ -164,6 +171,9 @@ export type StudioDocumentRouteApi = {
     documentId: string;
     signal?: AbortSignal;
   }) => Promise<TranslationVariantsResponse>;
+  createPreviewToken: (
+    input: StudioDocumentRoutePreviewTokenInput,
+  ) => Promise<ContentPreviewTokenResponse>;
 };
 
 type StudioDocumentRoutePayload = {
@@ -512,6 +522,24 @@ function toContentDocumentResponse(
   );
 }
 
+function toContentPreviewTokenResponse(
+  operation: string,
+  payload: unknown,
+  fallbackMessage: string,
+): ContentPreviewTokenResponse {
+  const parsed = extractRoutePayload(payload);
+
+  if (
+    !isRecord(parsed.data) ||
+    !isNonEmptyString(parsed.data.token) ||
+    !isNonEmptyString(parsed.data.expiresAt)
+  ) {
+    throw toInvalidRouteResponseError(operation, fallbackMessage, payload);
+  }
+
+  return parsed.data as ContentPreviewTokenResponse;
+}
+
 function toPaginatedContentDocumentResponse(
   operation: string,
   payload: unknown,
@@ -855,6 +883,22 @@ export function createStudioDocumentRouteApi(
         "PUT /api/v1/content/:documentId",
         payload,
         "Failed to update document draft.",
+      );
+    },
+    async createPreviewToken(input) {
+      const payload = await requestContentMutation(config, options, {
+        method: "POST",
+        path: `/api/v1/content/${encodeURIComponent(input.documentId)}/preview-token`,
+        signal: input.signal,
+        payload: {
+          previewUrl: input.previewUrl,
+        },
+      });
+
+      return toContentPreviewTokenResponse(
+        "POST /api/v1/content/:documentId/preview-token",
+        payload,
+        "Failed to create preview token.",
       );
     },
     async publish(input) {

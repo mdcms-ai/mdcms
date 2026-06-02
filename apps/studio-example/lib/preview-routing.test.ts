@@ -12,7 +12,7 @@ test("post documents link to the draft post preview by slug", () => {
         slug: "hello-mdcms",
       },
     }),
-    "/preview/post/hello-mdcms",
+    "/preview/post/hello-mdcms?preview=true",
   );
 });
 
@@ -25,7 +25,7 @@ test("page documents link to the draft page preview by content path", () => {
         title: "Getting Started",
       },
     }),
-    "/preview/page/docs/getting-started",
+    "/preview/page/docs/getting-started?preview=true",
   );
 });
 

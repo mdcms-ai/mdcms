@@ -12,6 +12,7 @@
   "dependencies": {
     "@mdcms/cli": "workspace:*",
     "@mdcms/sdk": "workspace:*",
+    "@mdcms/shared": "workspace:*",
     "@mdcms/studio": "workspace:*",
     "next": "^15.2.2",
     "react": "^19.2.0",

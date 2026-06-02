@@ -30,6 +30,18 @@ function getDemoApiKey(): string {
   return apiKey;
 }
 
+function getPreviewTokenSecret(): string {
+  const secret = process.env.MDCMS_PREVIEW_TOKEN_SECRET?.trim();
+
+  if (!secret) {
+    throw new Error(
+      "Set MDCMS_PREVIEW_TOKEN_SECRET to enable private preview routes.",
+    );
+  }
+
+  return secret;
+}
+
 function createPreviewClient() {
   return createClient({
     serverUrl: config.serverUrl,
@@ -55,7 +67,12 @@ function toPreviewRequestFailure(error: unknown): PreviewRequestFailure {
 
   if (error instanceof MdcmsClientError) {
     return {
-      status: error.code === "NOT_FOUND" ? 404 : 502,
+      status:
+        error.code === "NOT_FOUND"
+          ? 404
+          : error.code === "PREVIEW_TOKEN_INVALID"
+            ? 401
+            : 502,
       code: error.code,
       message: error.message,
     };
@@ -71,64 +88,47 @@ function toPreviewRequestFailure(error: unknown): PreviewRequestFailure {
   };
 }
 
-export async function fetchPreviewPostBySlug(
-  slug: string,
+export type PreviewRouteSearchParams = Record<
+  string,
+  string | string[] | undefined
+>;
+
+export function createPreviewRequestUrl(
+  pathname: string,
+  searchParams: PreviewRouteSearchParams = {},
+): string {
+  const url = new URL(pathname, "https://mdcms-preview.local");
+
+  for (const [key, value] of Object.entries(searchParams)) {
+    if (value === undefined) {
+      continue;
+    }
+
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        url.searchParams.append(key, item);
+      }
+      continue;
+    }
+
+    url.searchParams.set(key, value);
+  }
+
+  return url.href;
+}
+
+export async function fetchPreviewDocumentFromRequestUrl(
+  requestUrl: string,
 ): Promise<PreviewDocumentResult> {
   try {
     const client = createPreviewClient();
-    const document = await client.get("post", {
-      slug,
-      draft: true,
+    const document = await client.getPreviewDocumentFromRequest(requestUrl, {
+      secret: getPreviewTokenSecret(),
     });
 
     return {
       ok: true,
       document,
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      ...toPreviewRequestFailure(error),
-    };
-  }
-}
-
-function getPageDocumentPath(pathSegments: string[]): string {
-  return `content/pages/${pathSegments.filter(Boolean).join("/")}`;
-}
-
-export async function fetchPreviewPageByPath(
-  pathSegments: string[],
-): Promise<PreviewDocumentResult> {
-  try {
-    const client = createPreviewClient();
-    const result = await client.list("page", {
-      draft: true,
-      path: getPageDocumentPath(pathSegments),
-      limit: 2,
-    });
-
-    if (result.data.length === 0) {
-      return {
-        ok: false,
-        status: 404,
-        code: "NOT_FOUND",
-        message: `No page document matched path "${getPageDocumentPath(pathSegments)}".`,
-      };
-    }
-
-    if (result.data.length > 1) {
-      return {
-        ok: false,
-        status: 502,
-        code: "AMBIGUOUS_RESULT",
-        message: `Multiple page documents matched path "${getPageDocumentPath(pathSegments)}".`,
-      };
-    }
-
-    return {
-      ok: true,
-      document: result.data[0]!,
     };
   } catch (error) {
     return {

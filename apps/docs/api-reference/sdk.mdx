@@ -233,12 +233,13 @@ Thrown when the server returns a non-2xx response. Properties:
 
 Thrown for client-side issues that prevent a valid response. Error codes:
 
-| Code               | Description                                                                                          |
-| ------------------ | ---------------------------------------------------------------------------------------------------- |
-| `INVALID_RESPONSE` | The server returned a response that could not be parsed as valid JSON.                               |
-| `NETWORK_ERROR`    | The request failed due to a network issue (DNS failure, connection refused, timeout).                |
-| `NOT_FOUND`        | A `get()` call matched zero documents.                                                               |
-| `AMBIGUOUS_RESULT` | A `get()` call by slug or path matched multiple documents. Add a `locale` parameter to disambiguate. |
+| Code                    | Description                                                                                          |
+| ----------------------- | ---------------------------------------------------------------------------------------------------- |
+| `INVALID_RESPONSE`      | The server returned a response that could not be parsed as valid JSON.                               |
+| `NETWORK_ERROR`         | The request failed due to a network issue (DNS failure, connection refused, timeout).                |
+| `NOT_FOUND`             | A `get()` call matched zero documents.                                                               |
+| `AMBIGUOUS_RESULT`      | A `get()` call by slug or path matched multiple documents. Add a `locale` parameter to disambiguate. |
+| `PREVIEW_TOKEN_INVALID` | A preview request did not include a valid MDCMS preview token.                                       |
 
 ---
 
@@ -341,82 +342,76 @@ export default async function BlogIndex() {
 
 ## Draft Preview
 
-Use the `draft: true` option to fetch unpublished content for preview routes. Protect the preview route with a secret to prevent unauthorized access.
+Studio mints a short-lived preview token before loading a configured host preview route. The SDK can verify that token and fetch the matching draft document in one call:
 
 ```typescript
-// app/api/preview/route.ts
+// app/preview/[...path]/route.ts
 import { cms } from "@/lib/mdcms";
-import { draftMode } from "next/headers";
-import { redirect } from "next/navigation";
+import { MdcmsClientError } from "@mdcms/sdk";
+
+export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const secret = searchParams.get("secret");
-  const slug = searchParams.get("slug");
-  const type = searchParams.get("type");
-
-  if (secret !== process.env.MDCMS_PREVIEW_SECRET) {
-    return new Response("Invalid secret", { status: 401 });
-  }
-
-  if (!slug || !type) {
-    return new Response("Missing slug or type", { status: 400 });
-  }
-
-  // Verify the document exists
-  const post = await cms.get(type, { slug, draft: true });
-
-  (await draftMode()).enable();
-  redirect(`/blog/${post.frontmatter.slug}`);
-}
-```
-
-Then in your page component, check draft mode:
-
-```typescript
-// app/blog/[slug]/page.tsx
-import { cms } from "@/lib/mdcms";
-import { draftMode } from "next/headers";
-import { notFound } from "next/navigation";
-import { MdcmsApiError } from "@mdcms/sdk";
-
-export default async function BlogPost({
-  params,
-}: {
-  params: Promise<{ slug: string }>;
-}) {
-  const { slug } = await params;
-  const { isEnabled: isDraft } = await draftMode();
-
   try {
-    const post = await cms.get("BlogPost", {
-      slug,
+    const document = await cms.getPreviewDocumentFromRequest(request, {
+      secret: process.env.MDCMS_PREVIEW_TOKEN_SECRET!,
       resolve: ["author"],
-      draft: isDraft,
     });
 
-    return (
-      <article>
-        {isDraft && (
-          <div style={{ background: "#fef3cd", padding: "8px 16px" }}>
-            Preview Mode -- This is a draft.
-          </div>
-        )}
-        <h1>{post.frontmatter.title as string}</h1>
-        <div>{post.body}</div>
-      </article>
-    );
+    return Response.json(document, {
+      headers: {
+        "Cache-Control": "private, no-store",
+      },
+    });
   } catch (error) {
-    if (error instanceof MdcmsApiError && error.statusCode === 404) {
-      notFound();
+    if (
+      error instanceof MdcmsClientError &&
+      error.code === "PREVIEW_TOKEN_INVALID"
+    ) {
+      return new Response("Preview unavailable", { status: 401 });
     }
+
     throw error;
   }
 }
 ```
 
+For lower-level control, verify the request first and then choose your own draft fetch:
+
+```typescript
+import { verifyMdcmsPreviewRequest } from "@mdcms/sdk";
+
+const preview = await verifyMdcmsPreviewRequest(request, {
+  secret: process.env.MDCMS_PREVIEW_TOKEN_SECRET!,
+});
+
+if (!preview.ok) {
+  return new Response("Preview unavailable", { status: 401 });
+}
+
+const document = await cms.get(preview.claims.type, {
+  id: preview.claims.documentId,
+  locale: preview.claims.locale,
+  draft: true,
+});
+```
+
+When the preview route renders inside Studio's iframe, post
+`{ type: "mdcms:live-preview-ready" }` from client-side code after the page is
+ready. Studio keeps the pane in a loading state until that message arrives and
+shows the fallback link if the route never signals readiness.
+
 <Tip>
-  The API key used for draft preview must have both `content:read` and
-  `content:read:draft` scopes. Use a separate API key for preview routes with
-  limited scope rather than reusing a production key.
+  The server-side API key used for private preview routes needs
+  `content:read:draft`. Keep that API key and `MDCMS_PREVIEW_TOKEN_SECRET` in
+  server-only environment variables, force dynamic rendering, and send
+  `Cache-Control: private, no-store` or the framework equivalent.
 </Tip>
+
+<Note>
+  Some projects intentionally expose drafts on public or separately protected
+  preview deployments. MDCMS allows that pattern. If unpublished content must
+  stay private, do not treat `?preview=true` alone as authorization; require a
+  valid MDCMS preview token, a host session, or another server-side gate before
+  fetching with `draft: true`.
+</Note>

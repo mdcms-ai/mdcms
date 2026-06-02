@@ -2,7 +2,7 @@
 status: live
 canonical: true
 created: 2026-03-11
-last_updated: 2026-04-10
+last_updated: 2026-06-02
 ---
 
 # SPEC-007 Editor, MDX, and Collaboration
@@ -754,6 +754,30 @@ content. Host-rendered DOM outside that slot, including headings, labels, links,
 cards, or other output derived from props/source code, must not accept a caret or
 text input. Clicking that DOM selects the component node so editors can update
 the component through its props panel.
+
+**Boundary with real-route preview:**
+
+Inline MDX component preview is a node renderer. It answers whether a single
+MDX component block is authored correctly, using the local component catalog and
+the current node props. It does not own page-level layout, routing, global host
+CSS, SEO chrome, or host data fetching.
+
+The document editor's real-app preview surface is a page renderer owned by
+SPEC-006. It answers what the complete host route looks like for the active
+draft. It embeds a host route out-of-process and must not reuse the inline MDX
+node preview as a page renderer. Conversely, inline MDX preview must not reach
+for host routing or fetch page-level data.
+
+Draft propagation to the real-app preview is staged:
+
+- The first slice uses the existing draft-save pipeline. Studio persists the
+  current body/frontmatter through the normal draft update path, then refreshes
+  the iframe when the editor chooses to refresh the preview. This keeps the
+  route preview aligned with the canonical draft row and avoids a second draft
+  transport.
+- Lower-latency live injection may be added later through a host-adapter
+  `postMessage` protocol, but it must preserve the same serialization contract
+  and must never write published content.
 
 **Editing props:**
 

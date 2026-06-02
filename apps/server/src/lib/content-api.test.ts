@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { test } from "bun:test";
-import { RuntimeError } from "@mdcms/shared";
+import { RuntimeError, verifyMdcmsPreviewToken } from "@mdcms/shared";
 
 import {
   createInMemoryContentStore,
@@ -372,6 +372,229 @@ test("content API authorizes list reads before validating translation grouping",
   assert.equal(response.status, 403);
   assert.equal(body.code, "FORBIDDEN");
   assert.equal(schemaReads, 0);
+});
+
+test("content API preview token endpoint signs document-bound draft preview tokens", async () => {
+  const scope = {
+    project: scopeHeaders["x-mdcms-project"],
+    environment: scopeHeaders["x-mdcms-environment"],
+  };
+  const authorizeCalls: Array<Record<string, unknown>> = [];
+  let csrfCalls = 0;
+  const store = createInMemoryContentStore({
+    schemaScopes: [
+      {
+        project: scope.project,
+        environment: scope.environment,
+        schemas: createCms26ResolvedSchemas(),
+      },
+    ],
+  });
+  const document = await store.create(scope, {
+    path: "blog/preview-token",
+    type: "BlogPost",
+    locale: "en",
+    format: "md",
+    frontmatter: { slug: "preview-token" },
+    body: "draft body",
+  });
+  const handler = createServerRequestHandler({
+    env: baseEnv,
+    configureApp: (app) => {
+      mountContentApiRoutes(app, {
+        store,
+        authorize: async (_request, requirement) => {
+          authorizeCalls.push(requirement as Record<string, unknown>);
+        },
+        requireCsrf: async () => {
+          csrfCalls += 1;
+        },
+        getWriteSchemaSyncState: async () => ({
+          schemaHash: inMemorySchemaHash,
+        }),
+        previewTokenSecret: "test-preview-secret",
+      });
+    },
+    now: () => new Date("2026-03-02T10:00:00.000Z"),
+  });
+
+  const response = await handler(
+    new Request(
+      `http://localhost/api/v1/content/${document.documentId}/preview-token`,
+      {
+        method: "POST",
+        headers: {
+          ...scopeHeaders,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          previewUrl: "/preview/post/preview-token?preview=true",
+        }),
+      },
+    ),
+  );
+  const body = (await response.json()) as {
+    data: {
+      token: string;
+      expiresAt: string;
+    };
+  };
+  const verified = await verifyMdcmsPreviewToken(body.data.token, {
+    secret: "test-preview-secret",
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(typeof body.data.expiresAt, "string");
+  assert.equal(verified.ok, true);
+  if (verified.ok) {
+    assert.equal(verified.claims.documentId, document.documentId);
+    assert.equal(verified.claims.sub, document.documentId);
+    assert.equal(verified.claims.project, scope.project);
+    assert.equal(verified.claims.environment, scope.environment);
+    assert.equal(verified.claims.path, document.path);
+    assert.equal(verified.claims.type, document.type);
+    assert.equal(verified.claims.locale, document.locale);
+    assert.equal(verified.claims.draftRevision, document.draftRevision);
+    assert.equal(
+      verified.claims.previewUrl,
+      "/preview/post/preview-token?preview=true",
+    );
+  }
+  assert.equal(csrfCalls, 1);
+  assert.deepEqual(authorizeCalls, [
+    {
+      requiredScope: "content:read:draft",
+      project: scope.project,
+      environment: scope.environment,
+    },
+    {
+      requiredScope: "content:read:draft",
+      project: scope.project,
+      environment: scope.environment,
+      documentPath: document.path,
+    },
+  ]);
+});
+
+test("content API preview token endpoint returns unavailable when signing is not configured", async () => {
+  const scope = {
+    project: scopeHeaders["x-mdcms-project"],
+    environment: scopeHeaders["x-mdcms-environment"],
+  };
+  const store = createInMemoryContentStore({
+    schemaScopes: [
+      {
+        project: scope.project,
+        environment: scope.environment,
+        schemas: createCms26ResolvedSchemas(),
+      },
+    ],
+  });
+  const document = await store.create(scope, {
+    path: "blog/preview-token-missing-secret",
+    type: "BlogPost",
+    locale: "en",
+    format: "md",
+    frontmatter: { slug: "preview-token-missing-secret" },
+    body: "draft body",
+  });
+  const handler = createServerRequestHandler({
+    env: baseEnv,
+    configureApp: (app) => {
+      mountContentApiRoutes(app, {
+        store,
+        authorize: async () => undefined,
+        requireCsrf: async () => undefined,
+        getWriteSchemaSyncState: async () => ({
+          schemaHash: inMemorySchemaHash,
+        }),
+      });
+    },
+    now: () => new Date("2026-03-02T10:00:00.000Z"),
+  });
+
+  const response = await handler(
+    new Request(
+      `http://localhost/api/v1/content/${document.documentId}/preview-token`,
+      {
+        method: "POST",
+        headers: {
+          ...scopeHeaders,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({}),
+      },
+    ),
+  );
+  const body = (await response.json()) as { code: string };
+
+  assert.equal(response.status, 503);
+  assert.equal(body.code, "PREVIEW_TOKEN_UNAVAILABLE");
+});
+
+test("content API preview token endpoint enforces document path authorization", async () => {
+  const scope = {
+    project: scopeHeaders["x-mdcms-project"],
+    environment: scopeHeaders["x-mdcms-environment"],
+  };
+  const store = createInMemoryContentStore({
+    schemaScopes: [
+      {
+        project: scope.project,
+        environment: scope.environment,
+        schemas: createCms26ResolvedSchemas(),
+      },
+    ],
+  });
+  const document = await store.create(scope, {
+    path: "blog/preview-token-forbidden",
+    type: "BlogPost",
+    locale: "en",
+    format: "md",
+    frontmatter: { slug: "preview-token-forbidden" },
+    body: "draft body",
+  });
+  const handler = createServerRequestHandler({
+    env: baseEnv,
+    configureApp: (app) => {
+      mountContentApiRoutes(app, {
+        store,
+        authorize: async (_request, requirement) => {
+          if (requirement.documentPath === document.path) {
+            throw new RuntimeError({
+              code: "FORBIDDEN",
+              message: "Forbidden.",
+              statusCode: 403,
+            });
+          }
+        },
+        requireCsrf: async () => undefined,
+        getWriteSchemaSyncState: async () => ({
+          schemaHash: inMemorySchemaHash,
+        }),
+        previewTokenSecret: "test-preview-secret",
+      });
+    },
+    now: () => new Date("2026-03-02T10:00:00.000Z"),
+  });
+
+  const response = await handler(
+    new Request(
+      `http://localhost/api/v1/content/${document.documentId}/preview-token`,
+      {
+        method: "POST",
+        headers: {
+          ...scopeHeaders,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({}),
+      },
+    ),
+  );
+  const body = (await response.json()) as { code: string };
+
+  assert.equal(response.status, 403);
+  assert.equal(body.code, "FORBIDDEN");
 });
 
 test("content API overview returns metadata-only counts per type using content:read scope", async () => {

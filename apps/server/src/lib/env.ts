@@ -150,6 +150,7 @@ const ServerEnvExtensionSchema = z.object({
   SMTP_HOST: z.string().trim().min(1).optional(),
   SMTP_PORT: z.coerce.number().int().min(1).max(65535).optional().default(587),
   SMTP_FROM: z.string().trim().min(1).optional(),
+  MDCMS_PREVIEW_TOKEN_SECRET: z.string().trim().min(1).optional(),
   MDCMS_HTTP_COMPRESS: z
     .string()
     .optional()
@@ -231,6 +232,7 @@ export type ServerEnv = CoreEnv & {
   MDCMS_AUTH_OIDC_PROVIDERS: OidcProviderConfig[];
   MDCMS_AUTH_SAML_PROVIDERS: SamlProviderConfig[];
   MDCMS_STUDIO_ALLOWED_ORIGINS: string[];
+  MDCMS_PREVIEW_TOKEN_SECRET?: string;
   /**
    * App-level compression toggle. Defaults to enabled because Railway's edge
    * proxy (and many self-hosting setups) does not auto-compress; if a fronting

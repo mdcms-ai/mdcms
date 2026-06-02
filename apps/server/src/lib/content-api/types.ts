@@ -263,4 +263,6 @@ export type MountContentApiRoutesOptions = {
   requireCsrf: ContentRequestCsrfProtector;
   getWriteSchemaSyncState: ContentWriteSchemaSyncLookup;
   resolveUsers?: ContentUserSummaryLookup;
+  previewTokenSecret?: string;
+  previewTokenTtlSeconds?: number;
 };

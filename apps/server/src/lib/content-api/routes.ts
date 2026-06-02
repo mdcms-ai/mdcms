@@ -1,5 +1,9 @@
-import type { ApiPaginatedEnvelope, PaginationMetadata } from "@mdcms/shared";
-import { RuntimeError } from "@mdcms/shared";
+import type {
+  ApiPaginatedEnvelope,
+  ContentPreviewTokenRequest,
+  PaginationMetadata,
+} from "@mdcms/shared";
+import { RuntimeError, signMdcmsPreviewToken } from "@mdcms/shared";
 
 import type { ApiKeyOperationScope } from "../auth.js";
 import { executeWithRuntimeErrorsHandled } from "../http-utils.js";
@@ -102,6 +106,40 @@ function parseOverviewTypes(request: Request): string[] {
 
     return normalized;
   });
+}
+
+function parsePreviewTokenRequestBody(
+  body: unknown,
+): ContentPreviewTokenRequest {
+  if (body === undefined || body === null) {
+    return {};
+  }
+
+  if (typeof body !== "object" || Array.isArray(body)) {
+    throw new RuntimeError({
+      code: "INVALID_INPUT",
+      message: "Preview token request body must be an object.",
+      statusCode: 400,
+      details: { field: "body" },
+    });
+  }
+
+  const previewUrl = (body as Record<string, unknown>).previewUrl;
+
+  if (previewUrl === undefined) {
+    return {};
+  }
+
+  if (typeof previewUrl !== "string" || previewUrl.trim().length === 0) {
+    throw new RuntimeError({
+      code: "INVALID_INPUT",
+      message: 'Field "previewUrl" must be a non-empty string when provided.',
+      statusCode: 400,
+      details: { field: "previewUrl" },
+    });
+  }
+
+  return { previewUrl: previewUrl.trim() };
 }
 
 export function mountContentApiRoutes(
@@ -364,6 +402,72 @@ export function mountContentApiRoutes(
             plan: resolvePlan,
           }),
         };
+      });
+    },
+  );
+
+  contentApp.post?.(
+    "/api/v1/content/:documentId/preview-token",
+    ({ request, params, body }: any) => {
+      return executeWithRuntimeErrorsHandled(request, async () => {
+        const scope = pickScope(request);
+        await options.requireCsrf(request);
+
+        await options.authorize(request, {
+          requiredScope: "content:read:draft",
+          project: scope.project,
+          environment: scope.environment,
+        });
+
+        const document = await options.store.getById(scope, params.documentId, {
+          draft: true,
+        });
+
+        if (!document || document.isDeleted) {
+          throw new RuntimeError({
+            code: "NOT_FOUND",
+            message: "Document not found.",
+            statusCode: 404,
+            details: {
+              documentId: params.documentId,
+            },
+          });
+        }
+
+        await options.authorize(request, {
+          requiredScope: "content:read:draft",
+          project: scope.project,
+          environment: scope.environment,
+          documentPath: document.path,
+        });
+
+        if (!options.previewTokenSecret) {
+          throw new RuntimeError({
+            code: "PREVIEW_TOKEN_UNAVAILABLE",
+            message: "Preview token signing is not configured.",
+            statusCode: 503,
+          });
+        }
+
+        const payload = parsePreviewTokenRequestBody(body);
+        const token = await signMdcmsPreviewToken({
+          secret: options.previewTokenSecret,
+          ttlSeconds: options.previewTokenTtlSeconds,
+          claims: {
+            project: scope.project,
+            environment: scope.environment,
+            documentId: document.documentId,
+            type: document.type,
+            path: document.path,
+            locale: document.locale,
+            draftRevision: document.draftRevision,
+            ...(payload.previewUrl
+              ? { previewUrl: payload.previewUrl }
+              : undefined),
+          },
+        });
+
+        return { data: token };
       });
     },
   );

@@ -1,5 +1,6 @@
 import type { MdcmsConfig } from "@mdcms/studio";
 import { prepareStudioConfig } from "@mdcms/studio/runtime";
+import { getPreviewHrefForDocument } from "../../lib/preview-routing";
 import {
   studioExampleEnvironment,
   studioExampleLocales,
@@ -10,6 +11,7 @@ import {
 
 type PreparedStudioConfig = Awaited<ReturnType<typeof prepareStudioConfig>>;
 type PreparedStudioComponent = NonNullable<MdcmsConfig["components"]>[number];
+type PreparedStudioType = NonNullable<MdcmsConfig["types"]>[number];
 type PreparedDocumentRouteMetadata = NonNullable<
   MdcmsConfig["_documentRouteMetadata"]
 >;
@@ -32,6 +34,40 @@ export function extractPreparedStudioComponentMetadata(
   );
 }
 
+function createClientStudioType(
+  input: Omit<PreparedStudioType, "extend" | "fields">,
+): PreparedStudioType {
+  return {
+    ...input,
+    fields: {},
+    extend(overlay) {
+      return overlay;
+    },
+  };
+}
+
+const studioExamplePreviewTypes: PreparedStudioType[] = [
+  createClientStudioType({
+    name: "post",
+    directory: "content/posts",
+    resolvePreviewUrl: getPreviewHrefForDocument,
+  }),
+  createClientStudioType({
+    name: "author",
+    directory: "content/authors",
+  }),
+  createClientStudioType({
+    name: "page",
+    directory: "content/pages",
+    resolvePreviewUrl: getPreviewHrefForDocument,
+  }),
+  createClientStudioType({
+    name: "campaign",
+    directory: "content/campaigns",
+    localized: true,
+  }),
+];
+
 export function createClientStudioConfig(
   preparedComponents: PreparedStudioComponentMetadata[],
   schemaHash?: string,
@@ -51,7 +87,9 @@ export function createClientStudioConfig(
     project: studioExampleProject,
     environment: studioExampleEnvironment,
     serverUrl: resolveStudioExampleServerUrl(),
+    contentDirectories: ["content"],
     locales: studioExampleLocales,
+    types: studioExamplePreviewTypes,
     // Pre-computed schema hash from the server component where the full
     // config (with Zod types/environments) is available for derivation.
     ...(schemaHash ? { _schemaHash: schemaHash } : {}),

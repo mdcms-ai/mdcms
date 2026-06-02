@@ -1,4 +1,4 @@
-type PreviewableDocument = {
+type PreviewRouteDocument = {
   type: string;
   path: string;
   frontmatter: Record<string, unknown>;
@@ -27,17 +27,19 @@ function getPagePreviewPath(documentPath: string): string | undefined {
       : normalizedPath;
 
   return relativePath.trim().length > 0
-    ? `/preview/page/${encodePathSegments(relativePath)}`
+    ? `/preview/page/${encodePathSegments(relativePath)}?preview=true`
     : undefined;
 }
 
 export function getPreviewHrefForDocument(
-  document: PreviewableDocument,
+  document: PreviewRouteDocument,
 ): string | undefined {
   if (document.type === "post") {
     const slug = getString(document.frontmatter.slug);
 
-    return slug ? `/preview/post/${encodeURIComponent(slug)}` : undefined;
+    return slug
+      ? `/preview/post/${encodeURIComponent(slug)}?preview=true`
+      : undefined;
   }
 
   if (document.type === "page") {

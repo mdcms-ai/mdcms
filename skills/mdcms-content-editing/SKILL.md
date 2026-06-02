@@ -89,7 +89,7 @@ npx mdcms push --validate --dry-run
 npx mdcms push
 ```
 
-This uploads changed, new, deleted, and renamed local docs as **draft** updates on the server. Drafts are visible in Studio and to authenticated SDK reads with `draft: true`. They are not visible to public readers until published.
+This uploads changed, new, deleted, and renamed local docs as **draft** updates on the server. Drafts are visible in Studio and to SDK/API reads that explicitly request `draft: true` with the right server-side credentials. They are not visible to normal published-content readers until published; a host app may still choose to expose a draft preview route publicly, but that should be an explicit integration decision.
 
 For headless / CI runs, see **`mdcms-content-sync-workflow`** for the full flag surface (`--force`, `--sync-schema`).
 
@@ -109,7 +109,7 @@ If many docs need to be published together, do it one by one in Studio, or wait 
 npx mdcms status
 ```
 
-Expected: clean status, no drift. Open the doc in Studio (or hit it via SDK with `draft: true`) and confirm it renders.
+Expected: clean status, no drift. Open the doc in Studio (or hit it via a token-gated preview route / SDK read with `draft: true`) and confirm it renders.
 
 ## Bulk edits
 

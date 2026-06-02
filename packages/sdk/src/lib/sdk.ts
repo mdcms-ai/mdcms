@@ -3,6 +3,12 @@ import type {
   ApiPaginatedEnvelope,
   ContentDocumentResponse,
   ErrorEnvelope,
+  MdcmsPreviewTokenExpectedClaims,
+  MdcmsPreviewVerificationResult,
+} from "@mdcms/shared";
+import {
+  readMdcmsPreviewTokenFromUrl,
+  verifyMdcmsPreviewToken,
 } from "@mdcms/shared";
 
 export type MdcmsClientOptions = {
@@ -36,6 +42,10 @@ export type MdcmsClient = {
     type: string,
     input?: MdcmsListInput,
   ) => Promise<ApiPaginatedEnvelope<ContentDocumentResponse>>;
+  getPreviewDocumentFromRequest: (
+    request: MdcmsPreviewRequest,
+    input: MdcmsPreviewDocumentFromRequestInput,
+  ) => Promise<ContentDocumentResponse>;
 };
 
 export type MdcmsGetInput = {
@@ -45,6 +55,26 @@ export type MdcmsGetInput = {
   resolve?: string[];
   draft?: boolean;
 } & ({ id: string; slug?: never } | { slug: string; id?: never });
+
+export type MdcmsPreviewRequest = Request | URL | string;
+
+export type VerifyMdcmsPreviewRequestOptions = {
+  secret: string;
+  now?: Date;
+  expected?: MdcmsPreviewTokenExpectedClaims;
+};
+
+export type MdcmsPreviewDocumentFromRequestInput =
+  VerifyMdcmsPreviewRequestOptions & {
+    resolve?: string[];
+  };
+
+export type MdcmsClientErrorCode =
+  | "INVALID_RESPONSE"
+  | "NETWORK_ERROR"
+  | "NOT_FOUND"
+  | "AMBIGUOUS_RESULT"
+  | "PREVIEW_TOKEN_INVALID";
 
 export class MdcmsApiError extends Error {
   readonly statusCode: number;
@@ -72,19 +102,11 @@ export class MdcmsApiError extends Error {
 }
 
 export class MdcmsClientError extends Error {
-  readonly code:
-    | "INVALID_RESPONSE"
-    | "NETWORK_ERROR"
-    | "NOT_FOUND"
-    | "AMBIGUOUS_RESULT";
+  readonly code: MdcmsClientErrorCode;
   override readonly cause?: unknown;
 
   constructor(input: {
-    code:
-      | "INVALID_RESPONSE"
-      | "NETWORK_ERROR"
-      | "NOT_FOUND"
-      | "AMBIGUOUS_RESULT";
+    code: MdcmsClientErrorCode;
     message: string;
     cause?: unknown;
   }) {
@@ -97,6 +119,18 @@ export class MdcmsClientError extends Error {
 
 function normalizeServerUrl(serverUrl: string): string {
   return serverUrl.endsWith("/") ? serverUrl.slice(0, -1) : serverUrl;
+}
+
+function toRequestUrl(request: MdcmsPreviewRequest): URL {
+  if (typeof request === "string") {
+    return new URL(request);
+  }
+
+  if (request instanceof URL) {
+    return request;
+  }
+
+  return new URL(request.url);
 }
 
 function appendQueryParam(
@@ -259,6 +293,25 @@ async function requestJson(
   }
 }
 
+export async function verifyMdcmsPreviewRequest(
+  request: MdcmsPreviewRequest,
+  options: VerifyMdcmsPreviewRequestOptions,
+): Promise<MdcmsPreviewVerificationResult> {
+  let url: URL;
+
+  try {
+    url = toRequestUrl(request);
+  } catch {
+    return { ok: false, reason: "malformed" };
+  }
+
+  return verifyMdcmsPreviewToken(readMdcmsPreviewTokenFromUrl(url), {
+    secret: options.secret,
+    now: options.now,
+    expected: options.expected,
+  });
+}
+
 export function createClient(options: MdcmsClientOptions): MdcmsClient {
   const baseUrl = normalizeServerUrl(options.serverUrl);
   const fetcher = options.fetch ?? fetch;
@@ -296,48 +349,79 @@ export function createClient(options: MdcmsClientOptions): MdcmsClient {
     return body;
   }
 
-  return {
-    async get(type, input) {
-      if ("slug" in input && input.slug !== undefined) {
-        const result = await listDocuments(type, {
-          project: input.project,
-          environment: input.environment,
-          locale: input.locale,
-          resolve: input.resolve,
-          draft: input.draft,
-          slug: input.slug,
+  async function getDocumentById(
+    _type: string,
+    input: Extract<MdcmsGetInput, { id: string }>,
+  ): Promise<ContentDocumentResponse> {
+    const scope = {
+      project: input.project ?? options.project,
+      environment: input.environment ?? options.environment,
+    };
+
+    const url = new URL(`${baseUrl}/api/v1/content/${input.id}`);
+    appendQueryParam(url.searchParams, "locale", input.locale);
+    appendRepeatedQueryParam(url.searchParams, "resolve", input.resolve);
+    appendQueryParam(url.searchParams, "draft", input.draft);
+
+    const body = await requestJson(fetcher, url, options.apiKey, scope);
+    assertDocumentEnvelope(body);
+    return body.data;
+  }
+
+  async function getDocument(
+    type: string,
+    input: MdcmsGetInput,
+  ): Promise<ContentDocumentResponse> {
+    if ("slug" in input && input.slug !== undefined) {
+      const result = await listDocuments(type, {
+        project: input.project,
+        environment: input.environment,
+        locale: input.locale,
+        resolve: input.resolve,
+        draft: input.draft,
+        slug: input.slug,
+      });
+
+      if (result.data.length === 0) {
+        throw new MdcmsClientError({
+          code: "NOT_FOUND",
+          message: `No ${type} document matched slug "${input.slug}".`,
         });
-
-        if (result.data.length === 0) {
-          throw new MdcmsClientError({
-            code: "NOT_FOUND",
-            message: `No ${type} document matched slug "${input.slug}".`,
-          });
-        }
-
-        if (result.data.length > 1) {
-          throw new MdcmsClientError({
-            code: "AMBIGUOUS_RESULT",
-            message: `Multiple ${type} documents matched slug "${input.slug}".`,
-          });
-        }
-
-        return result.data[0]!;
       }
 
-      const scope = {
-        project: input.project ?? options.project,
-        environment: input.environment ?? options.environment,
-      };
+      if (result.data.length > 1) {
+        throw new MdcmsClientError({
+          code: "AMBIGUOUS_RESULT",
+          message: `Multiple ${type} documents matched slug "${input.slug}".`,
+        });
+      }
 
-      const url = new URL(`${baseUrl}/api/v1/content/${input.id}`);
-      appendQueryParam(url.searchParams, "locale", input.locale);
-      appendRepeatedQueryParam(url.searchParams, "resolve", input.resolve);
-      appendQueryParam(url.searchParams, "draft", input.draft);
+      return result.data[0]!;
+    }
 
-      const body = await requestJson(fetcher, url, options.apiKey, scope);
-      assertDocumentEnvelope(body);
-      return body.data;
+    return getDocumentById(type, input);
+  }
+
+  return {
+    get: getDocument,
+    async getPreviewDocumentFromRequest(request, input) {
+      const preview = await verifyMdcmsPreviewRequest(request, input);
+
+      if (!preview.ok) {
+        throw new MdcmsClientError({
+          code: "PREVIEW_TOKEN_INVALID",
+          message: `Preview token verification failed: ${preview.reason}.`,
+        });
+      }
+
+      return getDocumentById(preview.claims.type, {
+        id: preview.claims.documentId,
+        project: preview.claims.project,
+        environment: preview.claims.environment,
+        locale: preview.claims.locale,
+        resolve: input.resolve,
+        draft: true,
+      });
     },
     async list(type, input = {}) {
       return listDocuments(type, input);

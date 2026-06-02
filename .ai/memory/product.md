@@ -28,6 +28,9 @@ The core thesis is that **none of the three should block the others**. An editor
 ## Out of scope (current)
 
 - Real-time multi-user collaboration via CRDTs — Post-MVP.
-- Live preview (real-time content rendering in the consumer frontend) — upcoming.
 - MCP integration for agent-driven content operations — upcoming.
 - Multiple spaces (team-scoped content organization) — upcoming.
+
+## Current product surfaces
+
+- Live preview exists as real host-route preview: models expose `resolvePreviewUrl` in `mdcms.config.ts`, Studio mints a short-lived `mdcms_preview_token`, and host preview routes verify that token before private draft reads. Fully real-time postMessage/CRDT preview updates are separate future work.
