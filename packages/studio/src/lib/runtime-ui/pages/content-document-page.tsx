@@ -66,10 +66,13 @@ import {
   Check,
   ExternalLink,
   Globe,
+  Monitor,
   PanelRight,
   PanelRightClose,
   RefreshCw,
   Send,
+  Smartphone,
+  Tablet,
   X,
 } from "lucide-react";
 import { cn } from "../lib/utils.js";
@@ -126,6 +129,71 @@ import {
 const DOCUMENT_SAVE_DEBOUNCE_MS = 5000;
 
 type ContentDocumentPreviewMode = "edit" | "split" | "preview";
+
+const CONTENT_DOCUMENT_PREVIEW_MODE_QUERY_PARAM = "previewMode";
+export const LIVE_PREVIEW_IFRAME_SANDBOX =
+  "allow-scripts allow-forms allow-same-origin";
+
+function isContentDocumentPreviewMode(
+  value: unknown,
+): value is ContentDocumentPreviewMode {
+  return value === "edit" || value === "split" || value === "preview";
+}
+
+export function readContentDocumentPreviewModeSearchParam(
+  search: string,
+): ContentDocumentPreviewMode | undefined {
+  const params = new URLSearchParams(
+    search.startsWith("?") ? search.slice(1) : search,
+  );
+  const mode = params.get(CONTENT_DOCUMENT_PREVIEW_MODE_QUERY_PARAM);
+
+  return isContentDocumentPreviewMode(mode) ? mode : undefined;
+}
+
+export function writeContentDocumentPreviewModeSearchParam(
+  search: string,
+  mode: ContentDocumentPreviewMode,
+): string {
+  const params = new URLSearchParams(
+    search.startsWith("?") ? search.slice(1) : search,
+  );
+  params.set(CONTENT_DOCUMENT_PREVIEW_MODE_QUERY_PARAM, mode);
+
+  const serialized = params.toString();
+
+  return serialized ? `?${serialized}` : "";
+}
+
+function readBrowserContentDocumentPreviewMode():
+  | ContentDocumentPreviewMode
+  | undefined {
+  if (typeof window === "undefined") {
+    return undefined;
+  }
+
+  return readContentDocumentPreviewModeSearchParam(window.location.search);
+}
+
+function replaceBrowserContentDocumentPreviewMode(
+  mode: ContentDocumentPreviewMode,
+) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const nextUrl = new URL(window.location.href);
+  nextUrl.search = writeContentDocumentPreviewModeSearchParam(
+    window.location.search,
+    mode,
+  );
+
+  window.history.replaceState(
+    window.history.state,
+    "",
+    `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`,
+  );
+}
 
 function useLatestCallback<Args extends unknown[], Return>(
   callback: (...args: Args) => Return,
@@ -184,7 +252,53 @@ type ContentDocumentPageViewProps = {
   onPreviewRefresh?: () => boolean | Promise<boolean>;
 };
 
-type LivePreviewViewportSize = "small" | "medium" | "large";
+type LivePreviewViewportSize = "mobile" | "tablet" | "desktop";
+
+const LIVE_PREVIEW_VIEWPORT_PRESETS: Record<
+  LivePreviewViewportSize,
+  { label: string; width: number }
+> = {
+  mobile: { label: "Mobile", width: 390 },
+  tablet: { label: "Tablet", width: 768 },
+  desktop: { label: "Desktop", width: 1280 },
+};
+
+type LivePreviewViewportFrame = {
+  targetWidth: number;
+  visualWidth: number;
+  scale: number;
+  heightPercent: number;
+};
+
+function roundViewportNumber(value: number): number {
+  return Math.round(value * 1000) / 1000;
+}
+
+export function getLivePreviewViewportFrame(
+  size: LivePreviewViewportSize,
+  availableWidth: number,
+): LivePreviewViewportFrame {
+  const targetWidth = LIVE_PREVIEW_VIEWPORT_PRESETS[size].width;
+  const hasMeasuredWidth =
+    Number.isFinite(availableWidth) && availableWidth > 0;
+  const visualWidth = hasMeasuredWidth
+    ? Math.min(targetWidth, availableWidth)
+    : targetWidth;
+  const scale = hasMeasuredWidth
+    ? roundViewportNumber(Math.min(1, visualWidth / targetWidth))
+    : 1;
+  const heightPercent =
+    hasMeasuredWidth && visualWidth < targetWidth
+      ? roundViewportNumber((targetWidth / visualWidth) * 100)
+      : 100;
+
+  return {
+    targetWidth,
+    visualWidth: roundViewportNumber(visualWidth),
+    scale,
+    heightPercent,
+  };
+}
 
 function formatDocumentLabel(path: string, documentId: string): string {
   const trimmedPath = path.trim();
@@ -1230,38 +1344,53 @@ function LivePreviewViewportControl(props: {
   onSizeChange: (size: LivePreviewViewportSize) => void;
 }) {
   const options: Array<{
-    label: string;
     size: LivePreviewViewportSize;
+    Icon: typeof Smartphone;
   }> = [
-    { label: "S", size: "small" },
-    { label: "M", size: "medium" },
-    { label: "L", size: "large" },
+    { size: "mobile", Icon: Smartphone },
+    { size: "tablet", Icon: Tablet },
+    { size: "desktop", Icon: Monitor },
   ];
 
   return (
-    <div
-      className="hidden shrink-0 overflow-hidden rounded-md border border-border sm:inline-flex"
-      aria-label="Preview viewport"
-    >
-      {options.map((option) => (
-        <button
-          key={option.size}
-          type="button"
-          data-mdcms-preview-viewport-option={option.size}
-          data-state={props.size === option.size ? "active" : "inactive"}
-          className={cn(
-            "h-8 px-2 font-mono text-[10px] transition-colors",
-            props.size === option.size
-              ? "bg-foreground text-background"
-              : "text-foreground-muted hover:bg-muted hover:text-foreground",
-          )}
-          onClick={() => props.onSizeChange(option.size)}
-          aria-pressed={props.size === option.size}
-        >
-          {option.label}
-        </button>
-      ))}
-    </div>
+    <TooltipProvider delayDuration={150}>
+      <div
+        className="hidden shrink-0 overflow-hidden rounded-md border border-border sm:inline-flex"
+        aria-label="Preview viewport"
+      >
+        {options.map((option) => {
+          const preset = LIVE_PREVIEW_VIEWPORT_PRESETS[option.size];
+          const active = props.size === option.size;
+          const label = `${preset.label} viewport`;
+
+          return (
+            <Tooltip key={option.size}>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  data-mdcms-preview-viewport-option={option.size}
+                  data-state={active ? "active" : "inactive"}
+                  className={cn(
+                    "inline-flex size-8 items-center justify-center transition-colors",
+                    active
+                      ? "bg-foreground text-background"
+                      : "text-foreground-muted hover:bg-muted hover:text-foreground",
+                  )}
+                  onClick={() => props.onSizeChange(option.size)}
+                  aria-label={label}
+                  aria-pressed={active}
+                >
+                  <option.Icon className="size-3.5" aria-hidden />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {preset.label} · {preset.width}px
+              </TooltipContent>
+            </Tooltip>
+          );
+        })}
+      </div>
+    </TooltipProvider>
   );
 }
 
@@ -1273,7 +1402,9 @@ function LivePreviewPane(props: {
   onRefresh: () => void;
 }) {
   const [viewportSize, setViewportSize] =
-    useState<LivePreviewViewportSize>("medium");
+    useState<LivePreviewViewportSize>("tablet");
+  const [previewFrameAvailableWidth, setPreviewFrameAvailableWidth] =
+    useState(0);
   const [iframeRoute, setIframeRoute] = useState<
     | { status: "loading" }
     | {
@@ -1292,11 +1423,16 @@ function LivePreviewPane(props: {
     | { status: "error"; message: string }
   >({ status: "loading" });
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const previewFrameSlotRef = useRef<HTMLDivElement | null>(null);
   const previewDocument = resolveLivePreviewDocument(props.state);
   const route = resolveDocumentPreviewRoute({
     document: previewDocument,
     preview: props.context?.preview,
   });
+  const viewportFrame = getLivePreviewViewportFrame(
+    viewportSize,
+    previewFrameAvailableWidth,
+  );
   const readyRouteHref = route.status === "ready" ? route.href : undefined;
   const readyIframeRoute =
     route.status === "ready" &&
@@ -1310,6 +1446,34 @@ function LivePreviewPane(props: {
   const iframeInstanceKey = readyIframeRoute
     ? `${readyIframeRoute.sourceHref}:${props.refreshToken}`
     : undefined;
+
+  useLayoutEffect(() => {
+    const slot = previewFrameSlotRef.current;
+
+    if (!slot || typeof ResizeObserver === "undefined") {
+      return;
+    }
+
+    const updateWidth = (width: number) => {
+      setPreviewFrameAvailableWidth((current) =>
+        Math.abs(current - width) < 0.5 ? current : width,
+      );
+    };
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+
+      if (entry) {
+        updateWidth(entry.contentRect.width);
+      }
+    });
+
+    updateWidth(slot.clientWidth);
+    observer.observe(slot);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, []);
 
   useEffect(() => {
     if (route.status !== "ready") {
@@ -1462,7 +1626,10 @@ function LivePreviewPane(props: {
           <span className="lg:hidden">Open</span>
         </a>
       </div>
-      <div className="flex min-h-0 flex-1 justify-center p-3">
+      <div
+        ref={previewFrameSlotRef}
+        className="flex min-h-0 flex-1 justify-center overflow-hidden p-3"
+      >
         {readyIframeRoute ? (
           previewFrameState.status === "error" ? (
             <LivePreviewFrameUnavailableState
@@ -1474,43 +1641,54 @@ function LivePreviewPane(props: {
             <div
               data-mdcms-live-preview-frame-state={previewFrameState.status}
               className={cn(
-                "relative h-full rounded-md border border-border bg-card shadow-sm transition-[width]",
-                viewportSize === "small"
-                  ? "w-[390px] max-w-full"
-                  : viewportSize === "medium"
-                    ? "w-[768px] max-w-full"
-                    : "w-full",
+                "relative h-full overflow-hidden rounded-md border border-border bg-card shadow-sm transition-[width]",
               )}
+              style={{
+                width: viewportFrame.visualWidth,
+                maxWidth: "100%",
+              }}
+              data-mdcms-preview-target-width={viewportFrame.targetWidth}
+              data-mdcms-preview-scale={viewportFrame.scale}
             >
-              <iframe
-                key={iframeInstanceKey}
-                ref={iframeRef}
-                title={`Preview ${props.state.document.path}`}
-                src={readyIframeRoute.href}
-                sandbox="allow-scripts allow-forms"
-                referrerPolicy="no-referrer-when-downgrade"
-                onLoad={() => {
-                  setPreviewFrameState((current) =>
-                    current.status === "ready" || current.status === "error"
-                      ? current
-                      : { status: "loading" },
-                  );
+              <div
+                className="h-full"
+                style={{
+                  width: viewportFrame.targetWidth,
+                  height: `${viewportFrame.heightPercent}%`,
+                  transform: `scale(${viewportFrame.scale})`,
+                  transformOrigin: "top left",
                 }}
-                onError={() => {
-                  setPreviewFrameState({
-                    status: "error",
-                    message: createLivePreviewFrameErrorMessage(
-                      props.state.document.path,
-                    ),
-                  });
-                }}
-                className={cn(
-                  "size-full rounded-md bg-white transition-opacity",
-                  previewFrameState.status === "ready"
-                    ? "opacity-100"
-                    : "opacity-0",
-                )}
-              />
+              >
+                <iframe
+                  key={iframeInstanceKey}
+                  ref={iframeRef}
+                  title={`Preview ${props.state.document.path}`}
+                  src={readyIframeRoute.href}
+                  sandbox={LIVE_PREVIEW_IFRAME_SANDBOX}
+                  referrerPolicy="no-referrer-when-downgrade"
+                  onLoad={() => {
+                    setPreviewFrameState((current) =>
+                      current.status === "ready" || current.status === "error"
+                        ? current
+                        : { status: "loading" },
+                    );
+                  }}
+                  onError={() => {
+                    setPreviewFrameState({
+                      status: "error",
+                      message: createLivePreviewFrameErrorMessage(
+                        props.state.document.path,
+                      ),
+                    });
+                  }}
+                  className={cn(
+                    "size-full rounded-md bg-white transition-opacity",
+                    previewFrameState.status === "ready"
+                      ? "opacity-100"
+                      : "opacity-0",
+                  )}
+                />
+              </div>
               {previewFrameState.status === "loading" ? (
                 <div className="absolute inset-0 flex items-center justify-center rounded-md bg-card px-4 text-center text-sm text-foreground-muted">
                   Loading preview…
@@ -1574,7 +1752,9 @@ function useContentDocumentPageViewElement({
   onPreviewRefresh,
 }: ContentDocumentPageViewProps) {
   const [internalPreviewMode, setInternalPreviewMode] =
-    useState<ContentDocumentPreviewMode>("edit");
+    useState<ContentDocumentPreviewMode>(
+      () => previewMode ?? readBrowserContentDocumentPreviewMode() ?? "edit",
+    );
   const [previewRefreshToken, setPreviewRefreshToken] = useState(0);
   const activePreviewMode = previewMode ?? internalPreviewMode;
   const setPreviewMode = useCallback(
@@ -1582,6 +1762,7 @@ function useContentDocumentPageViewElement({
       if (previewMode === undefined) {
         setInternalPreviewMode(mode);
       }
+      replaceBrowserContentDocumentPreviewMode(mode);
       onPreviewModeChange?.(mode);
     },
     [onPreviewModeChange, previewMode],
