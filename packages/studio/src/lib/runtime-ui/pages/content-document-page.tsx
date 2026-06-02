@@ -62,9 +62,11 @@ import {
 } from "../components/ui/tooltip.js";
 import {
   Check,
+  ExternalLink,
   Globe,
   PanelRight,
   PanelRightClose,
+  RefreshCw,
   Send,
   X,
 } from "lucide-react";
@@ -114,8 +116,14 @@ import {
   type ContentDocumentPageReadyState,
   type ContentDocumentPageState,
 } from "./content-document-page-state.js";
+import {
+  resolveDocumentPreviewRoute,
+  type DocumentPreviewRouteResolution,
+} from "./document-preview-route.js";
 
 const DOCUMENT_SAVE_DEBOUNCE_MS = 5000;
+
+type ContentDocumentPreviewMode = "edit" | "split" | "preview";
 
 function useLatestCallback<Args extends unknown[], Return>(
   callback: (...args: Args) => Return,
@@ -168,7 +176,11 @@ type ContentDocumentPageViewProps = {
     draftRevision?: number;
     updatedAt?: string;
   }) => void;
+  previewMode?: ContentDocumentPreviewMode;
+  onPreviewModeChange?: (mode: ContentDocumentPreviewMode) => void;
 };
+
+type LivePreviewViewportSize = "small" | "medium" | "large";
 
 function formatDocumentLabel(path: string, documentId: string): string {
   const trimmedPath = path.trim();
@@ -976,6 +988,219 @@ function ContentDocumentPageSidebar(props: {
   );
 }
 
+function PreviewModeButton(props: {
+  mode: ContentDocumentPreviewMode;
+  activeMode: ContentDocumentPreviewMode;
+  onSelect: (mode: ContentDocumentPreviewMode) => void;
+}) {
+  const label =
+    props.mode === "edit"
+      ? "Edit"
+      : props.mode === "split"
+        ? "Split"
+        : "Preview";
+
+  return (
+    <button
+      type="button"
+      data-mdcms-preview-mode-option={props.mode}
+      data-state={props.activeMode === props.mode ? "active" : "inactive"}
+      className={cn(
+        "h-8 border-l border-border px-3 font-mono text-[11px] uppercase transition-colors first:border-l-0",
+        props.activeMode === props.mode
+          ? "bg-primary text-primary-foreground"
+          : "bg-card text-foreground-muted hover:bg-muted hover:text-foreground",
+      )}
+      onClick={() => props.onSelect(props.mode)}
+    >
+      {label}
+    </button>
+  );
+}
+
+function DocumentPreviewModeControl(props: {
+  mode: ContentDocumentPreviewMode;
+  onModeChange: (mode: ContentDocumentPreviewMode) => void;
+}) {
+  return (
+    <div
+      data-mdcms-preview-mode-control="true"
+      className="inline-flex shrink-0 overflow-hidden rounded-md border border-border bg-card"
+      aria-label="Editor preview mode"
+    >
+      {(["edit", "split", "preview"] as const).map((mode) => (
+        <PreviewModeButton
+          key={mode}
+          mode={mode}
+          activeMode={props.mode}
+          onSelect={props.onModeChange}
+        />
+      ))}
+    </div>
+  );
+}
+
+function LivePreviewFailureMatrix() {
+  return (
+    <div className="divide-y divide-border border-y border-border">
+      {[
+        ["NO ADAPTER", "Install the host preview route or use open-in-tab."],
+        ["FRAMING BLOCKED", "Allow Studio in frame-ancestors for preview."],
+        ["UNAUTHORIZED", "Refresh the Studio session or preview token."],
+        ["DRAFT INVALID", "Last valid render is kept until save succeeds."],
+      ].map(([label, description]) => (
+        <div key={label} className="grid gap-1 py-2 sm:grid-cols-[8rem_1fr]">
+          <p className="font-mono text-[10px] font-semibold uppercase text-foreground">
+            {label}
+          </p>
+          <p className="text-xs text-foreground-muted">{description}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function LivePreviewUnavailableState(props: {
+  route: Extract<DocumentPreviewRouteResolution, { status: "unavailable" }>;
+}) {
+  return (
+    <div
+      data-mdcms-live-preview-pane="unavailable"
+      className="flex size-full items-center justify-center bg-background-subtle p-6"
+    >
+      <div className="max-w-md">
+        <p className="font-mono text-[10px] uppercase text-primary">
+          Real-route preview
+        </p>
+        <h2 className="mt-2 text-lg font-semibold text-foreground">
+          No route configured
+        </h2>
+        <p className="mt-2 text-sm leading-6 text-foreground-muted">
+          {props.route.message} Configure a preview route for this type, or use
+          the inline MDX component preview for isolated component blocks.
+        </p>
+        <div className="mt-4">
+          <LivePreviewFailureMatrix />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LivePreviewViewportControl(props: {
+  size: LivePreviewViewportSize;
+  onSizeChange: (size: LivePreviewViewportSize) => void;
+}) {
+  const options: Array<{
+    label: string;
+    size: LivePreviewViewportSize;
+  }> = [
+    { label: "S", size: "small" },
+    { label: "M", size: "medium" },
+    { label: "L", size: "large" },
+  ];
+
+  return (
+    <div
+      className="hidden shrink-0 overflow-hidden rounded-md border border-border sm:inline-flex"
+      aria-label="Preview viewport"
+    >
+      {options.map((option) => (
+        <button
+          key={option.size}
+          type="button"
+          data-mdcms-preview-viewport-option={option.size}
+          data-state={props.size === option.size ? "active" : "inactive"}
+          className={cn(
+            "h-8 px-2 font-mono text-[10px] transition-colors",
+            props.size === option.size
+              ? "bg-foreground text-background"
+              : "text-foreground-muted hover:bg-muted hover:text-foreground",
+          )}
+          onClick={() => props.onSizeChange(option.size)}
+          aria-pressed={props.size === option.size}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function LivePreviewPane(props: {
+  state: ContentDocumentPageReadyState;
+  refreshToken: number;
+  onRefresh: () => void;
+}) {
+  const [viewportSize, setViewportSize] =
+    useState<LivePreviewViewportSize>("medium");
+  const route = resolveDocumentPreviewRoute({
+    type: props.state.document.type,
+    path: props.state.document.path,
+    frontmatter: props.state.draftFrontmatter,
+  });
+
+  if (route.status === "unavailable") {
+    return <LivePreviewUnavailableState route={route} />;
+  }
+
+  return (
+    <section
+      data-mdcms-live-preview-pane="ready"
+      data-mdcms-preview-viewport={viewportSize}
+      className="flex size-full min-w-0 flex-col bg-background-subtle"
+      aria-label="Live host route preview"
+    >
+      <div className="flex min-h-11 items-center gap-2 border-b border-border bg-card px-3">
+        <button
+          type="button"
+          className="inline-flex size-8 items-center justify-center rounded-md border border-border text-foreground-muted transition-colors hover:bg-muted hover:text-foreground"
+          onClick={props.onRefresh}
+          aria-label="Refresh preview"
+        >
+          <RefreshCw className="size-3.5" aria-hidden />
+        </button>
+        <div className="flex min-w-0 flex-1 items-center gap-2 rounded-full bg-muted px-3 py-1.5 font-mono text-[11px] text-foreground-muted">
+          <span className="size-1.5 shrink-0 rounded-full bg-primary" />
+          <span className="truncate text-foreground">{route.label}</span>
+          <span className="ml-auto shrink-0 text-primary">draft</span>
+        </div>
+        <LivePreviewViewportControl
+          size={viewportSize}
+          onSizeChange={setViewportSize}
+        />
+        <a
+          href={route.href}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-2.5 text-xs text-foreground-muted transition-colors hover:bg-muted hover:text-foreground"
+        >
+          <ExternalLink className="size-3.5" aria-hidden />
+          <span className="hidden lg:inline">Open preview in new tab</span>
+          <span className="lg:hidden">Open</span>
+        </a>
+      </div>
+      <div className="flex min-h-0 flex-1 justify-center p-3">
+        <iframe
+          key={`${route.href}:${props.refreshToken}`}
+          title={`Preview ${props.state.document.path}`}
+          src={route.href}
+          sandbox="allow-scripts allow-forms"
+          referrerPolicy="no-referrer-when-downgrade"
+          className={cn(
+            "h-full rounded-md border border-border bg-white shadow-sm transition-[width]",
+            viewportSize === "small"
+              ? "w-[390px] max-w-full"
+              : viewportSize === "medium"
+                ? "w-[768px] max-w-full"
+                : "w-full",
+          )}
+        />
+      </div>
+    </section>
+  );
+}
+
 export function ContentDocumentPageView(props: ContentDocumentPageViewProps) {
   return useContentDocumentPageViewElement(props);
 }
@@ -1007,7 +1232,22 @@ function useContentDocumentPageViewElement({
   onAiSelectionChange,
   aiApi,
   onAiProposalApplied,
+  previewMode,
+  onPreviewModeChange,
 }: ContentDocumentPageViewProps) {
+  const [internalPreviewMode, setInternalPreviewMode] =
+    useState<ContentDocumentPreviewMode>("edit");
+  const [previewRefreshToken, setPreviewRefreshToken] = useState(0);
+  const activePreviewMode = previewMode ?? internalPreviewMode;
+  const setPreviewMode = useCallback(
+    (mode: ContentDocumentPreviewMode) => {
+      if (previewMode === undefined) {
+        setInternalPreviewMode(mode);
+      }
+      onPreviewModeChange?.(mode);
+    },
+    [onPreviewModeChange, previewMode],
+  );
   const documentLabel =
     state.status === "ready"
       ? formatDocumentLabel(state.document.path, state.documentId)
@@ -1095,6 +1335,7 @@ function useContentDocumentPageViewElement({
       <TooltipProvider>
         <div
           data-mdcms-editor-layout="document"
+          data-mdcms-editor-preview-mode={activePreviewMode}
           data-mdcms-document-state={state.status}
           data-mdcms-document-write-state={writeState}
           className="flex h-screen min-w-0 flex-col overflow-x-hidden"
@@ -1121,6 +1362,13 @@ function useContentDocumentPageViewElement({
             </div>
 
             <div className="ml-auto flex shrink-0 items-center gap-2">
+              {state.status === "ready" ? (
+                <DocumentPreviewModeControl
+                  mode={activePreviewMode}
+                  onModeChange={setPreviewMode}
+                />
+              ) : null}
+
               {state.status === "ready" &&
               state.localized &&
               state.route.supportedLocales &&
@@ -1287,74 +1535,90 @@ function useContentDocumentPageViewElement({
                   </div>
                 </div>
               ) : (
-                <TipTapEditor
-                  ref={editorRef}
-                  initialContent={state.draftBody}
-                  context={context}
-                  onChange={onDraftChange}
-                  onActiveMdxComponentChange={onActiveMdxComponentChange}
-                  onSelectionTextChange={onAiSelectionChange}
-                  readOnly={!state.canWrite || !!state.viewingVersion}
-                  forbidden={false}
-                  canvasHeader={
-                    <div className="space-y-3 pb-1">
-                      {/* Path chip + dashed-border frontmatter mono row */}
-                      <DocumentCanvasHeader state={state} />
+                <div
+                  className={cn(
+                    "flex min-h-0 flex-1",
+                    activePreviewMode === "split" ? "flex-row" : "flex-col",
+                  )}
+                >
+                  {activePreviewMode !== "preview" ? (
+                    <div
+                      data-mdcms-editor-authoring-pane="true"
+                      className={cn(
+                        "flex min-w-0 flex-col overflow-hidden",
+                        activePreviewMode === "split"
+                          ? "w-1/2 border-r border-border"
+                          : "flex-1",
+                      )}
+                    >
+                      <TipTapEditor
+                        ref={editorRef}
+                        initialContent={state.draftBody}
+                        context={context}
+                        onChange={onDraftChange}
+                        onActiveMdxComponentChange={onActiveMdxComponentChange}
+                        onSelectionTextChange={onAiSelectionChange}
+                        readOnly={!state.canWrite || !!state.viewingVersion}
+                        forbidden={false}
+                        canvasHeader={
+                          <div className="space-y-3 pb-1">
+                            {/* Path chip + dashed-border frontmatter mono row */}
+                            <DocumentCanvasHeader state={state} />
 
-                      {state.schemaState?.status === "project-mismatch"
-                        ? renderProjectMismatchBanner(state.schemaState)
-                        : hasSchemaRecoveryMismatch(state.schemaState)
-                          ? renderSchemaRecoveryBanner({
-                              state,
-                              onSchemaSync,
-                            })
-                          : null}
+                            {state.schemaState?.status === "project-mismatch"
+                              ? renderProjectMismatchBanner(state.schemaState)
+                              : hasSchemaRecoveryMismatch(state.schemaState)
+                                ? renderSchemaRecoveryBanner({
+                                    state,
+                                    onSchemaSync,
+                                  })
+                                : null}
 
-                      {state.mutationError ? (
-                        <div
-                          data-mdcms-document-mutation-state="error"
-                          className="rounded-md border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive"
-                        >
-                          {state.mutationError}
-                        </div>
-                      ) : null}
+                            {state.mutationError ? (
+                              <div
+                                data-mdcms-document-mutation-state="error"
+                                className="rounded-md border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive"
+                              >
+                                {state.mutationError}
+                              </div>
+                            ) : null}
 
-                      {!state.canWrite &&
-                      state.writeMessage &&
-                      !hasSchemaRecoveryMismatch(state.schemaState) &&
-                      state.schemaState?.status !== "project-mismatch" ? (
-                        <div className="rounded-md border border-border bg-background-subtle px-4 py-3 text-sm text-foreground-muted">
-                          {state.writeMessage}
-                        </div>
-                      ) : null}
+                            {!state.canWrite &&
+                            state.writeMessage &&
+                            !hasSchemaRecoveryMismatch(state.schemaState) &&
+                            state.schemaState?.status !== "project-mismatch" ? (
+                              <div className="rounded-md border border-border bg-background-subtle px-4 py-3 text-sm text-foreground-muted">
+                                {state.writeMessage}
+                              </div>
+                            ) : null}
 
-                      {state.publishError ? (
-                        <div
-                          data-mdcms-document-publish-state="error"
-                          className="rounded-md border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive"
-                        >
-                          {state.publishError}
-                        </div>
-                      ) : null}
+                            {state.publishError ? (
+                              <div
+                                data-mdcms-document-publish-state="error"
+                                className="rounded-md border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive"
+                              >
+                                {state.publishError}
+                              </div>
+                            ) : null}
 
-                      {state.viewingVersion ? (
-                        <div
-                          data-mdcms-viewing-version={
-                            state.viewingVersion.version
-                          }
-                          className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-primary/30 bg-primary/5 px-4 py-2.5"
-                        >
-                          <p className="text-sm font-medium">
-                            Viewing version {state.viewingVersion.version}
-                            {state.viewingVersion.status === "loading"
-                              ? " — Loading..."
-                              : null}
-                            {state.restoreVersionState === "restoring"
-                              ? " — Restoring..."
-                              : null}
-                          </p>
-                          <div className="flex items-center gap-1">
-                            {/* "Restore this version" copies the viewed
+                            {state.viewingVersion ? (
+                              <div
+                                data-mdcms-viewing-version={
+                                  state.viewingVersion.version
+                                }
+                                className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-primary/30 bg-primary/5 px-4 py-2.5"
+                              >
+                                <p className="text-sm font-medium">
+                                  Viewing version {state.viewingVersion.version}
+                                  {state.viewingVersion.status === "loading"
+                                    ? " — Loading..."
+                                    : null}
+                                  {state.restoreVersionState === "restoring"
+                                    ? " — Restoring..."
+                                    : null}
+                                </p>
+                                <div className="flex items-center gap-1">
+                                  {/* "Restore this version" copies the viewed
                               version's body + frontmatter back into the
                               document as a new draft. The edit isn't
                               published until the user clicks Publish,
@@ -1362,62 +1626,84 @@ function useContentDocumentPageViewElement({
                               and keeping the content:write scope sufficient
                               (publish requires content:publish, which not
                               every editor has). */}
-                            {state.canWrite ? (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="text-xs"
-                                disabled={
-                                  state.viewingVersion.status !== "ready" ||
-                                  state.restoreVersionState === "restoring"
-                                }
-                                data-mdcms-restore-version={
-                                  state.viewingVersion.version
-                                }
-                                onClick={() => {
-                                  const v = state.viewingVersion?.version;
-                                  if (typeof v === "number") {
-                                    onRestoreVersion?.(v);
-                                  }
-                                }}
-                              >
-                                {state.restoreVersionState === "restoring"
-                                  ? "Restoring..."
-                                  : "Restore this version"}
-                              </Button>
+                                  {state.canWrite ? (
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="text-xs"
+                                      disabled={
+                                        state.viewingVersion.status !==
+                                          "ready" ||
+                                        state.restoreVersionState ===
+                                          "restoring"
+                                      }
+                                      data-mdcms-restore-version={
+                                        state.viewingVersion.version
+                                      }
+                                      onClick={() => {
+                                        const v = state.viewingVersion?.version;
+                                        if (typeof v === "number") {
+                                          onRestoreVersion?.(v);
+                                        }
+                                      }}
+                                    >
+                                      {state.restoreVersionState === "restoring"
+                                        ? "Restoring..."
+                                        : "Restore this version"}
+                                    </Button>
+                                  ) : null}
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="text-xs"
+                                    disabled={
+                                      state.restoreVersionState === "restoring"
+                                    }
+                                    onClick={() => onBackToDraft?.()}
+                                  >
+                                    View latest
+                                  </Button>
+                                </div>
+                              </div>
                             ) : null}
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="text-xs"
-                              disabled={
-                                state.restoreVersionState === "restoring"
-                              }
-                              onClick={() => onBackToDraft?.()}
-                            >
-                              View latest
-                            </Button>
+
+                            {state.viewingVersion?.status === "error" ? (
+                              <div className="rounded-md border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+                                {state.viewingVersion.error}
+                              </div>
+                            ) : null}
+
+                            {state.restoreVersionError ? (
+                              <div
+                                data-mdcms-document-restore-version-state="error"
+                                className="rounded-md border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive"
+                              >
+                                {state.restoreVersionError}
+                              </div>
+                            ) : null}
                           </div>
-                        </div>
-                      ) : null}
-
-                      {state.viewingVersion?.status === "error" ? (
-                        <div className="rounded-md border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-                          {state.viewingVersion.error}
-                        </div>
-                      ) : null}
-
-                      {state.restoreVersionError ? (
-                        <div
-                          data-mdcms-document-restore-version-state="error"
-                          className="rounded-md border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive"
-                        >
-                          {state.restoreVersionError}
-                        </div>
-                      ) : null}
+                        }
+                      />
                     </div>
-                  }
-                />
+                  ) : null}
+                  {activePreviewMode !== "edit" ? (
+                    <div
+                      data-mdcms-editor-host-preview-pane="true"
+                      className={cn(
+                        "min-w-0 overflow-hidden",
+                        activePreviewMode === "split" ? "w-1/2" : "flex-1",
+                      )}
+                    >
+                      <LivePreviewPane
+                        state={state}
+                        refreshToken={previewRefreshToken}
+                        onRefresh={() =>
+                          setPreviewRefreshToken((token) => token + 1)
+                        }
+                      />
+                    </div>
+                  ) : null}
+                </div>
               )}
             </div>
 

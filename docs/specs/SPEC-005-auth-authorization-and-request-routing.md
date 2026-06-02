@@ -2,7 +2,7 @@
 status: live
 canonical: true
 created: 2026-03-11
-last_updated: 2026-04-14
+last_updated: 2026-06-02
 ---
 
 # SPEC-005 Auth, Authorization, and Request Routing
@@ -120,6 +120,38 @@ Studio browser request modes:
 Successful browser preflight requests (`OPTIONS`) for allowlisted origins return `204` with no body.
 
 If a browser request includes an `Origin` header that is not allowlisted, the server must reject both the preflight request and the actual request with `FORBIDDEN_ORIGIN` (`403`).
+
+### Embedded Host Route Preview
+
+The Studio document editor may embed a host application's preview route in an
+iframe. That iframe renders host application HTML; it is not an MDCMS API
+endpoint and does not weaken the shared MDCMS request-routing rules above.
+
+Normative rules:
+
+- MDCMS API calls made by Studio continue to require the same session or API-key
+  auth mode, explicit project/environment routing, CSRF behavior, and CORS
+  allowlist checks as any other Studio browser request.
+- The iframe target must not be treated as an implicit authorization grant. Any
+  host preview route that reads MDCMS draft data must authenticate its own
+  draft-aware reads and must carry explicit project/environment/document
+  context.
+- The first Studio preview slice may embed same-origin host preview routes that
+  already rely on the host application's normal session/runtime context. It does
+  not introduce a public MDCMS preview-token mint endpoint.
+- Cross-origin host preview adapters require a future scoped preview-token
+  contract before they may read draft content in an embedded frame. Such a token
+  must be read-only, short-lived, scoped to
+  `{ project, environment, documentId }`, and rejected for all mutation
+  endpoints.
+- Browser cookies must not be the only cross-origin preview auth mechanism.
+  Third-party cookie restrictions make iframe session sharing unreliable, so a
+  future cross-origin adapter must use the scoped preview-token contract or
+  render an explicit unauthorized/unavailable state.
+- The host application controls its own frame policy. When the host route cannot
+  be framed because of `Content-Security-Policy` or `X-Frame-Options`, Studio
+  must surface a framing-blocked state and keep the open-in-new-tab fallback
+  available.
 
 ## Response Format
 

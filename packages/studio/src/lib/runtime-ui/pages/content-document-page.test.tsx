@@ -36,6 +36,7 @@ import {
   saveContentDocumentReadyState,
   syncSchemaStateForGuard,
 } from "./content-document-page-state.js";
+import { resolveDocumentPreviewRoute } from "./document-preview-route.js";
 
 function createReadyShell(
   overrides: Partial<StudioDocumentShell["data"]> = {},
@@ -1719,6 +1720,101 @@ test("ContentDocumentPageView folds the unpublished-changes signal into the Publ
     /data-mdcms-document-unpublished-changes="true"/,
   );
   assert.doesNotMatch(publishedMarkup, />unpublished</);
+});
+
+test("resolveDocumentPreviewRoute maps current demo post and page documents to host preview routes", () => {
+  assert.deepEqual(
+    resolveDocumentPreviewRoute({
+      type: "post",
+      path: "content/posts/launch-notes",
+      frontmatter: { slug: "launch-notes" },
+    }),
+    {
+      status: "ready",
+      href: "/preview/post/launch-notes",
+      label: "/preview/post/launch-notes",
+      source: "post-slug",
+    },
+  );
+
+  assert.deepEqual(
+    resolveDocumentPreviewRoute({
+      type: "page",
+      path: "content/pages/docs/getting-started.mdx",
+      frontmatter: { title: "Getting started" },
+    }),
+    {
+      status: "ready",
+      href: "/preview/page/docs/getting-started",
+      label: "/preview/page/docs/getting-started",
+      source: "page-path",
+    },
+  );
+});
+
+test("ContentDocumentPageView renders split live-preview mode with a real host route iframe", () => {
+  const baseState = createReadyState();
+  const state = createReadyState({
+    typeId: "post",
+    typeLabel: "Post",
+    document: {
+      ...baseState.document,
+      type: "post",
+      path: "content/posts/launch-notes",
+      frontmatter: {
+        title: "Launch Notes",
+        slug: "launch-notes",
+      },
+    },
+    draftFrontmatter: {
+      title: "Launch Notes",
+      slug: "launch-notes",
+    },
+  });
+
+  const markup = renderPageMarkup(state, {
+    previewMode: "split",
+  });
+
+  assert.match(markup, /data-mdcms-editor-preview-mode="split"/);
+  assert.match(markup, />Edit</);
+  assert.match(markup, />Split</);
+  assert.match(markup, />Preview</);
+  assert.match(markup, /data-mdcms-live-preview-pane="ready"/);
+  assert.match(markup, /data-mdcms-preview-viewport="medium"/);
+  assert.match(markup, /data-mdcms-preview-viewport-option="small"/);
+  assert.match(markup, /src="\/preview\/post\/launch-notes"/);
+  assert.match(markup, /Open preview in new tab/);
+});
+
+test("ContentDocumentPageView renders an explicit unavailable preview state for non-routable documents", () => {
+  const baseState = createReadyState();
+  const state = createReadyState({
+    typeId: "author",
+    typeLabel: "Author",
+    document: {
+      ...baseState.document,
+      type: "author",
+      path: "content/authors/maciej",
+      frontmatter: {
+        name: "Maciej",
+      },
+    },
+    draftFrontmatter: {
+      name: "Maciej",
+    },
+  });
+
+  const markup = renderPageMarkup(state, {
+    previewMode: "preview",
+  });
+
+  assert.match(markup, /data-mdcms-editor-preview-mode="preview"/);
+  assert.match(markup, /data-mdcms-live-preview-pane="unavailable"/);
+  assert.match(markup, /No route configured/);
+  assert.match(markup, /NO ADAPTER/);
+  assert.match(markup, /FRAMING BLOCKED/);
+  assert.doesNotMatch(markup, /<iframe/);
 });
 
 test("ContentDocumentPageView blocks writes when the local schema hash capability is unavailable", () => {
