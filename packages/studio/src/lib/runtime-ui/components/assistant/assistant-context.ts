@@ -19,8 +19,10 @@ import type {
   AssistantContextDoc,
   AssistantMessage,
   AssistantMessageContextSnapshot,
+  AssistantProgressEvent,
   AssistantProposal,
   AssistantStore,
+  AssistantStreamBlock,
   AssistantThread,
 } from "./assistant-types.js";
 
@@ -59,6 +61,43 @@ type AssistantState = {
   activeThreadId: string;
   railWidth: number;
 };
+
+function appendTextStreamBlock(
+  blocks: AssistantStreamBlock[] | undefined,
+  delta: string,
+): AssistantStreamBlock[] {
+  if (!delta) return blocks ?? [];
+  const current = blocks ?? [];
+  const last = current.at(-1);
+  if (last?.kind === "text") {
+    return [
+      ...current.slice(0, -1),
+      {
+        kind: "text",
+        text: last.text + delta,
+      },
+    ];
+  }
+  return [...current, { kind: "text", text: delta }];
+}
+
+function appendProgressStreamBlock(
+  blocks: AssistantStreamBlock[] | undefined,
+  progress: AssistantProgressEvent,
+): AssistantStreamBlock[] {
+  const current = blocks ?? [];
+  const last = current.at(-1);
+  if (last?.kind === "progress") {
+    return [
+      ...current.slice(0, -1),
+      {
+        kind: "progress",
+        events: [...last.events, progress],
+      },
+    ];
+  }
+  return [...current, { kind: "progress", events: [progress] }];
+}
 
 type AssistantAction =
   | { type: "open-rail" }
@@ -828,6 +867,7 @@ function reducer(
               role: "assistant",
               at: action.placeholderAt,
               text: "",
+              streamBlocks: [],
             };
             return {
               ...thread,
@@ -855,7 +895,14 @@ function reducer(
               ...thread,
               messages: thread.messages.map((m) =>
                 m.id === action.placeholderId
-                  ? { ...m, text: (m.text ?? "") + action.delta }
+                  ? {
+                      ...m,
+                      text: (m.text ?? "") + action.delta,
+                      streamBlocks: appendTextStreamBlock(
+                        m.streamBlocks,
+                        action.delta,
+                      ),
+                    }
                   : m,
               ),
             };
@@ -878,6 +925,10 @@ function reducer(
                       ...m,
                       progress: [...(m.progress ?? []), action.progress].slice(
                         -8,
+                      ),
+                      streamBlocks: appendProgressStreamBlock(
+                        m.streamBlocks,
+                        action.progress,
                       ),
                     }
                   : m,
