@@ -1,5 +1,11 @@
 # @mdcms/shared
 
+## 0.4.0
+
+### Minor Changes
+
+- a48b9d8: Add content type preview URL resolvers for Studio live preview
+
 ## 0.3.1
 
 ### Patch Changes
