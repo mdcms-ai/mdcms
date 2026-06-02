@@ -347,6 +347,7 @@ export function createAiOrchestrator(deps: AiOrchestratorDeps): AiOrchestrator {
       const { collected, tools, system, prompt, languageModel, baseContext } =
         setup;
       let accumulatedText = "";
+      let nextTextDeltaStartsNewBlock = false;
       try {
         const result = streamText({
           model: languageModel,
@@ -358,9 +359,19 @@ export function createAiOrchestrator(deps: AiOrchestratorDeps): AiOrchestrator {
         });
         for await (const part of result.fullStream) {
           if (part.type === "text-delta") {
-            accumulatedText += part.text;
-            yield { type: "text-delta", text: part.text };
+            const text =
+              nextTextDeltaStartsNewBlock && part.text.trim().length > 0
+                ? textDeltaWithBlockSeparator(accumulatedText, part.text)
+                : part.text;
+            accumulatedText += text;
+            if (part.text.trim().length > 0) {
+              nextTextDeltaStartsNewBlock = false;
+            }
+            yield { type: "text-delta", text };
           } else if (part.type === "start-step") {
+            if (accumulatedText.trim().length > 0) {
+              nextTextDeltaStartsNewBlock = true;
+            }
             yield {
               type: "progress",
               phase: "thinking",
@@ -445,6 +456,19 @@ export function createAiOrchestrator(deps: AiOrchestratorDeps): AiOrchestrator {
       }
     },
   };
+}
+
+function textDeltaWithBlockSeparator(
+  accumulatedText: string,
+  delta: string,
+): string {
+  if (accumulatedText.trim().length === 0) return delta;
+  if (hasMarkdownBlockBoundary(accumulatedText, delta)) return delta;
+  return `\n\n${delta}`;
+}
+
+function hasMarkdownBlockBoundary(previous: string, next: string): boolean {
+  return /\n[ \t]*\n[ \t]*$/.test(previous) || /^[ \t]*\n[ \t]*\n/.test(next);
 }
 
 /**
