@@ -484,6 +484,76 @@ describe("createAiOrchestrator", () => {
     assert.ok(events.some((event) => event.type === "done"));
   });
 
+  test("chat stream separates text blocks emitted across model steps", async () => {
+    resetIds();
+    const provider = createEchoAiProvider({
+      steps: [
+        {
+          type: "tool-calls",
+          calls: [
+            {
+              toolName: "propose_replace_document_text",
+              input: JSON.stringify({
+                summary: "Replace contact block",
+                originalText: "## Contact us\n\nExisting text",
+                replacementText: "## Contact us\n\nUpdated text",
+              }),
+            },
+          ],
+          trailingText:
+            "I'll inspect the existing page and compose the edit closely.",
+        },
+        { type: "text", text: "I've proposed the testimonial section." },
+      ],
+    });
+    const orchestrator = createAiOrchestrator({
+      provider,
+      clock: fixedClock,
+      idFactory,
+    });
+
+    const events: AiChatStreamEvent[] = [];
+    for await (const event of orchestrator.runChatStream({
+      message: "Add testimonials",
+      project: "demo",
+      environment: "draft",
+      activeDocument: {
+        documentId: "doc_1",
+        path: "content/pages/home",
+        type: "page",
+        locale: "en",
+        draftRevision: 4,
+        body: "## Contact us\n\nExisting text",
+        frontmatter: {},
+        hasPublishedVersion: false,
+      },
+      capabilities: {
+        canEditDocument: true,
+        canCreateDocument: false,
+        canDeleteDocument: false,
+        canReadEntries: false,
+      },
+    })) {
+      events.push(event);
+    }
+
+    const deltas = events
+      .filter((event) => event.type === "text-delta")
+      .map((event) => event.text)
+      .join("");
+    assert.equal(
+      deltas,
+      "I'll inspect the existing page and compose the edit closely.\n\nI've proposed the testimonial section.",
+    );
+
+    const done = events.find((event) => event.type === "done");
+    assert.ok(done);
+    assert.equal(
+      done.text,
+      "I'll inspect the existing page and compose the edit closely.\n\nI've proposed the testimonial section.",
+    );
+  });
+
   test("chat stream maps model error parts to a terminal error event", async () => {
     const orchestrator = createAiOrchestrator({
       provider: createStreamErrorAiProvider(
