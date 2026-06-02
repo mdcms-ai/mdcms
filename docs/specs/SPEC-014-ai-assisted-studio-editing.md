@@ -533,6 +533,10 @@ Rules:
   text. The assistant should prefer catalog components and built-ins when the
   user asks for common visual composition, and use raw intrinsic HTML only when
   the requested result needs native HTML semantics such as forms or inputs.
+  Proposal validation rejects presentation-only intrinsic containers such as
+  raw `<section>`, `<div>`, `<p>`, or heading tags with
+  `MDX_UNGROUNDED_INTRINSIC_ELEMENT`; the assistant must express those visual
+  blocks through registered components or built-ins instead.
 - Inline styles are valid only through first-class `style` props. Style values
   must be flat objects whose values are strings or numbers.
 

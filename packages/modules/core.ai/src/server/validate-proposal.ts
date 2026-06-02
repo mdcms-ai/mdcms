@@ -787,12 +787,54 @@ function validateMdxTargetsAgainstCatalog(
         }
       }
     }
+
+    for (const tag of extractMdxIntrinsicElementTags(target.source)) {
+      if (isAllowedAiIntrinsicElement(tag.name)) {
+        continue;
+      }
+      errors.push({
+        code: "MDX_UNGROUNDED_INTRINSIC_ELEMENT",
+        message: `<${tag.name}> is raw intrinsic HTML. Use a registered MDX component or MDCMS built-in component for visual composition; raw intrinsic HTML is only allowed for native form and input semantics.`,
+        path: target.path,
+      });
+    }
   }
 
   return errors;
 }
 
+const AI_ALLOWED_INTRINSIC_ELEMENT_NAMES = new Set([
+  "button",
+  "datalist",
+  "fieldset",
+  "form",
+  "input",
+  "label",
+  "legend",
+  "meter",
+  "optgroup",
+  "option",
+  "output",
+  "progress",
+  "select",
+  "textarea",
+]);
+
+function isAllowedAiIntrinsicElement(name: string): boolean {
+  return AI_ALLOWED_INTRINSIC_ELEMENT_NAMES.has(name);
+}
+
 function extractMdxComponentTags(source: string): MdxTag[] {
+  return extractMdxTags(source).filter((tag) => isMdxComponentName(tag.name));
+}
+
+function extractMdxIntrinsicElementTags(source: string): MdxTag[] {
+  return extractMdxTags(source).filter((tag) =>
+    isMdxIntrinsicElementName(tag.name),
+  );
+}
+
+function extractMdxTags(source: string): MdxTag[] {
   const stripped = stripMarkdownCode(source);
   const tags: MdxTag[] = [];
   let index = 0;
@@ -881,7 +923,6 @@ function parseOpeningMdxTag(raw: string): MdxTag | undefined {
   if (!match) return undefined;
 
   const name = match[1]!;
-  if (!isMdxComponentName(name)) return undefined;
 
   return {
     name,
@@ -893,6 +934,10 @@ function parseOpeningMdxTag(raw: string): MdxTag | undefined {
 function isMdxComponentName(name: string): boolean {
   const [head] = name.split(".");
   return Boolean(head && /^[A-Z]/.test(head));
+}
+
+function isMdxIntrinsicElementName(name: string): boolean {
+  return /^[a-z][a-z0-9-]*$/.test(name);
 }
 
 function parseMdxAttributes(raw: string): Record<string, MdxAttributeValue> {

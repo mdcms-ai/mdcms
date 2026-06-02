@@ -547,6 +547,84 @@ describe("createMdxCatalogProposalValidator", () => {
     }
   });
 
+  test("flags presentation-only lowercase MDX blocks that bypass the component catalog", async () => {
+    const validator = createMdxCatalogProposalValidator({
+      validator: async () => ({ status: "valid" }),
+      catalog,
+    });
+    const result = await validator({
+      proposalId: "p1",
+      kind: "insert_block",
+      project: "demo",
+      environment: "draft",
+      type: "page",
+      locale: "en",
+      summary: "Insert testimonials",
+      operations: [
+        {
+          op: "insert_block",
+          bodyMdx: [
+            "<section>",
+            "  <div>",
+            "    <p>WHAT PEOPLE SAY</p>",
+            "    <h2>Loved by teams that <span>ship fast</span></h2>",
+            "  </div>",
+            "</section>",
+          ].join("\n"),
+        },
+      ],
+      expiresAt: "2026-05-15T00:05:00.000Z",
+      provider: {
+        providerId: "echo",
+        model: "echo-1",
+        promptTemplateId: "chat_tools.v1",
+      },
+    });
+
+    assert.equal(result.status, "invalid");
+    if (result.status === "invalid") {
+      assert.equal(result.errors[0]?.code, "MDX_UNGROUNDED_INTRINSIC_ELEMENT");
+      assert.equal(result.errors[0]?.path, "operations[0].bodyMdx");
+      assert.match(result.errors[0]?.message ?? "", /<section>/);
+    }
+  });
+
+  test("allows lowercase MDX when native form semantics are required", async () => {
+    const validator = createMdxCatalogProposalValidator({
+      validator: async () => ({ status: "valid" }),
+      catalog,
+    });
+    const result = await validator({
+      proposalId: "p1",
+      kind: "insert_block",
+      project: "demo",
+      environment: "draft",
+      type: "page",
+      locale: "en",
+      summary: "Insert signup form",
+      operations: [
+        {
+          op: "insert_block",
+          bodyMdx: [
+            "<form>",
+            '  <label htmlFor="email">Email</label>',
+            '  <input id="email" name="email" type="email" />',
+            "  <button>Join waitlist</button>",
+            "</form>",
+          ].join("\n"),
+        },
+      ],
+      expiresAt: "2026-05-15T00:05:00.000Z",
+      provider: {
+        providerId: "echo",
+        model: "echo-1",
+        promptTemplateId: "chat_tools.v1",
+      },
+    });
+
+    assert.equal(result.status, "valid");
+  });
+
   test("flags missing required props on registered MDX components", async () => {
     const validator = createMdxCatalogProposalValidator({
       validator: async () => ({ status: "valid" }),

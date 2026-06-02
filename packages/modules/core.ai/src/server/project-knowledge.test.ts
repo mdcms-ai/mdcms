@@ -126,6 +126,11 @@ describe("renderProjectKnowledgeBlock", () => {
         "Use only these component names when generating MDX. Any other component name fails validation.",
       ),
     );
+    assert.ok(
+      block.includes(
+        "For visual composition, use registered components or built-ins instead of raw lowercase HTML containers.",
+      ),
+    );
     assert.ok(block.includes("- **Callout** — Inline notice"));
     assert.ok(block.includes('tone (enum "info" | "warning", required)'));
     assert.ok(block.includes("title (string, optional)"));

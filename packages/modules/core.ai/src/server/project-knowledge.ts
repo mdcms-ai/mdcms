@@ -79,6 +79,7 @@ export function renderProjectKnowledgeBlock(
     } else {
       lines.push(
         "Use only these component names when generating MDX. Any other component name fails validation.",
+        "For visual composition, use registered components or built-ins instead of raw lowercase HTML containers. Raw lowercase HTML is only valid when the user needs native form or input semantics.",
       );
       const sortedComponents = [...input.mdxCatalog.components].sort((a, b) =>
         a.name.localeCompare(b.name),
