@@ -1882,7 +1882,9 @@ function useContentDocumentPageViewElement({
                 <div
                   className={cn(
                     "flex min-h-0 flex-1",
-                    activePreviewMode === "split" ? "flex-row" : "flex-col",
+                    activePreviewMode === "split"
+                      ? "flex-col lg:flex-row"
+                      : "flex-col",
                   )}
                 >
                   {activePreviewMode !== "preview" ? (
@@ -1891,7 +1893,7 @@ function useContentDocumentPageViewElement({
                       className={cn(
                         "flex min-w-0 flex-col overflow-hidden",
                         activePreviewMode === "split"
-                          ? "w-1/2 border-r border-border"
+                          ? "w-full lg:w-1/2 lg:border-r lg:border-border"
                           : "flex-1",
                       )}
                     >
@@ -2035,7 +2037,9 @@ function useContentDocumentPageViewElement({
                       data-mdcms-editor-host-preview-pane="true"
                       className={cn(
                         "min-w-0 overflow-hidden",
-                        activePreviewMode === "split" ? "w-1/2" : "flex-1",
+                        activePreviewMode === "split"
+                          ? "w-full lg:w-1/2"
+                          : "flex-1",
                       )}
                     >
                       <LivePreviewPane

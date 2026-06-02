@@ -1833,6 +1833,15 @@ test("ContentDocumentPageView prepares split live-preview mode until a tokenized
   });
 
   assert.match(markup, /data-mdcms-editor-preview-mode="split"/);
+  assert.match(markup, /class="flex min-h-0 flex-1 flex-col lg:flex-row"/);
+  assert.match(
+    markup,
+    /data-mdcms-editor-authoring-pane="true" class="flex min-w-0 flex-col overflow-hidden w-full lg:w-1\/2 lg:border-r lg:border-border"/,
+  );
+  assert.match(
+    markup,
+    /data-mdcms-editor-host-preview-pane="true" class="min-w-0 overflow-hidden w-full lg:w-1\/2"/,
+  );
   assert.match(markup, />Edit</);
   assert.match(markup, />Split</);
   assert.match(markup, />Preview</);
