@@ -85,6 +85,7 @@ test("post preview route renders draft content after verifying a preview token",
   assert.match(markup, /Post Preview/);
   assert.match(markup, /Hello MDCMS/);
   assert.match(markup, /This draft is rendered/);
+  assert.match(markup, /data-mdcms-live-preview-ready-signal/);
   assert.match(
     markup,
     /\/admin\/content\/post\/11111111-1111-1111-1111-111111111111/,

@@ -104,7 +104,7 @@ const post = defineType("post", {
 });
 ```
 
-If no resolver exists, Studio should show "Live preview not available" for that model. If a resolver returns a URL, Studio mints a short-lived `mdcms_preview_token` before loading the iframe. The host preview route should verify that token with `@mdcms/sdk` before using `draft: true` when unpublished content must remain private.
+If no resolver exists, Studio should show "Live preview not available" for that model. If a resolver returns a URL, Studio mints a short-lived `mdcms_preview_token` before loading the iframe. The host preview route should verify that token with `@mdcms/sdk` before using `draft: true` when unpublished content must remain private. After the framed preview page renders, send `window.parent.postMessage({ type: "mdcms:live-preview-ready" }, "*")`; Studio keeps the pane loading and then fails closed if that ready signal never arrives.
 
 Set `MDCMS_PREVIEW_TOKEN_SECRET` on the MDCMS server and the host app to the same secret. The host route also needs a server-only API key with `content:read:draft`. Mark preview routes dynamic / no-store so draft renders do not reuse published caches.
 

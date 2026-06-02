@@ -1091,6 +1091,44 @@ function LivePreviewUnavailableState(props: {
   );
 }
 
+function LivePreviewFrameUnavailableState(props: {
+  documentPath: string;
+  href: string;
+  message: string;
+}) {
+  return (
+    <div
+      data-mdcms-live-preview-frame-state="error"
+      className="flex h-full w-full items-center justify-center rounded-md border border-border bg-card px-4 text-center text-sm text-foreground-muted"
+    >
+      <div className="max-w-md">
+        <p className="font-mono text-[10px] uppercase text-primary">
+          Real-route preview
+        </p>
+        <h2 className="mt-2 text-base font-semibold text-foreground">
+          Live preview not available
+        </h2>
+        <p className="mt-2 leading-6">
+          {props.message} Document path:{" "}
+          <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px] text-foreground">
+            {props.documentPath}
+          </code>
+          .
+        </p>
+        <a
+          href={props.href}
+          target="_blank"
+          rel="noreferrer"
+          className="mt-4 inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-2.5 text-xs text-foreground transition-colors hover:bg-muted"
+        >
+          <ExternalLink className="size-3.5" aria-hidden />
+          Open preview in new tab
+        </a>
+      </div>
+    </div>
+  );
+}
+
 export function resolveLivePreviewDocument(
   state: ContentDocumentPageReadyState,
 ): MdcmsPreviewDocument {
@@ -1143,6 +1181,48 @@ export async function createLivePreviewIframeRoute(input: {
     href: appendMdcmsPreviewTokenToUrl(input.href, token.token),
     expiresAt: token.expiresAt,
   };
+}
+
+export const MDCMS_LIVE_PREVIEW_READY_MESSAGE = "mdcms:live-preview-ready";
+const LIVE_PREVIEW_READY_TIMEOUT_MS = 10_000;
+
+type LivePreviewReadyMessageEvent = {
+  data: unknown;
+  source: MessageEventSource | null;
+};
+
+export function isLivePreviewReadyMessage(
+  event: LivePreviewReadyMessageEvent,
+  iframe: Pick<HTMLIFrameElement, "contentWindow"> | null | undefined,
+  expectedHref: string,
+): boolean {
+  if (!iframe?.contentWindow || event.source !== iframe.contentWindow) {
+    return false;
+  }
+
+  if (event.data === MDCMS_LIVE_PREVIEW_READY_MESSAGE) {
+    return true;
+  }
+
+  if (
+    !event.data ||
+    typeof event.data !== "object" ||
+    Array.isArray(event.data)
+  ) {
+    return false;
+  }
+
+  const payload = event.data as { type?: unknown; href?: unknown };
+
+  if (payload.type !== MDCMS_LIVE_PREVIEW_READY_MESSAGE) {
+    return false;
+  }
+
+  return typeof payload.href !== "string" || payload.href === expectedHref;
+}
+
+function createLivePreviewFrameErrorMessage(documentPath: string): string {
+  return `The host preview route did not signal readiness for "${documentPath}". Check the route's frame policy, preview token handling, and ready postMessage integration.`;
 }
 
 function LivePreviewViewportControl(props: {
@@ -1206,6 +1286,12 @@ function LivePreviewPane(props: {
       }
     | { status: "error"; message: string }
   >({ status: "loading" });
+  const [previewFrameState, setPreviewFrameState] = useState<
+    | { status: "loading" }
+    | { status: "ready" }
+    | { status: "error"; message: string }
+  >({ status: "loading" });
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const previewDocument = resolveLivePreviewDocument(props.state);
   const route = resolveDocumentPreviewRoute({
     document: previewDocument,
@@ -1221,6 +1307,9 @@ function LivePreviewPane(props: {
     iframeRoute.refreshToken === props.refreshToken
       ? iframeRoute
       : undefined;
+  const iframeInstanceKey = readyIframeRoute
+    ? `${readyIframeRoute.sourceHref}:${props.refreshToken}`
+    : undefined;
 
   useEffect(() => {
     if (route.status !== "ready") {
@@ -1279,6 +1368,60 @@ function LivePreviewPane(props: {
     route.status,
   ]);
 
+  useEffect(() => {
+    if (!readyIframeRoute) {
+      iframeRef.current = null;
+      setPreviewFrameState({ status: "loading" });
+      return;
+    }
+
+    setPreviewFrameState({ status: "loading" });
+
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    let timedOut = false;
+    const timeout = window.setTimeout(() => {
+      timedOut = true;
+      setPreviewFrameState({
+        status: "error",
+        message: createLivePreviewFrameErrorMessage(props.state.document.path),
+      });
+    }, LIVE_PREVIEW_READY_TIMEOUT_MS);
+
+    const onMessage = (event: MessageEvent) => {
+      if (
+        !isLivePreviewReadyMessage(
+          event,
+          iframeRef.current,
+          readyIframeRoute.sourceHref,
+        )
+      ) {
+        return;
+      }
+
+      if (timedOut) {
+        return;
+      }
+
+      window.clearTimeout(timeout);
+      setPreviewFrameState({ status: "ready" });
+    };
+
+    window.addEventListener("message", onMessage);
+
+    return () => {
+      window.clearTimeout(timeout);
+      window.removeEventListener("message", onMessage);
+    };
+  }, [
+    props.state.document.path,
+    readyIframeRoute?.href,
+    readyIframeRoute?.sourceHref,
+    iframeInstanceKey,
+  ]);
+
   if (route.status === "unavailable") {
     return <LivePreviewUnavailableState route={route} />;
   }
@@ -1321,27 +1464,68 @@ function LivePreviewPane(props: {
       </div>
       <div className="flex min-h-0 flex-1 justify-center p-3">
         {readyIframeRoute ? (
-          <iframe
-            key={`${readyIframeRoute.href}:${props.refreshToken}`}
-            title={`Preview ${props.state.document.path}`}
-            src={readyIframeRoute.href}
-            sandbox="allow-scripts allow-forms"
-            referrerPolicy="no-referrer-when-downgrade"
-            className={cn(
-              "h-full rounded-md border border-border bg-white shadow-sm transition-[width]",
-              viewportSize === "small"
-                ? "w-[390px] max-w-full"
-                : viewportSize === "medium"
-                  ? "w-[768px] max-w-full"
-                  : "w-full",
-            )}
-          />
+          previewFrameState.status === "error" ? (
+            <LivePreviewFrameUnavailableState
+              documentPath={props.state.document.path}
+              href={readyIframeRoute.href}
+              message={previewFrameState.message}
+            />
+          ) : (
+            <div
+              data-mdcms-live-preview-frame-state={previewFrameState.status}
+              className={cn(
+                "relative h-full rounded-md border border-border bg-card shadow-sm transition-[width]",
+                viewportSize === "small"
+                  ? "w-[390px] max-w-full"
+                  : viewportSize === "medium"
+                    ? "w-[768px] max-w-full"
+                    : "w-full",
+              )}
+            >
+              <iframe
+                key={iframeInstanceKey}
+                ref={iframeRef}
+                title={`Preview ${props.state.document.path}`}
+                src={readyIframeRoute.href}
+                sandbox="allow-scripts allow-forms"
+                referrerPolicy="no-referrer-when-downgrade"
+                onLoad={() => {
+                  setPreviewFrameState((current) =>
+                    current.status === "ready" || current.status === "error"
+                      ? current
+                      : { status: "loading" },
+                  );
+                }}
+                onError={() => {
+                  setPreviewFrameState({
+                    status: "error",
+                    message: createLivePreviewFrameErrorMessage(
+                      props.state.document.path,
+                    ),
+                  });
+                }}
+                className={cn(
+                  "size-full rounded-md bg-white transition-opacity",
+                  previewFrameState.status === "ready"
+                    ? "opacity-100"
+                    : "opacity-0",
+                )}
+              />
+              {previewFrameState.status === "loading" ? (
+                <div className="absolute inset-0 flex items-center justify-center rounded-md bg-card px-4 text-center text-sm text-foreground-muted">
+                  Loading preview…
+                </div>
+              ) : null}
+            </div>
+          )
         ) : (
           <div
             data-mdcms-live-preview-frame-state={
               iframeRoute.status === "error" ? "error" : "loading"
             }
-            className="flex h-full w-full items-center justify-center rounded-md border border-border bg-card px-4 text-center text-sm text-foreground-muted"
+            className={cn(
+              "flex h-full w-full items-center justify-center rounded-md border border-border bg-card px-4 text-center text-sm text-foreground-muted",
+            )}
           >
             {iframeRoute.status === "error"
               ? iframeRoute.message

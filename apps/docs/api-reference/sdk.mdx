@@ -396,6 +396,11 @@ const document = await cms.get(preview.claims.type, {
 });
 ```
 
+When the preview route renders inside Studio's iframe, post
+`{ type: "mdcms:live-preview-ready" }` from client-side code after the page is
+ready. Studio keeps the pane in a loading state until that message arrives and
+shows the fallback link if the route never signals readiness.
+
 <Tip>
   The server-side API key used for private preview routes needs
   `content:read:draft`. Keep that API key and `MDCMS_PREVIEW_TOKEN_SECRET` in

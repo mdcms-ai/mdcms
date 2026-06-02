@@ -5,6 +5,7 @@ import { createMdcmsRenderer } from "@mdcms/sdk/react";
 
 import type { PreviewDocumentResult } from "../../lib/preview-content";
 import config from "../../mdcms.config";
+import { PreviewReadySignal } from "./preview-ready-signal";
 
 const previewRenderer = createMdcmsRenderer(config);
 
@@ -37,6 +38,7 @@ export async function PreviewDocumentView({
           "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
       }}
     >
+      <PreviewReadySignal />
       <div
         style={{
           margin: "0 auto",

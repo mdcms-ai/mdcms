@@ -109,7 +109,16 @@ When Studio opens a preview pane it:
 1. resolves the preview URL from the persisted draft snapshot;
 2. asks the MDCMS server for a short-lived preview token;
 3. appends that token as `mdcms_preview_token`;
-4. loads the tokenized URL in the iframe.
+4. loads the tokenized URL in the iframe;
+5. waits for the framed route to post `{ type: "mdcms:live-preview-ready" }`.
+
+Send the ready message from client-side code after the preview page has rendered:
+
+```tsx
+useEffect(() => {
+  window.parent.postMessage({ type: "mdcms:live-preview-ready" }, "*");
+}, []);
+```
 
 Private preview routes should verify the token before fetching drafts:
 

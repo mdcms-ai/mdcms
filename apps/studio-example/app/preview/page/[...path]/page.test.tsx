@@ -92,6 +92,7 @@ test("page preview route renders draft content after verifying a preview token",
   assert.match(markup, /Rendered page content/);
   assert.match(markup, /href="\/contact"/);
   assert.match(markup, /Contact us/);
+  assert.match(markup, /data-mdcms-live-preview-ready-signal/);
   assert.match(
     markup,
     /\/admin\/content\/page\/44444444-4444-4444-4444-444444444444/,

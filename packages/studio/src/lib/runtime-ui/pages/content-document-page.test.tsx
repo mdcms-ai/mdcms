@@ -14,8 +14,10 @@ import type { StudioDocumentShell } from "../../document-shell.js";
 import { StudioNavigationProvider } from "../navigation.js";
 import {
   ContentDocumentPageView,
+  MDCMS_LIVE_PREVIEW_READY_MESSAGE,
   SidebarInfoTab,
   createLivePreviewIframeRoute,
+  isLivePreviewReadyMessage,
   resolveLivePreviewDocument,
   runLivePreviewRefresh,
   shouldPersistBeforeLivePreviewRefresh,
@@ -1874,6 +1876,76 @@ test("createLivePreviewIframeRoute mints a token before returning an iframe href
   assert.equal(
     route.href,
     "/configured/launch-notes?preview=true&mdcms_preview_token=preview-token",
+  );
+});
+
+test("isLivePreviewReadyMessage accepts only the active iframe ready handshake", () => {
+  const activeWindow = {} as Window;
+  const staleWindow = {} as Window;
+  const iframe = {
+    contentWindow: activeWindow,
+  } as Pick<HTMLIFrameElement, "contentWindow">;
+
+  assert.equal(
+    isLivePreviewReadyMessage(
+      {
+        data: {
+          type: MDCMS_LIVE_PREVIEW_READY_MESSAGE,
+          href: "/configured/launch-notes?preview=true",
+        },
+        source: activeWindow,
+      },
+      iframe,
+      "/configured/launch-notes?preview=true",
+    ),
+    true,
+  );
+  assert.equal(
+    isLivePreviewReadyMessage(
+      {
+        data: { type: MDCMS_LIVE_PREVIEW_READY_MESSAGE },
+        source: activeWindow,
+      },
+      iframe,
+      "/configured/launch-notes?preview=true",
+    ),
+    true,
+  );
+  assert.equal(
+    isLivePreviewReadyMessage(
+      {
+        data: {
+          type: MDCMS_LIVE_PREVIEW_READY_MESSAGE,
+          href: "/configured/other?preview=true",
+        },
+        source: activeWindow,
+      },
+      iframe,
+      "/configured/launch-notes?preview=true",
+    ),
+    false,
+  );
+  assert.equal(
+    isLivePreviewReadyMessage(
+      {
+        data: { type: MDCMS_LIVE_PREVIEW_READY_MESSAGE },
+        source: staleWindow,
+      },
+      iframe,
+      "/configured/launch-notes?preview=true",
+    ),
+    false,
+  );
+  assert.equal(
+    isLivePreviewReadyMessage(
+      {
+        data: { type: "mdcms:other-message" },
+        source: activeWindow,
+      },
+      iframe,
+      "/configured/launch-notes?preview=true",
+    ),
+    false,
   );
 });
 

@@ -58,9 +58,11 @@ The preview routes use `MDCMS_DEMO_API_KEY` for server-side SDK reads and
 `mdcms_preview_token` that Studio appends before loading an iframe.
 `mdcms.config.ts` wires the `post` and `page` content types to those routes with
 `resolvePreviewUrl`; content types without that resolver show the Studio "Live
-preview not available" guidance. Preview routes force dynamic rendering and the
-SDK fetches use `cache: "no-store"` so draft previews do not reuse published
-page cache output.
+preview not available" guidance. Preview pages send the
+`mdcms:live-preview-ready` postMessage after client render so Studio can fail
+closed if an iframe never becomes ready. Preview routes force dynamic rendering
+and the SDK fetches use `cache: "no-store"` so draft previews do not reuse
+published page cache output.
 
 For local CLI workflows in this demo, put developer-specific values in `apps/studio-example/.env.local` next to `mdcms.config.ts`. The `mdcms` CLI loads `.env*` files from that config directory before importing the config, with shell exports taking precedence over file values.
 

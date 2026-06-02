@@ -154,6 +154,8 @@ if (preview.ok) {
 
 Keep `MDCMS_API_KEY` / `MDCMS_PREVIEW_API_KEY` and `MDCMS_PREVIEW_TOKEN_SECRET` server-only. The preview API key needs `content:read:draft`. Preview responses should be uncached (`cache: "no-store"`, dynamic route rendering, and/or `Cache-Control: private, no-store`) so they do not reuse published ISR/static output.
 
+When the route is used inside Studio live preview, send `window.parent.postMessage({ type: "mdcms:live-preview-ready" }, "*")` from client-side code after the draft page renders. Studio treats missing ready signals as preview failures and shows the fallback link instead of a blank iframe.
+
 ### 5. (Brownfield) replace the existing fetching
 
 Typical before/after in a Next App Router page:
