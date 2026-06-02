@@ -2567,7 +2567,7 @@ testWithDatabase(
 );
 
 testWithDatabase(
-  "auth login rotates previous sessions for the same user",
+  "auth login preserves existing sessions for the same user",
   async () => {
     const { handler, dbConnection } = createServerRequestHandlerWithModules({
       env,
@@ -2600,11 +2600,12 @@ testWithDatabase(
         }),
       );
       const firstSessionBody = (await firstSessionResponse.json()) as {
-        code: string;
+        data: { session: { id: string; email: string } };
       };
 
-      assert.equal(firstSessionResponse.status, 401);
-      assert.equal(firstSessionBody.code, "UNAUTHORIZED");
+      assert.equal(firstSessionResponse.status, 200);
+      assert.equal(firstSessionBody.data.session.id, firstLogin.session.id);
+      assert.equal(firstSessionBody.data.session.email, email);
     } finally {
       await dbConnection.close();
     }

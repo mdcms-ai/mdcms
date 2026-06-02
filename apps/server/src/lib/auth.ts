@@ -15,7 +15,7 @@ import {
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { createAuthMiddleware } from "better-auth/api";
-import { and, desc, eq, gt, isNull, ne, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, isNull, or, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import type { DrizzleDatabase } from "./db.js";
@@ -3575,14 +3575,6 @@ export function createAuthService(
 
     const studioSession = toStudioSession(session);
     await clearLoginBackoff(loginKey);
-    await options.db
-      .delete(authSessions)
-      .where(
-        and(
-          eq(authSessions.userId, studioSession.userId),
-          ne(authSessions.id, studioSession.id),
-        ),
-      );
     const csrf = createCsrfBootstrap();
 
     return {

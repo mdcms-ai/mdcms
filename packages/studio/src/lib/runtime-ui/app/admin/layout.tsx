@@ -229,6 +229,13 @@ export function resolveAdminLayoutLoginRedirectPath(input: {
   return `/admin/login?returnTo=${returnTo}`;
 }
 
+export function shouldRefetchAdminLayoutSessionOnResume(input: {
+  sessionState: StudioSessionState;
+  isTokenMode: boolean;
+}): boolean {
+  return !input.isTokenMode && input.sessionState.status === "authenticated";
+}
+
 export function AdminTokenErrorStateView({
   state,
   context,
@@ -531,6 +538,38 @@ function useAdminLayoutRoutedElement({
     sessionQuery.error,
     sessionQuery.data,
   ]);
+
+  const shouldRefetchSessionOnResume = shouldRefetchAdminLayoutSessionOnResume({
+    sessionState,
+    isTokenMode,
+  });
+
+  useEffect(() => {
+    if (
+      !shouldRefetchSessionOnResume ||
+      typeof window === "undefined" ||
+      typeof document === "undefined"
+    ) {
+      return;
+    }
+
+    const refetchSession = () => {
+      void sessionQuery.refetch();
+    };
+    const refetchVisibleSession = () => {
+      if (document.visibilityState === "visible") {
+        refetchSession();
+      }
+    };
+
+    window.addEventListener("focus", refetchSession);
+    document.addEventListener("visibilitychange", refetchVisibleSession);
+
+    return () => {
+      window.removeEventListener("focus", refetchSession);
+      document.removeEventListener("visibilitychange", refetchVisibleSession);
+    };
+  }, [sessionQuery.refetch, shouldRefetchSessionOnResume]);
 
   // Environments
   const environmentsEnabled = Boolean(

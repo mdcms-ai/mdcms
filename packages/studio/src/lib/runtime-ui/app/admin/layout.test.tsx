@@ -15,6 +15,7 @@ import {
   getAdminSidebarStorageKey,
   isDocumentEditorPathname,
   resolveAdminLayoutLoginRedirectPath,
+  shouldRefetchAdminLayoutSessionOnResume,
 } from "./layout.js";
 
 function createContext(): StudioMountContext {
@@ -202,6 +203,50 @@ test("resolveAdminLayoutLoginRedirectPath keeps token auth failures inline", () 
       sessionState: { status: "error", message: "Failed to fetch" },
     }),
     null,
+  );
+});
+
+test("shouldRefetchAdminLayoutSessionOnResume only refetches verified cookie sessions", () => {
+  assert.equal(
+    shouldRefetchAdminLayoutSessionOnResume({
+      isTokenMode: false,
+      sessionState: {
+        status: "authenticated",
+        csrfToken: "csrf",
+        session: {
+          id: "session-1",
+          userId: "user-1",
+          email: "editor@example.com",
+          issuedAt: "2026-06-02T10:00:00.000Z",
+          expiresAt: "2026-06-02T12:00:00.000Z",
+        },
+      },
+    }),
+    true,
+  );
+  assert.equal(
+    shouldRefetchAdminLayoutSessionOnResume({
+      isTokenMode: false,
+      sessionState: { status: "unauthenticated" },
+    }),
+    false,
+  );
+  assert.equal(
+    shouldRefetchAdminLayoutSessionOnResume({
+      isTokenMode: true,
+      sessionState: {
+        status: "authenticated",
+        csrfToken: "",
+        session: {
+          id: "token-auth-session",
+          userId: "token-auth-user",
+          email: "API token",
+          issuedAt: "",
+          expiresAt: "",
+        },
+      },
+    }),
+    false,
   );
 });
 
