@@ -16,6 +16,9 @@ All three resolve to the same internal concept downstream: an authenticated prin
 
 Browser sessions are persisted server-side; the `sessions` table in `apps/server/src/lib/db/schema.ts` holds them with a unique-token index. Studio fetches the active principal on mount and caches it in its TanStack Query layer; writes carry CSRF protection.
 Session bootstrap returns the existing readable `mdcms_csrf` cookie when present and only creates a new token when the cookie is missing, so cached Studio clients can replay the token without another bootstrap invalidating it.
+Cookie-authenticated Studio tabs revalidate the session when the tab regains
+focus or becomes visible, so expired or revoked sessions redirect to login
+without a manual refresh.
 
 ### API key (SDK / non-interactive)
 
@@ -39,6 +42,9 @@ If the listener doesn't receive a callback within a timeout, the CLI surfaces "T
 - CSRF bootstrap must not rotate an existing `mdcms_csrf` cookie; multiple Studio clients and route helpers may cache that token concurrently.
 - The loopback flow validates `state` to defeat CSRF; binding to `127.0.0.1` confines redirect targets to the local machine.
 - API keys are revocable; sessions are revocable; both invalidate immediately on the server.
+- Password sign-in does not revoke a user's other active Studio sessions; users
+  can stay signed in from multiple browser contexts until inactivity, absolute
+  max age, logout, or explicit admin revocation invalidates a session.
 
 ## Cross-refs
 

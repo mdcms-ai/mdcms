@@ -346,6 +346,8 @@ MDCMS rejects sign-in with `AUTH_SAML_REQUIRED_ATTRIBUTE_MISSING` (`401`) when:
 - Session cookie is `httpOnly`, `Secure`, `SameSite=None`, and scoped to `/`.
 - `mdcms_csrf` cookie is readable, `Secure`, `SameSite=None`, and scoped to `/`.
 - Session lifetime: 2h rolling inactivity timeout with a 12h absolute max age.
+- Password sign-in creates a new session without revoking the user's other
+  active sessions.
 - Session IDs rotate on sign-in and privilege changes.
 - CSRF token required for Studio state-changing requests.
 - Failed password login attempts apply exponential backoff keyed by normalized email.
@@ -355,7 +357,8 @@ MDCMS rejects sign-in with `AUTH_SAML_REQUIRED_ATTRIBUTE_MISSING` (`401`) when:
 - Successful password sign-in resets the stored backoff state.
 - A quiet window of 15 minutes without failed attempts resets the backoff state.
 - MVP backoff schedule is capped exponential delay: `1s`, `2s`, `4s`, `8s`, `16s`, `32s`.
-- Per-user session revocation is supported (`logout` invalidates current session; owner/admin can revoke all active sessions).
+- Session revocation is explicit: `logout` invalidates the current session, and
+  owner/admin users can revoke all active sessions for a user.
 
 #### CSRF Enforcement (Normative)
 

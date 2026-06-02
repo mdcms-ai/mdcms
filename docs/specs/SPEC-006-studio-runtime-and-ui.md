@@ -133,6 +133,9 @@ session bootstrap request cannot verify the active browser session, including
 for the current Studio route. Token-authenticated embeds must not redirect to
 the login route; token authentication failures remain inline operator-facing
 states because the host application, not the Studio login form, owns the token.
+When a cookie-authenticated Studio tab returns to focus or becomes visible again,
+the runtime revalidates the active session so expired or revoked sessions move to
+the login route without requiring a manual page refresh.
 
 MDCMS built-in MDX components defined by `SPEC-007` are injected by the Studio
 shell/runtime without host registration. Studio resolves their preview

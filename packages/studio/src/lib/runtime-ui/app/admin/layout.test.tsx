@@ -14,7 +14,9 @@ import {
   getDefaultAdminSidebarCollapsed,
   getAdminSidebarStorageKey,
   isDocumentEditorPathname,
+  registerAdminLayoutSessionResumeRefetch,
   resolveAdminLayoutLoginRedirectPath,
+  shouldRefetchAdminLayoutSessionOnResume,
 } from "./layout.js";
 
 function createContext(): StudioMountContext {
@@ -203,6 +205,114 @@ test("resolveAdminLayoutLoginRedirectPath keeps token auth failures inline", () 
     }),
     null,
   );
+});
+
+test("shouldRefetchAdminLayoutSessionOnResume only refetches verified cookie sessions", () => {
+  assert.equal(
+    shouldRefetchAdminLayoutSessionOnResume({
+      isTokenMode: false,
+      sessionState: {
+        status: "authenticated",
+        csrfToken: "csrf",
+        session: {
+          id: "session-1",
+          userId: "user-1",
+          email: "editor@example.com",
+          issuedAt: "2026-06-02T10:00:00.000Z",
+          expiresAt: "2026-06-02T12:00:00.000Z",
+        },
+      },
+    }),
+    true,
+  );
+  assert.equal(
+    shouldRefetchAdminLayoutSessionOnResume({
+      isTokenMode: false,
+      sessionState: { status: "unauthenticated" },
+    }),
+    false,
+  );
+  assert.equal(
+    shouldRefetchAdminLayoutSessionOnResume({
+      isTokenMode: true,
+      sessionState: {
+        status: "authenticated",
+        csrfToken: "",
+        session: {
+          id: "token-auth-session",
+          userId: "token-auth-user",
+          email: "API token",
+          issuedAt: "",
+          expiresAt: "",
+        },
+      },
+    }),
+    false,
+  );
+});
+
+test("registerAdminLayoutSessionResumeRefetch refetches on resume and cleans up listeners", () => {
+  const windowListeners = new Map<string, Set<() => void>>();
+  const documentListeners = new Map<string, Set<() => void>>();
+  let visibilityState: DocumentVisibilityState = "hidden";
+  let refetchCount = 0;
+  const addListener = (
+    listeners: Map<string, Set<() => void>>,
+    event: string,
+    handler: () => void,
+  ) => {
+    const handlers = listeners.get(event) ?? new Set<() => void>();
+    handlers.add(handler);
+    listeners.set(event, handlers);
+  };
+  const removeListener = (
+    listeners: Map<string, Set<() => void>>,
+    event: string,
+    handler: () => void,
+  ) => {
+    listeners.get(event)?.delete(handler);
+  };
+  const dispatch = (listeners: Map<string, Set<() => void>>, event: string) => {
+    for (const handler of listeners.get(event) ?? []) {
+      handler();
+    }
+  };
+
+  const unregister = registerAdminLayoutSessionResumeRefetch({
+    windowTarget: {
+      addEventListener: (event, handler) =>
+        addListener(windowListeners, event, handler),
+      removeEventListener: (event, handler) =>
+        removeListener(windowListeners, event, handler),
+    },
+    documentTarget: {
+      addEventListener: (event, handler) =>
+        addListener(documentListeners, event, handler),
+      removeEventListener: (event, handler) =>
+        removeListener(documentListeners, event, handler),
+      get visibilityState() {
+        return visibilityState;
+      },
+    },
+    refetchSession: () => {
+      refetchCount += 1;
+    },
+  });
+
+  dispatch(windowListeners, "focus");
+  assert.equal(refetchCount, 1);
+
+  dispatch(documentListeners, "visibilitychange");
+  assert.equal(refetchCount, 1);
+
+  visibilityState = "visible";
+  dispatch(documentListeners, "visibilitychange");
+  assert.equal(refetchCount, 2);
+
+  unregister();
+  dispatch(windowListeners, "focus");
+  dispatch(documentListeners, "visibilitychange");
+  assert.equal(refetchCount, 2);
 });
 
 test("AdminTokenErrorStateView renders retry action and technical details", () => {
