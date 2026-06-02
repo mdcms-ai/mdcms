@@ -14,6 +14,7 @@ import { common, createLowlight } from "lowlight";
 
 import { MdxComponentExtension } from "./mdx-component-extension.js";
 import { MdxIntrinsicElementExtension } from "./mdx-intrinsic-element-extension.js";
+import { MdxIntrinsicInlineExtension } from "./mdx-intrinsic-inline-extension.js";
 import { MdxRawJsxExtension } from "./mdx-raw-jsx-extension.js";
 
 // Returns a lowlight instance seeded with the common language set and with
@@ -205,6 +206,7 @@ export function createEditorExtensions(options?: {
       nested: true,
     }),
     options?.codeBlock ?? HeadlessCodeBlock,
+    MdxIntrinsicInlineExtension,
     options?.mdxComponent ?? MdxComponentExtension,
     options?.mdxIntrinsicElement ?? MdxIntrinsicElementExtension,
     options?.mdxRawJsx ?? MdxRawJsxExtension,

@@ -228,6 +228,70 @@ test("markdown pipeline parses lowercase intrinsic wrappers as structured blocks
   assert.equal(wrapperChildren[1]?.attrs?.componentName, "FeatureGrid");
 });
 
+test("markdown pipeline parses intrinsic text elements without leaking JSX source", () => {
+  const source = [
+    '<section style={{backgroundColor: "#f7f3f3"}}>',
+    "<div>",
+    '<p style={{textAlign: "center", fontFamily: "var(--font-mono)", fontSize: "12px", fontWeight: 500, letterSpacing: "2px", color: "rgb(47, 73, 229)", textTransform: "uppercase", marginBottom: "16px"}}>WHAT PEOPLE SAY</p>',
+    '<h2>Loved by teams that <span style={{color: "rgb(47, 73, 229)"}}>ship fast</span></h2>',
+    "</div>",
+    "</section>",
+  ].join("\n");
+
+  const parsed = parseMarkdownToDocument(source);
+  const section = parsed.content?.[0];
+  const div = section?.content?.[0];
+  const eyebrow = div?.content?.[0];
+  const heading = div?.content?.[1];
+  const spanText = heading?.content?.[0]?.content?.[1];
+
+  assert.equal(section?.type, "mdxIntrinsicElement");
+  assert.equal(section?.attrs?.tagName, "section");
+  assert.equal(div?.type, "mdxIntrinsicElement");
+  assert.equal(div?.attrs?.tagName, "div");
+  assert.equal(eyebrow?.type, "mdxIntrinsicElement");
+  assert.equal(eyebrow?.attrs?.tagName, "p");
+  assert.deepEqual(eyebrow?.attrs?.props, {
+    style: {
+      textAlign: "center",
+      fontFamily: "var(--font-mono)",
+      fontSize: "12px",
+      fontWeight: 500,
+      letterSpacing: "2px",
+      color: "rgb(47, 73, 229)",
+      textTransform: "uppercase",
+      marginBottom: "16px",
+    },
+  });
+  assert.equal(heading?.type, "mdxIntrinsicElement");
+  assert.equal(heading?.attrs?.tagName, "h2");
+  assert.equal(spanText?.type, "text");
+  assert.equal(spanText?.text, "ship fast");
+  assert.deepEqual(spanText?.marks, [
+    {
+      type: "mdxIntrinsicInline",
+      attrs: {
+        tagName: "span",
+        props: {
+          style: {
+            color: "rgb(47, 73, 229)",
+          },
+        },
+      },
+    },
+  ]);
+
+  assert.doesNotMatch(JSON.stringify(parsed), /<span style=/);
+  assert.doesNotMatch(JSON.stringify(parsed), /<p style=/);
+
+  const serialized = serializeDocumentToMarkdown(parsed);
+
+  assert.match(
+    serialized,
+    /<span style=\{\{"color":"rgb\(47, 73, 229\)"\}\}>ship fast<\/span>/,
+  );
+});
+
 test("markdown pipeline round-trips native form elements as structured intrinsic blocks", () => {
   const source = [
     '<form name="contact">',

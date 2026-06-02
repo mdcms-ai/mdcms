@@ -6,6 +6,12 @@ Entries are reverse-chronological (newest first).
 
 ---
 
+## 2026-06-02 — split lowercase MDX text elements by HTML semantics
+
+**Rule:** Studio's MDX parser must not assume `mdxJsxTextElement` means inline editable text; first classify lowercase tags by HTML semantics and split block-like tags out of paragraph buffers.
+**Why:** mdast can represent standalone lowercase tags such as `<p>` and `<h2>` inside an intrinsic wrapper as `mdxJsxTextElement` children of a paragraph, so treating every lowercase text element as literal text leaks raw JSX into the Studio canvas.
+**How to apply:** When changing MDX parsing, add regression coverage for lowercase block tags inside wrappers and inline tags such as `<span style={{...}}>...</span>` inside heading/text content, then assert no raw JSX source remains in the parsed TipTap JSON.
+
 ## 2026-05-28 — parse AI-generated MDX before marking proposals valid
 
 **Rule:** AI proposal validation must run generated body MDX through the Studio MDX parser family, not only scan component tags or props.

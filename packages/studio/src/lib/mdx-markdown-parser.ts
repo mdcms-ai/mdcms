@@ -6,6 +6,10 @@ import { mdx } from "micromark-extension-mdx";
 
 import { HTML_VOID_ELEMENTS } from "./html-void-elements.js";
 import { parseMdxAttributeValue } from "./mdx-component-extension.js";
+import {
+  isMdxIntrinsicInlineName,
+  isMdxIntrinsicTextBlockName,
+} from "./mdx-intrinsic-inline.js";
 
 type AstPosition = {
   start?: { offset?: number };
@@ -91,11 +95,38 @@ function withMark(
   return [...(marks ?? []), mark];
 }
 
-function isInlineAstNode(node: MdxAstNode): boolean {
-  if (
+function applyMarkToInlineContent(
+  content: JSONContent[],
+  mark: NonNullable<JSONContent["marks"]>[number],
+): JSONContent[] {
+  return content.map((node) => {
+    if (node.type === "text") {
+      return {
+        ...node,
+        marks: withMark(node.marks, mark),
+      };
+    }
+
+    return node.content
+      ? {
+          ...node,
+          content: applyMarkToInlineContent(node.content, mark),
+        }
+      : node;
+  });
+}
+
+function isBlockMdxTextElement(node: MdxAstNode): boolean {
+  return (
     node.type === "mdxJsxTextElement" &&
-    isUppercaseComponentName(node.name)
-  ) {
+    (isUppercaseComponentName(node.name) ||
+      (isLowercaseIntrinsicName(node.name) &&
+        isMdxIntrinsicTextBlockName(node.name)))
+  );
+}
+
+function isInlineAstNode(node: MdxAstNode): boolean {
+  if (isBlockMdxTextElement(node)) {
     return false;
   }
 
@@ -165,9 +196,33 @@ function convertInlineNode(
           },
         }),
       );
+    case "mdxJsxTextElement":
+      if (
+        isLowercaseIntrinsicName(node.name) &&
+        isMdxIntrinsicInlineName(node.name)
+      ) {
+        const props = parseMdxElementProps(node, source);
+
+        if (props !== null) {
+          return applyMarkToInlineContent(
+            convertInlineChildren(node.children ?? [], source, marks),
+            {
+              type: "mdxIntrinsicInline",
+              attrs: {
+                tagName: node.name,
+                props,
+              },
+            },
+          );
+        }
+      }
+
+      return createText(
+        getSourceSlice(source, node) ?? node.value ?? "",
+        marks,
+      );
     case "html":
     case "image":
-    case "mdxJsxTextElement":
       return createText(
         getSourceSlice(source, node) ?? node.value ?? "",
         marks,
@@ -189,11 +244,7 @@ function convertInlineNodesToParagraph(nodes: MdxAstNode[], source: string) {
 
 function convertParagraphNode(node: MdxAstNode, source: string): JSONContent[] {
   const children = node.children ?? [];
-  const hasBlockMdxTextElement = children.some(
-    (child) =>
-      child.type === "mdxJsxTextElement" &&
-      isUppercaseComponentName(child.name),
-  );
+  const hasBlockMdxTextElement = children.some(isBlockMdxTextElement);
 
   if (!hasBlockMdxTextElement) {
     return [createParagraph(convertInlineChildren(children, source))];
@@ -209,10 +260,7 @@ function convertParagraphNode(node: MdxAstNode, source: string): JSONContent[] {
   };
 
   for (const child of children) {
-    if (
-      child.type === "mdxJsxTextElement" &&
-      isUppercaseComponentName(child.name)
-    ) {
+    if (isBlockMdxTextElement(child)) {
       flushInlineBuffer();
       blocks.push(convertMdxJsxElementNode(child, source));
       continue;
