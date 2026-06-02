@@ -45,17 +45,22 @@ Default demo credentials (seeded automatically in `compose:dev`):
 
 ## Environment Variables
 
-| Variable                    | Default                                         | Description                    |
-| --------------------------- | ----------------------------------------------- | ------------------------------ |
-| `MDCMS_STUDIO_EXAMPLE_HOST` | `127.0.0.1`                                     | Host address                   |
-| `MDCMS_STUDIO_EXAMPLE_PORT` | `4173`                                          | Port                           |
-| `DATABASE_URL`              | `postgresql://mdcms:mdcms@localhost:5432/mdcms` | For `server:dev`               |
-| `MDCMS_DEMO_API_KEY`        | Seeded in compose                               | API key for demo content pages |
+| Variable                     | Default                                         | Description                                                |
+| ---------------------------- | ----------------------------------------------- | ---------------------------------------------------------- |
+| `MDCMS_STUDIO_EXAMPLE_HOST`  | `127.0.0.1`                                     | Host address                                               |
+| `MDCMS_STUDIO_EXAMPLE_PORT`  | `4173`                                          | Port                                                       |
+| `DATABASE_URL`               | `postgresql://mdcms:mdcms@localhost:5432/mdcms` | For `server:dev`                                           |
+| `MDCMS_DEMO_API_KEY`         | Seeded in compose                               | API key for demo content pages and server-side draft reads |
+| `MDCMS_PREVIEW_TOKEN_SECRET` | Seeded in compose                               | Shared secret used to verify Studio preview tokens         |
 
-The preview routes use the same `MDCMS_DEMO_API_KEY` as the raw and SDK demo
-routes. `mdcms.config.ts` wires the `post` and `page` content types to those
-routes with `resolvePreviewUrl`; content types without that resolver show the
-Studio "Live preview not available" guidance.
+The preview routes use `MDCMS_DEMO_API_KEY` for server-side SDK reads and
+`MDCMS_PREVIEW_TOKEN_SECRET` to verify the short-lived
+`mdcms_preview_token` that Studio appends before loading an iframe.
+`mdcms.config.ts` wires the `post` and `page` content types to those routes with
+`resolvePreviewUrl`; content types without that resolver show the Studio "Live
+preview not available" guidance. Preview routes force dynamic rendering and the
+SDK fetches use `cache: "no-store"` so draft previews do not reuse published
+page cache output.
 
 For local CLI workflows in this demo, put developer-specific values in `apps/studio-example/.env.local` next to `mdcms.config.ts`. The `mdcms` CLI loads `.env*` files from that config directory before importing the config, with shell exports taking precedence over file values.
 

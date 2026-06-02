@@ -21,6 +21,7 @@ Runtime, dependencies, and infrastructure. Update when any of them change.
 - **`@mdx-js/mdx`** for server-side SDK React rendering of fetched Markdown/MDX bodies.
 - **TanStack Query** for client-side data fetching.
 - **TipTap** for the editor with MDX component support.
+- **Studio live preview** embeds host app routes resolved from `mdcms.config.ts` and appends a short-lived `mdcms_preview_token`.
 
 ## Validation
 
@@ -50,7 +51,7 @@ Runtime, dependencies, and infrastructure. Update when any of them change.
 
 - No CRDT library (real-time collab is Post-MVP).
 - No MCP server (AI agent integration is upcoming, separate work).
-- No live preview pipeline (upcoming).
+- No real-time preview transport beyond iframe route reloads.
 
 ## Repository services
 

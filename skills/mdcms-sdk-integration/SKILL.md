@@ -122,8 +122,37 @@ const draft = await cms.get("page", {
 Patterns:
 
 - **Production pages** — omit `draft` or pass `false`. Only published content ships.
-- **Preview routes** — gate `draft: true` behind a preview cookie / query param so only editors see drafts.
+- **Private preview routes** — gate `draft: true` behind `verifyMdcmsPreviewRequest()` or `cms.getPreviewDocumentFromRequest()`, a host session, or another server-side authorization check.
+- **Public draft routes** — allowed when the project intentionally exposes drafts, for example on an internal network or low-sensitivity staging site. Make that decision explicit and do not present `?preview=true` as security.
 - **In-development** — early in a project, drafts are often all you have. Pass `draft: true` everywhere until content is ready to publish.
+
+First-class Studio live preview uses a short-lived `mdcms_preview_token`. Recommended private route:
+
+```ts
+export const dynamic = "force-dynamic";
+
+const document = await cms.getPreviewDocumentFromRequest(request, {
+  secret: process.env.MDCMS_PREVIEW_TOKEN_SECRET!,
+});
+```
+
+For lower-level control:
+
+```ts
+const preview = await verifyMdcmsPreviewRequest(request, {
+  secret: process.env.MDCMS_PREVIEW_TOKEN_SECRET!,
+});
+
+if (preview.ok) {
+  const document = await cms.get(preview.claims.type, {
+    id: preview.claims.documentId,
+    locale: preview.claims.locale,
+    draft: true,
+  });
+}
+```
+
+Keep `MDCMS_API_KEY` / `MDCMS_PREVIEW_API_KEY` and `MDCMS_PREVIEW_TOKEN_SECRET` server-only. The preview API key needs `content:read:draft`. Preview responses should be uncached (`cache: "no-store"`, dynamic route rendering, and/or `Cache-Control: private, no-store`) so they do not reuse published ISR/static output.
 
 ### 5. (Brownfield) replace the existing fetching
 
@@ -193,7 +222,7 @@ export default async function PostPage({ params }) {
 - **API key leaks into the browser** — always import the SDK in server-only modules. In Next, a `"use client"` file or a client component must not import `@/lib/cms`.
 - **`get` needs `id` or `slug`, not `path`** — the SDK does not take a document path. If you only have the local filesystem path, either look up the slug from frontmatter or issue a `list` with a filter. Prefer `id` for stability across rename/slug changes.
 - **`list` returns a paginated envelope** — iterate `response.data`, not `response` itself. The envelope also carries `response.pagination` for offset/total pagination.
-- **Draft leaking to production** — if every page passes `draft: true`, unpublished content goes live. Route preview behind a flag.
+- **Draft leaking to production** — if every page passes `draft: true`, unpublished content goes live. Route private preview behind a verified token/session, or document that the draft route is intentionally public.
 - **Type vs type name** — `mdcms.config.ts` uses a string type name (`"post"`). The SDK call uses the same name; it is case-sensitive.
 - **Locale-aware fetches** — the SDK takes `locale` as an explicit argument on every `get`/`list` call. Pass it even for non-localized types so the caller stays explicit.
 

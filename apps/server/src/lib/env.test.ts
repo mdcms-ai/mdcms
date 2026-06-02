@@ -95,6 +95,20 @@ test("parseServerEnv parses studio runtime disabled flag as boolean", () => {
   assert.equal(disabled.MDCMS_STUDIO_RUNTIME_DISABLED, false);
 });
 
+test("parseServerEnv trims optional preview token secret", () => {
+  const env = parseServerEnv({
+    MDCMS_PREVIEW_TOKEN_SECRET: "  preview-secret-value  ",
+  } as NodeJS.ProcessEnv);
+
+  assert.equal(env.MDCMS_PREVIEW_TOKEN_SECRET, "preview-secret-value");
+});
+
+test("parseServerEnv leaves preview token secret undefined when absent", () => {
+  const env = parseServerEnv({} as NodeJS.ProcessEnv);
+
+  assert.equal(env.MDCMS_PREVIEW_TOKEN_SECRET, undefined);
+});
+
 test("parseServerEnv rejects invalid studio runtime disabled flag values", () => {
   assert.throws(
     () =>

@@ -19,7 +19,7 @@ Architecture invariants and key technical decisions. Update when one changes.
 ## Package boundaries (hard rules)
 
 - `@mdcms/shared` exports types, validators, pure utilities. **No runtime side effects, no HTTP, no DB.**
-- `@mdcms/sdk` is read-only. Bearer-token client. **No write methods.**
+- `@mdcms/sdk` is read-only. Bearer-token client. **No write methods.** It may verify MDCMS preview tokens and fetch the matching draft document, but it must not mint tokens.
 - `@mdcms/sdk/react` is the SDK's server-only React rendering subpath. It renders fetched Markdown/MDX bodies and loads custom components from `mdcms.config.ts`; keep React/MDX concerns out of the default `@mdcms/sdk` export.
 - `@mdcms/cli` owns push/pull/sync logic and the loopback OAuth flow.
 - `@mdcms/studio` runs inside the host app's process — embedded React component, not a separate page.
@@ -55,3 +55,9 @@ Files under `docs/specs/` are **standalone canonical product documentation**. No
 - **Project** is the isolation unit. Every persistable entity carries `project_id`.
 - **Environment** is a state within a project (e.g. `draft`, `prod`). Reads default to the published environment unless explicit.
 - Tenant scoping is enforced at the route layer — every authenticated request resolves a project context before reaching domain code.
+
+## Live preview
+
+- Preview route mapping belongs on the content type in `mdcms.config.ts` via `resolvePreviewUrl(document)`, not in frontmatter conventions or hardcoded Studio routes.
+- The server mints short-lived preview JWTs from persisted draft state at `POST /api/v1/content/:documentId/preview-token`. Tokens are signed with `MDCMS_PREVIEW_TOKEN_SECRET` and are not API keys.
+- Private host preview routes verify `mdcms_preview_token` with `@mdcms/sdk` before calling draft reads. Public draft preview routes are allowed when intentional, but `?preview=true` alone is only a mode flag.

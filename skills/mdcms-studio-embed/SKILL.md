@@ -86,12 +86,35 @@ Restart the server after updating the allowlist.
 3. You should be redirected to the MDCMS login flow, and after logging in land on the Studio dashboard under the host app's URL.
 4. Open a document. Edit a field. Save. Confirm the change appears in the MDCMS server when you run `mdcms pull` locally.
 
+### 7. Wire real-app live preview when requested
+
+Live preview route mapping belongs in `mdcms.config.ts` on the content type, not in frontmatter fields or hardcoded Studio routes:
+
+```ts
+const post = defineType("post", {
+  directory: "content/posts",
+  fields: {
+    title: z.string().min(1),
+    slug: z.string().min(1),
+  },
+  resolvePreviewUrl(document) {
+    const slug = document.frontmatter.slug;
+    return typeof slug === "string" ? `/preview/post/${slug}` : undefined;
+  },
+});
+```
+
+If no resolver exists, Studio should show "Live preview not available" for that model. If a resolver returns a URL, Studio mints a short-lived `mdcms_preview_token` before loading the iframe. The host preview route should verify that token with `@mdcms/sdk` before using `draft: true` when unpublished content must remain private.
+
+Set `MDCMS_PREVIEW_TOKEN_SECRET` on the MDCMS server and the host app to the same secret. The host route also needs a server-only API key with `content:read:draft`. Mark preview routes dynamic / no-store so draft renders do not reuse published caches.
+
 ## Common gotchas
 
 - **`127.0.0.1` vs `localhost`**: browser cookies treat them as different sites. Use `localhost` for local dev unless you have a specific reason to use `127.0.0.1` (and then add it to the allowlist).
 - **Stale prepared config**: the prepared config includes a schema hash. After a schema change, redeploy the host app (or revalidate the server component that prepared the config) so the client carries the fresh hash. Otherwise Studio may reject writes.
 - **Next.js layouts that add their own chrome**: Studio expects a minimal layout. The reference uses `apps/studio-example/app/admin/layout.tsx` which is mostly empty. Don't wrap Studio with site navigation — it has its own.
 - **Auth cookie SameSite in dev**: if cookies aren't being sent on XHRs, check the server's cookie SameSite policy. The current contract is `SameSite=None` for Studio cookies, even on HTTP in local dev.
+- **Preview route is public by accident**: `?preview=true` is only a mode flag. For private drafts, verify `mdcms_preview_token` or another server-side gate before fetching with `draft: true`.
 
 ## Related skills
 

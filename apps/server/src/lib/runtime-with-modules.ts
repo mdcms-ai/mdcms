@@ -490,6 +490,7 @@ export function createServerRequestHandlerWithModules(
           }
           return map;
         },
+        previewTokenSecret: env.MDCMS_PREVIEW_TOKEN_SECRET,
       });
       mountSchemaApiRoutes(app, {
         store: schemaStore,

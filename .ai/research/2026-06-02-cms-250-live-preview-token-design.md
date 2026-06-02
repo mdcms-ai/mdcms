@@ -210,7 +210,7 @@ const document = await cms.get(preview.claims.type, {
 The route should render dynamically and avoid published-page caches:
 
 - Next.js App Router: use dynamic rendering and `fetch(..., { cache:
-  "no-store" })` or equivalent SDK fetch override.
+"no-store" })` or equivalent SDK fetch override.
 - Generic HTTP routes: send `Cache-Control: private, no-store`.
 - Existing public routes with ISR should branch into an uncached draft path when
   the preview token verifies.

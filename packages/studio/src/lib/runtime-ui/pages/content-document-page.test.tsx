@@ -15,6 +15,7 @@ import { StudioNavigationProvider } from "../navigation.js";
 import {
   ContentDocumentPageView,
   SidebarInfoTab,
+  createLivePreviewIframeRoute,
   resolveLivePreviewDocument,
   runLivePreviewRefresh,
   shouldPersistBeforeLivePreviewRefresh,
@@ -1795,7 +1796,7 @@ test("resolveDocumentPreviewRoute uses configured content type preview URL resol
   );
 });
 
-test("ContentDocumentPageView renders split live-preview mode with a real host route iframe", () => {
+test("ContentDocumentPageView prepares split live-preview mode until a tokenized route is ready", () => {
   const baseState = createReadyState();
   const state = createReadyState({
     typeId: "post",
@@ -1836,8 +1837,44 @@ test("ContentDocumentPageView renders split live-preview mode with a real host r
   assert.match(markup, /data-mdcms-live-preview-pane="ready"/);
   assert.match(markup, /data-mdcms-preview-viewport="medium"/);
   assert.match(markup, /data-mdcms-preview-viewport-option="small"/);
-  assert.match(markup, /src="\/configured\/launch-notes"/);
+  assert.match(markup, /Preparing preview/);
+  assert.doesNotMatch(markup, /src="\/configured\/launch-notes"/);
   assert.match(markup, /Open preview in new tab/);
+});
+
+test("createLivePreviewIframeRoute mints a token before returning an iframe href", async () => {
+  const calls: Array<{ documentId: string; previewUrl?: string }> = [];
+
+  const route = await createLivePreviewIframeRoute({
+    api: {
+      createPreviewToken: async (input) => {
+        calls.push({
+          documentId: input.documentId,
+          previewUrl: input.previewUrl,
+        });
+        return {
+          token: "preview-token",
+          expiresAt: "2026-06-02T10:05:00.000Z",
+        };
+      },
+    },
+    document: {
+      documentId: "11111111-1111-4111-8111-111111111111",
+    },
+    href: "/configured/launch-notes?preview=true",
+  });
+
+  assert.deepEqual(calls, [
+    {
+      documentId: "11111111-1111-4111-8111-111111111111",
+      previewUrl: "/configured/launch-notes?preview=true",
+    },
+  ]);
+  assert.equal(route.expiresAt, "2026-06-02T10:05:00.000Z");
+  assert.equal(
+    route.href,
+    "/configured/launch-notes?preview=true&mdcms_preview_token=preview-token",
+  );
 });
 
 test("resolveLivePreviewDocument uses the persisted draft snapshot for route resolution", () => {

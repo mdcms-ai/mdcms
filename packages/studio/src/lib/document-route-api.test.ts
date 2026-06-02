@@ -258,6 +258,71 @@ test("token-authenticated mutations do not bootstrap CSRF", async () => {
   assert.equal(result.body, "# Published");
 });
 
+test("createPreviewToken posts the resolved preview URL with scoped headers and CSRF", async () => {
+  const calls: Array<{ input: string | URL | Request; init?: RequestInit }> =
+    [];
+  const api = createDocumentRouteApi({
+    auth: { mode: "cookie" },
+    fetcher: async (input, init) => {
+      calls.push({ input, init });
+
+      if (String(input) === "http://localhost:4000/api/v1/auth/session") {
+        return new Response(
+          JSON.stringify({
+            data: {
+              csrfToken: "csrf-cookie-token",
+            },
+          }),
+          {
+            status: 200,
+            headers: {
+              "content-type": "application/json",
+            },
+          },
+        );
+      }
+
+      assert.equal(
+        String(input),
+        "http://localhost:4000/api/v1/content/11111111-1111-4111-8111-111111111111/preview-token",
+      );
+      assert.equal(init?.method, "POST");
+      assert.equal(readHeader(init, "x-mdcms-csrf-token"), "csrf-cookie-token");
+      assert.equal(readHeader(init, "x-mdcms-project"), "marketing-site");
+      assert.equal(readHeader(init, "x-mdcms-environment"), "staging");
+      assert.deepEqual(readJsonBody(init), {
+        previewUrl: "/preview/blog/launch-notes?preview=true",
+      });
+
+      return new Response(
+        JSON.stringify({
+          data: {
+            token: "preview.jwt",
+            expiresAt: "2026-06-02T10:05:00.000Z",
+          },
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        },
+      );
+    },
+  });
+
+  const result = await api.createPreviewToken({
+    documentId: "11111111-1111-4111-8111-111111111111",
+    previewUrl: "/preview/blog/launch-notes?preview=true",
+  });
+
+  assert.equal(calls.length, 2);
+  assert.deepEqual(result, {
+    token: "preview.jwt",
+    expiresAt: "2026-06-02T10:05:00.000Z",
+  });
+});
+
 test("cookie-authenticated mutations preserve a path-prefixed studio serverUrl", async () => {
   const calls: Array<{ input: string | URL | Request; init?: RequestInit }> =
     [];

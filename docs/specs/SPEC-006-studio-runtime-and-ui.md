@@ -494,6 +494,13 @@ Normative behavior:
   after persistence succeeds. Route resolution uses the latest persisted draft
   snapshot; local unsaved frontmatter changes must not navigate the iframe
   before the canonical draft row is updated.
+- When route resolution returns a URL, Studio requests a signed preview token
+  from `POST /api/v1/content/:documentId/preview-token` before loading the
+  iframe. Studio sends the resolved URL as `previewUrl` when available, appends
+  the returned token to the host URL as `mdcms_preview_token`, and may also add
+  `preview=true` as a mode flag. Manual refresh repeats token minting after any
+  required draft persistence so the iframe sees a token bound to the latest
+  persisted draft revision.
 - Route resolution is deterministic and config-owned. A content type may define
   `resolvePreviewUrl(document)` in `mdcms.config.ts`; Studio calls that resolver
   with the active document id, content type, path, locale, persisted draft
@@ -513,10 +520,9 @@ Normative behavior:
   must remain read-only from Studio's perspective.
 - Preview failure states are explicit and actionable. Studio distinguishes at
   least: no route configured, no host adapter, framing blocked, unauthorized,
-  token/session expiry, and invalid draft. Until a host-adapter/token endpoint
-  contract exists, cross-origin adapter failures are represented as unavailable
-  states and an open-in-new-tab fallback rather than implicit background
-  retries.
+  token/session expiry, invalid preview-token configuration, and invalid draft.
+  Cross-origin adapter failures are represented as unavailable states and an
+  open-in-new-tab fallback rather than implicit background retries.
 - `Save draft` calls the same draft-persistence routine that the auto-save
   debounce uses. It is enabled only while the draft is in `unsaved` state
   and a publish is not in flight; it is hidden when the active target denies

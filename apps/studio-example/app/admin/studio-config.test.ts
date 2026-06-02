@@ -100,7 +100,7 @@ test("createClientStudioConfig includes content type preview URL resolvers", () 
       },
       draftRevision: 5,
     }),
-    "/preview/post/hello-mdcms",
+    "/preview/post/hello-mdcms?preview=true",
   );
   assert.equal(
     page?.resolvePreviewUrl?.({
@@ -113,6 +113,6 @@ test("createClientStudioConfig includes content type preview URL resolvers", () 
       },
       draftRevision: 3,
     }),
-    "/preview/page/docs/getting-started",
+    "/preview/page/docs/getting-started?preview=true",
   );
 });

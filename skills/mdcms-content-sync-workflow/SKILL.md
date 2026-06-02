@@ -13,7 +13,7 @@ Anything operational: syncing content, managing credentials, automating publishi
 
 ## Core mental model
 
-- **Drafts** live on the server and in local working copies. Editing locally + `mdcms push` updates the draft on the server. Editing in Studio writes directly to the server draft. Drafts are visible only to authenticated consumers (Studio, preview renders, SDK with `draft: true`).
+- **Drafts** live on the server and in local working copies. Editing locally + `mdcms push` updates the draft on the server. Editing in Studio writes directly to the server draft. Draft reads require an explicit `draft: true` API/SDK request and appropriate credentials. Host apps can intentionally expose draft preview routes, but private previews should verify a Studio preview token, host session, or equivalent server-side gate first.
 - **Publishing** is a separate explicit action (via Studio or the CLI's publish surface when applicable). Published documents are what unauthenticated readers of the host app see.
 - **Manifest** — MDCMS tracks per-`(project, environment)` document state in `.mdcms/manifests/<project>.<environment>.json`. The CLI uses it for hash-based change detection. It's not committed; each developer has their own.
 

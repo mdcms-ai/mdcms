@@ -11,6 +11,7 @@ import {
 } from "react";
 
 import {
+  appendMdcmsPreviewTokenToUrl,
   type MdcmsPreviewDocument,
   type StudioDocumentRouteMountContext,
   type StudioMountContext,
@@ -170,6 +171,7 @@ type ContentDocumentPageViewProps = {
   aiSelection?: TipTapEditorSelectionInfo | null;
   onAiSelectionChange?: (selection: TipTapEditorSelectionInfo | null) => void;
   aiApi?: StudioAiRouteApi;
+  previewTokenApi?: Pick<StudioDocumentRouteApi, "createPreviewToken">;
   onAiProposalApplied?: (input: {
     bodyAfter: string;
     documentId?: string;
@@ -1122,6 +1124,27 @@ export async function runLivePreviewRefresh(input: {
   return true;
 }
 
+export type LivePreviewIframeRoute = {
+  href: string;
+  expiresAt: string;
+};
+
+export async function createLivePreviewIframeRoute(input: {
+  api: Pick<StudioDocumentRouteApi, "createPreviewToken">;
+  document: Pick<MdcmsPreviewDocument, "documentId">;
+  href: string;
+}): Promise<LivePreviewIframeRoute> {
+  const token = await input.api.createPreviewToken({
+    documentId: input.document.documentId,
+    previewUrl: input.href,
+  });
+
+  return {
+    href: appendMdcmsPreviewTokenToUrl(input.href, token.token),
+    expiresAt: token.expiresAt,
+  };
+}
+
 function LivePreviewViewportControl(props: {
   size: LivePreviewViewportSize;
   onSizeChange: (size: LivePreviewViewportSize) => void;
@@ -1165,15 +1188,96 @@ function LivePreviewViewportControl(props: {
 function LivePreviewPane(props: {
   state: ContentDocumentPageReadyState;
   context?: StudioMountContext;
+  previewTokenApi?: Pick<StudioDocumentRouteApi, "createPreviewToken">;
   refreshToken: number;
   onRefresh: () => void;
 }) {
   const [viewportSize, setViewportSize] =
     useState<LivePreviewViewportSize>("medium");
+  const [iframeRoute, setIframeRoute] = useState<
+    | { status: "loading" }
+    | {
+        status: "ready";
+        href: string;
+        sourceHref: string;
+        documentId: string;
+        draftRevision: number;
+        refreshToken: number;
+      }
+    | { status: "error"; message: string }
+  >({ status: "loading" });
+  const previewDocument = resolveLivePreviewDocument(props.state);
   const route = resolveDocumentPreviewRoute({
-    document: resolveLivePreviewDocument(props.state),
+    document: previewDocument,
     preview: props.context?.preview,
   });
+  const readyRouteHref = route.status === "ready" ? route.href : undefined;
+  const readyIframeRoute =
+    route.status === "ready" &&
+    iframeRoute.status === "ready" &&
+    iframeRoute.sourceHref === route.href &&
+    iframeRoute.documentId === previewDocument.documentId &&
+    iframeRoute.draftRevision === previewDocument.draftRevision &&
+    iframeRoute.refreshToken === props.refreshToken
+      ? iframeRoute
+      : undefined;
+
+  useEffect(() => {
+    if (route.status !== "ready") {
+      setIframeRoute({ status: "loading" });
+      return;
+    }
+
+    if (!props.previewTokenApi) {
+      setIframeRoute({
+        status: "error",
+        message:
+          "Preview token creation is not available for this Studio mount.",
+      });
+      return;
+    }
+
+    let cancelled = false;
+    setIframeRoute({ status: "loading" });
+
+    void createLivePreviewIframeRoute({
+      api: props.previewTokenApi,
+      document: previewDocument,
+      href: route.href,
+    })
+      .then((tokenizedRoute) => {
+        if (cancelled) return;
+        setIframeRoute({
+          status: "ready",
+          href: tokenizedRoute.href,
+          sourceHref: route.href,
+          documentId: previewDocument.documentId,
+          draftRevision: previewDocument.draftRevision,
+          refreshToken: props.refreshToken,
+        });
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setIframeRoute({
+          status: "error",
+          message: toRouteErrorMessage(
+            error,
+            "Failed to create a preview token for this document.",
+          ),
+        });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    previewDocument.documentId,
+    previewDocument.draftRevision,
+    props.previewTokenApi,
+    props.refreshToken,
+    readyRouteHref,
+    route.status,
+  ]);
 
   if (route.status === "unavailable") {
     return <LivePreviewUnavailableState route={route} />;
@@ -1205,7 +1309,7 @@ function LivePreviewPane(props: {
           onSizeChange={setViewportSize}
         />
         <a
-          href={route.href}
+          href={readyIframeRoute?.href ?? route.href}
           target="_blank"
           rel="noreferrer"
           className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-2.5 text-xs text-foreground-muted transition-colors hover:bg-muted hover:text-foreground"
@@ -1216,21 +1320,34 @@ function LivePreviewPane(props: {
         </a>
       </div>
       <div className="flex min-h-0 flex-1 justify-center p-3">
-        <iframe
-          key={`${route.href}:${props.refreshToken}`}
-          title={`Preview ${props.state.document.path}`}
-          src={route.href}
-          sandbox="allow-scripts allow-forms"
-          referrerPolicy="no-referrer-when-downgrade"
-          className={cn(
-            "h-full rounded-md border border-border bg-white shadow-sm transition-[width]",
-            viewportSize === "small"
-              ? "w-[390px] max-w-full"
-              : viewportSize === "medium"
-                ? "w-[768px] max-w-full"
-                : "w-full",
-          )}
-        />
+        {readyIframeRoute ? (
+          <iframe
+            key={`${readyIframeRoute.href}:${props.refreshToken}`}
+            title={`Preview ${props.state.document.path}`}
+            src={readyIframeRoute.href}
+            sandbox="allow-scripts allow-forms"
+            referrerPolicy="no-referrer-when-downgrade"
+            className={cn(
+              "h-full rounded-md border border-border bg-white shadow-sm transition-[width]",
+              viewportSize === "small"
+                ? "w-[390px] max-w-full"
+                : viewportSize === "medium"
+                  ? "w-[768px] max-w-full"
+                  : "w-full",
+            )}
+          />
+        ) : (
+          <div
+            data-mdcms-live-preview-frame-state={
+              iframeRoute.status === "error" ? "error" : "loading"
+            }
+            className="flex h-full w-full items-center justify-center rounded-md border border-border bg-card px-4 text-center text-sm text-foreground-muted"
+          >
+            {iframeRoute.status === "error"
+              ? iframeRoute.message
+              : "Preparing preview..."}
+          </div>
+        )}
       </div>
     </section>
   );
@@ -1266,6 +1383,7 @@ function useContentDocumentPageViewElement({
   aiSelection,
   onAiSelectionChange,
   aiApi,
+  previewTokenApi,
   onAiProposalApplied,
   previewMode,
   onPreviewModeChange,
@@ -1739,6 +1857,7 @@ function useContentDocumentPageViewElement({
                       <LivePreviewPane
                         state={state}
                         context={context}
+                        previewTokenApi={previewTokenApi}
                         refreshToken={previewRefreshToken}
                         onRefresh={() => {
                           void refreshLivePreview();
@@ -1985,6 +2104,18 @@ function useContentDocumentPageController({
       },
       { auth: activeContext.auth },
     );
+  }, [activeContext, route]);
+  const previewTokenApi = useMemo<
+    Pick<StudioDocumentRouteApi, "createPreviewToken"> | undefined
+  >(() => {
+    if (!activeContext || !route) {
+      return undefined;
+    }
+
+    return createContentDocumentRouteApi({
+      context: activeContext,
+      route,
+    });
   }, [activeContext, route]);
   const stateRef = useRef(state);
   const loadRequestIdRef = useRef(0);
@@ -3040,6 +3171,7 @@ function useContentDocumentPageController({
     aiSelection,
     onAiSelectionChange: setAiSelection,
     aiApi,
+    previewTokenApi,
     onAiProposalApplied: handleAiProposalApplied,
   };
 }

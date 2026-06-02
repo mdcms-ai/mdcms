@@ -86,6 +86,65 @@ export default defineConfig({
 
 See the [Schema Guide](/guide/schema/defining-types) for field types, references, and environment overlays.
 
+## Live preview routes
+
+Real-app live preview is configured per content type in `mdcms.config.ts`. Keep route mapping with the model definition so Studio, the CLI, and host app code agree on where a document should render.
+
+```typescript mdcms.config.ts
+const BlogPost = defineType("BlogPost", {
+  directory: "content/blog",
+  fields: {
+    title: z.string().min(1),
+    slug: z.string().min(1),
+  },
+  resolvePreviewUrl(document) {
+    const slug = document.frontmatter.slug;
+    return typeof slug === "string" ? `/preview/blog/${slug}` : undefined;
+  },
+});
+```
+
+When Studio opens a preview pane it:
+
+1. resolves the preview URL from the persisted draft snapshot;
+2. asks the MDCMS server for a short-lived preview token;
+3. appends that token as `mdcms_preview_token`;
+4. loads the tokenized URL in the iframe.
+
+Private preview routes should verify the token before fetching drafts:
+
+```typescript
+import { createClient } from "@mdcms/sdk";
+
+const cms = createClient({
+  serverUrl: process.env.MDCMS_SERVER_URL!,
+  apiKey: process.env.MDCMS_PREVIEW_API_KEY!,
+  project: process.env.MDCMS_PROJECT!,
+  environment: process.env.MDCMS_ENVIRONMENT!,
+  fetch: (input, init) =>
+    fetch(input, {
+      ...init,
+      cache: "no-store",
+    }),
+});
+
+export const dynamic = "force-dynamic";
+
+export async function GET(request: Request) {
+  const document = await cms.getPreviewDocumentFromRequest(request, {
+    secret: process.env.MDCMS_PREVIEW_TOKEN_SECRET!,
+  });
+
+  return Response.json(document, {
+    headers: {
+      "Cache-Control": "private, no-store",
+    },
+  });
+}
+```
+
+`preview=true` can be useful as a readable mode flag, but it is not proof that the caller may read private drafts. If your deployment intentionally makes drafts public, document that decision and still avoid reusing static published-page caches for preview responses.
+
 ## Embedding Studio
 
 Studio is a React component that owns all rendering under a catch-all route (e.g., `/admin/*`). The recommended pattern splits server and client concerns so the config can be safely serialized across the boundary.
