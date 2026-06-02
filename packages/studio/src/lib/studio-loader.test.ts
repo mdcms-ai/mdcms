@@ -12,6 +12,7 @@ import {
   type HostBridgeV1,
   type StudioBootstrapManifest,
   type StudioBootstrapReadyResponse,
+  type StudioMountContext,
 } from "@mdcms/shared";
 
 import { buildStudioRuntimeArtifacts } from "./build-runtime.js";
@@ -374,6 +375,106 @@ test("loadStudioRuntime forwards document route environment metadata to the remo
         featured: ["staging"],
       },
     });
+  });
+});
+
+test("loadStudioRuntime forwards configured content type preview URL resolvers", async () => {
+  await withTempDir("studio-loader-preview-resolver-", async (directory) => {
+    const fixture = await createRuntimeFixture(directory);
+    const contexts: StudioMountContext[] = [];
+    const article = defineType("article", {
+      directory: "content/articles",
+      fields: {
+        title: stringSchema,
+      },
+      resolvePreviewUrl: (document) => {
+        const slug = document.frontmatter.slug;
+        return typeof slug === "string" ? `/articles/${slug}` : null;
+      },
+    });
+
+    await loadStudioRuntime({
+      config: {
+        project: "marketing-site",
+        environment: "staging",
+        serverUrl: "http://localhost:4000",
+        types: [article],
+      },
+      basePath: "/admin",
+      container: {},
+      hostBridge: validHostBridge,
+      fetcher: async (input) => {
+        const url = String(input);
+
+        if (url === "http://localhost:4000/api/v1/studio/bootstrap") {
+          return new Response(
+            JSON.stringify(
+              createReadyBootstrapPayload({
+                manifest: fixture.manifest,
+              }),
+            ),
+            {
+              status: 200,
+              headers: {
+                "content-type": "application/json",
+              },
+            },
+          );
+        }
+
+        if (url === "http://localhost:4000" + fixture.manifest.entryUrl) {
+          return new Response(new Uint8Array(fixture.runtimeBytes), {
+            status: 200,
+            headers: {
+              "content-type": "text/javascript; charset=utf-8",
+            },
+          });
+        }
+
+        throw new Error(`Unexpected fetch URL: ${url}`);
+      },
+      loadRemoteModule: async () => ({
+        mount: (_target: unknown, context: StudioMountContext) => {
+          contexts.push(context);
+          return () => {};
+        },
+      }),
+    });
+
+    assert.equal(
+      contexts[0]?.preview?.hasPreviewUrlResolver?.("article"),
+      true,
+    );
+    assert.equal(
+      contexts[0]?.preview?.hasPreviewUrlResolver?.("author"),
+      false,
+    );
+    assert.equal(
+      contexts[0]?.preview?.resolvePreviewUrl({
+        documentId: "11111111-1111-4111-8111-111111111111",
+        type: "article",
+        path: "content/articles/launch-notes",
+        locale: "en",
+        frontmatter: {
+          slug: "launch-notes",
+        },
+        draftRevision: 8,
+      }),
+      "/articles/launch-notes",
+    );
+    assert.equal(
+      contexts[0]?.preview?.resolvePreviewUrl({
+        documentId: "22222222-2222-4222-8222-222222222222",
+        type: "author",
+        path: "content/authors/ada",
+        locale: "en",
+        frontmatter: {
+          slug: "ada",
+        },
+        draftRevision: 1,
+      }),
+      null,
+    );
   });
 });
 

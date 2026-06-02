@@ -53,8 +53,9 @@ Default demo credentials (seeded automatically in `compose:dev`):
 | `MDCMS_DEMO_API_KEY`        | Seeded in compose                               | API key for demo content pages |
 
 The preview routes use the same `MDCMS_DEMO_API_KEY` as the raw and SDK demo
-routes. They render the draft body for `post` and `page` documents through the
-same local MDX components registered in `mdcms.config.ts`.
+routes. `mdcms.config.ts` wires the `post` and `page` content types to those
+routes with `resolvePreviewUrl`; content types without that resolver show the
+Studio "Live preview not available" guidance.
 
 For local CLI workflows in this demo, put developer-specific values in `apps/studio-example/.env.local` next to `mdcms.config.ts`. The `mdcms` CLI loads `.env*` files from that config directory before importing the config, with shell exports taking precedence over file values.
 

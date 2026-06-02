@@ -66,6 +66,17 @@ export type StudioMountContext = {
   basePath: string;
   auth: { mode: "cookie" | "token"; token?: string };
   hostBridge: HostBridgeV1;
+  preview?: {
+    hasPreviewUrlResolver?: (contentType: string) => boolean;
+    resolvePreviewUrl: (document: {
+      documentId: string;
+      type: string;
+      path: string;
+      locale: string;
+      frontmatter: Record<string, unknown>;
+      draftRevision: number;
+    }) => string | null;
+  };
   mdx?: {
     catalog: MdxComponentCatalog; // Contract owned by SPEC-007
     resolvePropsEditor: (name: string) => unknown | null;
@@ -478,12 +489,19 @@ Normative behavior:
   refresh control, viewport-size controls, and an open-in-new-tab link. The
   open-in-new-tab link is always available when a route is resolved so editors
   have a fallback when browser framing policy blocks embedding.
-- Route resolution is deterministic. Studio first accepts an explicit
-  frontmatter route value such as `previewUrl` or `previewHref`. For the demo
-  host integration, `post`/`BlogPost` documents with a string `slug` resolve to
-  `/preview/post/:slug`, and `page` documents resolve from their content path to
-  `/preview/page/:path`. Documents without a resolvable route render a
-  `No route configured` state rather than guessing.
+- Route resolution is deterministic and config-owned. A content type may define
+  `resolvePreviewUrl(document)` in `mdcms.config.ts`; Studio calls that resolver
+  with the active document id, content type, path, locale, draft frontmatter, and
+  draft revision. The resolver returns a same-origin path or absolute URL to
+  embed, or `null`/`undefined` when the document has no route. Studio must not
+  derive preview routes from frontmatter fields such as `previewUrl`, and it
+  must not ship built-in route assumptions for content types such as `post` or
+  `page`.
+- Documents whose content type has no `resolvePreviewUrl` resolver render a
+  `Live preview not available` state with guidance to add the resolver to that
+  content type in `mdcms.config.ts`. If a resolver is present but returns no
+  URL for the active document, the pane renders an unavailable state that points
+  operators back to the resolver and document fields instead of guessing.
 - The iframe uses a restrictive sandbox for the first slice:
   `allow-scripts allow-forms`, without `allow-same-origin` unless a future
   same-origin adapter contract explicitly opts into it. The preview surface

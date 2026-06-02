@@ -79,3 +79,40 @@ test("createClientStudioConfig preserves explicit locale metadata", () => {
     supported: ["en", "fr"],
   });
 });
+
+test("createClientStudioConfig includes content type preview URL resolvers", () => {
+  const config = createClientStudioConfig([]);
+  const post = config.types?.find((type) => type.name === "post");
+  const page = config.types?.find((type) => type.name === "page");
+  const author = config.types?.find((type) => type.name === "author");
+
+  assert.equal(typeof post?.resolvePreviewUrl, "function");
+  assert.equal(typeof page?.resolvePreviewUrl, "function");
+  assert.equal(author?.resolvePreviewUrl, undefined);
+  assert.equal(
+    post?.resolvePreviewUrl?.({
+      documentId: "11111111-1111-4111-8111-111111111111",
+      type: "post",
+      path: "content/posts/hello-mdcms",
+      locale: "en",
+      frontmatter: {
+        slug: "hello-mdcms",
+      },
+      draftRevision: 5,
+    }),
+    "/preview/post/hello-mdcms",
+  );
+  assert.equal(
+    page?.resolvePreviewUrl?.({
+      documentId: "22222222-2222-4222-8222-222222222222",
+      type: "page",
+      path: "content/pages/docs/getting-started.mdx",
+      locale: "en",
+      frontmatter: {
+        title: "Getting started",
+      },
+      draftRevision: 3,
+    }),
+    "/preview/page/docs/getting-started",
+  );
+});

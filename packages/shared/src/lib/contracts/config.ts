@@ -64,6 +64,19 @@ export type MdcmsEnvironmentDefinition = {
   types?: Record<string, MdcmsTypeOverlay>;
 };
 
+export type MdcmsPreviewDocument = {
+  documentId: string;
+  type: string;
+  path: string;
+  locale: string;
+  frontmatter: Record<string, unknown>;
+  draftRevision: number;
+};
+
+export type MdcmsPreviewUrlResolver = (
+  document: MdcmsPreviewDocument,
+) => string | URL | null | undefined;
+
 export type MdcmsTypeDefinition<
   TName extends string = string,
   TFields extends Record<string, MdcmsFieldSchema> = Record<
@@ -75,6 +88,7 @@ export type MdcmsTypeDefinition<
   directory?: string;
   localized?: boolean;
   fields: TFields;
+  resolvePreviewUrl?: MdcmsPreviewUrlResolver;
   extend(overlay: MdcmsTypeOverlay): MdcmsTypeOverlay;
 };
 
@@ -117,6 +131,7 @@ export type ParsedMdcmsTypeDefinition = {
   directory?: string;
   localized: boolean;
   fields: Record<string, MdcmsFieldSchema>;
+  resolvePreviewUrl?: MdcmsPreviewUrlResolver;
   referenceFields: Record<string, MdcmsReferenceMetadata>;
   environmentFields: Record<
     string,
@@ -175,6 +190,7 @@ export function defineType<
     directory?: string;
     localized?: boolean;
     fields: TFields;
+    resolvePreviewUrl?: MdcmsPreviewUrlResolver;
   },
 ): MdcmsTypeDefinition<TName, TFields> {
   return {
@@ -266,6 +282,10 @@ function parseTypes(value: unknown): ParsedMdcmsTypeDefinition[] {
           `types[${index}].localized`,
         ) ?? false,
       fields: parsedFields.fields,
+      resolvePreviewUrl: parseOptionalFunction<MdcmsPreviewUrlResolver>(
+        typeConfig.resolvePreviewUrl,
+        `types[${index}].resolvePreviewUrl`,
+      ),
       referenceFields: extractReferenceFields(parsedFields.fields),
       environmentFields: parsedFields.environmentFields,
     };
@@ -592,6 +612,9 @@ function toResolvedTypeDefinition(
     directory: typeConfig.directory,
     localized: typeConfig.localized,
     fields,
+    ...(typeConfig.resolvePreviewUrl
+      ? { resolvePreviewUrl: typeConfig.resolvePreviewUrl }
+      : {}),
     referenceFields: extractReferenceFields(fields),
     environmentFields: {},
   };
@@ -1095,6 +1118,21 @@ function parseOptionalBoolean(
   }
 
   return value;
+}
+
+function parseOptionalFunction<TFunction extends (...args: never[]) => unknown>(
+  value: unknown,
+  field: string,
+): TFunction | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "function") {
+    throw invalidConfig(field, "must be a function.");
+  }
+
+  return value as TFunction;
 }
 
 function parseStringArray(value: unknown, field: string): string[] {

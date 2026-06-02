@@ -11,6 +11,7 @@ import {
   parseMdcmsConfig,
   type ErrorEnvelope,
   type HostBridgeV1,
+  type MdcmsPreviewUrlResolver,
   type MdxComponentCatalog,
   type StudioBootstrapReadyResponse,
   type StudioBootstrapRejectionReason,
@@ -426,6 +427,64 @@ async function createDocumentRouteMountContext(
   };
 }
 
+function normalizePreviewResolverResult(value: unknown): string | null {
+  const href =
+    value instanceof URL
+      ? value.href
+      : typeof value === "string"
+        ? value.trim()
+        : "";
+
+  return href.length > 0 ? href : null;
+}
+
+function createPreviewMountContext(
+  config: MdcmsConfig,
+): StudioMountContext["preview"] | undefined {
+  const resolvers = new Map<string, MdcmsPreviewUrlResolver>();
+
+  for (const typeConfig of config.types ?? []) {
+    const typeName = readTrimmedConfigString(typeConfig.name);
+
+    if (!typeName || typeof typeConfig.resolvePreviewUrl !== "function") {
+      continue;
+    }
+
+    resolvers.set(typeName, typeConfig.resolvePreviewUrl);
+  }
+
+  if (resolvers.size === 0) {
+    return undefined;
+  }
+
+  const normalizedResolvers = new Map(
+    [...resolvers.entries()].map(([typeName, resolver]) => [
+      typeName.toLowerCase(),
+      resolver,
+    ]),
+  );
+
+  return {
+    hasPreviewUrlResolver(contentType) {
+      return (
+        resolvers.has(contentType) ||
+        normalizedResolvers.has(contentType.toLowerCase())
+      );
+    },
+    resolvePreviewUrl(document) {
+      const resolver =
+        resolvers.get(document.type) ??
+        normalizedResolvers.get(document.type.toLowerCase());
+
+      if (!resolver) {
+        return null;
+      }
+
+      return normalizePreviewResolverResult(resolver(document));
+    },
+  };
+}
+
 function readBrowserOrigin(): string | undefined {
   const origin = globalThis.location?.origin;
 
@@ -669,6 +728,7 @@ async function loadStudioRuntimeFromBootstrap(
         })
       : (options.hostBridge ?? configHostBridge ?? createDefaultHostBridge());
   const documentRoute = await createDocumentRouteMountContext(options.config);
+  const preview = createPreviewMountContext(options.config);
 
   const mountContext: StudioMountContext = {
     apiBaseUrl: input.apiBaseUrl,
@@ -676,6 +736,7 @@ async function loadStudioRuntimeFromBootstrap(
     auth: options.auth ?? { mode: "cookie" },
     hostBridge,
     ...(documentRoute ? { documentRoute } : {}),
+    ...(preview ? { preview } : {}),
     ...(localMdxRuntime?.mdx !== undefined ? { mdx: localMdxRuntime.mdx } : {}),
   };
   assertStudioMountContext(mountContext);

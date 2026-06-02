@@ -8,9 +8,11 @@ import {
   studioExampleProject,
   studioExampleServerUrl,
 } from "./lib/studio-example-studio-config";
+import { getPreviewHrefForDocument } from "./lib/preview-routing";
 
 const post = defineType("post", {
   directory: "content/posts",
+  resolvePreviewUrl: getPreviewHrefForDocument,
   fields: {
     title: z.string().min(1),
     slug: z.string().min(1),
@@ -29,6 +31,7 @@ const author = defineType("author", {
 
 const page = defineType("page", {
   directory: "content/pages",
+  resolvePreviewUrl: getPreviewHrefForDocument,
   fields: {
     title: z.string().min(1),
   },

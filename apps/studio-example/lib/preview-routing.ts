@@ -1,8 +1,4 @@
-type PreviewableDocument = {
-  type: string;
-  path: string;
-  frontmatter: Record<string, unknown>;
-};
+import type { MdcmsPreviewDocument } from "@mdcms/cli";
 
 function encodePathSegments(path: string): string {
   return path
@@ -32,7 +28,7 @@ function getPagePreviewPath(documentPath: string): string | undefined {
 }
 
 export function getPreviewHrefForDocument(
-  document: PreviewableDocument,
+  document: MdcmsPreviewDocument,
 ): string | undefined {
   if (document.type === "post") {
     const slug = getString(document.frontmatter.slug);

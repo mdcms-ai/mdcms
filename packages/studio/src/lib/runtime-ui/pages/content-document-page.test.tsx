@@ -1722,32 +1722,72 @@ test("ContentDocumentPageView folds the unpublished-changes signal into the Publ
   assert.doesNotMatch(publishedMarkup, />unpublished</);
 });
 
-test("resolveDocumentPreviewRoute maps current demo post and page documents to host preview routes", () => {
+test("resolveDocumentPreviewRoute uses configured content type preview URL resolvers only", () => {
   assert.deepEqual(
     resolveDocumentPreviewRoute({
-      type: "post",
-      path: "content/posts/launch-notes",
-      frontmatter: { slug: "launch-notes" },
+      document: {
+        documentId: "11111111-1111-4111-8111-111111111111",
+        type: "post",
+        path: "content/posts/launch-notes",
+        locale: "en",
+        frontmatter: { slug: "launch-notes", previewUrl: "/ignored" },
+        draftRevision: 8,
+      },
+      preview: {
+        hasPreviewUrlResolver: (type) => type === "post",
+        resolvePreviewUrl: (document) => {
+          const slug = document.frontmatter.slug;
+          return typeof slug === "string" ? `/configured/${slug}` : null;
+        },
+      },
     }),
     {
       status: "ready",
-      href: "/preview/post/launch-notes",
-      label: "/preview/post/launch-notes",
-      source: "post-slug",
+      href: "/configured/launch-notes",
+      label: "/configured/launch-notes",
+      source: "config",
     },
   );
 
   assert.deepEqual(
     resolveDocumentPreviewRoute({
-      type: "page",
-      path: "content/pages/docs/getting-started.mdx",
-      frontmatter: { title: "Getting started" },
+      document: {
+        documentId: "33333333-3333-4333-8333-333333333333",
+        type: "author",
+        path: "content/authors/ada",
+        locale: "en",
+        frontmatter: { slug: "ada", previewUrl: "/ignored" },
+        draftRevision: 2,
+      },
+      preview: {
+        hasPreviewUrlResolver: (type) => type === "post",
+        resolvePreviewUrl: () => null,
+      },
     }),
     {
-      status: "ready",
-      href: "/preview/page/docs/getting-started",
-      label: "/preview/page/docs/getting-started",
-      source: "page-path",
+      status: "unavailable",
+      reason: "not-configured",
+      message:
+        'Live preview is not configured for content type "author". Add resolvePreviewUrl to this content type in mdcms.config.ts to enable route preview.',
+    },
+  );
+
+  assert.deepEqual(
+    resolveDocumentPreviewRoute({
+      document: {
+        documentId: "22222222-2222-4222-8222-222222222222",
+        type: "post",
+        path: "content/posts/launch-notes",
+        locale: "en",
+        frontmatter: { slug: "launch-notes", previewUrl: "/ignored" },
+        draftRevision: 8,
+      },
+    }),
+    {
+      status: "unavailable",
+      reason: "not-configured",
+      message:
+        'Live preview is not configured for content type "post". Add resolvePreviewUrl to this content type in mdcms.config.ts to enable route preview.',
     },
   );
 });
@@ -1774,6 +1814,16 @@ test("ContentDocumentPageView renders split live-preview mode with a real host r
 
   const markup = renderPageMarkup(state, {
     previewMode: "split",
+    context: {
+      ...createMountContext(),
+      preview: {
+        hasPreviewUrlResolver: (type) => type === "post",
+        resolvePreviewUrl: (document) => {
+          const slug = document.frontmatter.slug;
+          return typeof slug === "string" ? `/configured/${slug}` : null;
+        },
+      },
+    },
   });
 
   assert.match(markup, /data-mdcms-editor-preview-mode="split"/);
@@ -1783,25 +1833,29 @@ test("ContentDocumentPageView renders split live-preview mode with a real host r
   assert.match(markup, /data-mdcms-live-preview-pane="ready"/);
   assert.match(markup, /data-mdcms-preview-viewport="medium"/);
   assert.match(markup, /data-mdcms-preview-viewport-option="small"/);
-  assert.match(markup, /src="\/preview\/post\/launch-notes"/);
+  assert.match(markup, /src="\/configured\/launch-notes"/);
   assert.match(markup, /Open preview in new tab/);
 });
 
-test("ContentDocumentPageView renders an explicit unavailable preview state for non-routable documents", () => {
+test("ContentDocumentPageView renders unavailable guidance when a content type has no preview resolver", () => {
   const baseState = createReadyState();
   const state = createReadyState({
-    typeId: "author",
-    typeLabel: "Author",
+    typeId: "post",
+    typeLabel: "Post",
     document: {
       ...baseState.document,
-      type: "author",
-      path: "content/authors/maciej",
+      type: "post",
+      path: "content/posts/launch-notes",
       frontmatter: {
-        name: "Maciej",
+        title: "Launch Notes",
+        slug: "launch-notes",
+        previewUrl: "/ignored",
       },
     },
     draftFrontmatter: {
-      name: "Maciej",
+      title: "Launch Notes",
+      slug: "launch-notes",
+      previewUrl: "/ignored",
     },
   });
 
@@ -1811,9 +1865,9 @@ test("ContentDocumentPageView renders an explicit unavailable preview state for 
 
   assert.match(markup, /data-mdcms-editor-preview-mode="preview"/);
   assert.match(markup, /data-mdcms-live-preview-pane="unavailable"/);
-  assert.match(markup, /No route configured/);
-  assert.match(markup, /NO ADAPTER/);
-  assert.match(markup, /FRAMING BLOCKED/);
+  assert.match(markup, /Live preview not available/);
+  assert.match(markup, /resolvePreviewUrl/);
+  assert.match(markup, /mdcms\.config\.ts/);
   assert.doesNotMatch(markup, /<iframe/);
 });
 

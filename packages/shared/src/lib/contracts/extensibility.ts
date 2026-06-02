@@ -5,7 +5,10 @@ import {
   assertActionCatalogList,
   type ActionCatalogItem,
 } from "./action-catalog.js";
-import type { MdcmsComponentRegistration } from "./config.js";
+import type {
+  MdcmsComponentRegistration,
+  MdcmsPreviewDocument,
+} from "./config.js";
 
 export const EXTENSIBILITY_API_VERSION = "1" as const;
 export const HOST_BRIDGE_VERSION = "1" as const;
@@ -157,6 +160,11 @@ export type StudioDocumentRouteMountContext = {
   write: StudioDocumentRouteWriteContext;
 };
 
+export type StudioPreviewMountContext = {
+  hasPreviewUrlResolver?: (contentType: string) => boolean;
+  resolvePreviewUrl: (document: MdcmsPreviewDocument) => string | null;
+};
+
 export type StudioMountContext = {
   apiBaseUrl: string;
   basePath: string;
@@ -166,6 +174,7 @@ export type StudioMountContext = {
   };
   hostBridge: HostBridgeV1;
   documentRoute?: StudioDocumentRouteMountContext;
+  preview?: StudioPreviewMountContext;
   mdx?: {
     catalog: MdxComponentCatalog;
     resolvePropsEditor: MdxComponentHostCapabilities["resolvePropsEditor"];
@@ -592,6 +601,13 @@ const studioDocumentRouteContextSchema = z
     }
   });
 
+const studioPreviewMountContextSchema = z
+  .object({
+    hasPreviewUrlResolver: functionSchema.optional(),
+    resolvePreviewUrl: functionSchema,
+  })
+  .strict();
+
 const studioMountContextSchema = z
   .object({
     apiBaseUrl: nonEmptyStringSchema,
@@ -599,6 +615,7 @@ const studioMountContextSchema = z
     auth: studioMountAuthSchema,
     hostBridge: hostBridgeV1Schema,
     documentRoute: studioDocumentRouteContextSchema.optional(),
+    preview: studioPreviewMountContextSchema.optional(),
     mdx: z
       .object({
         catalog: mdxComponentCatalogSchema,

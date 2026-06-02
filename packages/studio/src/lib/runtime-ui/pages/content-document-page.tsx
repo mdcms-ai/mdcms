@@ -1073,11 +1073,11 @@ function LivePreviewUnavailableState(props: {
           Real-route preview
         </p>
         <h2 className="mt-2 text-lg font-semibold text-foreground">
-          No route configured
+          Live preview not available
         </h2>
         <p className="mt-2 text-sm leading-6 text-foreground-muted">
-          {props.route.message} Configure a preview route for this type, or use
-          the inline MDX component preview for isolated component blocks.
+          {props.route.message} Studio only embeds host routes returned by
+          mdcms.config.ts; frontmatter preview fields are ignored.
         </p>
         <div className="mt-4">
           <LivePreviewFailureMatrix />
@@ -1129,15 +1129,22 @@ function LivePreviewViewportControl(props: {
 
 function LivePreviewPane(props: {
   state: ContentDocumentPageReadyState;
+  context?: StudioMountContext;
   refreshToken: number;
   onRefresh: () => void;
 }) {
   const [viewportSize, setViewportSize] =
     useState<LivePreviewViewportSize>("medium");
   const route = resolveDocumentPreviewRoute({
-    type: props.state.document.type,
-    path: props.state.document.path,
-    frontmatter: props.state.draftFrontmatter,
+    document: {
+      documentId: props.state.document.documentId,
+      type: props.state.document.type,
+      path: props.state.document.path,
+      locale: props.state.document.locale,
+      frontmatter: props.state.draftFrontmatter,
+      draftRevision: props.state.document.draftRevision,
+    },
+    preview: props.context?.preview,
   });
 
   if (route.status === "unavailable") {
@@ -1696,6 +1703,7 @@ function useContentDocumentPageViewElement({
                     >
                       <LivePreviewPane
                         state={state}
+                        context={context}
                         refreshToken={previewRefreshToken}
                         onRefresh={() =>
                           setPreviewRefreshToken((token) => token + 1)
