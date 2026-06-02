@@ -15,6 +15,9 @@ import { StudioNavigationProvider } from "../navigation.js";
 import {
   ContentDocumentPageView,
   SidebarInfoTab,
+  resolveLivePreviewDocument,
+  runLivePreviewRefresh,
+  shouldPersistBeforeLivePreviewRefresh,
 } from "./content-document-page.js";
 import {
   applyFailedDraftSaveToReadyState,
@@ -1835,6 +1838,122 @@ test("ContentDocumentPageView renders split live-preview mode with a real host r
   assert.match(markup, /data-mdcms-preview-viewport-option="small"/);
   assert.match(markup, /src="\/configured\/launch-notes"/);
   assert.match(markup, /Open preview in new tab/);
+});
+
+test("resolveLivePreviewDocument uses the persisted draft snapshot for route resolution", () => {
+  const baseState = createReadyState();
+  const state = createReadyState({
+    typeId: "post",
+    typeLabel: "Post",
+    document: {
+      ...baseState.document,
+      type: "post",
+      body: "# Persisted body",
+      path: "content/posts/persisted-slug",
+      frontmatter: {
+        title: "Persisted title",
+        slug: "persisted-slug",
+      },
+    },
+    draftBody: "# Unsaved body",
+    draftFrontmatter: {
+      title: "Unsaved title",
+      slug: "unsaved-slug",
+    },
+    saveState: "unsaved",
+  });
+
+  assert.deepEqual(resolveLivePreviewDocument(state), {
+    documentId: state.document.documentId,
+    type: "post",
+    path: "content/posts/persisted-slug",
+    locale: "en",
+    frontmatter: {
+      title: "Persisted title",
+      slug: "persisted-slug",
+    },
+    draftRevision: state.document.draftRevision,
+  });
+});
+
+test("shouldPersistBeforeLivePreviewRefresh requires canonical draft persistence before reload", () => {
+  const baseState = createReadyState();
+  const unsavedState = createReadyState({
+    document: {
+      ...baseState.document,
+      body: "# Persisted body",
+      frontmatter: {
+        title: "Persisted title",
+      },
+    },
+    draftBody: "# Unsaved body",
+    draftFrontmatter: {
+      title: "Unsaved title",
+    },
+    saveState: "unsaved",
+  });
+
+  assert.equal(shouldPersistBeforeLivePreviewRefresh(unsavedState), true);
+  assert.equal(
+    shouldPersistBeforeLivePreviewRefresh({
+      ...unsavedState,
+      saveState: "saving",
+    }),
+    true,
+  );
+  assert.equal(
+    shouldPersistBeforeLivePreviewRefresh({
+      ...unsavedState,
+      draftBody: unsavedState.document.body,
+      draftFrontmatter: unsavedState.document.frontmatter,
+      saveState: "saved",
+    }),
+    false,
+  );
+  assert.equal(
+    shouldPersistBeforeLivePreviewRefresh({
+      ...unsavedState,
+      viewingVersion: {
+        version: 1,
+        body: "# Historical",
+        status: "ready",
+      },
+    }),
+    false,
+  );
+});
+
+test("runLivePreviewRefresh persists before reloading and skips reload when persistence fails", async () => {
+  const calls: string[] = [];
+
+  assert.equal(
+    await runLivePreviewRefresh({
+      beforeRefresh: async () => {
+        calls.push("save");
+        return true;
+      },
+      refresh: () => {
+        calls.push("reload");
+      },
+    }),
+    true,
+  );
+  assert.deepEqual(calls, ["save", "reload"]);
+
+  calls.length = 0;
+  assert.equal(
+    await runLivePreviewRefresh({
+      beforeRefresh: async () => {
+        calls.push("save");
+        return false;
+      },
+      refresh: () => {
+        calls.push("reload");
+      },
+    }),
+    false,
+  );
+  assert.deepEqual(calls, ["save"]);
 });
 
 test("ContentDocumentPageView renders unavailable guidance when a content type has no preview resolver", () => {

@@ -11,6 +11,7 @@ import {
 } from "react";
 
 import {
+  type MdcmsPreviewDocument,
   type StudioDocumentRouteMountContext,
   type StudioMountContext,
 } from "@mdcms/shared";
@@ -178,6 +179,7 @@ type ContentDocumentPageViewProps = {
   }) => void;
   previewMode?: ContentDocumentPreviewMode;
   onPreviewModeChange?: (mode: ContentDocumentPreviewMode) => void;
+  onPreviewRefresh?: () => boolean | Promise<boolean>;
 };
 
 type LivePreviewViewportSize = "small" | "medium" | "large";
@@ -1087,6 +1089,39 @@ function LivePreviewUnavailableState(props: {
   );
 }
 
+export function resolveLivePreviewDocument(
+  state: ContentDocumentPageReadyState,
+): MdcmsPreviewDocument {
+  return {
+    documentId: state.document.documentId,
+    type: state.document.type,
+    path: state.document.path,
+    locale: state.document.locale,
+    frontmatter: cloneFrontmatter(state.document.frontmatter),
+    draftRevision: state.document.draftRevision,
+  };
+}
+
+export function shouldPersistBeforeLivePreviewRefresh(
+  state: ContentDocumentPageReadyState,
+): boolean {
+  return state.canWrite && !state.viewingVersion && !isDraftPersisted(state);
+}
+
+export async function runLivePreviewRefresh(input: {
+  beforeRefresh?: () => boolean | Promise<boolean>;
+  refresh: () => void;
+}): Promise<boolean> {
+  const canRefresh = input.beforeRefresh ? await input.beforeRefresh() : true;
+
+  if (canRefresh === false) {
+    return false;
+  }
+
+  input.refresh();
+  return true;
+}
+
 function LivePreviewViewportControl(props: {
   size: LivePreviewViewportSize;
   onSizeChange: (size: LivePreviewViewportSize) => void;
@@ -1136,14 +1171,7 @@ function LivePreviewPane(props: {
   const [viewportSize, setViewportSize] =
     useState<LivePreviewViewportSize>("medium");
   const route = resolveDocumentPreviewRoute({
-    document: {
-      documentId: props.state.document.documentId,
-      type: props.state.document.type,
-      path: props.state.document.path,
-      locale: props.state.document.locale,
-      frontmatter: props.state.draftFrontmatter,
-      draftRevision: props.state.document.draftRevision,
-    },
+    document: resolveLivePreviewDocument(props.state),
     preview: props.context?.preview,
   });
 
@@ -1241,6 +1269,7 @@ function useContentDocumentPageViewElement({
   onAiProposalApplied,
   previewMode,
   onPreviewModeChange,
+  onPreviewRefresh,
 }: ContentDocumentPageViewProps) {
   const [internalPreviewMode, setInternalPreviewMode] =
     useState<ContentDocumentPreviewMode>("edit");
@@ -1255,6 +1284,12 @@ function useContentDocumentPageViewElement({
     },
     [onPreviewModeChange, previewMode],
   );
+  const refreshLivePreview = useLatestCallback(async () => {
+    await runLivePreviewRefresh({
+      beforeRefresh: onPreviewRefresh,
+      refresh: () => setPreviewRefreshToken((token) => token + 1),
+    });
+  });
   const documentLabel =
     state.status === "ready"
       ? formatDocumentLabel(state.document.path, state.documentId)
@@ -1705,9 +1740,9 @@ function useContentDocumentPageViewElement({
                         state={state}
                         context={context}
                         refreshToken={previewRefreshToken}
-                        onRefresh={() =>
-                          setPreviewRefreshToken((token) => token + 1)
-                        }
+                        onRefresh={() => {
+                          void refreshLivePreview();
+                        }}
                       />
                     </div>
                   ) : null}
@@ -2439,6 +2474,23 @@ function useContentDocumentPageController({
     );
   });
 
+  const prepareLivePreviewRefresh = useLatestCallback(async () => {
+    const currentState = stateRef.current;
+
+    if (
+      currentState.status !== "ready" ||
+      !shouldPersistBeforeLivePreviewRefresh(currentState)
+    ) {
+      return true;
+    }
+
+    if (currentState.saveState !== "unsaved") {
+      return false;
+    }
+
+    return saveDraft();
+  });
+
   const handleCreateVariant = useLatestCallback(async (prefill: boolean) => {
     const currentState = stateRef.current;
     const requestContext = activeContext;
@@ -2952,6 +3004,7 @@ function useContentDocumentPageController({
     onSaveNow: () => {
       void saveDraft();
     },
+    onPreviewRefresh: prepareLivePreviewRefresh,
     onSchemaSync: () => {
       void syncSchema();
     },

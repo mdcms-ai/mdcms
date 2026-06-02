@@ -489,14 +489,19 @@ Normative behavior:
   refresh control, viewport-size controls, and an open-in-new-tab link. The
   open-in-new-tab link is always available when a route is resolved so editors
   have a fallback when browser framing policy blocks embedding.
+- Refreshing the real-app preview first runs the normal draft persistence path
+  when local body or frontmatter edits are unsaved, then reloads the iframe only
+  after persistence succeeds. Route resolution uses the latest persisted draft
+  snapshot; local unsaved frontmatter changes must not navigate the iframe
+  before the canonical draft row is updated.
 - Route resolution is deterministic and config-owned. A content type may define
   `resolvePreviewUrl(document)` in `mdcms.config.ts`; Studio calls that resolver
-  with the active document id, content type, path, locale, draft frontmatter, and
-  draft revision. The resolver returns a same-origin path or absolute URL to
-  embed, or `null`/`undefined` when the document has no route. Studio must not
-  derive preview routes from frontmatter fields such as `previewUrl`, and it
-  must not ship built-in route assumptions for content types such as `post` or
-  `page`.
+  with the active document id, content type, path, locale, persisted draft
+  frontmatter, and draft revision. The resolver returns a same-origin path or
+  absolute URL to embed, or `null`/`undefined` when the document has no route.
+  Studio must not derive preview routes from frontmatter fields such as
+  `previewUrl`, and it must not ship built-in route assumptions for content
+  types such as `post` or `page`.
 - Documents whose content type has no `resolvePreviewUrl` resolver render a
   `Live preview not available` state with guidance to add the resolver to that
   content type in `mdcms.config.ts`. If a resolver is present but returns no
