@@ -377,7 +377,7 @@ MDCMS rejects sign-in with `AUTH_SAML_REQUIRED_ATTRIBUTE_MISSING` (`401`) when:
 
 - Session cookie is `httpOnly`, `Secure`, `SameSite=None`, and scoped to `/`.
 - `mdcms_csrf` cookie is readable, `Secure`, `SameSite=None`, and scoped to `/`.
-- Session lifetime: 2h rolling inactivity timeout with a 12h absolute max age.
+- Session lifetime: 7-day rolling inactivity timeout with a 30-day absolute max age.
 - Password sign-in creates a new session without revoking the user's other
   active sessions.
 - Session IDs rotate on sign-in and privilege changes.

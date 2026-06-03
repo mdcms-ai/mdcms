@@ -1909,6 +1909,34 @@ testWithDatabase(
 );
 
 testWithDatabase(
+  "auth login issues a Studio session with a 7-day rolling inactivity expiry",
+  async () => {
+    const { handler, dbConnection } = createServerRequestHandlerWithModules({
+      env,
+      logger,
+    });
+    const email = uniqueEmail();
+    const password = "Admin12345!";
+
+    try {
+      await signUp(handler, { email, password });
+
+      const beforeLogin = Date.now();
+      const loginResult = await login(handler, { email, password });
+      const expiresAt = Date.parse(loginResult.session.expiresAt);
+      const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+
+      assert.ok(Number.isFinite(expiresAt));
+      assert.ok(expiresAt >= beforeLogin + sevenDaysMs - 30_000);
+      assert.ok(expiresAt <= Date.now() + sevenDaysMs + 30_000);
+      assert.equal(loginResult.setCookie.includes("Max-Age=604800"), true);
+    } finally {
+      await dbConnection.close();
+    }
+  },
+);
+
+testWithDatabase(
   "auth login and session bootstrap issue a CSRF cookie for Studio mutations",
   async () => {
     const { handler, dbConnection } = createServerRequestHandlerWithModules({
@@ -2496,8 +2524,8 @@ testWithDatabase(
       await dbConnection.db
         .update(authSessions)
         .set({
-          createdAt: new Date(Date.now() - 13 * 60 * 60 * 1000),
-          expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+          createdAt: new Date(Date.now() - 31 * 24 * 60 * 60 * 1000),
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
         })
         .where(eq(authSessions.id, session.id));
 
@@ -2544,8 +2572,8 @@ testWithDatabase(
       await dbConnection.db
         .update(authSessions)
         .set({
-          createdAt: new Date(Date.now() - 13 * 60 * 60 * 1000),
-          expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+          createdAt: new Date(Date.now() - 31 * 24 * 60 * 60 * 1000),
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
         })
         .where(eq(authSessions.id, session.id));
 

@@ -73,8 +73,8 @@ Sessions are used by the Studio UI and browser-based interactions.
 
 - Created via better-auth after successful password, OIDC, or SAML authentication.
 - Stored in the `sessions` table with a session token cookie.
-- **Inactivity timeout:** 2 hours of no activity expires the session.
-- **Absolute max age:** 12 hours regardless of activity.
+- **Inactivity timeout:** 7 days of no activity expires the session.
+- **Absolute max age:** 30 days regardless of activity.
 - **CSRF protection:** Mutations require a `X-MDCMS-CSRF-Token` header matching the `mdcms_csrf` cookie (24-byte random token).
 - Supported identity providers: password (credential), OIDC (Okta, Azure AD, Google Workspace, Auth0), SAML.
 
