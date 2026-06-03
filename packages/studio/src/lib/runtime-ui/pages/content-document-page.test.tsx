@@ -14,13 +14,17 @@ import type { StudioDocumentShell } from "../../document-shell.js";
 import { StudioNavigationProvider } from "../navigation.js";
 import {
   ContentDocumentPageView,
+  LIVE_PREVIEW_IFRAME_SANDBOX,
   MDCMS_LIVE_PREVIEW_READY_MESSAGE,
   SidebarInfoTab,
   createLivePreviewIframeRoute,
+  getLivePreviewViewportFrame,
   isLivePreviewReadyMessage,
+  readContentDocumentPreviewModeSearchParam,
   resolveLivePreviewDocument,
   runLivePreviewRefresh,
   shouldPersistBeforeLivePreviewRefresh,
+  writeContentDocumentPreviewModeSearchParam,
 } from "./content-document-page.js";
 import {
   applyFailedDraftSaveToReadyState,
@@ -1846,11 +1850,74 @@ test("ContentDocumentPageView prepares split live-preview mode until a tokenized
   assert.match(markup, />Split</);
   assert.match(markup, />Preview</);
   assert.match(markup, /data-mdcms-live-preview-pane="ready"/);
-  assert.match(markup, /data-mdcms-preview-viewport="medium"/);
-  assert.match(markup, /data-mdcms-preview-viewport-option="small"/);
+  assert.match(markup, /data-mdcms-preview-viewport="tablet"/);
+  assert.match(markup, /data-mdcms-preview-viewport-option="mobile"/);
+  assert.match(markup, /aria-label="Mobile viewport"/);
+  assert.match(markup, /aria-label="Tablet viewport"/);
+  assert.match(markup, /aria-label="Desktop viewport"/);
+  assert.doesNotMatch(markup, />S</);
+  assert.doesNotMatch(markup, />M</);
+  assert.doesNotMatch(markup, />L</);
   assert.match(markup, /Preparing preview/);
   assert.doesNotMatch(markup, /src="\/configured\/launch-notes"/);
   assert.match(markup, /Open preview in new tab/);
+});
+
+test("getLivePreviewViewportFrame preserves target viewport width while scaling to fit", () => {
+  assert.deepEqual(getLivePreviewViewportFrame("mobile", 720), {
+    targetWidth: 390,
+    visualWidth: 390,
+    scale: 1,
+    heightPercent: 100,
+  });
+  assert.deepEqual(getLivePreviewViewportFrame("tablet", 640), {
+    targetWidth: 768,
+    visualWidth: 640,
+    scale: 0.833,
+    heightPercent: 120,
+  });
+  assert.deepEqual(getLivePreviewViewportFrame("desktop", 640), {
+    targetWidth: 1280,
+    visualWidth: 640,
+    scale: 0.5,
+    heightPercent: 200,
+  });
+});
+
+test("content document preview mode query param accepts only supported modes", () => {
+  assert.equal(
+    readContentDocumentPreviewModeSearchParam("?previewMode=preview"),
+    "preview",
+  );
+  assert.equal(
+    readContentDocumentPreviewModeSearchParam("?previewMode=split"),
+    "split",
+  );
+  assert.equal(
+    readContentDocumentPreviewModeSearchParam("?previewMode=wide"),
+    undefined,
+  );
+});
+
+test("content document preview mode query param preserves unrelated params", () => {
+  assert.equal(
+    writeContentDocumentPreviewModeSearchParam("?env=preview", "preview"),
+    "?env=preview&previewMode=preview",
+  );
+  assert.equal(
+    writeContentDocumentPreviewModeSearchParam(
+      "?previewMode=edit&env=preview",
+      "split",
+    ),
+    "?previewMode=split&env=preview",
+  );
+});
+
+test("live preview iframe sandbox preserves same-origin asset loading", () => {
+  assert.equal(
+    LIVE_PREVIEW_IFRAME_SANDBOX,
+    "allow-scripts allow-forms allow-same-origin",
+  );
 });
 
 test("createLivePreviewIframeRoute mints a token before returning an iframe href", async () => {

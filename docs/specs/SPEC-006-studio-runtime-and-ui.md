@@ -485,6 +485,9 @@ Normative behavior:
   `Preview` hides the editor canvas and gives the preview surface the available
   document area. The mode is local UI state and does not change the document
   body, frontmatter, publish state, sidebar state, or write authorization.
+  Studio mirrors the selected layout mode into the document editor URL as
+  `previewMode=edit|split|preview` so reloads and shared admin URLs preserve
+  the current layout. Unsupported `previewMode` values are ignored.
 - The real-app preview surface is a page renderer. It embeds a host route in an
   iframe and must not render Studio-only component mocks. The existing inline
   MDX component preview remains a node renderer owned by SPEC-007.
@@ -517,10 +520,12 @@ Normative behavior:
   content type in `mdcms.config.ts`. If a resolver is present but returns no
   URL for the active document, the pane renders an unavailable state that points
   operators back to the resolver and document fields instead of guessing.
-- The iframe uses a restrictive sandbox for the first slice:
-  `allow-scripts allow-forms`, without `allow-same-origin` unless a future
-  same-origin adapter contract explicitly opts into it. The preview surface
-  must remain read-only from Studio's perspective.
+- The iframe uses a restrictive sandbox:
+  `allow-scripts allow-forms allow-same-origin`. `allow-same-origin` keeps host
+  preview routes on their real origin so route-owned assets such as framework
+  font files can load correctly. The preview route and preview token remain the
+  authorization boundary; the sandbox is not an auth substitute. The preview
+  surface must remain read-only from Studio's perspective.
 - Preview failure states are explicit and actionable. Studio distinguishes at
   least: no route configured, no host adapter, framing blocked, unauthorized,
   token/session expiry, invalid preview-token configuration, and invalid draft.
