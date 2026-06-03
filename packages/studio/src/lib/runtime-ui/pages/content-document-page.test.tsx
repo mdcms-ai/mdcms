@@ -1850,7 +1850,7 @@ test("ContentDocumentPageView prepares split live-preview mode until a tokenized
   assert.match(markup, />Split</);
   assert.match(markup, />Preview</);
   assert.match(markup, /data-mdcms-live-preview-pane="ready"/);
-  assert.match(markup, /data-mdcms-preview-viewport="tablet"/);
+  assert.match(markup, /data-mdcms-preview-viewport="desktop"/);
   assert.match(markup, /data-mdcms-preview-viewport-option="mobile"/);
   assert.match(markup, /aria-label="Mobile viewport"/);
   assert.match(markup, /aria-label="Tablet viewport"/);

@@ -1402,7 +1402,7 @@ function LivePreviewPane(props: {
   onRefresh: () => void;
 }) {
   const [viewportSize, setViewportSize] =
-    useState<LivePreviewViewportSize>("tablet");
+    useState<LivePreviewViewportSize>("desktop");
   const [previewFrameAvailableWidth, setPreviewFrameAvailableWidth] =
     useState(0);
   const [iframeRoute, setIframeRoute] = useState<

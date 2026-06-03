@@ -493,6 +493,7 @@ Normative behavior:
   MDX component preview remains a node renderer owned by SPEC-007.
 - The preview pane chrome contains a read-only resolved-route chip, a manual
   refresh control, viewport-size controls, and an open-in-new-tab link. The
+  `Desktop` viewport preset is selected by default. The
   open-in-new-tab link is always available when a route is resolved so editors
   have a fallback when browser framing policy blocks embedding.
 - Refreshing the real-app preview first runs the normal draft persistence path
