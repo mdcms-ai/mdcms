@@ -220,6 +220,35 @@ test("schema snapshot includes CMS-11/CMS-12 core tables and columns", () => {
       "uploaded_by",
       "uploaded_at",
     ],
+    "public.webhooks": [
+      "id",
+      "project_id",
+      "environment_id",
+      "url",
+      "events",
+      "secret",
+      "active",
+      "created_by",
+      "updated_by",
+      "created_at",
+      "updated_at",
+    ],
+    "public.webhook_delivery_attempts": [
+      "id",
+      "project_id",
+      "environment_id",
+      "webhook_id",
+      "event",
+      "event_id",
+      "delivery_id",
+      "url",
+      "attempt",
+      "max_attempts",
+      "outcome",
+      "status_code",
+      "error",
+      "created_at",
+    ],
     "public.migrations": [
       "id",
       "name",
@@ -288,6 +317,9 @@ test("snapshot includes required named constraints and indexes", () => {
   const authAccountsTable = snapshot.tables["public.accounts"];
   const authVerificationsTable = snapshot.tables["public.verifications"];
   const schemaSyncsTable = snapshot.tables["public.schema_syncs"];
+  const webhooksTable = snapshot.tables["public.webhooks"];
+  const webhookDeliveryAttemptsTable =
+    snapshot.tables["public.webhook_delivery_attempts"];
   const projectEnvironmentTopologySnapshotsTable =
     snapshot.tables["public.project_environment_topology_snapshots"];
   const schemaRegistryEntriesTable =
@@ -314,6 +346,11 @@ test("snapshot includes required named constraints and indexes", () => {
   assert.ok(authAccountsTable, "expected accounts table in snapshot");
   assert.ok(authVerificationsTable, "expected verifications table in snapshot");
   assert.ok(schemaSyncsTable, "expected schema_syncs table in snapshot");
+  assert.ok(webhooksTable, "expected webhooks table in snapshot");
+  assert.ok(
+    webhookDeliveryAttemptsTable,
+    "expected webhook_delivery_attempts table in snapshot",
+  );
   assert.ok(
     projectEnvironmentTopologySnapshotsTable,
     "expected project_environment_topology_snapshots table in snapshot",
@@ -447,6 +484,31 @@ test("snapshot includes required named constraints and indexes", () => {
   assert.ok(
     schemaSyncsTable.foreignKeys.fk_schema_syncs_env_project,
     "expected foreign key fk_schema_syncs_env_project on schema_syncs",
+  );
+  assert.ok(
+    webhooksTable.indexes.idx_webhooks_scope,
+    "expected index idx_webhooks_scope on webhooks",
+  );
+  assert.ok(
+    webhooksTable.indexes.idx_webhooks_active_event_lookup,
+    "expected index idx_webhooks_active_event_lookup on webhooks",
+  );
+  assert.ok(
+    webhooksTable.foreignKeys.fk_webhooks_env_project,
+    "expected foreign key fk_webhooks_env_project on webhooks",
+  );
+  assert.ok(
+    webhookDeliveryAttemptsTable.indexes.idx_webhook_delivery_attempts_scope,
+    "expected index idx_webhook_delivery_attempts_scope on webhook_delivery_attempts",
+  );
+  assert.ok(
+    webhookDeliveryAttemptsTable.indexes.idx_webhook_delivery_attempts_filters,
+    "expected index idx_webhook_delivery_attempts_filters on webhook_delivery_attempts",
+  );
+  assert.ok(
+    webhookDeliveryAttemptsTable.foreignKeys
+      .fk_webhook_delivery_attempts_env_project,
+    "expected foreign key fk_webhook_delivery_attempts_env_project on webhook_delivery_attempts",
   );
   assert.ok(
     projectEnvironmentTopologySnapshotsTable.uniqueConstraints

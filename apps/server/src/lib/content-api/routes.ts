@@ -23,6 +23,7 @@ import {
   parseRequestedResolvePaths,
   prepareResolvePlan,
 } from "./resolve.js";
+import { emitContentLifecycleEvent } from "./lifecycle-events.js";
 import {
   stripUnknownFrontmatterFields,
   toDocumentResponse,
@@ -622,7 +623,7 @@ export function mountContentApiRoutes(
       const payload = (body ?? {}) as ContentWritePayload;
       const requestedPath =
         typeof payload.path === "string" ? payload.path.trim() : undefined;
-      await options.authorize(request, {
+      const authorization = await options.authorize(request, {
         requiredScope: "content:write",
         project: scope.project,
         environment: scope.environment,
@@ -636,6 +637,13 @@ export function mountContentApiRoutes(
       );
       const document = await options.store.create(scope, payload, {
         expectedSchemaHash: schemaHash,
+      });
+      emitContentLifecycleEvent({
+        sink: options.lifecycleEvents,
+        event: "content.created",
+        scope,
+        document,
+        authorization,
       });
 
       return {
@@ -652,7 +660,7 @@ export function mountContentApiRoutes(
         await options.requireCsrf(request);
         const payload = (body ?? {}) as ContentWritePayload;
 
-        await options.authorize(request, {
+        const authorization = await options.authorize(request, {
           requiredScope: "content:write",
           project: scope.project,
           environment: scope.environment,
@@ -712,6 +720,13 @@ export function mountContentApiRoutes(
             expectedDraftRevision,
           },
         );
+        emitContentLifecycleEvent({
+          sink: options.lifecycleEvents,
+          event: "content.updated",
+          scope,
+          document,
+          authorization,
+        });
 
         return {
           data: toDocumentResponse(document),
@@ -727,7 +742,7 @@ export function mountContentApiRoutes(
         const scope = pickScope(request);
         await options.requireCsrf(request);
 
-        await options.authorize(request, {
+        const authorization = await options.authorize(request, {
           requiredScope: "content:write",
           project: scope.project,
           environment: scope.environment,
@@ -756,6 +771,13 @@ export function mountContentApiRoutes(
         });
 
         const document = await options.store.restore(scope, params.documentId);
+        emitContentLifecycleEvent({
+          sink: options.lifecycleEvents,
+          event: "content.restored",
+          scope,
+          document,
+          authorization,
+        });
 
         return {
           data: toDocumentResponse(document),
@@ -848,7 +870,7 @@ export function mountContentApiRoutes(
       return executeWithRuntimeErrorsHandled(request, async () => {
         const scope = pickScope(request);
         await options.requireCsrf(request);
-        await options.authorize(request, {
+        const authorization = await options.authorize(request, {
           requiredScope: "content:publish",
           project: scope.project,
           environment: scope.environment,
@@ -885,6 +907,13 @@ export function mountContentApiRoutes(
           changeSummary,
           actorId,
         });
+        emitContentLifecycleEvent({
+          sink: options.lifecycleEvents,
+          event: "content.published",
+          scope,
+          document,
+          authorization,
+        });
 
         return {
           data: toDocumentResponse(document),
@@ -899,7 +928,7 @@ export function mountContentApiRoutes(
       return executeWithRuntimeErrorsHandled(request, async () => {
         const scope = pickScope(request);
         await options.requireCsrf(request);
-        await options.authorize(request, {
+        const authorization = await options.authorize(request, {
           requiredScope: "content:publish",
           project: scope.project,
           environment: scope.environment,
@@ -935,6 +964,13 @@ export function mountContentApiRoutes(
             actorId,
           },
         );
+        emitContentLifecycleEvent({
+          sink: options.lifecycleEvents,
+          event: "content.unpublished",
+          scope,
+          document,
+          authorization,
+        });
 
         return {
           data: toDocumentResponse(document),
@@ -1040,7 +1076,7 @@ export function mountContentApiRoutes(
       return executeWithRuntimeErrorsHandled(request, async () => {
         const scope = pickScope(request);
         await options.requireCsrf(request);
-        await options.authorize(request, {
+        const authorization = await options.authorize(request, {
           requiredScope: "content:delete",
           project: scope.project,
           environment: scope.environment,
@@ -1070,6 +1106,13 @@ export function mountContentApiRoutes(
           scope,
           params.documentId,
         );
+        emitContentLifecycleEvent({
+          sink: options.lifecycleEvents,
+          event: "content.deleted",
+          scope,
+          document,
+          authorization,
+        });
 
         return {
           data: toDocumentResponse(document),

@@ -14,6 +14,8 @@ import {
   rbacGrants,
   schemaRegistryEntries,
   schemaSyncs,
+  webhookDeliveryAttempts,
+  webhooks,
 } from "./db/schema.js";
 import { createServerRequestHandler } from "./server.js";
 import { createServerRequestHandlerWithModules } from "./runtime-with-modules.js";
@@ -21,6 +23,7 @@ import {
   createInMemoryContentStore,
   mountContentApiRoutes,
 } from "./content-api.js";
+import type { AuthorizedRequest } from "./auth.js";
 import { CONTENT_SCHEMA_HASH_HEADER } from "./content-api/schema-hash.js";
 import { resolveProjectEnvironmentScope } from "./project-provisioning.js";
 
@@ -105,6 +108,24 @@ export const scopeHeaders = {
   "x-mdcms-project": "_test-marketing-site",
   "x-mdcms-environment": "production",
 };
+
+export const authorizedTestRequest = {
+  mode: "session",
+  principal: {
+    type: "session",
+    session: {
+      id: "session-1",
+      userId: "user-1",
+      email: "editor@example.com",
+      issuedAt: "2026-06-03T00:00:00.000Z",
+      expiresAt: "2026-06-03T01:00:00.000Z",
+    },
+  },
+} satisfies AuthorizedRequest;
+
+export async function authorizeTestRequest(): Promise<AuthorizedRequest> {
+  return authorizedTestRequest;
+}
 
 function splitSetCookieHeader(header: string): string[] {
   return header
@@ -215,7 +236,7 @@ export function createHandler() {
     configureApp: (app) => {
       mountContentApiRoutes(app, {
         store,
-        authorize: async () => undefined,
+        authorize: authorizeTestRequest,
         requireCsrf: async () => undefined,
         getWriteSchemaSyncState: async () => ({
           schemaHash: inMemorySchemaHash,
@@ -256,6 +277,24 @@ export async function resetDatabaseTestScope(
   if (!resolvedScope) {
     return;
   }
+
+  await db
+    .delete(webhookDeliveryAttempts)
+    .where(
+      and(
+        eq(webhookDeliveryAttempts.projectId, resolvedScope.project.id),
+        eq(webhookDeliveryAttempts.environmentId, resolvedScope.environment.id),
+      ),
+    );
+
+  await db
+    .delete(webhooks)
+    .where(
+      and(
+        eq(webhooks.projectId, resolvedScope.project.id),
+        eq(webhooks.environmentId, resolvedScope.environment.id),
+      ),
+    );
 
   await db
     .update(documents)

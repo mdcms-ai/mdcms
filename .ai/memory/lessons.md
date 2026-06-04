@@ -6,6 +6,18 @@ Entries are reverse-chronological (newest first).
 
 ---
 
+## 2026-06-04 — preserve webhook sink results through wrappers
+
+**Rule:** Webhook delivery wrappers must return the wrapped sink result after logging or instrumentation.
+**Why:** The delivery worker records status codes from the sink return value; a wrapper that only awaits the sink silently turns successful attempts into `statusCode: null` history rows.
+**How to apply:** When adding logging, tracing, or metrics around `WebhookDeliverySink`, capture `const result = await sink(delivery)`, perform side effects, then `return result`; add worker or composition coverage when new metadata is persisted from sink results.
+
+## 2026-06-03 — inject deterministic DNS in webhook target tests
+
+**Rule:** Webhook route and dispatcher tests that exercise target validation must inject a deterministic target-address resolver instead of relying on real DNS.
+**Why:** The SSRF guard resolves hostnames before persistence and delivery; sandboxed or offline test environments can make public example domains fail resolution, which causes delivery validation to skip otherwise valid webhook fixtures.
+**How to apply:** When adding webhook tests with non-literal hosts, pass `resolveTargetAddresses` with explicit public or private fixture IPs and assert the resulting error code/details or delivery selection.
+
 ## 2026-06-02 — split lowercase MDX text elements by HTML semantics
 
 **Rule:** Studio's MDX parser must not assume `mdxJsxTextElement` means inline editable text; first classify lowercase tags by HTML semantics and split block-like tags out of paragraph buffers.

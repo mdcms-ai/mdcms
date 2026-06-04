@@ -102,9 +102,16 @@ export type StudioSession = {
   expiresAt: string;
 };
 
+export type AuthorizedActor = {
+  id: string;
+  email: string;
+};
+
 export type ApiKeyPrincipal = {
   type: "api_key";
   keyId: string;
+  createdByUserId: string;
+  createdByUserEmail: string;
   keyPrefix: string;
   label: string;
   scopes: readonly ApiKeyOperationScope[];
@@ -130,6 +137,22 @@ export type AuthorizedRequest = {
   mode: "session" | "api_key";
   principal: AuthPrincipal;
 };
+
+export function actorFromAuthorizedRequest(
+  authorized: AuthorizedRequest,
+): AuthorizedActor {
+  if (authorized.principal.type === "session") {
+    return {
+      id: authorized.principal.session.userId,
+      email: authorized.principal.session.email,
+    };
+  }
+
+  return {
+    id: authorized.principal.createdByUserId,
+    email: authorized.principal.createdByUserEmail,
+  };
+}
 
 export type CreateApiKeyInput = {
   label: string;
@@ -2011,6 +2034,10 @@ function toRbacAction(requiredScope: ApiKeyOperationScope): RbacAction | null {
     return "schema:write";
   }
 
+  if (requiredScope === "webhooks:read" || requiredScope === "webhooks:write") {
+    return "settings:manage";
+  }
+
   if (requiredScope === "projects:read") {
     return "projects:read";
   }
@@ -3394,6 +3421,23 @@ export function createAuthService(
     };
   }
 
+  async function requireApiKeyOwnerEmail(userId: string): Promise<string> {
+    const user = await options.db.query.authUsers.findFirst({
+      columns: { email: true },
+      where: eq(authUsers.id, userId),
+    });
+
+    if (!user) {
+      throw new RuntimeError({
+        code: "INTERNAL_ERROR",
+        message: "API key owner no longer exists.",
+        statusCode: 500,
+      });
+    }
+
+    return user.email;
+  }
+
   async function touchApiKeyLastUsed(keyId: string): Promise<void> {
     await options.db
       .update(apiKeys)
@@ -3801,6 +3845,9 @@ export function createAuthService(
           });
         }
 
+        const createdByUserEmail = await requireApiKeyOwnerEmail(
+          metadata.createdByUserId,
+        );
         await touchApiKeyLastUsed(row.id);
 
         return {
@@ -3808,6 +3855,8 @@ export function createAuthService(
           principal: {
             type: "api_key",
             keyId: metadata.id,
+            createdByUserId: metadata.createdByUserId,
+            createdByUserEmail,
             keyPrefix: metadata.keyPrefix,
             label: metadata.label,
             scopes: metadata.scopes,
