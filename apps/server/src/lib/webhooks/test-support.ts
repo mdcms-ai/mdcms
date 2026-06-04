@@ -119,9 +119,6 @@ export function createStubStore(
     create: overrides.create ?? (fail("create") as WebhookStore["create"]),
     update: overrides.update ?? (fail("update") as WebhookStore["update"]),
     delete: overrides.delete ?? (fail("delete") as WebhookStore["delete"]),
-    listActiveByEvent:
-      overrides.listActiveByEvent ??
-      (fail("listActiveByEvent") as WebhookStore["listActiveByEvent"]),
     listActiveTargetsByEvent:
       overrides.listActiveTargetsByEvent ??
       (fail(

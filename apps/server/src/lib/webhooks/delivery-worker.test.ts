@@ -5,6 +5,13 @@ import { createWebhookDeliveryWorker } from "../webhooks-api.js";
 
 import { createPayload, createTarget } from "./test-support.js";
 
+test("webhook delivery worker requires an explicit delivery sink", () => {
+  assert.throws(
+    () => createWebhookDeliveryWorker({} as never),
+    /delivery sink/i,
+  );
+});
+
 test("webhook delivery worker retries failed deliveries with exponential backoff", async () => {
   const attempts: number[] = [];
   const delays: number[] = [];

@@ -57,11 +57,17 @@ function statusCodeFromError(error: unknown): number | undefined {
 }
 
 export function createWebhookDeliveryWorker(
-  options: CreateWebhookDeliveryWorkerOptions = {},
+  options: CreateWebhookDeliveryWorkerOptions,
 ): WebhookDeliveryQueue {
+  if (typeof options.deliver !== "function") {
+    throw new Error(
+      "Webhook delivery worker requires an explicit delivery sink.",
+    );
+  }
+
   const retryPolicy = options.retryPolicy ?? DEFAULT_WEBHOOK_RETRY_POLICY;
   const maxAttempts = Math.max(1, Math.floor(retryPolicy.maxAttempts));
-  const deliver = options.deliver ?? (async () => undefined);
+  const deliver = options.deliver;
   const sleep = options.sleep ?? defaultSleep;
   const recordAttempt = options.recordAttempt ?? (async () => undefined);
   const createEventId = options.createEventId ?? randomUUID;

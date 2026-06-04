@@ -30,3 +30,23 @@ export function emitContentLifecycleEvent(input: {
       // perspective; sink failures must not fail the committed write.
     });
 }
+
+export async function commitContentMutationWithLifecycleEvent(input: {
+  sink?: ContentLifecycleEventSink;
+  event: ContentLifecycleEvent;
+  scope: ContentScope;
+  authorization: AuthorizedRequest;
+  mutate: () => Promise<ContentDocument>;
+}): Promise<ContentDocument> {
+  const document = await input.mutate();
+
+  emitContentLifecycleEvent({
+    sink: input.sink,
+    event: input.event,
+    scope: input.scope,
+    document,
+    authorization: input.authorization,
+  });
+
+  return document;
+}

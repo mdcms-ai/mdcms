@@ -13,7 +13,7 @@ import { createPayload } from "./webhooks/test-support.js";
 const validSecret = "0123456789abcdef0123456789abcdef";
 
 testWithDatabase(
-  "database webhook store persists scoped redacted configs and active event lookup",
+  "database webhook store persists scoped configs and active delivery target lookup",
   async () => {
     const { dbConnection, userId } = await createDatabaseTestContext(
       "test:webhooks-db-store",
@@ -55,16 +55,6 @@ testWithDatabase(
       assert.equal(listed.length, 1);
       assert.equal(listed[0]?.id, created.id);
 
-      const activePublished = await store.listActiveByEvent(
-        scope,
-        "content.published",
-      );
-      assert.deepEqual(
-        activePublished.map((webhook) => webhook.id),
-        [created.id],
-      );
-      assert.equal("secret" in activePublished[0]!, false);
-
       const activeDeliveryTargets = await store.listActiveTargetsByEvent(
         scope,
         "content.published",
@@ -75,7 +65,7 @@ testWithDatabase(
       );
       assert.equal(activeDeliveryTargets[0]?.secret, validSecret);
       assert.equal(
-        (await store.listActiveByEvent(scope, "content.deleted")).length,
+        (await store.listActiveTargetsByEvent(scope, "content.deleted")).length,
         0,
       );
 
@@ -92,7 +82,8 @@ testWithDatabase(
       assert.equal(updated.active, false);
       assert.equal(updated.updatedBy, userId);
       assert.equal(
-        (await store.listActiveByEvent(scope, "content.published")).length,
+        (await store.listActiveTargetsByEvent(scope, "content.published"))
+          .length,
         0,
       );
 

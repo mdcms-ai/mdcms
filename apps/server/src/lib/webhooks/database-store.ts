@@ -286,29 +286,6 @@ export function createDatabaseWebhookStore(
       return { deleted: true, id: deleted.id };
     },
 
-    async listActiveByEvent(scope, event) {
-      const scopeIds = await resolveWebhookScopeIds(options, scope);
-
-      if (!scopeIds) {
-        return [];
-      }
-
-      const rows = await db
-        .select()
-        .from(webhooks)
-        .where(
-          and(
-            eq(webhooks.projectId, scopeIds.projectId),
-            eq(webhooks.environmentId, scopeIds.environmentId),
-            eq(webhooks.active, true),
-            sql`${webhooks.events} @> ${JSON.stringify([event])}::jsonb`,
-          ),
-        )
-        .orderBy(desc(webhooks.createdAt), desc(webhooks.id));
-
-      return rows.map((row) => toWebhookConfig(scope, row));
-    },
-
     async listActiveTargetsByEvent(scope, event) {
       const scopeIds = await resolveWebhookScopeIds(options, scope);
 

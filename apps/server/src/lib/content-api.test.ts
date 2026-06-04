@@ -385,6 +385,150 @@ test("content API emits webhook events for document lifecycle mutations", async 
   );
 });
 
+test("content API emits webhook events for duplicate and version restore mutations", async () => {
+  const store = createInMemoryContentStore({
+    schemaScopes: [
+      {
+        project: scopeHeaders["x-mdcms-project"],
+        environment: scopeHeaders["x-mdcms-environment"],
+        schemas: createCms26ResolvedSchemas(),
+      },
+    ],
+  });
+  const emitted: Array<{
+    event: string;
+    documentId: string;
+  }> = [];
+  const rawHandler = createServerRequestHandler({
+    env: baseEnv,
+    configureApp: (app) => {
+      mountContentApiRoutes(app, {
+        store,
+        authorize: authorizeTestRequest,
+        requireCsrf: async () => undefined,
+        getWriteSchemaSyncState: async () => ({
+          schemaHash: inMemorySchemaHash,
+        }),
+        lifecycleEvents: {
+          async emitContentEvent(input) {
+            emitted.push({
+              event: input.event,
+              documentId: input.document.documentId,
+            });
+          },
+        },
+      });
+    },
+    now: () => new Date("2026-06-03T00:00:00.000Z"),
+  });
+  const handler = wrapHandlerWithAutoSchemaHash(
+    rawHandler,
+    () => inMemorySchemaHash,
+  );
+  const requestJson = (path: string, method: string, body?: unknown) =>
+    handler(
+      new Request(`http://localhost${path}`, {
+        method,
+        headers: {
+          ...scopeHeaders,
+          "content-type": "application/json",
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      }),
+    );
+
+  const createResponse = await requestJson("/api/v1/content", "POST", {
+    path: "blog/webhook-restore-source",
+    type: "BlogPost",
+    locale: "en",
+    format: "md",
+    frontmatter: { slug: "webhook-restore-source" },
+    body: "version one body",
+  });
+  const created = (await createResponse.json()) as {
+    data: { documentId: string };
+  };
+  assert.equal(createResponse.status, 200);
+  emitted.length = 0;
+
+  const duplicateResponse = await requestJson(
+    `/api/v1/content/${created.data.documentId}/duplicate`,
+    "POST",
+  );
+  const duplicated = (await duplicateResponse.json()) as {
+    data: { documentId: string };
+  };
+  assert.equal(duplicateResponse.status, 200);
+  assert.deepEqual(emitted, [
+    {
+      event: "content.created",
+      documentId: duplicated.data.documentId,
+    },
+  ]);
+
+  assert.equal(
+    (
+      await requestJson(
+        `/api/v1/content/${created.data.documentId}/publish`,
+        "POST",
+        { changeSummary: "publish v1" },
+      )
+    ).status,
+    200,
+  );
+  assert.equal(
+    (
+      await requestJson(`/api/v1/content/${created.data.documentId}`, "PUT", {
+        body: "version two body",
+      })
+    ).status,
+    200,
+  );
+  assert.equal(
+    (
+      await requestJson(
+        `/api/v1/content/${created.data.documentId}/publish`,
+        "POST",
+        { changeSummary: "publish v2" },
+      )
+    ).status,
+    200,
+  );
+  emitted.length = 0;
+
+  assert.equal(
+    (
+      await requestJson(
+        `/api/v1/content/${created.data.documentId}/versions/1/restore`,
+        "POST",
+        { targetStatus: "draft" },
+      )
+    ).status,
+    200,
+  );
+  assert.equal(
+    (
+      await requestJson(
+        `/api/v1/content/${created.data.documentId}/versions/2/restore`,
+        "POST",
+        { targetStatus: "published", changeSummary: "republish v2" },
+      )
+    ).status,
+    200,
+  );
+
+  assert.deepEqual(emitted, [
+    {
+      event: "content.updated",
+      documentId: created.data.documentId,
+    },
+    {
+      event: "content.published",
+      documentId: created.data.documentId,
+    },
+  ]);
+});
+
 test("content API rejects translation group grouping for non-localized types", async () => {
   const store = createInMemoryContentStore({
     schemaScopes: [

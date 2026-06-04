@@ -49,10 +49,6 @@ export type WebhookStore = {
     scope: WebhookScope,
     id: string,
   ) => Promise<{ deleted: true; id: string }>;
-  listActiveByEvent: (
-    scope: WebhookScope,
-    event: WebhookEvent,
-  ) => Promise<WebhookConfig[]>;
   listActiveTargetsByEvent: (
     scope: WebhookScope,
     event: WebhookEvent,
@@ -158,7 +154,7 @@ export type WebhookIdGenerator = () => string;
 
 export type CreateWebhookDeliveryWorkerOptions = {
   store?: WebhookStore;
-  deliver?: WebhookDeliverySink;
+  deliver: WebhookDeliverySink;
   resolveTargetAddresses?: WebhookTargetAddressResolver;
   retryPolicy?: WebhookRetryPolicy;
   sleep?: WebhookRetrySleeper;
@@ -170,7 +166,7 @@ export type CreateWebhookDeliveryWorkerOptions = {
 export type CreateWebhookEventDispatcherOptions = {
   store: WebhookStore;
   now?: () => Date;
-  deliver?: WebhookDeliverySink;
+  deliver: WebhookDeliverySink;
   resolveTargetAddresses?: WebhookTargetAddressResolver;
   retryPolicy?: WebhookRetryPolicy;
   sleep?: WebhookRetrySleeper;

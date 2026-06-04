@@ -23,7 +23,7 @@ import {
   parseRequestedResolvePaths,
   prepareResolvePlan,
 } from "./resolve.js";
-import { emitContentLifecycleEvent } from "./lifecycle-events.js";
+import { commitContentMutationWithLifecycleEvent } from "./lifecycle-events.js";
 import {
   stripUnknownFrontmatterFields,
   toDocumentResponse,
@@ -635,15 +635,15 @@ export function mountContentApiRoutes(
         scope,
         options.getWriteSchemaSyncState,
       );
-      const document = await options.store.create(scope, payload, {
-        expectedSchemaHash: schemaHash,
-      });
-      emitContentLifecycleEvent({
+      const document = await commitContentMutationWithLifecycleEvent({
         sink: options.lifecycleEvents,
         event: "content.created",
         scope,
-        document,
         authorization,
+        mutate: () =>
+          options.store.create(scope, payload, {
+            expectedSchemaHash: schemaHash,
+          }),
       });
 
       return {
@@ -711,21 +711,16 @@ export function mountContentApiRoutes(
             ? payload.draftRevision
             : undefined;
 
-        const document = await options.store.update(
-          scope,
-          params.documentId,
-          payload,
-          {
-            expectedSchemaHash: schemaHash,
-            expectedDraftRevision,
-          },
-        );
-        emitContentLifecycleEvent({
+        const document = await commitContentMutationWithLifecycleEvent({
           sink: options.lifecycleEvents,
           event: "content.updated",
           scope,
-          document,
           authorization,
+          mutate: () =>
+            options.store.update(scope, params.documentId, payload, {
+              expectedSchemaHash: schemaHash,
+              expectedDraftRevision,
+            }),
         });
 
         return {
@@ -770,13 +765,12 @@ export function mountContentApiRoutes(
           documentPath: existing.path,
         });
 
-        const document = await options.store.restore(scope, params.documentId);
-        emitContentLifecycleEvent({
+        const document = await commitContentMutationWithLifecycleEvent({
           sink: options.lifecycleEvents,
           event: "content.restored",
           scope,
-          document,
           authorization,
+          mutate: () => options.store.restore(scope, params.documentId),
         });
 
         return {
@@ -798,7 +792,7 @@ export function mountContentApiRoutes(
           targetStatus === "published" ? "content:publish" : "content:write";
         const version = parsePathInt(params.version, "version");
 
-        await options.authorize(request, {
+        const authorization = await options.authorize(request, {
           requiredScope,
           project: scope.project,
           environment: scope.environment,
@@ -846,16 +840,21 @@ export function mountContentApiRoutes(
           "changeSummary",
         );
         const actorId = parseOptionalString(payload.actorId, "actorId");
-        const document = await options.store.restoreVersion(
+        const document = await commitContentMutationWithLifecycleEvent({
+          sink: options.lifecycleEvents,
+          event:
+            targetStatus === "published"
+              ? "content.published"
+              : "content.updated",
           scope,
-          params.documentId,
-          version,
-          {
-            targetStatus,
-            changeSummary,
-            actorId,
-          },
-        );
+          authorization,
+          mutate: () =>
+            options.store.restoreVersion(scope, params.documentId, version, {
+              targetStatus,
+              changeSummary,
+              actorId,
+            }),
+        });
 
         return {
           data: toDocumentResponse(document),
@@ -903,16 +902,16 @@ export function mountContentApiRoutes(
           "changeSummary",
         );
         const actorId = parseOptionalString(payload.actorId, "actorId");
-        const document = await options.store.publish(scope, params.documentId, {
-          changeSummary,
-          actorId,
-        });
-        emitContentLifecycleEvent({
+        const document = await commitContentMutationWithLifecycleEvent({
           sink: options.lifecycleEvents,
           event: "content.published",
           scope,
-          document,
           authorization,
+          mutate: () =>
+            options.store.publish(scope, params.documentId, {
+              changeSummary,
+              actorId,
+            }),
         });
 
         return {
@@ -933,6 +932,7 @@ export function mountContentApiRoutes(
           project: scope.project,
           environment: scope.environment,
         });
+
         const existing = await options.store.getById(scope, params.documentId, {
           draft: true,
         });
@@ -957,19 +957,15 @@ export function mountContentApiRoutes(
 
         const payload = (body ?? {}) as ContentPublishPayload;
         const actorId = parseOptionalString(payload.actorId, "actorId");
-        const document = await options.store.unpublish(
-          scope,
-          params.documentId,
-          {
-            actorId,
-          },
-        );
-        emitContentLifecycleEvent({
+        const document = await commitContentMutationWithLifecycleEvent({
           sink: options.lifecycleEvents,
           event: "content.unpublished",
           scope,
-          document,
           authorization,
+          mutate: () =>
+            options.store.unpublish(scope, params.documentId, {
+              actorId,
+            }),
         });
 
         return {
@@ -981,11 +977,11 @@ export function mountContentApiRoutes(
 
   contentApp.post?.(
     "/api/v1/content/:documentId/duplicate",
-    ({ request, params, body }: any) => {
+    ({ request, params }: any) => {
       return executeWithRuntimeErrorsHandled(request, async () => {
         const scope = pickScope(request);
         await options.requireCsrf(request);
-        await options.authorize(request, {
+        const authorization = await options.authorize(request, {
           requiredScope: "content:write",
           project: scope.project,
           environment: scope.environment,
@@ -1028,18 +1024,25 @@ export function mountContentApiRoutes(
           });
 
           try {
-            const document = await options.store.create(
+            const document = await commitContentMutationWithLifecycleEvent({
+              sink: options.lifecycleEvents,
+              event: "content.created",
               scope,
-              {
-                path: candidatePath,
-                type: source.type,
-                locale: source.locale,
-                format: source.format,
-                frontmatter: source.frontmatter,
-                body: source.body,
-              },
-              schemaHash ? { expectedSchemaHash: schemaHash } : undefined,
-            );
+              authorization,
+              mutate: () =>
+                options.store.create(
+                  scope,
+                  {
+                    path: candidatePath,
+                    type: source.type,
+                    locale: source.locale,
+                    format: source.format,
+                    frontmatter: source.frontmatter,
+                    body: source.body,
+                  },
+                  schemaHash ? { expectedSchemaHash: schemaHash } : undefined,
+                ),
+            });
 
             return {
               data: toDocumentResponse(document),
@@ -1102,16 +1105,12 @@ export function mountContentApiRoutes(
           environment: scope.environment,
           documentPath: existing.path,
         });
-        const document = await options.store.softDelete(
-          scope,
-          params.documentId,
-        );
-        emitContentLifecycleEvent({
+        const document = await commitContentMutationWithLifecycleEvent({
           sink: options.lifecycleEvents,
           event: "content.deleted",
           scope,
-          document,
           authorization,
+          mutate: () => options.store.softDelete(scope, params.documentId),
         });
 
         return {
