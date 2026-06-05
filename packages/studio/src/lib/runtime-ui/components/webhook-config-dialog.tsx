@@ -244,14 +244,24 @@ export function WebhookConfigDialog(props: WebhookConfigDialogProps) {
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-2xl">
-        <form onSubmit={handleSubmit}>
-          <DialogHeader>
+      <DialogContent
+        data-mdcms-webhook-dialog-content
+        className="flex max-h-[calc(100dvh-2rem)] flex-col overflow-hidden sm:max-w-2xl"
+      >
+        <form
+          data-mdcms-webhook-dialog-form
+          onSubmit={handleSubmit}
+          className="flex min-h-0 flex-1 flex-col"
+        >
+          <DialogHeader className="shrink-0 pr-8">
             <DialogTitle>{title}</DialogTitle>
             <DialogDescription>{description}</DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4 py-4">
+          <div
+            data-mdcms-webhook-dialog-body
+            className="-mx-1 min-h-0 flex-1 space-y-4 overflow-y-auto px-1 py-4"
+          >
             <div className="space-y-2">
               <Label htmlFor="webhook-url">URL</Label>
               <Input
@@ -280,7 +290,7 @@ export function WebhookConfigDialog(props: WebhookConfigDialogProps) {
                       disabled={isSubmitting}
                       onClick={() => dispatch({ type: "event-toggle", event })}
                       className={cn(
-                        "group flex min-h-24 w-full items-start gap-3 rounded-md border border-border bg-background-subtle/40 p-3 text-left transition-colors hover:border-primary/40 hover:bg-primary/5 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+                        "group flex min-h-20 w-full items-start gap-3 rounded-md border border-border bg-background-subtle/40 p-3 text-left transition-colors hover:border-primary/40 hover:bg-primary/5 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
                         selected && "border-primary/60 bg-primary/10",
                         isSubmitting && "cursor-not-allowed opacity-50",
                       )}
@@ -307,9 +317,6 @@ export function WebhookConfigDialog(props: WebhookConfigDialogProps) {
                         <span className="mt-1 block text-xs leading-snug text-foreground-muted">
                           {display.description}
                         </span>
-                        <code className="mt-2 block font-mono text-[10px] text-foreground-muted/70">
-                          {event}
-                        </code>
                       </span>
                     </button>
                   );
@@ -361,7 +368,10 @@ export function WebhookConfigDialog(props: WebhookConfigDialogProps) {
             <WebhookConfigDialogError message={errorMessage} />
           </div>
 
-          <DialogFooter>
+          <DialogFooter
+            data-mdcms-webhook-dialog-footer
+            className="shrink-0 pt-2"
+          >
             <Button
               type="button"
               variant="ghost"

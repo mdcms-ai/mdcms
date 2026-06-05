@@ -273,6 +273,32 @@ test("WebhookConfigDialog renders event choices as operator-facing actions", () 
   assert.match(markup, /Notify when an asset is added to media storage/);
 });
 
+test("WebhookConfigDialog keeps long event choices inside a viewport-height modal", () => {
+  const markup = renderToStaticMarkup(
+    createElement(WebhookConfigDialog, {
+      mode: "create",
+      open: true,
+      onOpenChange: () => {},
+      onSubmit: async () => {},
+      isSubmitting: false,
+      error: null,
+    }),
+  );
+
+  assert.match(
+    markup,
+    /<div(?=[^>]*data-mdcms-webhook-dialog-content="true")(?=[^>]*class="[^"]*max-h-\[calc\(100dvh-2rem\)\][^"]*overflow-hidden)[^>]*>/,
+  );
+  assert.match(
+    markup,
+    /<div(?=[^>]*data-mdcms-webhook-dialog-body="true")(?=[^>]*class="[^"]*min-h-0[^"]*flex-1[^"]*overflow-y-auto)[^>]*>/,
+  );
+  assert.match(
+    markup,
+    /<div(?=[^>]*data-mdcms-webhook-dialog-footer="true")(?=[^>]*class="[^"]*shrink-0)[^>]*>/,
+  );
+});
+
 test("parent mutation errors are hidden until a submit attempt in the current open cycle", () => {
   const parentError = new Error("Stale mutation failure.");
   const initial = createInitialWebhookConfigDialogFormState("create");
