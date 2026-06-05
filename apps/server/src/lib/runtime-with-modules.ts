@@ -185,6 +185,22 @@ export function createServerRequestHandlerWithModules(
         ...(error ? { error } : {}),
       });
     },
+    onRecordAttemptError: ({ result, error }) => {
+      logger.error("webhook.delivery_attempt_record_failed", {
+        webhookId: result.delivery.webhook.id,
+        url: result.delivery.webhook.url,
+        event: result.delivery.payload.event,
+        eventId: result.delivery.eventId,
+        deliveryId: result.delivery.deliveryId,
+        project: result.delivery.payload.project,
+        environment: result.delivery.payload.environment,
+        attempt: result.delivery.attempt,
+        maxAttempts: result.delivery.maxAttempts,
+        outcome: result.outcome,
+        statusCode: result.statusCode ?? null,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    },
   });
   const actions = collectServerModuleActions(moduleLoadReport);
 

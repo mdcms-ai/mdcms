@@ -92,7 +92,7 @@ function WebhookHistoryFilters({
         />
       </div>
       <div className="space-y-1.5">
-        <Label>Event</Label>
+        <Label htmlFor="webhook-history-event">Event</Label>
         <Select
           value={state.filters.event || "all"}
           onValueChange={(value) =>
@@ -101,7 +101,10 @@ function WebhookHistoryFilters({
             })
           }
         >
-          <SelectTrigger className="h-9 rounded-sm border-border bg-background text-[13px]">
+          <SelectTrigger
+            id="webhook-history-event"
+            className="h-9 rounded-sm border-border bg-background text-[13px]"
+          >
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -115,7 +118,7 @@ function WebhookHistoryFilters({
         </Select>
       </div>
       <div className="space-y-1.5">
-        <Label>Outcome</Label>
+        <Label htmlFor="webhook-history-outcome">Outcome</Label>
         <Select
           value={state.filters.outcome || "all"}
           onValueChange={(value) =>
@@ -124,7 +127,10 @@ function WebhookHistoryFilters({
             })
           }
         >
-          <SelectTrigger className="h-9 rounded-sm border-border bg-background text-[13px]">
+          <SelectTrigger
+            id="webhook-history-outcome"
+            className="h-9 rounded-sm border-border bg-background text-[13px]"
+          >
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -138,14 +144,17 @@ function WebhookHistoryFilters({
         </Select>
       </div>
       <div className="space-y-1.5">
-        <Label>Limit</Label>
+        <Label htmlFor="webhook-history-limit">Limit</Label>
         <Select
           value={String(state.filters.limit)}
           onValueChange={(value) =>
             updateFilters(state, { limit: Number(value) })
           }
         >
-          <SelectTrigger className="h-9 rounded-sm border-border bg-background text-[13px]">
+          <SelectTrigger
+            id="webhook-history-limit"
+            className="h-9 rounded-sm border-border bg-background text-[13px]"
+          >
             <SelectValue />
           </SelectTrigger>
           <SelectContent>

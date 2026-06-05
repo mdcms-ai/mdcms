@@ -20,7 +20,7 @@ test("webhook signing creates the canonical HMAC header", () => {
   );
 });
 
-test("webhook signature verification accepts a fresh signature once", async () => {
+test("webhook signature verification accepts a fresh delivery once", async () => {
   const replayStore = createInMemoryWebhookReplayStore();
   const body = '{"event":"content.published"}';
   const signature = createWebhookSignatureHeader({
@@ -33,7 +33,7 @@ test("webhook signature verification accepts a fresh signature once", async () =
     secret: "0123456789abcdef0123456789abcdef",
     body,
     signature,
-    eventId: "018f0c6d-98da-7f25-89fe-7c7ef5e8597d",
+    deliveryId: "018f0c6d-98da-7f25-89fe-7c7ef5e8597d",
     now: () => new Date("2026-02-02T02:40:30.000Z"),
     replayStore,
   });
@@ -41,7 +41,7 @@ test("webhook signature verification accepts a fresh signature once", async () =
   assert.deepEqual(result, { ok: true });
 });
 
-test("webhook signature verification rejects stale timestamps and replayed event ids", async () => {
+test("webhook signature verification dedupes replay by delivery id", async () => {
   const replayStore = createInMemoryWebhookReplayStore();
   const body = '{"event":"content.published"}';
   const signature = createWebhookSignatureHeader({
@@ -53,7 +53,7 @@ test("webhook signature verification rejects stale timestamps and replayed event
     secret: "0123456789abcdef0123456789abcdef",
     body,
     signature,
-    eventId: "018f0c6d-98da-7f25-89fe-7c7ef5e8597d",
+    deliveryId: "018f0c6d-98da-7f25-89fe-7c7ef5e8597d",
     now: () => new Date("2026-02-02T02:40:30.000Z"),
     replayStore,
   };
@@ -63,6 +63,18 @@ test("webhook signature verification rejects stale timestamps and replayed event
     ok: false,
     reason: "event_replayed",
   });
+  assert.deepEqual(
+    await verifyWebhookSignature({
+      ...freshInput,
+      deliveryId: "018f0c6d-98da-7f25-89fe-7c7ef5e8597e",
+    }),
+    { ok: true },
+  );
+});
+
+test("webhook signature verification rejects stale timestamps", async () => {
+  const replayStore = createInMemoryWebhookReplayStore();
+  const body = '{"event":"content.published"}';
 
   const staleSignature = createWebhookSignatureHeader({
     secret: "0123456789abcdef0123456789abcdef",
@@ -75,7 +87,7 @@ test("webhook signature verification rejects stale timestamps and replayed event
       secret: "0123456789abcdef0123456789abcdef",
       body,
       signature: staleSignature,
-      eventId: "018f0c6d-98da-7f25-89fe-7c7ef5e8597e",
+      deliveryId: "018f0c6d-98da-7f25-89fe-7c7ef5e8597e",
       now: () => new Date("2026-02-02T02:46:00.000Z"),
       replayStore,
     }),

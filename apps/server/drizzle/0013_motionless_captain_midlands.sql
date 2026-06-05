@@ -15,6 +15,7 @@ CREATE TABLE "webhook_delivery_attempts" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "webhook_delivery_attempts_attempt_check" CHECK ("webhook_delivery_attempts"."attempt" > 0),
 	CONSTRAINT "webhook_delivery_attempts_max_attempts_check" CHECK ("webhook_delivery_attempts"."max_attempts" > 0),
+	CONSTRAINT "webhook_delivery_attempts_attempt_le_max_attempts_check" CHECK ("webhook_delivery_attempts"."attempt" <= "webhook_delivery_attempts"."max_attempts"),
 	CONSTRAINT "webhook_delivery_attempts_outcome_check" CHECK ("webhook_delivery_attempts"."outcome" in ('succeeded', 'retrying', 'failed', 'discarded')),
 	CONSTRAINT "webhook_delivery_attempts_status_code_check" CHECK ("webhook_delivery_attempts"."status_code" is null or ("webhook_delivery_attempts"."status_code" >= 100 and "webhook_delivery_attempts"."status_code" <= 599))
 );

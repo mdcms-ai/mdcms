@@ -101,3 +101,56 @@ test("webhook HTTP delivery sink disables automatic redirects", async () => {
     /Webhook delivery failed with status 302/,
   );
 });
+
+test("webhook HTTP delivery sink aborts stalled fetch requests after timeout", async () => {
+  const sink = createWebhookHttpDeliverySink({
+    timeoutMs: 5,
+    resolveTargetAddresses: async () => ["93.184.216.34"],
+    fetch: async (_input, init) =>
+      new Promise<Response>((_resolve, reject) => {
+        const failIfNotAborted = setTimeout(() => {
+          reject(new Error("fetch was not aborted"));
+        }, 30);
+
+        init?.signal?.addEventListener("abort", () => {
+          clearTimeout(failIfNotAborted);
+          reject(new Error("fetch aborted"));
+        });
+      }),
+  });
+
+  await assert.rejects(
+    () =>
+      Promise.resolve(
+        sink({
+          webhook: createTarget(),
+          payload: createPayload(),
+          eventId: "018f0c6d-98da-7f25-89fe-7c7ef5e8597e",
+          deliveryId: "018f0c6d-98da-7f25-89fe-7c7ef5e8597f",
+          attempt: 1,
+          maxAttempts: 3,
+        }),
+      ),
+    /fetch aborted/,
+  );
+});
+
+test("webhook HTTP delivery sink passes timeout to pinned transport", async () => {
+  const sink = createWebhookHttpDeliverySink({
+    timeoutMs: 123,
+    resolveTargetAddresses: async () => ["93.184.216.34"],
+    transport: async (input) => {
+      assert.equal(input.timeoutMs, 123);
+      return { status: 202 };
+    },
+  });
+
+  await sink({
+    webhook: createTarget(),
+    payload: createPayload(),
+    eventId: "018f0c6d-98da-7f25-89fe-7c7ef5e8597e",
+    deliveryId: "018f0c6d-98da-7f25-89fe-7c7ef5e8597f",
+    attempt: 1,
+    maxAttempts: 3,
+  });
+});

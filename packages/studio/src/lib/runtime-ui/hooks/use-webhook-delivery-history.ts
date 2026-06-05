@@ -78,6 +78,8 @@ export function useWebhookDeliveryHistory(
     return createStudioWebhooksApi(apiConfig.config, apiConfig.authOptions);
   }, [apiConfig, canLoad]);
 
+  const historyQuery = useMemo(() => toHistoryQuery(filters), [filters]);
+
   const query = useQuery({
     queryKey: [
       "webhook-delivery-history",
@@ -88,13 +90,13 @@ export function useWebhookDeliveryHistory(
       apiConfig?.authOptions.auth.mode === "token"
         ? apiConfig.authOptions.auth.token
         : null,
-      filters.webhookId,
-      filters.event,
-      filters.outcome,
-      filters.limit,
+      historyQuery.webhookId ?? null,
+      historyQuery.event ?? null,
+      historyQuery.outcome ?? null,
+      historyQuery.limit,
     ],
     enabled: api !== null,
-    queryFn: async () => api!.listDeliveryHistory(toHistoryQuery(filters)),
+    queryFn: async () => api!.listDeliveryHistory(historyQuery),
   });
 
   const entries = query.data ?? [];

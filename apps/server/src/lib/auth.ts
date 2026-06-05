@@ -2162,6 +2162,9 @@ function buildCapabilitiesFromApiKeyScopes(
     scopes,
     "content:delete",
   );
+  capabilities.settings.manage = scopes.some(
+    (scope) => toRbacAction(scope) === "settings:manage",
+  );
   capabilities.ai.use = apiKeyScopesSatisfyRequirement(scopes, "ai:use");
 
   return capabilities;

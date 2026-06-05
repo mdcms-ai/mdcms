@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type {
   CreateWebhookDeliveryWorkerOptions,
+  WebhookDeliveryAttemptResult,
   WebhookDeliveryInput,
   WebhookDeliveryQueueInput,
   WebhookDeliveryQueue,
@@ -70,6 +71,8 @@ export function createWebhookDeliveryWorker(
   const deliver = options.deliver;
   const sleep = options.sleep ?? defaultSleep;
   const recordAttempt = options.recordAttempt ?? (async () => undefined);
+  const onRecordAttemptError =
+    options.onRecordAttemptError ?? (async () => undefined);
   const createEventId = options.createEventId ?? randomUUID;
   const createDeliveryId = options.createDeliveryId ?? randomUUID;
   const pending = new Set<Promise<void>>();
@@ -78,6 +81,21 @@ export function createWebhookDeliveryWorker(
     const tracked = work.catch(() => undefined);
     pending.add(tracked);
     tracked.finally(() => pending.delete(tracked));
+  };
+
+  const safelyRecordAttempt = async (
+    result: WebhookDeliveryAttemptResult,
+  ): Promise<void> => {
+    try {
+      await recordAttempt(result);
+    } catch (error) {
+      try {
+        await onRecordAttemptError({ result, error });
+      } catch {
+        // Delivery history persistence is best effort; reporting failures
+        // must not trigger retries or duplicate sends.
+      }
+    }
   };
 
   const runAttempt = async (
@@ -101,7 +119,7 @@ export function createWebhookDeliveryWorker(
         ...attemptDelivery,
         target,
       });
-      await recordAttempt({
+      await safelyRecordAttempt({
         delivery: {
           ...attemptDelivery,
           target,
@@ -112,7 +130,7 @@ export function createWebhookDeliveryWorker(
     } catch (error) {
       const terminal = isTerminalTargetValidationError(error);
       if (terminal || attempt >= maxAttempts) {
-        await recordAttempt({
+        await safelyRecordAttempt({
           delivery: attemptDelivery,
           outcome: terminal ? "discarded" : "failed",
           statusCode: statusCodeFromError(error),
@@ -125,7 +143,7 @@ export function createWebhookDeliveryWorker(
         retryPolicy.retryDelaysMs[attempt - 1] ??
         retryPolicy.retryDelaysMs.at(-1) ??
         0;
-      await recordAttempt({
+      await safelyRecordAttempt({
         delivery: attemptDelivery,
         outcome: "retrying",
         statusCode: statusCodeFromError(error),

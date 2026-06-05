@@ -569,6 +569,10 @@ export const webhookDeliveryAttempts = pgTable(
       sql`${table.maxAttempts} > 0`,
     ),
     check(
+      "webhook_delivery_attempts_attempt_le_max_attempts_check",
+      sql`${table.attempt} <= ${table.maxAttempts}`,
+    ),
+    check(
       "webhook_delivery_attempts_outcome_check",
       sql`${table.outcome} in ('succeeded', 'retrying', 'failed', 'discarded')`,
     ),

@@ -15,10 +15,13 @@ import {
 
 export type WebhookFetch = typeof fetch;
 
+export const DEFAULT_WEBHOOK_DELIVERY_TIMEOUT_MS = 10_000;
+
 export type WebhookHttpTransportInput = {
   target: ResolvedWebhookTarget;
   body: string;
   headers: Record<string, string>;
+  timeoutMs: number;
 };
 
 export type WebhookHttpTransport = (
@@ -30,6 +33,7 @@ export type CreateWebhookHttpDeliverySinkOptions = {
   transport?: WebhookHttpTransport;
   resolveTargetAddresses?: WebhookTargetAddressResolver;
   now?: () => Date;
+  timeoutMs?: number;
 };
 
 export class WebhookHttpDeliveryError extends Error {
@@ -76,6 +80,11 @@ function sendWithPinnedTarget(
     );
 
     request.on("error", reject);
+    request.setTimeout(input.timeoutMs, () => {
+      request.destroy(
+        new Error(`Webhook delivery timed out after ${input.timeoutMs}ms.`),
+      );
+    });
     request.end(input.body);
   });
 }
@@ -85,6 +94,10 @@ export function createWebhookHttpDeliverySink(
 ): WebhookDeliverySink {
   const send = options.fetch ?? fetch;
   const transport = options.transport ?? sendWithPinnedTarget;
+  const timeoutMs = Math.max(
+    1,
+    Math.floor(options.timeoutMs ?? DEFAULT_WEBHOOK_DELIVERY_TIMEOUT_MS),
+  );
 
   return async ({
     webhook,
@@ -113,16 +126,31 @@ export function createWebhookHttpDeliverySink(
       [WEBHOOK_EVENT_ID_HEADER]: eventId,
     };
     const response = options.fetch
-      ? await send(target.url, {
-          method: "POST",
-          headers,
-          redirect: "manual",
-          body,
-        })
+      ? await (async () => {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => {
+            controller.abort(
+              new Error(`Webhook delivery timed out after ${timeoutMs}ms.`),
+            );
+          }, timeoutMs);
+
+          try {
+            return await send(target.url, {
+              method: "POST",
+              headers,
+              redirect: "manual",
+              body,
+              signal: controller.signal,
+            });
+          } finally {
+            clearTimeout(timeout);
+          }
+        })()
       : await transport({
           target,
           body,
           headers,
+          timeoutMs,
         });
 
     const status = response.status;

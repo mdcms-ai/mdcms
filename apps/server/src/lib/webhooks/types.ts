@@ -145,6 +145,11 @@ export type WebhookDeliveryAttemptRecorder = (
   result: WebhookDeliveryAttemptResult,
 ) => Promise<void> | void;
 
+export type WebhookDeliveryAttemptRecordErrorHandler = (input: {
+  result: WebhookDeliveryAttemptResult;
+  error: unknown;
+}) => Promise<void> | void;
+
 export type WebhookDeliveryQueue = {
   enqueue: (input: WebhookDeliveryQueueInput) => void;
   drain: () => Promise<void>;
@@ -159,6 +164,7 @@ export type CreateWebhookDeliveryWorkerOptions = {
   retryPolicy?: WebhookRetryPolicy;
   sleep?: WebhookRetrySleeper;
   recordAttempt?: WebhookDeliveryAttemptRecorder;
+  onRecordAttemptError?: WebhookDeliveryAttemptRecordErrorHandler;
   createEventId?: WebhookIdGenerator;
   createDeliveryId?: WebhookIdGenerator;
 };
@@ -171,6 +177,7 @@ export type CreateWebhookEventDispatcherOptions = {
   retryPolicy?: WebhookRetryPolicy;
   sleep?: WebhookRetrySleeper;
   recordAttempt?: WebhookDeliveryAttemptRecorder;
+  onRecordAttemptError?: WebhookDeliveryAttemptRecordErrorHandler;
   deliveryQueue?: WebhookDeliveryQueue;
   createEventId?: WebhookIdGenerator;
   createDeliveryId?: WebhookIdGenerator;

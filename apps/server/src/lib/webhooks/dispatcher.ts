@@ -32,6 +32,7 @@ export function createWebhookEventDispatcher(
       retryPolicy: options.retryPolicy,
       sleep: options.sleep,
       recordAttempt: options.recordAttempt,
+      onRecordAttemptError: options.onRecordAttemptError,
       createEventId,
       createDeliveryId: options.createDeliveryId,
     });

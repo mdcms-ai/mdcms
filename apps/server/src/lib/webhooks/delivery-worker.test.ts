@@ -195,6 +195,72 @@ test("webhook delivery worker records successful HTTP status codes", async () =>
   assert.deepEqual(statusCodes, [202]);
 });
 
+test("webhook delivery worker does not resend when recording success fails", async () => {
+  const attempts: number[] = [];
+  const outcomes: string[] = [];
+  const worker = createWebhookDeliveryWorker({
+    resolveTargetAddresses: async () => ["93.184.216.34"],
+    retryPolicy: {
+      maxAttempts: 2,
+      retryDelaysMs: [0],
+    },
+    sleep: async () => undefined,
+    deliver: async (delivery) => {
+      attempts.push(delivery.attempt);
+      return { statusCode: 202 };
+    },
+    recordAttempt: (result) => {
+      outcomes.push(result.outcome);
+      if (result.outcome === "succeeded") {
+        throw new Error("delivery history unavailable");
+      }
+    },
+  });
+
+  worker.enqueue({
+    webhook: createTarget(),
+    payload: createPayload(),
+  });
+  await worker.drain();
+
+  assert.deepEqual(attempts, [1]);
+  assert.deepEqual(outcomes, ["succeeded"]);
+});
+
+test("webhook delivery worker retries delivery failures when recording retry state fails", async () => {
+  const attempts: number[] = [];
+  const outcomes: string[] = [];
+  const worker = createWebhookDeliveryWorker({
+    resolveTargetAddresses: async () => ["93.184.216.34"],
+    retryPolicy: {
+      maxAttempts: 2,
+      retryDelaysMs: [0],
+    },
+    sleep: async () => undefined,
+    deliver: async (delivery) => {
+      attempts.push(delivery.attempt);
+      if (delivery.attempt === 1) {
+        throw new Error("transient failure");
+      }
+    },
+    recordAttempt: (result) => {
+      outcomes.push(result.outcome);
+      if (result.outcome === "retrying") {
+        throw new Error("delivery history unavailable");
+      }
+    },
+  });
+
+  worker.enqueue({
+    webhook: createTarget(),
+    payload: createPayload(),
+  });
+  await worker.drain();
+
+  assert.deepEqual(attempts, [1, 2]);
+  assert.deepEqual(outcomes, ["retrying", "succeeded"]);
+});
+
 test("webhook delivery worker does not retry forbidden targets", async () => {
   let attempts = 0;
   let sleeps = 0;

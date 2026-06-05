@@ -18,7 +18,7 @@ export {
 
 export type WebhookReplayStore = {
   accept: (
-    eventId: string,
+    deliveryId: string,
     expiresAtUnixSeconds: number,
     nowUnixSeconds: number,
   ) => Promise<boolean> | boolean;
@@ -49,7 +49,7 @@ export type VerifyWebhookSignatureInput = {
   // Must be the exact raw request body string; parsed and re-serialized JSON is not signature-equivalent.
   body: string;
   signature: string | null | undefined;
-  eventId: string;
+  deliveryId: string;
   replayStore: WebhookReplayStore;
   now?: () => Date;
   skewToleranceSeconds?: number;
@@ -57,22 +57,22 @@ export type VerifyWebhookSignatureInput = {
 };
 
 export function createInMemoryWebhookReplayStore(): WebhookReplayStore {
-  const acceptedEventIds = new Map<string, number>();
+  const acceptedDeliveryIds = new Map<string, number>();
 
   return {
-    accept(eventId, expiresAtUnixSeconds, nowUnixSeconds) {
-      for (const [candidate, expiresAt] of acceptedEventIds) {
+    accept(deliveryId, expiresAtUnixSeconds, nowUnixSeconds) {
+      for (const [candidate, expiresAt] of acceptedDeliveryIds) {
         if (expiresAt <= nowUnixSeconds) {
-          acceptedEventIds.delete(candidate);
+          acceptedDeliveryIds.delete(candidate);
         }
       }
 
-      const existingExpiry = acceptedEventIds.get(eventId);
+      const existingExpiry = acceptedDeliveryIds.get(deliveryId);
       if (existingExpiry !== undefined && existingExpiry > nowUnixSeconds) {
         return false;
       }
 
-      acceptedEventIds.set(eventId, expiresAtUnixSeconds);
+      acceptedDeliveryIds.set(deliveryId, expiresAtUnixSeconds);
       return true;
     },
   };
@@ -167,7 +167,7 @@ export async function verifyWebhookSignature(
   const replayRetentionSeconds =
     input.replayRetentionSeconds ?? WEBHOOK_REPLAY_RETENTION_SECONDS;
   const accepted = await input.replayStore.accept(
-    input.eventId,
+    input.deliveryId,
     nowUnixSeconds + replayRetentionSeconds,
     nowUnixSeconds,
   );

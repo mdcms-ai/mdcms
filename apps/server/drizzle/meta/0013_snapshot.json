@@ -2404,6 +2404,10 @@
           "name": "webhook_delivery_attempts_max_attempts_check",
           "value": "\"webhook_delivery_attempts\".\"max_attempts\" > 0"
         },
+        "webhook_delivery_attempts_attempt_le_max_attempts_check": {
+          "name": "webhook_delivery_attempts_attempt_le_max_attempts_check",
+          "value": "\"webhook_delivery_attempts\".\"attempt\" <= \"webhook_delivery_attempts\".\"max_attempts\""
+        },
         "webhook_delivery_attempts_outcome_check": {
           "name": "webhook_delivery_attempts_outcome_check",
           "value": "\"webhook_delivery_attempts\".\"outcome\" in ('succeeded', 'retrying', 'failed', 'discarded')"

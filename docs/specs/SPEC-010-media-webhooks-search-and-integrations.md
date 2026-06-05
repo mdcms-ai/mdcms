@@ -2,7 +2,7 @@
 status: live
 canonical: true
 created: 2026-03-11
-last_updated: 2026-03-11
+last_updated: 2026-06-05
 ---
 
 # SPEC-010 Media, Webhooks, Search, and Integrations
@@ -227,9 +227,10 @@ Signed delivery headers use HMAC-SHA256 with the webhook secret.
 - Receivers verify the signature against the exact raw request body bytes.
 - Verification rejects missing or malformed signature headers, signatures whose
   timestamp is outside the 5-minute skew tolerance, signature mismatches, and
-  event ids that have already been accepted within the replay retention window.
+  delivery ids that have already been accepted within the replay retention
+  window.
 - The default replay retention window is 5 minutes. Operators may keep accepted
-  event ids longer, but must retain them for at least the skew tolerance.
+  delivery ids longer, but must retain them for at least the skew tolerance.
 
 ### Delivery
 

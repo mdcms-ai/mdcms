@@ -20,8 +20,8 @@
 
 - Modify `docs/specs/SPEC-010-media-webhooks-search-and-integrations.md`: make the Studio configuration UI canonical and define role-aware UI behavior.
 - Modify `packages/studio/README.md`: document the Settings -> Webhooks operator workflow.
-- Modify `packages/studio/src/lib/runtime-ui/lib/webhooks-api.ts`: add configuration list/create/update/delete methods.
-- Modify `packages/studio/src/lib/runtime-ui/lib/webhooks-api.test.ts`: cover CRUD routing, scoped headers, CSRF headers, bearer auth, invalid responses, and route errors.
+- Modify `packages/studio/src/lib/webhooks-api.ts`: add configuration list/create/update/delete methods.
+- Modify `packages/studio/src/lib/webhooks-api.test.ts`: cover CRUD routing, scoped headers, CSRF headers, bearer auth, invalid responses, and route errors.
 - Create `packages/studio/src/lib/runtime-ui/hooks/use-webhook-config-list.ts`: own configuration query and mutations.
 - Create `packages/studio/src/lib/runtime-ui/components/webhook-config-dialog.tsx`: own create/edit dialog, reducer, event multi-select, secret handling, URL and active controls.
 - Create `packages/studio/src/lib/runtime-ui/components/webhook-config-dialog.test.ts`: test input builders, submittable rules, reducer event toggles, and edit secret omission.
@@ -134,12 +134,12 @@ Expected: `All matched files use Prettier code style!`
 ### Task 2: Studio Webhooks API Client CRUD
 
 **Files:**
-- Modify: `packages/studio/src/lib/runtime-ui/lib/webhooks-api.test.ts`
-- Modify: `packages/studio/src/lib/runtime-ui/lib/webhooks-api.ts`
+- Modify: `packages/studio/src/lib/webhooks-api.test.ts`
+- Modify: `packages/studio/src/lib/webhooks-api.ts`
 
 - [ ] **Step 1: Write failing API client tests**
 
-Append these tests to `packages/studio/src/lib/runtime-ui/lib/webhooks-api.test.ts`:
+Append these tests to `packages/studio/src/lib/webhooks-api.test.ts`:
 
 ```ts
 import type { WebhookConfig, WebhookCreateInput } from "@mdcms/shared";
@@ -325,14 +325,14 @@ test("config requests surface route errors and reject invalid responses", async 
 Run:
 
 ```bash
-bun test --cwd packages/studio ./src/lib/runtime-ui/lib/webhooks-api.test.ts
+bun test --cwd packages/studio ./src/lib/webhooks-api.test.ts
 ```
 
 Expected: fail with `api.listConfigs is not a function`.
 
 - [ ] **Step 3: Implement CRUD methods**
 
-In `packages/studio/src/lib/runtime-ui/lib/webhooks-api.ts`, update the shared import:
+In `packages/studio/src/lib/webhooks-api.ts`, update the shared import:
 
 ```ts
 import {
@@ -551,7 +551,7 @@ Change the delivery history request headers to use `createScopedHeaders(config)`
 Run:
 
 ```bash
-bun test --cwd packages/studio ./src/lib/runtime-ui/lib/webhooks-api.test.ts
+bun test --cwd packages/studio ./src/lib/webhooks-api.test.ts
 ```
 
 Expected: all tests pass.
@@ -1994,7 +1994,7 @@ Expected: the new spec passes against the running Studio example. If the local s
 Run:
 
 ```bash
-bun test --cwd packages/studio ./src/lib/runtime-ui/lib/webhooks-api.test.ts ./src/lib/runtime-ui/components/webhook-config-dialog.test.ts ./src/lib/runtime-ui/app/admin/settings-page.test.tsx
+bun test --cwd packages/studio ./src/lib/webhooks-api.test.ts ./src/lib/runtime-ui/components/webhook-config-dialog.test.ts ./src/lib/runtime-ui/app/admin/settings-page.test.tsx
 ```
 
 Expected: all tests pass.
@@ -2026,7 +2026,7 @@ Run:
 
 ```bash
 git status --short
-git diff -- docs/specs/SPEC-010-media-webhooks-search-and-integrations.md packages/studio/README.md packages/studio/src/lib/runtime-ui/lib/webhooks-api.ts packages/studio/src/lib/runtime-ui/hooks/use-webhook-config-list.ts packages/studio/src/lib/runtime-ui/components/webhook-config-dialog.tsx packages/studio/src/lib/runtime-ui/app/admin/settings-webhooks-panel.tsx packages/studio/src/lib/runtime-ui/app/admin/settings-page.tsx packages/studio/src/lib/runtime-ui/app/admin/settings-page.test.tsx packages/studio/src/lib/runtime-ui/lib/webhooks-api.test.ts packages/studio/src/lib/runtime-ui/components/webhook-config-dialog.test.ts e2e/studio-webhooks-settings.spec.ts package.json
+git diff -- docs/specs/SPEC-010-media-webhooks-search-and-integrations.md packages/studio/README.md packages/studio/src/lib/webhooks-api.ts packages/studio/src/lib/runtime-ui/hooks/use-webhook-config-list.ts packages/studio/src/lib/runtime-ui/components/webhook-config-dialog.tsx packages/studio/src/lib/runtime-ui/app/admin/settings-webhooks-panel.tsx packages/studio/src/lib/runtime-ui/app/admin/settings-page.tsx packages/studio/src/lib/runtime-ui/app/admin/settings-page.test.tsx packages/studio/src/lib/webhooks-api.test.ts packages/studio/src/lib/runtime-ui/components/webhook-config-dialog.test.ts e2e/studio-webhooks-settings.spec.ts package.json
 ```
 
 Expected: only CMS-105 files plus previously staged webhook epic files are present; unrelated untracked local artifacts remain unstaged.
@@ -2036,7 +2036,7 @@ Expected: only CMS-105 files plus previously staged webhook epic files are prese
 Run:
 
 ```bash
-git add .ai/plans/2026-06-04-cms-105-studio-webhooks-crud.md docs/specs/SPEC-010-media-webhooks-search-and-integrations.md packages/studio/README.md packages/studio/src/lib/runtime-ui/lib/webhooks-api.ts packages/studio/src/lib/runtime-ui/hooks/use-webhook-config-list.ts packages/studio/src/lib/runtime-ui/components/webhook-config-dialog.tsx packages/studio/src/lib/runtime-ui/components/webhook-config-dialog.test.ts packages/studio/src/lib/runtime-ui/app/admin/settings-webhooks-panel.tsx packages/studio/src/lib/runtime-ui/app/admin/settings-page.tsx packages/studio/src/lib/runtime-ui/app/admin/settings-page.test.tsx packages/studio/src/lib/runtime-ui/lib/webhooks-api.test.ts e2e/studio-webhooks-settings.spec.ts package.json
+git add .ai/plans/2026-06-04-cms-105-studio-webhooks-crud.md .ai/memory/lessons.md .changeset/silent-lemons-play.md docs/specs/SPEC-010-media-webhooks-search-and-integrations.md packages/studio/README.md packages/studio/src/lib/webhooks-api.ts packages/studio/src/lib/runtime-ui/hooks/use-webhook-config-list.ts packages/studio/src/lib/runtime-ui/components/webhook-config-dialog.tsx packages/studio/src/lib/runtime-ui/components/webhook-config-dialog.test.ts packages/studio/src/lib/runtime-ui/app/admin/settings-webhooks-panel.tsx packages/studio/src/lib/runtime-ui/app/admin/settings-page.tsx packages/studio/src/lib/runtime-ui/app/admin/settings-page.test.tsx packages/studio/src/lib/webhooks-api.test.ts e2e/studio-webhooks-settings.spec.ts package.json
 ```
 
 Expected: files are staged. Do not stage unrelated untracked `.ai/plans/2026-03-*`, `.mdcms/`, `apps/studio-example/content/`, or local report files.
