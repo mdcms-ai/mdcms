@@ -115,11 +115,13 @@ function WebhookConfigErrorState({
 function WebhookConfigReadyState({
   configs,
   isMutating,
+  updateError,
   onToggleActive,
   onDelete,
 }: {
   configs: WebhookConfig[];
   isMutating: boolean;
+  updateError: Error | null;
   onToggleActive: (config: WebhookConfig, active: boolean) => void;
   onDelete: (config: WebhookConfig) => void;
 }) {
@@ -151,21 +153,32 @@ function WebhookConfigReadyState({
                 <WebhookEventList events={config.events} />
               </TableCell>
               <TableCell>
-                <div className="flex items-center gap-2">
-                  <Switch
-                    checked={config.active}
-                    onCheckedChange={(active) => onToggleActive(config, active)}
-                    disabled={isMutating}
-                    aria-label={`${config.active ? "Disable" : "Enable"} webhook ${config.id}`}
-                  />
-                  <span
-                    className={cn(
-                      "text-xs font-medium",
-                      config.active ? "text-success" : "text-foreground-muted",
-                    )}
-                  >
-                    {config.active ? "Active" : "Inactive"}
-                  </span>
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      checked={config.active}
+                      onCheckedChange={(active) =>
+                        onToggleActive(config, active)
+                      }
+                      disabled={isMutating}
+                      aria-label={`${config.active ? "Disable" : "Enable"} webhook ${config.id}`}
+                    />
+                    <span
+                      className={cn(
+                        "text-xs font-medium",
+                        config.active
+                          ? "text-success"
+                          : "text-foreground-muted",
+                      )}
+                    >
+                      {config.active ? "Active" : "Inactive"}
+                    </span>
+                  </div>
+                  {updateError ? (
+                    <p className="text-xs text-destructive" role="alert">
+                      {updateError.message}
+                    </p>
+                  ) : null}
                 </div>
               </TableCell>
               <TableCell className="min-w-[11rem] text-sm text-foreground-muted">
@@ -243,6 +256,7 @@ function WebhookConfigStateView({
     <WebhookConfigReadyState
       configs={state.configs}
       isMutating={isMutating}
+      updateError={state.updateError}
       onToggleActive={onToggleActive}
       onDelete={onDelete}
     />

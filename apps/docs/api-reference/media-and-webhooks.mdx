@@ -128,18 +128,26 @@ curl "https://cms.example.com/api/v1/webhooks" \
 {
   "data": [
     {
-      "id": "wh_550e8400-e29b-41d4-a716-446655440000",
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "project": "marketing-site",
+      "environment": "production",
       "url": "https://api.example.com/webhooks/mdcms",
       "events": ["content.published", "content.unpublished"],
       "active": true,
+      "createdBy": "user_01HZX9N8Y6M2J4K7V3P6Q8R9SA",
+      "updatedBy": "user_01HZX9N8Y6M2J4K7V3P6Q8R9SA",
       "createdAt": "2026-01-10T12:00:00.000Z",
       "updatedAt": "2026-01-10T12:00:00.000Z"
     },
     {
-      "id": "wh_660e8400-e29b-41d4-a716-446655440001",
+      "id": "660e8400-e29b-41d4-a716-446655440001",
+      "project": "marketing-site",
+      "environment": "production",
       "url": "https://deploy.example.com/trigger",
       "events": ["content.published"],
       "active": true,
+      "createdBy": "user_01HZX9N8Y6M2J4K7V3P6Q8R9SA",
+      "updatedBy": "user_01HZX9N8Y6M2J4K7V3P6Q8R9SA",
       "createdAt": "2026-01-12T08:00:00.000Z",
       "updatedAt": "2026-01-12T08:00:00.000Z"
     }
@@ -195,10 +203,14 @@ curl -X POST "https://cms.example.com/api/v1/webhooks" \
 ```json
 {
   "data": {
-    "id": "wh_770e8400-e29b-41d4-a716-446655440002",
+    "id": "770e8400-e29b-41d4-a716-446655440002",
+    "project": "marketing-site",
+    "environment": "production",
     "url": "https://api.example.com/webhooks/mdcms",
     "events": ["content.published", "content.unpublished", "content.deleted"],
     "active": true,
+    "createdBy": "user_01HZX9N8Y6M2J4K7V3P6Q8R9SA",
+    "updatedBy": "user_01HZX9N8Y6M2J4K7V3P6Q8R9SA",
     "createdAt": "2026-01-20T10:00:00.000Z",
     "updatedAt": "2026-01-20T10:00:00.000Z"
   }
@@ -239,7 +251,7 @@ curl -X POST "https://cms.example.com/api/v1/webhooks" \
 **Example request:**
 
 ```bash
-curl -X PUT "https://cms.example.com/api/v1/webhooks/wh_770e8400-e29b-41d4-a716-446655440002" \
+curl -X PUT "https://cms.example.com/api/v1/webhooks/770e8400-e29b-41d4-a716-446655440002" \
   -H "Content-Type: application/json" \
   -H "X-MDCMS-Project: marketing-site" \
   -H "X-MDCMS-Environment: production" \
@@ -256,7 +268,9 @@ curl -X PUT "https://cms.example.com/api/v1/webhooks/wh_770e8400-e29b-41d4-a716-
 ```json
 {
   "data": {
-    "id": "wh_770e8400-e29b-41d4-a716-446655440002",
+    "id": "770e8400-e29b-41d4-a716-446655440002",
+    "project": "marketing-site",
+    "environment": "production",
     "url": "https://api.example.com/webhooks/mdcms",
     "events": [
       "content.published",
@@ -265,6 +279,8 @@ curl -X PUT "https://cms.example.com/api/v1/webhooks/wh_770e8400-e29b-41d4-a716-
       "content.created"
     ],
     "active": true,
+    "createdBy": "user_01HZX9N8Y6M2J4K7V3P6Q8R9SA",
+    "updatedBy": "user_01HZX9N8Y6M2J4K7V3P6Q8R9SA",
     "createdAt": "2026-01-20T10:00:00.000Z",
     "updatedAt": "2026-01-20T11:00:00.000Z"
   }
@@ -288,7 +304,7 @@ curl -X PUT "https://cms.example.com/api/v1/webhooks/wh_770e8400-e29b-41d4-a716-
 **Example request:**
 
 ```bash
-curl -X DELETE "https://cms.example.com/api/v1/webhooks/wh_770e8400-e29b-41d4-a716-446655440002" \
+curl -X DELETE "https://cms.example.com/api/v1/webhooks/770e8400-e29b-41d4-a716-446655440002" \
   -H "X-MDCMS-Project: marketing-site" \
   -H "X-MDCMS-Environment: production" \
   -H "X-MDCMS-CSRF-Token: csrf_token_value" \
@@ -300,9 +316,8 @@ curl -X DELETE "https://cms.example.com/api/v1/webhooks/wh_770e8400-e29b-41d4-a7
 ```json
 {
   "data": {
-    "success": true,
-    "id": "wh_770e8400-e29b-41d4-a716-446655440002",
-    "deletedAt": "2026-01-21T10:00:00.000Z"
+    "deleted": true,
+    "id": "770e8400-e29b-41d4-a716-446655440002"
   }
 }
 ```
@@ -331,12 +346,18 @@ All webhook deliveries use the following envelope:
   "timestamp": "2026-01-20T12:00:00.000Z",
   "project": "marketing-site",
   "environment": "production",
-  "data": {
+  "document": {
     "documentId": "550e8400-e29b-41d4-a716-446655440000",
+    "translationGroupId": "660e8400-e29b-41d4-a716-446655440001",
     "type": "BlogPost",
     "path": "content/blog/hello-world",
     "locale": "en",
+    "format": "mdx",
     "version": 4
+  },
+  "user": {
+    "id": "user_01HZX9N8Y6M2J4K7V3P6Q8R9SA",
+    "email": "editor@example.com"
   }
 }
 ```
@@ -442,7 +463,7 @@ app.post(
 ### Delivery Behavior
 
 - **Async delivery** -- Webhooks are dispatched asynchronously and do not block the originating API request.
-- **Retries** -- Failed deliveries (non-2xx responses or network errors) are retried up to 3 times with exponential backoff (1 minute, 5 minutes, 30 minutes).
+- **Retries** -- Failed deliveries (non-2xx responses or network errors) use three total attempts: the initial attempt, then retries after 1 second and 2 seconds.
 - **HTTPS only** -- Webhook URLs must use HTTPS. HTTP URLs are rejected at configuration time.
 - **Timeout** -- Each delivery attempt has a 10-second timeout. If the endpoint does not respond within 10 seconds, the attempt is marked as failed.
 

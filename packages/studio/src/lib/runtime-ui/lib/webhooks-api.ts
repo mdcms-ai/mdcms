@@ -14,8 +14,8 @@ import {
 import {
   applyStudioAuthToRequestInit,
   type StudioRuntimeAuth,
-} from "./request-auth.js";
-import { resolveStudioRelativeUrl } from "./url-resolution.js";
+} from "../../request-auth.js";
+import { resolveStudioRelativeUrl } from "../../url-resolution.js";
 
 export type StudioWebhooksApiConfig = {
   project: string;
@@ -25,24 +25,18 @@ export type StudioWebhooksApiConfig = {
 
 export type StudioWebhooksApiOptions = {
   auth?: StudioRuntimeAuth;
+  csrfToken?: string | null;
   fetcher?: typeof fetch;
 };
 
 export type StudioWebhooksApi = {
   listConfigs: () => Promise<WebhookConfig[]>;
-  createConfig: (
-    input: WebhookCreateInput,
-    csrfToken: string | undefined,
-  ) => Promise<WebhookConfig>;
+  createConfig: (input: WebhookCreateInput) => Promise<WebhookConfig>;
   updateConfig: (
     id: string,
     input: WebhookUpdateInput,
-    csrfToken: string | undefined,
   ) => Promise<WebhookConfig>;
-  deleteConfig: (
-    id: string,
-    csrfToken: string | undefined,
-  ) => Promise<{ deleted: true; id: string }>;
+  deleteConfig: (id: string) => Promise<{ deleted: true; id: string }>;
   listDeliveryHistory: (
     filter: Partial<ParsedWebhookDeliveryHistoryQuery>,
   ) => Promise<WebhookDeliveryHistoryEntry[]>;
@@ -136,6 +130,29 @@ function createDeliveryHistorySearchParams(
   return query ? `?${query}` : "";
 }
 
+function createMissingCsrfError(): RuntimeError {
+  return new RuntimeError({
+    code: "CSRF_TOKEN_MISSING",
+    message: "CSRF token is not available. You must be authenticated.",
+    statusCode: 0,
+  });
+}
+
+function requireMutationCsrfToken(
+  options: StudioWebhooksApiOptions,
+): string | undefined {
+  if (options.auth?.mode === "token") {
+    return undefined;
+  }
+
+  const csrfToken = options.csrfToken?.trim();
+  if (!csrfToken) {
+    throw createMissingCsrfError();
+  }
+
+  return csrfToken;
+}
+
 export function createStudioWebhooksApi(
   config: StudioWebhooksApiConfig,
   options: StudioWebhooksApiOptions = {},
@@ -176,8 +193,9 @@ export function createStudioWebhooksApi(
       return payload.data;
     },
 
-    async createConfig(input, csrfToken) {
+    async createConfig(input) {
       const operation = "POST /api/v1/webhooks";
+      const csrfToken = requireMutationCsrfToken(options);
       const url = resolveStudioRelativeUrl(
         "/api/v1/webhooks",
         config.serverUrl,
@@ -213,8 +231,9 @@ export function createStudioWebhooksApi(
       return payload.data;
     },
 
-    async updateConfig(id, input, csrfToken) {
+    async updateConfig(id, input) {
       const operation = `PUT /api/v1/webhooks/${id}`;
+      const csrfToken = requireMutationCsrfToken(options);
       const url = resolveStudioRelativeUrl(
         `/api/v1/webhooks/${encodeURIComponent(id)}`,
         config.serverUrl,
@@ -250,8 +269,9 @@ export function createStudioWebhooksApi(
       return payload.data;
     },
 
-    async deleteConfig(id, csrfToken) {
+    async deleteConfig(id) {
       const operation = `DELETE /api/v1/webhooks/${id}`;
+      const csrfToken = requireMutationCsrfToken(options);
       const url = resolveStudioRelativeUrl(
         `/api/v1/webhooks/${encodeURIComponent(id)}`,
         config.serverUrl,

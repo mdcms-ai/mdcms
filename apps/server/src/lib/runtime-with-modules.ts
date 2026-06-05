@@ -38,12 +38,8 @@ import {
   createDatabaseProjectStore,
   mountProjectApiRoutes,
 } from "./projects-api.js";
-import {
-  createDatabaseWebhookStore,
-  createWebhookEventDispatcher,
-  createWebhookHttpDeliverySink,
-  mountWebhookApiRoutes,
-} from "./webhooks-api.js";
+import { mountWebhookApiRoutes } from "./webhooks-api.js";
+import { createRuntimeWebhookRuntime } from "./webhooks/runtime.js";
 import type { ParsedMdcmsConfig } from "@mdcms/shared";
 import {
   createRefreshingStudioRuntimePublicationSelection,
@@ -132,75 +128,9 @@ export function createServerRequestHandlerWithModules(
     db: dbConnection.db,
   });
   const projectStore = createDatabaseProjectStore({ db: dbConnection.db });
-  const webhookStore = createDatabaseWebhookStore({ db: dbConnection.db });
-  const deliverWebhook = createWebhookHttpDeliverySink();
-  const webhookDispatcher = createWebhookEventDispatcher({
-    store: webhookStore,
-    deliver: async (delivery) => {
-      logger.info("webhook.delivery_attempt", {
-        webhookId: delivery.webhook.id,
-        event: delivery.payload.event,
-        eventId: delivery.eventId,
-        deliveryId: delivery.deliveryId,
-        project: delivery.payload.project,
-        environment: delivery.payload.environment,
-        attempt: delivery.attempt,
-        maxAttempts: delivery.maxAttempts,
-      });
-      const result = await deliverWebhook(delivery);
-      logger.info("webhook.delivery_succeeded", {
-        webhookId: delivery.webhook.id,
-        event: delivery.payload.event,
-        eventId: delivery.eventId,
-        deliveryId: delivery.deliveryId,
-        project: delivery.payload.project,
-        environment: delivery.payload.environment,
-        attempt: delivery.attempt,
-      });
-      return result;
-    },
-    recordAttempt: async (result) => {
-      await webhookStore.recordDeliveryAttempt(result);
-
-      if (result.outcome !== "failed" && result.outcome !== "discarded") {
-        return;
-      }
-
-      const error =
-        result.error instanceof Error
-          ? result.error.message
-          : result.error
-            ? String(result.error)
-            : undefined;
-      logger.error(`webhook.delivery_${result.outcome}`, {
-        webhookId: result.delivery.webhook.id,
-        event: result.delivery.payload.event,
-        eventId: result.delivery.eventId,
-        deliveryId: result.delivery.deliveryId,
-        project: result.delivery.payload.project,
-        environment: result.delivery.payload.environment,
-        attempt: result.delivery.attempt,
-        maxAttempts: result.delivery.maxAttempts,
-        statusCode: result.statusCode ?? null,
-        ...(error ? { error } : {}),
-      });
-    },
-    onRecordAttemptError: ({ result, error }) => {
-      logger.error("webhook.delivery_attempt_record_failed", {
-        webhookId: result.delivery.webhook.id,
-        url: result.delivery.webhook.url,
-        event: result.delivery.payload.event,
-        eventId: result.delivery.eventId,
-        deliveryId: result.delivery.deliveryId,
-        project: result.delivery.payload.project,
-        environment: result.delivery.payload.environment,
-        attempt: result.delivery.attempt,
-        maxAttempts: result.delivery.maxAttempts,
-        outcome: result.outcome,
-        statusCode: result.statusCode ?? null,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    },
+  const webhookRuntime = createRuntimeWebhookRuntime({
+    db: dbConnection.db,
+    logger,
   });
   const actions = collectServerModuleActions(moduleLoadReport);
 
@@ -541,7 +471,7 @@ export function createServerRequestHandlerWithModules(
     configureApp: (app) => {
       mountAuthRoutes(app, { authService });
       mountWebhookApiRoutes(app, {
-        store: webhookStore,
+        store: webhookRuntime.store,
         authorize: (request, requirement) =>
           authService.authorizeRequest(request, requirement),
         requireCsrf: (request) => authService.requireCsrfProtection(request),
@@ -572,7 +502,7 @@ export function createServerRequestHandlerWithModules(
           }
           return map;
         },
-        lifecycleEvents: webhookDispatcher,
+        lifecycleEvents: webhookRuntime.dispatcher,
         previewTokenSecret: env.MDCMS_PREVIEW_TOKEN_SECRET,
       });
       mountSchemaApiRoutes(app, {

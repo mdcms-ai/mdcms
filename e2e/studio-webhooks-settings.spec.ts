@@ -46,7 +46,10 @@ async function loginAndOpenWebhooks(page: Page): Promise<void> {
   await page.getByRole("textbox", { name: "Password" }).fill(LOGIN_PASSWORD);
   await page.getByRole("button", { name: "Sign in" }).click();
   await page.waitForURL((url) => url.pathname.endsWith(settingsPath));
-  await page.getByRole("button", { name: "Webhooks" }).click();
+  await page.getByRole("link", { name: "Webhooks" }).click();
+  await page.waitForURL((url) =>
+    url.pathname.endsWith("/admin/settings/webhooks"),
+  );
 }
 
 test.describe("Studio Settings Webhooks", () => {
@@ -85,31 +88,36 @@ test.describe("Studio Settings Webhooks", () => {
     await expect(page.getByText("Webhook configurations")).toBeVisible();
     await expect(page.getByText(webhookConfig.url)).toBeVisible();
 
-    await page.getByRole("button", { name: "Create webhook" }).click();
+    await page.getByRole("link", { name: "Create webhook" }).click();
+    await page.waitForURL((url) =>
+      url.pathname.endsWith("/admin/settings/webhooks/new"),
+    );
     await expect(
-      page.getByRole("dialog").getByRole("heading", {
-        name: "Create webhook",
-      }),
+      page.getByRole("heading", { name: "Create webhook" }),
     ).toBeVisible();
     await page.getByLabel("URL").fill("https://example.com/hooks/new");
-    await page.getByRole("button", { name: "content.published" }).click();
-    await page.getByRole("button", { name: "media.uploaded" }).click();
-    await page.getByLabel("HMAC secret").fill("a".repeat(32));
-    await page
-      .getByRole("dialog")
-      .getByRole("button", { name: "Create webhook" })
-      .click();
+    await page.getByRole("button", { name: /Published content:/ }).click();
+    await page.getByRole("button", { name: /Media uploaded:/ }).click();
+    await expect(page.getByLabel("Signing secret")).toHaveValue(/^whsec_/);
+    await page.getByRole("button", { name: "Create webhook" }).click();
+    await page.waitForURL((url) =>
+      url.pathname.endsWith("/admin/settings/webhooks"),
+    );
 
     await page
-      .getByRole("button", { name: `Edit webhook ${webhookConfig.id}` })
+      .getByRole("link", { name: `Edit webhook ${webhookConfig.id}` })
       .click();
+    await page.waitForURL((url) =>
+      url.pathname.endsWith(`/admin/settings/webhooks/${webhookConfig.id}`),
+    );
     await expect(
-      page.getByRole("dialog").getByRole("heading", {
-        name: "Edit webhook",
-      }),
+      page.getByRole("heading", { name: "Edit webhook" }),
     ).toBeVisible();
-    await expect(page.getByLabel("Rotate HMAC secret")).toBeVisible();
+    await expect(page.getByLabel("Rotate signing secret")).toBeVisible();
     await page.getByRole("button", { name: "Cancel" }).click();
+    await page.waitForURL((url) =>
+      url.pathname.endsWith("/admin/settings/webhooks"),
+    );
 
     await page
       .getByRole("button", { name: `Delete webhook ${webhookConfig.id}` })

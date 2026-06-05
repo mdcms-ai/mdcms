@@ -87,6 +87,7 @@ export type MountWebhookApiRoutesOptions = {
 };
 
 export type WebhookDelivery = {
+  scope: WebhookScope;
   webhook: WebhookDeliveryTarget;
   payload: WebhookPayload;
   eventId: string;
@@ -122,14 +123,11 @@ export type WebhookQueuedEvent = {
 };
 
 export type WebhookDeliveryInput = {
+  scope: WebhookScope;
   webhook: WebhookDeliveryTarget;
   payload: WebhookPayload;
   eventId?: string;
 };
-
-export type WebhookDeliveryQueueInput =
-  | WebhookQueuedEvent
-  | WebhookDeliveryInput;
 
 export type WebhookDeliveryAttemptResult = {
   delivery: Omit<WebhookDelivery, "target"> & {
@@ -150,24 +148,35 @@ export type WebhookDeliveryAttemptRecordErrorHandler = (input: {
   error: unknown;
 }) => Promise<void> | void;
 
+export type WebhookDeliveryQueueErrorHandler = (input: {
+  input: WebhookQueuedEvent;
+  error: unknown;
+}) => Promise<void> | void;
+
 export type WebhookDeliveryQueue = {
-  enqueue: (input: WebhookDeliveryQueueInput) => void;
+  enqueue: (input: WebhookQueuedEvent) => void;
   drain: () => Promise<void>;
 };
 
 export type WebhookIdGenerator = () => string;
 
 export type CreateWebhookDeliveryWorkerOptions = {
-  store?: WebhookStore;
+  store: WebhookStore;
   deliver: WebhookDeliverySink;
   resolveTargetAddresses?: WebhookTargetAddressResolver;
   retryPolicy?: WebhookRetryPolicy;
   sleep?: WebhookRetrySleeper;
   recordAttempt?: WebhookDeliveryAttemptRecorder;
   onRecordAttemptError?: WebhookDeliveryAttemptRecordErrorHandler;
+  onQueueError?: WebhookDeliveryQueueErrorHandler;
   createEventId?: WebhookIdGenerator;
   createDeliveryId?: WebhookIdGenerator;
 };
+
+export type DeliverWebhookWithRetriesOptions = Omit<
+  CreateWebhookDeliveryWorkerOptions,
+  "store" | "onQueueError"
+>;
 
 export type CreateWebhookEventDispatcherOptions = {
   store: WebhookStore;
@@ -178,6 +187,7 @@ export type CreateWebhookEventDispatcherOptions = {
   sleep?: WebhookRetrySleeper;
   recordAttempt?: WebhookDeliveryAttemptRecorder;
   onRecordAttemptError?: WebhookDeliveryAttemptRecordErrorHandler;
+  onQueueError?: WebhookDeliveryQueueErrorHandler;
   deliveryQueue?: WebhookDeliveryQueue;
   createEventId?: WebhookIdGenerator;
   createDeliveryId?: WebhookIdGenerator;

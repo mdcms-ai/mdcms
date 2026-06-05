@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import type { WebhookConfig } from "@mdcms/shared";
 
 import {
   WebhookConfigFormError,
@@ -13,8 +14,27 @@ import {
   generateWebhookSigningSecret,
   getWebhookConfigFormErrorMessage,
   isWebhookConfigFormSubmittable,
+  shouldResetWebhookConfigForm,
   webhookConfigFormReducer,
 } from "./webhook-config-form.js";
+
+function createWebhookConfig(
+  overrides: Partial<WebhookConfig> = {},
+): WebhookConfig {
+  return {
+    id: "webhook-1",
+    project: "marketing-site",
+    environment: "production",
+    url: "https://example.com/hooks/mdcms",
+    events: ["content.published" as const],
+    active: true,
+    createdBy: "user-1",
+    updatedBy: "user-1",
+    createdAt: "2026-06-03T00:00:00.000Z",
+    updatedAt: "2026-06-03T00:00:00.000Z",
+    ...overrides,
+  };
+}
 
 test("generateWebhookSigningSecret creates a prefixed 32-byte hex secret", () => {
   const secret = generateWebhookSigningSecret((bytes) => {
@@ -182,6 +202,75 @@ test("isWebhookConfigFormSubmittable enforces url event secret and pending state
     value: ` ${"b".repeat(30)} `,
   });
   assert.equal(isWebhookConfigFormSubmittable(editRotatingSecret, false), true);
+});
+
+test("isWebhookConfigFormSubmittable follows the shared webhook input contract", () => {
+  const base = webhookConfigFormReducer(
+    webhookConfigFormReducer(
+      webhookConfigFormReducer(createInitialWebhookConfigFormState("create"), {
+        type: "url-change",
+        value: "https://example.com/hooks/mdcms",
+      }),
+      { type: "event-toggle", event: "content.published" },
+    ),
+    { type: "secret-change", value: "a".repeat(32) },
+  );
+
+  const httpUrl = webhookConfigFormReducer(base, {
+    type: "url-change",
+    value: "http://example.com/hooks/mdcms",
+  });
+  assert.equal(isWebhookConfigFormSubmittable(httpUrl, false), false);
+
+  const urlWithFragment = webhookConfigFormReducer(base, {
+    type: "url-change",
+    value: "https://example.com/hooks/mdcms#fragment",
+  });
+  assert.equal(isWebhookConfigFormSubmittable(urlWithFragment, false), false);
+
+  const oversizedSecret = webhookConfigFormReducer(base, {
+    type: "secret-change",
+    value: "a".repeat(4097),
+  });
+  assert.equal(isWebhookConfigFormSubmittable(oversizedSecret, false), false);
+});
+
+test("shouldResetWebhookConfigForm ignores fresh objects for the same edit target", () => {
+  const originalConfig = createWebhookConfig({
+    id: "018f0c6d-98da-7f25-89fe-7c7ef5e8597d",
+    url: "https://example.com/hooks/original",
+  });
+  const refetchedConfig = createWebhookConfig({
+    id: "018f0c6d-98da-7f25-89fe-7c7ef5e8597d",
+    url: "https://example.com/hooks/refetched",
+  });
+
+  assert.equal(
+    shouldResetWebhookConfigForm(
+      { mode: "edit", config: originalConfig },
+      { mode: "edit", config: refetchedConfig },
+    ),
+    false,
+  );
+  assert.equal(
+    shouldResetWebhookConfigForm(
+      { mode: "edit", config: originalConfig },
+      {
+        mode: "edit",
+        config: createWebhookConfig({
+          id: "018f0c6d-98da-7f25-89fe-7c7ef5e8597e",
+        }),
+      },
+    ),
+    true,
+  );
+  assert.equal(
+    shouldResetWebhookConfigForm(
+      { mode: "create", config: null },
+      { mode: "edit", config: originalConfig },
+    ),
+    true,
+  );
 });
 
 test("webhookConfigFormReducer toggles events and active state immutably", () => {

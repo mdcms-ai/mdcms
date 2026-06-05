@@ -33,6 +33,7 @@ export function createWebhookEventDispatcher(
       sleep: options.sleep,
       recordAttempt: options.recordAttempt,
       onRecordAttemptError: options.onRecordAttemptError,
+      onQueueError: options.onQueueError,
       createEventId,
       createDeliveryId: options.createDeliveryId,
     });

@@ -2,9 +2,9 @@ import { randomUUID } from "node:crypto";
 
 import type {
   CreateWebhookDeliveryWorkerOptions,
+  DeliverWebhookWithRetriesOptions,
   WebhookDeliveryAttemptResult,
   WebhookDeliveryInput,
-  WebhookDeliveryQueueInput,
   WebhookDeliveryQueue,
   WebhookQueuedEvent,
   WebhookRetryPolicy,
@@ -65,6 +65,81 @@ export function createWebhookDeliveryWorker(
       "Webhook delivery worker requires an explicit delivery sink.",
     );
   }
+  if (!options.store) {
+    throw new Error("Webhook delivery worker requires an explicit store.");
+  }
+
+  const createEventId = options.createEventId ?? randomUUID;
+  const onQueueError = options.onQueueError ?? (async () => undefined);
+  const pending = new Set<Promise<void>>();
+
+  const reportQueueError = async (
+    input: WebhookQueuedEvent,
+    error: unknown,
+  ): Promise<void> => {
+    try {
+      await onQueueError({ input, error });
+    } catch {
+      // Queue error reporting is best effort; it must not rethrow from drain.
+    }
+  };
+
+  const track = (input: WebhookQueuedEvent, work: Promise<void>) => {
+    const tracked = work.catch((error) => reportQueueError(input, error));
+    pending.add(tracked);
+    tracked.finally(() => pending.delete(tracked));
+  };
+
+  const runEvent = async (event: WebhookQueuedEvent): Promise<void> => {
+    const matchingWebhooks = await options.store.listActiveTargetsByEvent(
+      event.scope,
+      event.event,
+    );
+
+    await Promise.all(
+      matchingWebhooks.map((webhook) =>
+        deliverWebhookWithRetries(
+          {
+            scope: event.scope,
+            webhook,
+            payload: event.payload,
+            eventId: event.eventId,
+          },
+          {
+            deliver: options.deliver,
+            resolveTargetAddresses: options.resolveTargetAddresses,
+            retryPolicy: options.retryPolicy,
+            sleep: options.sleep,
+            recordAttempt: options.recordAttempt,
+            onRecordAttemptError: options.onRecordAttemptError,
+            createEventId,
+            createDeliveryId: options.createDeliveryId,
+          },
+        ),
+      ),
+    );
+  };
+
+  return {
+    enqueue(input) {
+      track(input, runEvent(input));
+    },
+
+    async drain() {
+      while (pending.size > 0) {
+        await Promise.allSettled([...pending]);
+      }
+    },
+  };
+}
+
+export async function deliverWebhookWithRetries(
+  delivery: WebhookDeliveryInput,
+  options: DeliverWebhookWithRetriesOptions,
+): Promise<void> {
+  if (typeof options.deliver !== "function") {
+    throw new Error("Webhook delivery requires an explicit delivery sink.");
+  }
 
   const retryPolicy = options.retryPolicy ?? DEFAULT_WEBHOOK_RETRY_POLICY;
   const maxAttempts = Math.max(1, Math.floor(retryPolicy.maxAttempts));
@@ -75,13 +150,6 @@ export function createWebhookDeliveryWorker(
     options.onRecordAttemptError ?? (async () => undefined);
   const createEventId = options.createEventId ?? randomUUID;
   const createDeliveryId = options.createDeliveryId ?? randomUUID;
-  const pending = new Set<Promise<void>>();
-
-  const track = (work: Promise<void>) => {
-    const tracked = work.catch(() => undefined);
-    pending.add(tracked);
-    tracked.finally(() => pending.delete(tracked));
-  };
 
   const safelyRecordAttempt = async (
     result: WebhookDeliveryAttemptResult,
@@ -99,9 +167,8 @@ export function createWebhookDeliveryWorker(
   };
 
   const runAttempt = async (
-    delivery: WebhookDeliveryInput,
     attempt: number,
-    eventId = delivery.eventId ?? createEventId(),
+    eventId: string,
   ): Promise<void> => {
     const attemptDelivery = {
       ...delivery,
@@ -151,49 +218,9 @@ export function createWebhookDeliveryWorker(
         nextDelayMs: delayMs,
       });
       await sleep(delayMs);
-      await runAttempt(delivery, attempt + 1, eventId);
+      await runAttempt(attempt + 1, eventId);
     }
   };
 
-  const runEvent = async (event: WebhookQueuedEvent): Promise<void> => {
-    if (!options.store) {
-      throw new Error("Webhook delivery worker requires a store for events.");
-    }
-
-    const matchingWebhooks = await options.store.listActiveTargetsByEvent(
-      event.scope,
-      event.event,
-    );
-
-    await Promise.all(
-      matchingWebhooks.map((webhook) =>
-        runAttempt(
-          {
-            webhook,
-            payload: event.payload,
-            eventId: event.eventId,
-          },
-          1,
-        ),
-      ),
-    );
-  };
-
-  const isQueuedEvent = (
-    input: WebhookDeliveryQueueInput,
-  ): input is WebhookQueuedEvent => {
-    return "scope" in input && "event" in input;
-  };
-
-  return {
-    enqueue(input) {
-      track(isQueuedEvent(input) ? runEvent(input) : runAttempt(input, 1));
-    },
-
-    async drain() {
-      while (pending.size > 0) {
-        await Promise.allSettled([...pending]);
-      }
-    },
-  };
+  await runAttempt(1, delivery.eventId ?? createEventId());
 }

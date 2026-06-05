@@ -524,6 +524,10 @@ export const webhooks = pgTable(
     updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
   },
   (table): any => [
+    check(
+      "webhooks_events_check",
+      sql`jsonb_typeof(${table.events}) = 'array' and jsonb_array_length(${table.events}) > 0 and ${table.events} <@ '["content.created", "content.updated", "content.published", "content.unpublished", "content.deleted", "content.restored", "media.uploaded"]'::jsonb`,
+    ),
     foreignKey({
       name: "fk_webhooks_env_project",
       columns: [table.environmentId, table.projectId],
@@ -575,6 +579,10 @@ export const webhookDeliveryAttempts = pgTable(
     check(
       "webhook_delivery_attempts_outcome_check",
       sql`${table.outcome} in ('succeeded', 'retrying', 'failed', 'discarded')`,
+    ),
+    check(
+      "webhook_delivery_attempts_event_check",
+      sql`${table.event} in ('content.created', 'content.updated', 'content.published', 'content.unpublished', 'content.deleted', 'content.restored', 'media.uploaded')`,
     ),
     check(
       "webhook_delivery_attempts_status_code_check",

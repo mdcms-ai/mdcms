@@ -7,6 +7,13 @@ import type {
   ContentScope,
 } from "./types.js";
 
+export type ContentLifecycleMutationCommitter = (
+  event: ContentLifecycleEvent,
+  scope: ContentScope,
+  authorization: AuthorizedRequest,
+  mutate: () => Promise<ContentDocument>,
+) => Promise<ContentDocument>;
+
 export function emitContentLifecycleEvent(input: {
   sink?: ContentLifecycleEventSink;
   event: ContentLifecycleEvent;
@@ -49,4 +56,17 @@ export async function commitContentMutationWithLifecycleEvent(input: {
   });
 
   return document;
+}
+
+export function createContentLifecycleMutationCommitter(
+  sink?: ContentLifecycleEventSink,
+): ContentLifecycleMutationCommitter {
+  return (event, scope, authorization, mutate) =>
+    commitContentMutationWithLifecycleEvent({
+      sink,
+      event,
+      scope,
+      authorization,
+      mutate,
+    });
 }

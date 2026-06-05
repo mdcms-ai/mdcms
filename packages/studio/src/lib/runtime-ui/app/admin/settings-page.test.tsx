@@ -415,6 +415,18 @@ test("SettingsPageView renders webhook configuration rows and CRUD affordances",
   );
 });
 
+test("SettingsPageView surfaces webhook active toggle update failures", () => {
+  const markup = renderSettingsPageView({
+    initialTab: "webhooks",
+    webhookConfigState: {
+      updateError: new Error("Webhook update failed."),
+    },
+  });
+
+  assert.match(markup, /Webhook update failed\./);
+  assert.match(markup, /role="alert"/);
+});
+
 test("SettingsPageView renders webhook creation as a settings subpage", () => {
   const markup = renderSettingsPageView({
     initialTab: "webhooks",

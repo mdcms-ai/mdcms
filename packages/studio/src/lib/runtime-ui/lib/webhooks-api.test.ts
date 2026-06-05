@@ -198,6 +198,7 @@ test("createConfig posts scoped webhook input with csrf", async () => {
     [];
   const api = createApi({
     auth: { mode: "cookie" },
+    csrfToken: "csrf-token",
     fetcher: async (input, init) => {
       calls.push({ input, init });
       return new Response(JSON.stringify({ data: webhookConfig }), {
@@ -213,7 +214,7 @@ test("createConfig posts scoped webhook input with csrf", async () => {
     active: true,
   };
 
-  const result = await api.createConfig(input, "csrf-token");
+  const result = await api.createConfig(input);
 
   assert.equal(result.id, webhookConfig.id);
   assert.equal(
@@ -233,6 +234,7 @@ test("updateConfig and deleteConfig route ids safely", async () => {
     [];
   const api = createApi({
     auth: { mode: "cookie" },
+    csrfToken: "csrf-token",
     fetcher: async (input, init) => {
       calls.push({ input, init });
       const data =
@@ -246,12 +248,11 @@ test("updateConfig and deleteConfig route ids safely", async () => {
     },
   });
 
-  await api.updateConfig(
-    "webhook/with spaces",
-    { active: false, secret: "b".repeat(32) },
-    "csrf-token",
-  );
-  const deleted = await api.deleteConfig("webhook/with spaces", "csrf-token");
+  await api.updateConfig("webhook/with spaces", {
+    active: false,
+    secret: "b".repeat(32),
+  });
+  const deleted = await api.deleteConfig("webhook/with spaces");
 
   assert.equal(
     String(calls[0]?.input),
@@ -291,15 +292,12 @@ test("token-authenticated config mutations do not attach csrf or credentials", a
     },
   });
 
-  await api.createConfig(
-    {
-      url: "https://example.com/hooks/mdcms",
-      events: ["content.published"],
-      secret: "a".repeat(32),
-      active: true,
-    },
-    undefined,
-  );
+  await api.createConfig({
+    url: "https://example.com/hooks/mdcms",
+    events: ["content.published"],
+    secret: "a".repeat(32),
+    active: true,
+  });
 
   assert.equal(calls[0]?.init?.credentials, undefined);
   assert.equal(
@@ -307,6 +305,30 @@ test("token-authenticated config mutations do not attach csrf or credentials", a
     "Bearer mdcms_key_test",
   );
   assert.equal(readHeader(calls[0]?.init, "x-mdcms-csrf-token"), null);
+});
+
+test("cookie-authenticated config mutations require csrf at the API boundary", async () => {
+  const api = createApi({
+    auth: { mode: "cookie" },
+    fetcher: async () => {
+      throw new Error("request should not be sent without csrf");
+    },
+  });
+
+  await assert.rejects(
+    () =>
+      api.createConfig({
+        url: "https://example.com/hooks/mdcms",
+        events: ["content.published"],
+        secret: "a".repeat(32),
+        active: true,
+      }),
+    (error: unknown) =>
+      error instanceof RuntimeError &&
+      error.code === "CSRF_TOKEN_MISSING" &&
+      error.message ===
+        "CSRF token is not available. You must be authenticated.",
+  );
 });
 
 test("config requests surface route errors and reject invalid responses", async () => {
@@ -337,43 +359,41 @@ test("config requests surface route errors and reject invalid responses", async 
   );
 
   const invalidCreateApi = createApi({
+    csrfToken: "csrf-token",
     fetcher: async () =>
       new Response(JSON.stringify({ data: { ...webhookConfig, secret: "x" } })),
   });
 
   await assert.rejects(
     () =>
-      invalidCreateApi.createConfig(
-        {
-          url: "https://example.com/hooks/mdcms",
-          events: ["content.published"],
-          secret: "a".repeat(32),
-          active: true,
-        },
-        "csrf-token",
-      ),
+      invalidCreateApi.createConfig({
+        url: "https://example.com/hooks/mdcms",
+        events: ["content.published"],
+        secret: "a".repeat(32),
+        active: true,
+      }),
     (error: unknown) =>
       error instanceof RuntimeError &&
       error.code === "WEBHOOKS_RESPONSE_INVALID",
   );
 
   const invalidUpdateApi = createApi({
+    csrfToken: "csrf-token",
     fetcher: async () => new Response(JSON.stringify({ data: {} })),
   });
 
   await assert.rejects(
     () =>
-      invalidUpdateApi.updateConfig(
-        "018f0c6d-98da-7f25-89fe-7c7ef5e8597d",
-        { active: false },
-        "csrf-token",
-      ),
+      invalidUpdateApi.updateConfig("018f0c6d-98da-7f25-89fe-7c7ef5e8597d", {
+        active: false,
+      }),
     (error: unknown) =>
       error instanceof RuntimeError &&
       error.code === "WEBHOOKS_RESPONSE_INVALID",
   );
 
   const invalidDeleteApi = createApi({
+    csrfToken: "csrf-token",
     fetcher: async () =>
       new Response(
         JSON.stringify({
@@ -383,11 +403,7 @@ test("config requests surface route errors and reject invalid responses", async 
   });
 
   await assert.rejects(
-    () =>
-      invalidDeleteApi.deleteConfig(
-        "018f0c6d-98da-7f25-89fe-7c7ef5e8597d",
-        "csrf-token",
-      ),
+    () => invalidDeleteApi.deleteConfig("018f0c6d-98da-7f25-89fe-7c7ef5e8597d"),
     (error: unknown) =>
       error instanceof RuntimeError &&
       error.code === "WEBHOOKS_RESPONSE_INVALID",

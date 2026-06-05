@@ -13,8 +13,6 @@ import {
   WEBHOOK_SIGNATURE_HEADER,
 } from "./signing.js";
 
-export type WebhookFetch = typeof fetch;
-
 export const DEFAULT_WEBHOOK_DELIVERY_TIMEOUT_MS = 10_000;
 
 export type WebhookHttpTransportInput = {
@@ -29,7 +27,6 @@ export type WebhookHttpTransport = (
 ) => Promise<{ status: number }>;
 
 export type CreateWebhookHttpDeliverySinkOptions = {
-  fetch?: WebhookFetch;
   transport?: WebhookHttpTransport;
   resolveTargetAddresses?: WebhookTargetAddressResolver;
   now?: () => Date;
@@ -108,7 +105,6 @@ function sendWithPinnedTarget(
 export function createWebhookHttpDeliverySink(
   options: CreateWebhookHttpDeliverySinkOptions = {},
 ): WebhookDeliverySink {
-  const send = options.fetch ?? fetch;
   const transport = options.transport ?? sendWithPinnedTarget;
   const timeoutMs = Math.max(
     1,
@@ -141,33 +137,12 @@ export function createWebhookHttpDeliverySink(
       [WEBHOOK_DELIVERY_ID_HEADER]: deliveryId,
       [WEBHOOK_EVENT_ID_HEADER]: eventId,
     };
-    const response = options.fetch
-      ? await (async () => {
-          const controller = new AbortController();
-          const timeout = setTimeout(() => {
-            controller.abort(
-              new Error(`Webhook delivery timed out after ${timeoutMs}ms.`),
-            );
-          }, timeoutMs);
-
-          try {
-            return await send(target.url, {
-              method: "POST",
-              headers,
-              redirect: "manual",
-              body,
-              signal: controller.signal,
-            });
-          } finally {
-            clearTimeout(timeout);
-          }
-        })()
-      : await transport({
-          target,
-          body,
-          headers,
-          timeoutMs,
-        });
+    const response = await transport({
+      target,
+      body,
+      headers,
+      timeoutMs,
+    });
 
     const status = response.status;
 

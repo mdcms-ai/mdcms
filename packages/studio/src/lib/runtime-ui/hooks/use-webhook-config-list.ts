@@ -9,7 +9,7 @@ import {
   type WebhookUpdateInput,
 } from "@mdcms/shared";
 
-import { createStudioWebhooksApi } from "../../webhooks-api.js";
+import { createStudioWebhooksApi } from "../lib/webhooks-api.js";
 import { useStudioApiConfig } from "../app/admin/mount-info-context.js";
 import { useStudioSession } from "../app/admin/session-context.js";
 
@@ -43,15 +43,7 @@ export type UseWebhookConfigListOptions = {
   enabled?: boolean;
 };
 
-function createMissingCsrfError(): RuntimeError {
-  return new RuntimeError({
-    code: "CSRF_TOKEN_MISSING",
-    message: "CSRF token is not available. You must be authenticated.",
-    statusCode: 0,
-  });
-}
-
-function createUnavailableApiError(): RuntimeError {
+function createUnavailableApiError(): Error {
   return new RuntimeError({
     code: "API_NOT_AVAILABLE",
     message: "Webhook API client is not available.",
@@ -75,8 +67,11 @@ export function useWebhookConfigList(
       return null;
     }
 
-    return createStudioWebhooksApi(apiConfig.config, apiConfig.authOptions);
-  }, [apiConfig, canLoad]);
+    return createStudioWebhooksApi(apiConfig.config, {
+      ...apiConfig.authOptions,
+      csrfToken,
+    });
+  }, [apiConfig, canLoad, csrfToken]);
 
   const queryKey = useMemo(
     () => [
@@ -98,16 +93,6 @@ export function useWebhookConfigList(
     queryFn: async () => api!.listConfigs(),
   });
 
-  const requireMutationCsrfToken = useCallback((): string | undefined => {
-    if (apiConfig?.authOptions.auth.mode === "token") {
-      return undefined;
-    }
-    if (!csrfToken) {
-      throw createMissingCsrfError();
-    }
-    return csrfToken;
-  }, [apiConfig, csrfToken]);
-
   const invalidateConfigs = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey });
   }, [queryClient, queryKey]);
@@ -118,7 +103,7 @@ export function useWebhookConfigList(
         throw createUnavailableApiError();
       }
 
-      return api.createConfig(input, requireMutationCsrfToken());
+      return api.createConfig(input);
     },
     onSuccess: invalidateConfigs,
   });
@@ -129,11 +114,7 @@ export function useWebhookConfigList(
         throw createUnavailableApiError();
       }
 
-      return api.updateConfig(
-        input.id,
-        input.patch,
-        requireMutationCsrfToken(),
-      );
+      return api.updateConfig(input.id, input.patch);
     },
     onSuccess: invalidateConfigs,
   });
@@ -144,7 +125,7 @@ export function useWebhookConfigList(
         throw createUnavailableApiError();
       }
 
-      return api.deleteConfig(id, requireMutationCsrfToken());
+      return api.deleteConfig(id);
     },
     onSuccess: invalidateConfigs,
   });

@@ -10,6 +10,8 @@ import {
 import { Check, RefreshCw } from "lucide-react";
 import {
   WEBHOOK_EVENTS,
+  parseWebhookCreateInput,
+  parseWebhookUpdateInput,
   type WebhookConfig,
   type WebhookCreateInput,
   type WebhookEvent,
@@ -172,6 +174,20 @@ function hasValidSecretForMode(state: WebhookConfigFormState): boolean {
   return secretLength === 0 || secretLength >= 32;
 }
 
+function hasValidWebhookInputForMode(state: WebhookConfigFormState): boolean {
+  try {
+    if (state.mode === "create") {
+      parseWebhookCreateInput(buildWebhookConfigCreateInput(state));
+    } else {
+      parseWebhookUpdateInput(buildWebhookConfigUpdateInput(state));
+    }
+  } catch {
+    return false;
+  }
+
+  return true;
+}
+
 export function isWebhookConfigFormSubmittable(
   state: WebhookConfigFormState,
   isSubmitting: boolean,
@@ -180,6 +196,7 @@ export function isWebhookConfigFormSubmittable(
     state.url.trim().length > 0 &&
     state.selectedEvents.size > 0 &&
     hasValidSecretForMode(state) &&
+    hasValidWebhookInputForMode(state) &&
     !isSubmitting
   );
 }
@@ -231,6 +248,21 @@ export function WebhookConfigFormError({
       {message}
     </p>
   );
+}
+
+export function shouldResetWebhookConfigForm(
+  previous: { mode: WebhookConfigFormMode; config: WebhookConfig | null },
+  next: { mode: WebhookConfigFormMode; config: WebhookConfig | null },
+): boolean {
+  if (previous.mode !== next.mode) {
+    return true;
+  }
+
+  if (previous.mode === "create" || next.mode === "create") {
+    return false;
+  }
+
+  return previous.config?.id !== next.config?.id;
 }
 
 function WebhookConfigFormFields({
@@ -438,8 +470,7 @@ export function WebhookConfigForm(props: WebhookConfigFormProps) {
 
   useEffect(() => {
     if (
-      previousInputs.current.mode !== mode ||
-      previousInputs.current.config !== config
+      shouldResetWebhookConfigForm(previousInputs.current, { config, mode })
     ) {
       previousInputs.current = { config, mode };
       dispatch({ type: "reset", mode, config });

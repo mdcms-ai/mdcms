@@ -18,6 +18,7 @@ type DrizzleSnapshot = {
       indexes: Record<string, unknown>;
       foreignKeys: Record<string, unknown>;
       uniqueConstraints: Record<string, unknown>;
+      checkConstraints: Record<string, unknown>;
     }
   >;
 };
@@ -498,6 +499,10 @@ test("snapshot includes required named constraints and indexes", () => {
     "expected foreign key fk_webhooks_env_project on webhooks",
   );
   assert.ok(
+    webhooksTable.checkConstraints.webhooks_events_check,
+    "expected check constraint webhooks_events_check on webhooks",
+  );
+  assert.ok(
     webhookDeliveryAttemptsTable.indexes.idx_webhook_delivery_attempts_scope,
     "expected index idx_webhook_delivery_attempts_scope on webhook_delivery_attempts",
   );
@@ -509,6 +514,11 @@ test("snapshot includes required named constraints and indexes", () => {
     webhookDeliveryAttemptsTable.foreignKeys
       .fk_webhook_delivery_attempts_env_project,
     "expected foreign key fk_webhook_delivery_attempts_env_project on webhook_delivery_attempts",
+  );
+  assert.ok(
+    webhookDeliveryAttemptsTable.checkConstraints
+      .webhook_delivery_attempts_event_check,
+    "expected check constraint webhook_delivery_attempts_event_check on webhook_delivery_attempts",
   );
   assert.ok(
     projectEnvironmentTopologySnapshotsTable.uniqueConstraints

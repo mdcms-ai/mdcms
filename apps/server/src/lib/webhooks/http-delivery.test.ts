@@ -1,24 +1,42 @@
 import assert from "node:assert/strict";
 import { test } from "bun:test";
 
-import { createWebhookHttpDeliverySink } from "../webhooks-api.js";
+import {
+  createWebhookHttpDeliverySink,
+  WEBHOOK_DELIVERY_ID_HEADER,
+  WEBHOOK_EVENT_ID_HEADER,
+  WEBHOOK_SIGNATURE_HEADER,
+} from "../webhooks-api.js";
 
 import { createPinnedWebhookTargetLookup } from "./http-delivery.js";
 import { createPayload, createTarget } from "./test-support.js";
 
-test("webhook HTTP delivery sink posts JSON payloads and rejects non-2xx responses", async () => {
-  const requests: Request[] = [];
+test("webhook HTTP delivery sink posts JSON payloads through the pinned transport", async () => {
+  const deliveries: Array<{
+    body: string;
+    headers: Record<string, string>;
+    target: {
+      url: string;
+      hostname: string;
+      address: string;
+      addressFamily: 4 | 6;
+    };
+    timeoutMs: number;
+  }> = [];
   const sink = createWebhookHttpDeliverySink({
     now: () => new Date("2026-02-02T02:40:00.000Z"),
     resolveTargetAddresses: async () => ["93.184.216.34"],
-    fetch: async (input, init) => {
-      const request = new Request(input, init);
-      requests.push(request);
-      return new Response(null, { status: 202 });
+    transport: async (input) => {
+      deliveries.push(input);
+      return { status: 202 };
     },
   });
 
   await sink({
+    scope: {
+      project: "marketing-site",
+      environment: "production",
+    },
     webhook: createTarget({
       url: "https://example.com/hooks/mdcms",
     }),
@@ -29,35 +47,46 @@ test("webhook HTTP delivery sink posts JSON payloads and rejects non-2xx respons
     maxAttempts: 3,
   });
 
-  assert.equal(requests.length, 1);
-  assert.equal(requests[0]?.method, "POST");
+  assert.equal(deliveries.length, 1);
+  assert.deepEqual(deliveries[0]?.target, {
+    url: "https://example.com/hooks/mdcms",
+    hostname: "example.com",
+    address: "93.184.216.34",
+    addressFamily: 4,
+  });
   assert.equal(
-    requests[0]?.headers.get("content-type"),
+    deliveries[0]?.headers["content-type"],
     "application/json; charset=utf-8",
   );
   assert.equal(
-    requests[0]?.headers.get("x-mdcms-signature"),
+    deliveries[0]?.headers[WEBHOOK_SIGNATURE_HEADER],
     "t=1770000000,v1=5f3e22aa49977362d9d2eb905af572002961eca1a4dcf308d0fe666222ef61cd",
   );
   assert.equal(
-    requests[0]?.headers.get("x-mdcms-delivery-id"),
+    deliveries[0]?.headers[WEBHOOK_DELIVERY_ID_HEADER],
     "018f0c6d-98da-7f25-89fe-7c7ef5e8597f",
   );
   assert.equal(
-    requests[0]?.headers.get("x-mdcms-event-id"),
+    deliveries[0]?.headers[WEBHOOK_EVENT_ID_HEADER],
     "018f0c6d-98da-7f25-89fe-7c7ef5e8597e",
   );
-  assert.deepEqual(await requests[0]?.json(), createPayload());
+  assert.deepEqual(JSON.parse(deliveries[0]?.body ?? "{}"), createPayload());
+});
 
-  const failingSink = createWebhookHttpDeliverySink({
+test("webhook HTTP delivery sink rejects non-2xx transport responses", async () => {
+  const sink = createWebhookHttpDeliverySink({
     resolveTargetAddresses: async () => ["93.184.216.34"],
-    fetch: async () => new Response("unavailable", { status: 503 }),
+    transport: async () => ({ status: 503 }),
   });
 
   await assert.rejects(
     () =>
       Promise.resolve(
-        failingSink({
+        sink({
+          scope: {
+            project: "marketing-site",
+            environment: "production",
+          },
           webhook: createTarget(),
           payload: createPayload(),
           eventId: "018f0c6d-98da-7f25-89fe-7c7ef5e8597e",
@@ -73,69 +102,6 @@ test("webhook HTTP delivery sink posts JSON payloads and rejects non-2xx respons
   );
 });
 
-test("webhook HTTP delivery sink disables automatic redirects", async () => {
-  const sink = createWebhookHttpDeliverySink({
-    resolveTargetAddresses: async () => ["93.184.216.34"],
-    fetch: async (_input, init) => {
-      assert.equal(init?.redirect, "manual");
-      return new Response(null, {
-        status: 302,
-        headers: {
-          location: "https://127.0.0.1/hooks/mdcms",
-        },
-      });
-    },
-  });
-
-  await assert.rejects(
-    () =>
-      Promise.resolve(
-        sink({
-          webhook: createTarget(),
-          payload: createPayload(),
-          eventId: "018f0c6d-98da-7f25-89fe-7c7ef5e8597e",
-          deliveryId: "018f0c6d-98da-7f25-89fe-7c7ef5e8597f",
-          attempt: 1,
-          maxAttempts: 3,
-        }),
-      ),
-    /Webhook delivery failed with status 302/,
-  );
-});
-
-test("webhook HTTP delivery sink aborts stalled fetch requests after timeout", async () => {
-  const sink = createWebhookHttpDeliverySink({
-    timeoutMs: 5,
-    resolveTargetAddresses: async () => ["93.184.216.34"],
-    fetch: async (_input, init) =>
-      new Promise<Response>((_resolve, reject) => {
-        const failIfNotAborted = setTimeout(() => {
-          reject(new Error("fetch was not aborted"));
-        }, 30);
-
-        init?.signal?.addEventListener("abort", () => {
-          clearTimeout(failIfNotAborted);
-          reject(new Error("fetch aborted"));
-        });
-      }),
-  });
-
-  await assert.rejects(
-    () =>
-      Promise.resolve(
-        sink({
-          webhook: createTarget(),
-          payload: createPayload(),
-          eventId: "018f0c6d-98da-7f25-89fe-7c7ef5e8597e",
-          deliveryId: "018f0c6d-98da-7f25-89fe-7c7ef5e8597f",
-          attempt: 1,
-          maxAttempts: 3,
-        }),
-      ),
-    /fetch aborted/,
-  );
-});
-
 test("webhook HTTP delivery sink passes timeout to pinned transport", async () => {
   const sink = createWebhookHttpDeliverySink({
     timeoutMs: 123,
@@ -147,6 +113,10 @@ test("webhook HTTP delivery sink passes timeout to pinned transport", async () =
   });
 
   await sink({
+    scope: {
+      project: "marketing-site",
+      environment: "production",
+    },
     webhook: createTarget(),
     payload: createPayload(),
     eventId: "018f0c6d-98da-7f25-89fe-7c7ef5e8597e",

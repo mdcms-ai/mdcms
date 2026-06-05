@@ -2,6 +2,7 @@ export { createDatabaseWebhookStore } from "./webhooks/database-store.js";
 export {
   createWebhookDeliveryWorker,
   DEFAULT_WEBHOOK_RETRY_POLICY,
+  deliverWebhookWithRetries,
 } from "./webhooks/delivery-worker.js";
 export { createWebhookEventDispatcher } from "./webhooks/dispatcher.js";
 export {
@@ -27,6 +28,7 @@ export type {
 export { mountWebhookApiRoutes } from "./webhooks/routes.js";
 export type {
   CreateDatabaseWebhookStoreOptions,
+  DeliverWebhookWithRetriesOptions,
   CreateWebhookDeliveryWorkerOptions,
   CreateWebhookEventDispatcherOptions,
   MountWebhookApiRoutesOptions,

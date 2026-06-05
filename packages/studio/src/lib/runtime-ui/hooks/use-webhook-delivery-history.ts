@@ -9,7 +9,7 @@ import type {
   WebhookEvent,
 } from "@mdcms/shared";
 
-import { createStudioWebhooksApi } from "../../webhooks-api.js";
+import { createStudioWebhooksApi } from "../lib/webhooks-api.js";
 import { useStudioApiConfig } from "../app/admin/mount-info-context.js";
 
 export type SettingsPageWebhookHistoryFilters = {

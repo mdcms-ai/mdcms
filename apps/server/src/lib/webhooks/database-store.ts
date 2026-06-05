@@ -161,10 +161,7 @@ function toWebhookDeliveryHistoryEntry(
 function scopeFromDeliveryAttempt(
   result: WebhookDeliveryAttemptResult,
 ): WebhookScope {
-  return {
-    project: result.delivery.payload.project,
-    environment: result.delivery.payload.environment,
-  };
+  return result.delivery.scope;
 }
 
 export function createDatabaseWebhookStore(

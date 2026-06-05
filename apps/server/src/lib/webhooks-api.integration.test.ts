@@ -132,6 +132,7 @@ testWithDatabase(
       );
       const payload = createPayload();
       const delivery = {
+        scope,
         webhook: {
           ...created,
           secret: validSecret,
