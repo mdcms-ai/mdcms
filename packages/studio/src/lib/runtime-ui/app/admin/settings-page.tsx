@@ -51,17 +51,37 @@ import {
 } from "./mount-info-context.js";
 import { SettingsWebhooksPanel } from "./settings-webhooks-panel.js";
 import { cn } from "../../lib/utils.js";
+import Link from "../../adapters/next-link.js";
+import { useParams } from "../../navigation.js";
 
 export type { SettingsPageWebhookHistoryState } from "../../hooks/use-webhook-delivery-history.js";
 export type { SettingsPageWebhookConfigState } from "../../hooks/use-webhook-config-list.js";
 
 const settingsTabs = [
-  { id: "general", label: "General", icon: Settings },
-  { id: "api-keys", label: "API keys", icon: Key },
-  { id: "webhooks", label: "Webhooks", icon: Activity },
+  { id: "general", label: "General", icon: Settings, href: "/settings" },
+  {
+    id: "api-keys",
+    label: "API keys",
+    icon: Key,
+    href: "/settings/api-keys",
+  },
+  {
+    id: "webhooks",
+    label: "Webhooks",
+    icon: Activity,
+    href: "/settings/webhooks",
+  },
 ] as const;
 
 type SettingsTabId = (typeof settingsTabs)[number]["id"];
+
+function toSettingsTabId(value: string | undefined): SettingsTabId {
+  if (value === "api-keys" || value === "webhooks") {
+    return value;
+  }
+
+  return "general";
+}
 
 export type SettingsPageSchemaSummaryState =
   | { status: "loading" }
@@ -273,13 +293,7 @@ function SettingsNotice({
   );
 }
 
-function SettingsSubnav({
-  activeTab,
-  setActiveTab,
-}: {
-  activeTab: string;
-  setActiveTab: (tab: SettingsTabId) => void;
-}) {
+function SettingsSubnav({ activeTab }: { activeTab: string }) {
   return (
     <aside
       data-mdcms-settings-subnav
@@ -290,11 +304,11 @@ function SettingsSubnav({
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
           return (
-            <button
-              type="button"
+            <Link
               key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
+              href={tab.href}
               data-active={isActive ? "true" : "false"}
+              aria-current={isActive ? "page" : undefined}
               className={cn(
                 "flex min-w-0 flex-1 items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-medium transition-colors lg:flex-none",
                 isActive
@@ -304,7 +318,7 @@ function SettingsSubnav({
             >
               <Icon className="size-4 shrink-0" />
               <span className="truncate">{tab.label}</span>
-            </button>
+            </Link>
           );
         })}
       </nav>
@@ -653,7 +667,6 @@ function ApiKeysPanel({
 
 export function SettingsPageView({
   activeTab,
-  setActiveTab,
   canManageSettings,
   mountInfo,
   schemaSummary,
@@ -667,7 +680,6 @@ export function SettingsPageView({
   createError,
 }: {
   activeTab: string;
-  setActiveTab: (tab: SettingsTabId) => void;
   canManageSettings: boolean;
   mountInfo: SettingsPageMountContext;
   schemaSummary: SettingsPageSchemaSummaryState;
@@ -706,7 +718,7 @@ export function SettingsPageView({
         </div>
 
         <div className="grid gap-5 lg:grid-cols-[220px_minmax(0,1fr)]">
-          <SettingsSubnav activeTab={activeTab} setActiveTab={setActiveTab} />
+          <SettingsSubnav activeTab={activeTab} />
           <main className="min-w-0">
             {activeTab === "api-keys" ? (
               <ApiKeysPanel
@@ -739,16 +751,9 @@ export function SettingsPageView({
   );
 }
 
-export default function SettingsPage({
-  initialTab = "general",
-}: {
-  initialTab?: string;
-}) {
-  const [activeTab, setActiveTab] = useState<SettingsTabId>(
-    initialTab === "api-keys" || initialTab === "webhooks"
-      ? initialTab
-      : "general",
-  );
+export default function SettingsPage({ initialTab }: { initialTab?: string }) {
+  const params = useParams<{ tab?: string }>();
+  const activeTab = toSettingsTabId(initialTab ?? params.tab);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const canManageSettings = useCanManageSettings();
   const mountInfo = useStudioMountInfo();
@@ -797,7 +802,6 @@ export default function SettingsPage({
   return (
     <SettingsPageView
       activeTab={activeTab}
-      setActiveTab={setActiveTab}
       canManageSettings={canManageSettings}
       mountInfo={{
         project: mountInfo.project,

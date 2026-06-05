@@ -24,10 +24,20 @@ import type { ApiKeyMetadata } from "../../../api-keys-api.js";
 import type { WebhookConfig, WebhookDeliveryHistoryEntry } from "@mdcms/shared";
 
 function renderSettingsPage(input: {
-  initialTab: string;
+  initialTab?: string;
+  routeTab?: string;
   basePath?: string;
   capabilities?: Partial<AdminCapabilitiesValue>;
 }): string {
+  const pathname =
+    input.routeTab === "webhooks"
+      ? "/admin/settings/webhooks"
+      : input.routeTab === "api-keys"
+        ? "/admin/settings/api-keys"
+        : "/admin/settings";
+  const settingsPageProps =
+    input.initialTab === undefined ? {} : { initialTab: input.initialTab };
+
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -42,8 +52,8 @@ function renderSettingsPage(input: {
           StudioNavigationProvider,
           {
             value: {
-              pathname: "/admin/settings",
-              params: {},
+              pathname,
+              params: input.routeTab ? { tab: input.routeTab } : {},
               basePath: input.basePath ?? "/admin",
               push: () => {},
               replace: () => {},
@@ -77,9 +87,7 @@ function renderSettingsPage(input: {
                   setEnvironment: () => {},
                 },
               },
-              createElement(SettingsPage, {
-                initialTab: input.initialTab,
-              }),
+              createElement(SettingsPage, settingsPageProps),
             ),
           ),
         ),
@@ -133,6 +141,30 @@ test("SettingsPage renders Webhooks tab and still omits Media tab", () => {
   });
   assert.match(markup, /Webhooks/);
   assert.doesNotMatch(markup, /Media/);
+});
+
+test("SettingsPage subnav links to addressable settings sections", () => {
+  const markup = renderSettingsPage({
+    initialTab: "webhooks",
+    capabilities: { canManageSettings: true },
+  });
+
+  assert.match(markup, /href="\/admin\/settings"/);
+  assert.match(markup, /href="\/admin\/settings\/api-keys"/);
+  assert.match(markup, /href="\/admin\/settings\/webhooks"/);
+});
+
+test("SettingsPage selects the Webhooks section from the route", () => {
+  const markup = renderSettingsPage({
+    routeTab: "webhooks",
+    capabilities: { canManageSettings: true },
+  });
+
+  assert.match(markup, /data-mdcms-settings-webhooks-state="loading"/);
+  assert.match(
+    markup,
+    /data-active="true"[^>]*href="\/admin\/settings\/webhooks"/,
+  );
 });
 
 test("SettingsPage General tab shows read-only project context", () => {
@@ -233,45 +265,64 @@ function renderSettingsPageView(input: {
   schemaSummary?: SettingsPageSchemaSummaryState;
   canManageSettings?: boolean;
 }): string {
+  const pathname =
+    input.initialTab === "webhooks"
+      ? "/admin/settings/webhooks"
+      : input.initialTab === "api-keys"
+        ? "/admin/settings/api-keys"
+        : "/admin/settings";
+
   return renderToStaticMarkup(
     createElement(
       ThemeProvider,
       null,
-      createElement(SettingsPageView, {
-        activeTab: input.initialTab,
-        setActiveTab: () => {},
-        canManageSettings: input.canManageSettings ?? true,
-        mountInfo: {
-          project: "test-project",
-          environment: "production",
-          apiBaseUrl: "https://api.example.com",
+      createElement(
+        StudioNavigationProvider,
+        {
+          value: {
+            pathname,
+            params: {},
+            basePath: "/admin",
+            push: () => {},
+            replace: () => {},
+            back: () => {},
+          },
         },
-        schemaSummary: input.schemaSummary ?? readySchemaSummary,
-        apiKeysState: {
-          status: "ready",
-          keys: [readyKey],
-          isRevoking: false,
-          revokeError: null,
-          onRevoke: () => {},
-          ...input.apiKeysState,
-        },
-        webhookConfigState: {
-          ...readyWebhookConfigState,
-          ...input.webhookConfigState,
-        },
-        webhookHistoryState: {
-          ...readyWebhookHistoryState,
-          ...input.webhookHistoryState,
-        },
-        createDialogOpen: false,
-        setCreateDialogOpen: () => {},
-        createKey: async () => ({
-          ...readyKey,
-          key: "mdcms_key_secret",
+        createElement(SettingsPageView, {
+          activeTab: input.initialTab,
+          canManageSettings: input.canManageSettings ?? true,
+          mountInfo: {
+            project: "test-project",
+            environment: "production",
+            apiBaseUrl: "https://api.example.com",
+          },
+          schemaSummary: input.schemaSummary ?? readySchemaSummary,
+          apiKeysState: {
+            status: "ready",
+            keys: [readyKey],
+            isRevoking: false,
+            revokeError: null,
+            onRevoke: () => {},
+            ...input.apiKeysState,
+          },
+          webhookConfigState: {
+            ...readyWebhookConfigState,
+            ...input.webhookConfigState,
+          },
+          webhookHistoryState: {
+            ...readyWebhookHistoryState,
+            ...input.webhookHistoryState,
+          },
+          createDialogOpen: false,
+          setCreateDialogOpen: () => {},
+          createKey: async () => ({
+            ...readyKey,
+            key: "mdcms_key_secret",
+          }),
+          isCreating: false,
+          createError: null,
         }),
-        isCreating: false,
-        createError: null,
-      }),
+      ),
     ),
   );
 }
