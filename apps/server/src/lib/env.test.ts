@@ -109,6 +109,94 @@ test("parseServerEnv leaves preview token secret undefined when absent", () => {
   assert.equal(env.MDCMS_PREVIEW_TOKEN_SECRET, undefined);
 });
 
+test("parseServerEnv parses S3 media storage settings", () => {
+  const env = parseServerEnv({
+    S3_ENDPOINT: " http://localhost:9000/ ",
+    S3_ACCESS_KEY: " minioadmin ",
+    S3_SECRET_KEY: " miniosecret ",
+    S3_BUCKET: " mdcms-media ",
+    S3_PUBLIC_BASE_URL: " http://localhost:9000/mdcms-media/ ",
+  } as NodeJS.ProcessEnv);
+
+  assert.equal(env.S3_ENDPOINT, "http://localhost:9000");
+  assert.equal(env.S3_ACCESS_KEY, "minioadmin");
+  assert.equal(env.S3_SECRET_KEY, "miniosecret");
+  assert.equal(env.S3_BUCKET, "mdcms-media");
+  assert.equal(env.S3_PUBLIC_BASE_URL, "http://localhost:9000/mdcms-media");
+});
+
+test("parseServerEnv rejects S3_PUBLIC_BASE_URL with query or hash", () => {
+  assert.throws(
+    () =>
+      parseServerEnv({
+        S3_PUBLIC_BASE_URL: "http://localhost:9000/mdcms-media?token=bad",
+      } as NodeJS.ProcessEnv),
+    (error: unknown) =>
+      error instanceof RuntimeError &&
+      error.code === "INVALID_ENV" &&
+      error.details?.key === "S3_PUBLIC_BASE_URL",
+  );
+
+  assert.throws(
+    () =>
+      parseServerEnv({
+        S3_PUBLIC_BASE_URL: "http://localhost:9000/mdcms-media#media",
+      } as NodeJS.ProcessEnv),
+    (error: unknown) =>
+      error instanceof RuntimeError &&
+      error.code === "INVALID_ENV" &&
+      error.details?.key === "S3_PUBLIC_BASE_URL",
+  );
+
+  assert.throws(
+    () =>
+      parseServerEnv({
+        S3_PUBLIC_BASE_URL: "http://localhost:9000/mdcms-media?",
+      } as NodeJS.ProcessEnv),
+    (error: unknown) =>
+      error instanceof RuntimeError &&
+      error.code === "INVALID_ENV" &&
+      error.details?.key === "S3_PUBLIC_BASE_URL",
+  );
+
+  assert.throws(
+    () =>
+      parseServerEnv({
+        S3_PUBLIC_BASE_URL: "http://localhost:9000/mdcms-media#",
+      } as NodeJS.ProcessEnv),
+    (error: unknown) =>
+      error instanceof RuntimeError &&
+      error.code === "INVALID_ENV" &&
+      error.details?.key === "S3_PUBLIC_BASE_URL",
+  );
+});
+
+test("parseServerEnv rejects non-http S3_PUBLIC_BASE_URL values", () => {
+  assert.throws(
+    () =>
+      parseServerEnv({
+        S3_PUBLIC_BASE_URL: "s3://mdcms-media",
+      } as NodeJS.ProcessEnv),
+    (error: unknown) =>
+      error instanceof RuntimeError &&
+      error.code === "INVALID_ENV" &&
+      error.details?.key === "S3_PUBLIC_BASE_URL",
+  );
+});
+
+test("parseServerEnv rejects non-http S3_ENDPOINT values", () => {
+  assert.throws(
+    () =>
+      parseServerEnv({
+        S3_ENDPOINT: "s3://mdcms-media",
+      } as NodeJS.ProcessEnv),
+    (error: unknown) =>
+      error instanceof RuntimeError &&
+      error.code === "INVALID_ENV" &&
+      error.details?.key === "S3_ENDPOINT",
+  );
+});
+
 test("parseServerEnv rejects invalid studio runtime disabled flag values", () => {
   assert.throws(
     () =>

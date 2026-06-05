@@ -496,9 +496,28 @@ export const media = pgTable("media", {
   sizeBytes: bigint({ mode: "number" }).notNull(),
   s3Key: text().notNull(),
   url: text().notNull(),
-  uploadedBy: uuid().notNull(),
+  uploadedBy: text().notNull(),
   uploadedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
 });
+
+export const projectMediaSettings = pgTable(
+  "project_media_settings",
+  {
+    projectId: uuid()
+      .primaryKey()
+      .references(() => projects.id),
+    imageMaxUploadSizeBytes: bigint({ mode: "number" }),
+    updatedBy: text().notNull(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    check(
+      "project_media_settings_image_max_size_positive",
+      sql`${table.imageMaxUploadSizeBytes} is null or ${table.imageMaxUploadSizeBytes} > 0`,
+    ),
+  ],
+);
 
 export const webhooks = pgTable(
   "webhooks",

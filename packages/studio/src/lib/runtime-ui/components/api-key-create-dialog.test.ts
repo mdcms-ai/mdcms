@@ -4,6 +4,7 @@ import { test } from "bun:test";
 
 import type { ApiKeyCreateResult } from "../../api-keys-api.js";
 import {
+  SCOPE_GROUPS,
   apiKeyCreateDialogFormReducer,
   buildApiKeyCreateInput,
   createInitialApiKeyCreateDialogFormState,
@@ -25,6 +26,16 @@ test("buildApiKeyCreateInput trims labels and scopes the key to the mounted targ
     { project: "marketing-site", environment: "production" },
   ]);
   assert.equal(input.expiresAt, "2026-06-01T00:00:00.000Z");
+});
+
+test("API key create dialog exposes the media read scope", () => {
+  const mediaGroup = SCOPE_GROUPS.find((group) => group.label === "Media");
+
+  assert.deepEqual(mediaGroup?.scopes, [
+    "media:read",
+    "media:upload",
+    "media:delete",
+  ]);
 });
 
 test("isApiKeyCreateDialogSubmittable requires a label, at least one scope, and idle mutation state", () => {

@@ -13,13 +13,54 @@ This is the live canonical document under `docs/`.
 
 ### Storage
 
-Media files are stored in S3-compatible object storage and are **project-scoped** (reusable across environments in the same project). In development, MinIO provides a local S3-compatible API within the Docker Compose stack. In production, any S3-compatible service works (AWS S3, Cloudflare R2, DigitalOcean Spaces, etc.).
+Media files are stored in S3-compatible object storage and are
+**project-scoped** (reusable across environments in the same project). In
+development, MinIO provides a local S3-compatible API within the Docker Compose
+stack. In production, any S3-compatible service works (AWS S3, Cloudflare R2,
+DigitalOcean Spaces, etc.).
+
+The server object-store adapter uses the private S3 connection settings for
+storage operations and stores a public URL in media metadata for insertion into
+Markdown and for browser previews. Operators may configure a distinct public
+base URL when the internal S3 endpoint is not browser-reachable.
+
+Required storage settings:
+
+- `S3_ENDPOINT` — S3-compatible API endpoint used by the server.
+- `S3_ACCESS_KEY` — object-store access key.
+- `S3_SECRET_KEY` — object-store secret key.
+- `S3_BUCKET` — bucket that stores media objects.
+
+Optional storage settings:
+
+- `S3_PUBLIC_BASE_URL` — public URL prefix used to derive returned media URLs.
+  When omitted, the server derives URLs from `S3_ENDPOINT`, `S3_BUCKET`, and the
+  object key. The public base URL must be an absolute `http` or `https` URL and
+  must not include query parameters or a fragment.
+
+Media object keys are server-generated and must be unique within the bucket. The
+key format is implementation-owned but must include the project identifier and
+media id so objects for different projects cannot collide.
 
 #### Upload Constraints Config
 
 Media uploads are intentionally **not file-type restricted**: MDCMS accepts any MIME type/extension and stores it as media metadata + object storage.
 
-Owner/Admin users can configure an optional image upload size limit in Studio Settings (project-level config), for example:
+Owner/Admin users can configure an optional image upload size limit in Studio
+Settings. The setting is project-scoped, not environment-scoped, because media
+assets are reusable across environments in the same project.
+
+```ts
+type MediaSettings = {
+  media: {
+    image: {
+      maxUploadSizeBytes: number | null;
+    };
+  };
+};
+```
+
+Equivalent JSON example:
 
 ```json
 {
@@ -36,6 +77,9 @@ Rules:
 - No MIME/extension allowlist is enforced for media uploads.
 - `media.image.maxUploadSizeBytes` applies only to files classified as images (`mime_type` starts with `image/`).
 - If `maxUploadSizeBytes` is omitted/null, image uploads are unlimited at the MDCMS layer (infrastructure/proxy limits may still apply).
+- A configured `maxUploadSizeBytes` must be a positive safe integer in bytes.
+- Updating media settings replaces only the media settings document. It does not
+  modify schema sync state or content type definitions.
 
 ### Planned Upload Flow
 
@@ -55,14 +99,50 @@ CREATE TABLE media (
     size_bytes  BIGINT NOT NULL,
     s3_key      TEXT NOT NULL,
     url         TEXT NOT NULL,
-    uploaded_by UUID NOT NULL,
+    uploaded_by TEXT NOT NULL,
     uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE project_media_settings (
+    project_id                         UUID PRIMARY KEY REFERENCES projects(id),
+    image_max_upload_size_bytes         BIGINT,
+    updated_by                         TEXT NOT NULL,
+    created_at                         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at                         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT project_media_settings_image_max_size_positive
+      CHECK (image_max_upload_size_bytes IS NULL OR image_max_upload_size_bytes > 0)
 );
 ```
 
+The public media API returns metadata in camelCase and never exposes `s3_key`:
+
+```ts
+type MediaAsset = {
+  id: string;
+  project: string;
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
+  url: string;
+  uploadedBy: string;
+  uploadedAt: string;
+};
+```
+
+`uploadedBy` is the authenticated actor id. For API-key initiated uploads it is
+the user id that owns the API key.
+
+Media metadata rows are deleted when a media asset is deleted. Deletion does not
+rewrite existing documents that may contain the deleted asset URL.
+
 ### Scope Status
 
-Media upload is **Post-MVP** in the reduced scope plan. When it ships, the first phase remains inline editor upload only. A full media library (browse, search, tag, organize, reuse across documents) stays Post-MVP beyond that initial upload flow.
+Media upload is **Post-MVP** in the reduced scope plan. The first shipped media
+API phase includes upload, metadata read, deletion, and project media settings.
+The initial Studio editor flow inserts uploaded URLs into Markdown. Advanced
+media organization features such as tags, folders, collections, usage
+references, duplicate detection, image transformations, CDN controls, and asset
+governance remain outside this phase.
 
 ---
 
@@ -374,11 +454,104 @@ The search backend is designed to be pluggable. A post-MVP upgrade path to Meili
 
 These routes are **Post-MVP**. They are intentionally omitted from the canonical MVP endpoint appendix in §24.
 
-| Method   | Endpoint        | Description                                                                                                            |
-| -------- | --------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `POST`   | `/media/upload` | Upload any file type to S3-compatible storage (no MIME/extension allowlist; optional image size cap from media config) |
-| `GET`    | `/media/:id`    | Get media metadata                                                                                                     |
-| `DELETE` | `/media/:id`    | Delete a media file                                                                                                    |
+All `/api/v1/media*` endpoints require explicit target routing for `project`
+and `environment` via headers or query parameters. Media metadata is stored at
+project scope; the routed environment is used only for authorization and request
+consistency. Request bodies must not provide `project` or `environment`.
+
+Session-authenticated state-changing media requests follow the shared CSRF
+rules from `SPEC-005`. API-key requests use bearer authentication and the
+`media:*` operation scopes.
+
+`MediaSettings`:
+
+```ts
+type MediaSettings = {
+  media: {
+    image: {
+      maxUploadSizeBytes: number | null;
+    };
+  };
+};
+```
+
+`MediaAsset`:
+
+```ts
+type MediaAsset = {
+  id: string;
+  project: string;
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
+  url: string;
+  uploadedBy: string;
+  uploadedAt: string;
+};
+```
+
+`POST /api/v1/media/upload` accepts `multipart/form-data` with one required
+`file` field. Additional fields are ignored only if they are browser-generated
+multipart metadata; explicit application fields such as `project`,
+`environment`, `s3Key`, or `url` are invalid. The server derives:
+
+- `filename` from the uploaded file name, trimmed; if unavailable, the fallback
+  is `upload`.
+- `mimeType` from the uploaded file type; if unavailable, the fallback is
+  `application/octet-stream`.
+- `sizeBytes` from the uploaded byte length.
+- `uploadedBy` from the authenticated actor. API-key uploads use the API key
+  owner user id.
+
+Upload size enforcement:
+
+- If `mimeType` starts with `image/` and `media.image.maxUploadSizeBytes` is a
+  positive number, `sizeBytes` must be less than or equal to that limit.
+- Non-image uploads are not subject to `media.image.maxUploadSizeBytes`.
+- Omitted or `null` `maxUploadSizeBytes` means unlimited at the MDCMS layer.
+
+| Method | Path                     | Auth Mode             | Required Scope | Target Routing                  | Request                                  | Success                                 | Deterministic Errors                                                                                                                                                                                                                                                                         |
+| ------ | ------------------------ | --------------------- | -------------- | ------------------------------- | ---------------------------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/api/v1/media/settings` | session (admin/owner) | none           | required: `project_environment` | explicit routing only                    | `200` `{ data: MediaSettings }`         | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`)                                                                                                                                                                             |
+| PUT    | `/api/v1/media/settings` | session (admin/owner) | none           | required: `project_environment` | JSON: `MediaSettings`                    | `200` `{ data: MediaSettings }`         | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_INPUT` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`)                                                                                                                                                    |
+| POST   | `/api/v1/media/upload`   | session_or_api_key    | `media:upload` | required: `project_environment` | multipart form data with required `file` | `200` `{ data: MediaAsset }`            | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_INPUT` (`400`), `MEDIA_UPLOAD_TOO_LARGE` (`413`), `MEDIA_STORAGE_UNAVAILABLE` (`503`), `MEDIA_OBJECT_WRITE_FAILED` (`502`), `MEDIA_METADATA_WRITE_FAILED` (`500`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`) |
+| GET    | `/api/v1/media/:id`      | session_or_api_key    | `media:read`   | required: `project_environment` | path `id`; explicit routing only         | `200` `{ data: MediaAsset }`            | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_INPUT` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`)                                                                                                                               |
+| DELETE | `/api/v1/media/:id`      | session_or_api_key    | `media:delete` | required: `project_environment` | path `id`                                | `200` `{ data: { deleted: true, id } }` | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_INPUT` (`400`), `MEDIA_STORAGE_UNAVAILABLE` (`503`), `MEDIA_OBJECT_DELETE_FAILED` (`502`), `MEDIA_METADATA_DELETE_FAILED` (`500`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`)            |
+
+Error split:
+
+- `INVALID_INPUT` (`400`) means a path id is not a UUID, the request body is not
+  valid `multipart/form-data` or JSON for the selected endpoint, the required
+  `file` field is missing, the uploaded part is not a file, a client-supplied
+  reserved media field was provided, or `maxUploadSizeBytes` is not `null` or a
+  positive safe integer.
+- `MEDIA_UPLOAD_TOO_LARGE` (`413`) means an image upload exceeds the configured
+  `media.image.maxUploadSizeBytes` value. Implementations must include
+  `details.limitBytes` and `details.sizeBytes`.
+- `MEDIA_STORAGE_UNAVAILABLE` (`503`) means the object-store adapter is not
+  configured or cannot create a usable client from operator configuration.
+- `MEDIA_OBJECT_WRITE_FAILED` (`502`) means the object-store write failed before
+  metadata could be persisted. Implementations must not create a metadata row
+  for this failure.
+- `MEDIA_METADATA_WRITE_FAILED` (`500`) means object storage succeeded but
+  metadata persistence failed. Implementations should attempt best-effort object
+  cleanup and include `details.cleanupAttempted`.
+- `MEDIA_OBJECT_DELETE_FAILED` (`502`) means a metadata row exists but the
+  object-store delete failed. Implementations must leave the metadata row in
+  place so the operation can be retried.
+- `MEDIA_METADATA_DELETE_FAILED` (`500`) means the object-store delete
+  succeeded or was idempotently accepted, but metadata deletion failed.
+- `NOT_FOUND` (`404`) means the media id does not exist in the routed project.
+
+Deletion semantics:
+
+- Deleting a media asset deletes the object from S3-compatible storage and then
+  deletes the metadata row.
+- Object deletion is idempotent for a known metadata row: if the object is
+  already absent and the object store reports a successful delete, MDCMS
+  continues with metadata deletion.
+- Deleting media does not scan or rewrite existing documents that may still
+  contain the asset URL.
 
 ## Webhook Endpoints
 

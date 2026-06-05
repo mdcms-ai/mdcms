@@ -4,6 +4,7 @@ import { RuntimeError } from "@mdcms/shared";
 import { test } from "bun:test";
 
 import {
+  API_KEY_OPERATION_SCOPES,
   createStudioApiKeysApi,
   type ApiKeyCreateInput,
   type ApiKeyCreateResult,
@@ -37,6 +38,10 @@ function createApi(options: StudioApiKeysApiOptions = {}) {
     options,
   );
 }
+
+test("API key operation scopes include read-only media keys", () => {
+  assert.equal(API_KEY_OPERATION_SCOPES.includes("media:read"), true);
+});
 
 const validApiKey: ApiKeyMetadata = {
   id: "key-1",

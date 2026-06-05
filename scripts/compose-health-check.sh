@@ -88,6 +88,7 @@ assert_infra_services_healthy() {
 start_stack() {
   docker compose up -d --build "${INFRA_SERVICES[@]}"
   assert_infra_services_healthy
+  docker compose run --rm --no-deps minio-init
   docker compose run --rm --no-deps --build db-migrate
   docker compose up -d --build --no-deps server
   wait_for_service server

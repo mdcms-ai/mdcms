@@ -14,6 +14,7 @@ import {
 
 import { buildServerModuleLoadReport } from "./module-loader.js";
 import {
+  createRuntimeMediaObjectStore,
   createServerRequestHandlerWithModules,
   prepareServerRequestHandlerWithModules,
 } from "./runtime-with-modules.js";
@@ -136,6 +137,49 @@ test("createServerRequestHandlerWithModules mounts server module routes", async 
   } finally {
     await dbConnection.close();
   }
+});
+
+test("createServerRequestHandlerWithModules mounts media routes before auth and DB work", async () => {
+  const { handler, dbConnection } = createServerRequestHandlerWithModules({
+    env,
+    logger,
+  });
+
+  try {
+    const response = await handler(
+      new Request("http://localhost/api/v1/media/settings"),
+    );
+    const body = (await response.json()) as { code: string };
+
+    assert.equal(response.status, 400);
+    assert.equal(body.code, "MISSING_TARGET_ROUTING");
+  } finally {
+    await dbConnection.close();
+  }
+});
+
+test("createRuntimeMediaObjectStore uses endpoint-derived public URLs when public base URL is omitted", () => {
+  assert.equal(createRuntimeMediaObjectStore({}), undefined);
+  assert.equal(
+    createRuntimeMediaObjectStore({
+      S3_ENDPOINT: "http://localhost:9000",
+      S3_ACCESS_KEY: "minioadmin",
+      S3_SECRET_KEY: "minioadmin",
+    }),
+    undefined,
+  );
+
+  const store = createRuntimeMediaObjectStore({
+    S3_ENDPOINT: "http://localhost:9000",
+    S3_ACCESS_KEY: "minioadmin",
+    S3_SECRET_KEY: "minioadmin",
+    S3_BUCKET: "mdcms-media",
+  });
+
+  assert.equal(
+    store?.publicUrlForKey("projects/marketing-site/media/id/hero.png"),
+    "http://localhost:9000/mdcms-media/projects/marketing-site/media/id/hero.png",
+  );
 });
 
 test("createServerRequestHandlerWithModules loads bundled modules when APP_VERSION is unset", async () => {

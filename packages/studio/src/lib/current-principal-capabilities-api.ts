@@ -194,6 +194,13 @@ function validateCurrentPrincipalCapabilitiesResponse(
     ["manage"],
     operation,
   );
+  const media = isRecord(capabilities.media)
+    ? validateBooleanRecord(
+        capabilities.media,
+        ["read", "upload", "delete"],
+        operation,
+      )
+    : { read: false, upload: false, delete: false };
   const ai = isRecord(capabilities.ai)
     ? validateBooleanRecord(capabilities.ai, ["use"], operation)
     : { use: false };
@@ -219,6 +226,11 @@ function validateCurrentPrincipalCapabilitiesResponse(
       },
       settings: {
         manage: settings.manage,
+      },
+      media: {
+        read: media.read,
+        upload: media.upload,
+        delete: media.delete,
       },
       ai: {
         use: ai.use,

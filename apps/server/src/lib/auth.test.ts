@@ -378,9 +378,15 @@ test("auth oidc fixture rejects missing sub claims", () => {
   assert.throws(() => normalizeOidcFixtureClaims(fixture.claims), /sub/i);
 });
 
-test("resolveApiKeyRbacAction rejects unmapped API key scopes", () => {
+test("resolveApiKeyRbacAction maps media API key scopes", () => {
+  assert.equal(resolveApiKeyRbacAction("media:read"), "media:read");
+  assert.equal(resolveApiKeyRbacAction("media:upload"), "media:upload");
+  assert.equal(resolveApiKeyRbacAction("media:delete"), "media:delete");
+});
+
+test("resolveApiKeyRbacAction rejects operation scopes that sessions cannot mint by role", () => {
   assert.throws(
-    () => resolveApiKeyRbacAction("media:upload"),
+    () => resolveApiKeyRbacAction("migrations:run"),
     (error: unknown) =>
       error instanceof Error && "code" in error && error.code === "FORBIDDEN",
   );
@@ -3370,16 +3376,17 @@ testWithDatabase(
 );
 
 testWithDatabase(
-  "API key creation rejects unmapped scopes even for owner sessions",
+  "API key creation allows media read and upload scopes based on session RBAC",
   async () => {
     const { handler, dbConnection } = createServerRequestHandlerWithModules({
       env,
       logger,
     });
     const ownerEmail = uniqueEmail();
+    const editorEmail = uniqueEmail();
     const password = "Admin12345!";
     const scope = {
-      project: `unmapped-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      project: `media-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       environment: `env-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     };
 
@@ -3399,13 +3406,13 @@ testWithDatabase(
           userId: ownerLogin.session.userId,
           role: "owner",
           scopeKind: "global",
-          source: "test:unmapped-scope-owner",
+          source: "test:media-scope-owner",
           createdByUserId: ownerLogin.session.userId,
         })
         .onConflictDoNothing();
       await seedScope(dbConnection.db, scope);
 
-      const createResponse = await handler(
+      const ownerCreateResponse = await handler(
         new Request("http://localhost/api/v1/auth/api-keys", {
           method: "POST",
           headers: createCsrfHeaders(ownerLogin, {
@@ -3418,12 +3425,60 @@ testWithDatabase(
           }),
         }),
       );
-      const createBody = (await createResponse.json()) as {
+      assert.equal(ownerCreateResponse.status, 200);
+
+      await signUp(handler, {
+        email: editorEmail,
+        password,
+        name: "Media Scope Editor",
+      });
+      const editorLogin = await login(handler, {
+        email: editorEmail,
+        password,
+      });
+      await dbConnection.db.insert(rbacGrants).values({
+        userId: editorLogin.session.userId,
+        role: "editor",
+        scopeKind: "project",
+        project: scope.project,
+        source: "test:media-scope-editor",
+        createdByUserId: ownerLogin.session.userId,
+      });
+
+      const editorCreateResponse = await handler(
+        new Request("http://localhost/api/v1/auth/api-keys", {
+          method: "POST",
+          headers: createCsrfHeaders(editorLogin, {
+            "content-type": "application/json",
+          }),
+          body: JSON.stringify({
+            label: "media-editor-read-upload",
+            scopes: ["media:read", "media:upload"],
+            contextAllowlist: [scope],
+          }),
+        }),
+      );
+      assert.equal(editorCreateResponse.status, 200);
+
+      const deleteCreateResponse = await handler(
+        new Request("http://localhost/api/v1/auth/api-keys", {
+          method: "POST",
+          headers: createCsrfHeaders(editorLogin, {
+            "content-type": "application/json",
+          }),
+          body: JSON.stringify({
+            label: "media-editor-delete",
+            scopes: ["media:delete"],
+            contextAllowlist: [scope],
+          }),
+        }),
+      );
+      const deleteCreateBody = (await deleteCreateResponse.json()) as {
         code: string;
       };
 
-      assert.equal(createResponse.status, 403);
-      assert.equal(createBody.code, "FORBIDDEN");
+      assert.equal(deleteCreateResponse.status, 403);
+      assert.equal(deleteCreateBody.code, "FORBIDDEN");
     } finally {
       await dbConnection.close();
     }
@@ -3528,6 +3583,21 @@ testWithDatabase(
         }),
       );
       assert.equal(getWithReadResponse.status, 200);
+
+      const getWrongTargetResponse = await handler(
+        new Request("http://localhost/api/v1/schema", {
+          headers: {
+            "x-mdcms-project": scope.project,
+            "x-mdcms-environment": `${scope.environment}-other`,
+            authorization: `Bearer ${readKeyBody.data.key}`,
+          },
+        }),
+      );
+      const getWrongTargetBody = (await getWrongTargetResponse.json()) as {
+        code: string;
+      };
+      assert.equal(getWrongTargetResponse.status, 400);
+      assert.equal(getWrongTargetBody.code, "TARGET_ROUTING_MISMATCH");
 
       const putWithReadResponse = await handler(
         new Request("http://localhost/api/v1/schema", {
@@ -3827,6 +3897,7 @@ testWithDatabase(
             };
             users: { manage: boolean };
             settings: { manage: boolean };
+            media: { read: boolean; upload: boolean; delete: boolean };
             ai: { use: boolean };
           };
         };
@@ -3853,6 +3924,11 @@ testWithDatabase(
         },
         settings: {
           manage: false,
+        },
+        media: {
+          read: true,
+          upload: true,
+          delete: false,
         },
         ai: {
           use: true,
@@ -3915,7 +3991,12 @@ testWithDatabase(
           }),
           body: JSON.stringify({
             label: "capabilities-readonly",
-            scopes: ["schema:read", "content:read", "webhooks:read"],
+            scopes: [
+              "schema:read",
+              "content:read",
+              "webhooks:read",
+              "media:read",
+            ],
             contextAllowlist: [
               {
                 project: scope.project,
@@ -3952,6 +4033,7 @@ testWithDatabase(
             };
             users: { manage: boolean };
             settings: { manage: boolean };
+            media: { read: boolean; upload: boolean; delete: boolean };
             ai: { use: boolean };
           };
         };
@@ -3976,6 +4058,11 @@ testWithDatabase(
         },
         settings: {
           manage: true,
+        },
+        media: {
+          read: true,
+          upload: false,
+          delete: false,
         },
         ai: {
           use: false,

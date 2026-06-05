@@ -12,11 +12,17 @@ The steps below are for contributors working inside the monorepo.
 
 ```bash
 docker compose up -d postgres redis minio mailhog
+docker compose run --rm --no-deps minio-init
 export DATABASE_URL=postgresql://mdcms:mdcms@localhost:5432/mdcms
+export S3_ENDPOINT=http://localhost:9000
+export S3_ACCESS_KEY=minioadmin
+export S3_SECRET_KEY=minioadmin
+export S3_BUCKET=mdcms-media
+export S3_PUBLIC_BASE_URL=http://localhost:9000/mdcms-media
 bun run --cwd apps/server db:migrate
 ```
 
-This starts PostgreSQL, Redis, MinIO, and Mailhog for a local server process, then points local server commands at the Compose PostgreSQL instance.
+This starts PostgreSQL, Redis, initialized MinIO media storage, and Mailhog for a local server process, then points local server commands at the Compose PostgreSQL and MinIO instances.
 
 ### Start the server
 

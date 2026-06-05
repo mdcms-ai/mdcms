@@ -11,6 +11,11 @@ export type CurrentPrincipalCapabilities = {
     unpublish: boolean;
     delete: boolean;
   };
+  media: {
+    read: boolean;
+    upload: boolean;
+    delete: boolean;
+  };
   users: {
     manage: boolean;
   };
@@ -40,6 +45,11 @@ export function createEmptyCurrentPrincipalCapabilities(): CurrentPrincipalCapab
       write: false,
       publish: false,
       unpublish: false,
+      delete: false,
+    },
+    media: {
+      read: false,
+      upload: false,
       delete: false,
     },
     users: {

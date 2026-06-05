@@ -75,6 +75,11 @@ function createCapabilitiesApi(overrides?: {
         settings: {
           manage: false,
         },
+        media: {
+          read: false,
+          upload: false,
+          delete: false,
+        },
         ai: {
           use: false,
         },

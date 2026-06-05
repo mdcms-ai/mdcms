@@ -24,12 +24,12 @@ import type {
 } from "../../api-keys-api.js";
 import { useStudioMountInfo } from "../app/admin/mount-info-context.js";
 
-type ScopeGroup = {
+export type ScopeGroup = {
   label: string;
   scopes: ApiKeyOperationScope[];
 };
 
-const SCOPE_GROUPS: ScopeGroup[] = [
+export const SCOPE_GROUPS: ScopeGroup[] = [
   {
     label: "Content",
     scopes: [
@@ -47,7 +47,7 @@ const SCOPE_GROUPS: ScopeGroup[] = [
   },
   {
     label: "Media",
-    scopes: ["media:upload", "media:delete"],
+    scopes: ["media:read", "media:upload", "media:delete"],
   },
   {
     label: "Webhooks",

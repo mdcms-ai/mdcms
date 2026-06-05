@@ -14,11 +14,27 @@ type DrizzleSnapshot = {
   tables: Record<
     string,
     {
-      columns: Record<string, unknown>;
+      columns: Record<
+        string,
+        {
+          default?: string;
+          notNull?: boolean;
+          primaryKey?: boolean;
+          type?: string;
+        }
+      >;
       indexes: Record<string, unknown>;
-      foreignKeys: Record<string, unknown>;
+      foreignKeys: Record<
+        string,
+        {
+          columnsFrom?: string[];
+          columnsTo?: string[];
+          tableFrom?: string;
+          tableTo?: string;
+        }
+      >;
       uniqueConstraints: Record<string, unknown>;
-      checkConstraints: Record<string, unknown>;
+      checkConstraints: Record<string, { value?: string }>;
     }
   >;
 };
@@ -221,6 +237,13 @@ test("schema snapshot includes CMS-11/CMS-12 core tables and columns", () => {
       "uploaded_by",
       "uploaded_at",
     ],
+    "public.project_media_settings": [
+      "project_id",
+      "image_max_upload_size_bytes",
+      "updated_by",
+      "created_at",
+      "updated_at",
+    ],
     "public.webhooks": [
       "id",
       "project_id",
@@ -288,6 +311,57 @@ test("schema snapshot includes CMS-11/CMS-12 core tables and columns", () => {
     ],
   };
 
+  assert.equal(
+    snapshot.tables["public.media"]?.columns.uploaded_by?.type,
+    "text",
+    "expected public.media.uploaded_by to be text in snapshot",
+  );
+  assert.deepEqual(
+    snapshot.tables["public.project_media_settings"]?.columns.project_id,
+    {
+      name: "project_id",
+      type: "uuid",
+      primaryKey: true,
+      notNull: true,
+    },
+    "expected project_media_settings.project_id to be a non-null UUID primary key",
+  );
+  assert.deepEqual(
+    snapshot.tables["public.project_media_settings"]?.columns
+      .image_max_upload_size_bytes,
+    {
+      name: "image_max_upload_size_bytes",
+      type: "bigint",
+      primaryKey: false,
+      notNull: false,
+    },
+    "expected project_media_settings.image_max_upload_size_bytes to be nullable BIGINT",
+  );
+  assert.deepEqual(
+    snapshot.tables["public.project_media_settings"]?.columns.updated_by,
+    {
+      name: "updated_by",
+      type: "text",
+      primaryKey: false,
+      notNull: true,
+    },
+    "expected project_media_settings.updated_by to be non-null text",
+  );
+
+  for (const columnName of ["created_at", "updated_at"] as const) {
+    assert.deepEqual(
+      snapshot.tables["public.project_media_settings"]?.columns[columnName],
+      {
+        name: columnName,
+        type: "timestamp with time zone",
+        primaryKey: false,
+        notNull: true,
+        default: "now()",
+      },
+      `expected project_media_settings.${columnName} to default to now()`,
+    );
+  }
+
   for (const [tableName, requiredColumns] of Object.entries(
     requiredTableColumns,
   )) {
@@ -325,6 +399,8 @@ test("snapshot includes required named constraints and indexes", () => {
     snapshot.tables["public.project_environment_topology_snapshots"];
   const schemaRegistryEntriesTable =
     snapshot.tables["public.schema_registry_entries"];
+  const projectMediaSettingsTable =
+    snapshot.tables["public.project_media_settings"];
 
   assert.ok(documentsTable, "expected documents table in snapshot");
   assert.ok(
@@ -359,6 +435,10 @@ test("snapshot includes required named constraints and indexes", () => {
   assert.ok(
     schemaRegistryEntriesTable,
     "expected schema_registry_entries table in snapshot",
+  );
+  assert.ok(
+    projectMediaSettingsTable,
+    "expected project_media_settings table in snapshot",
   );
 
   for (const indexName of [
@@ -538,6 +618,31 @@ test("snapshot includes required named constraints and indexes", () => {
     schemaRegistryEntriesTable.foreignKeys
       .fk_schema_registry_entries_env_project,
     "expected foreign key fk_schema_registry_entries_env_project on schema_registry_entries",
+  );
+  assert.ok(
+    projectMediaSettingsTable.checkConstraints
+      .project_media_settings_image_max_size_positive,
+    "expected check constraint project_media_settings_image_max_size_positive on project_media_settings",
+  );
+  assert.deepEqual(
+    projectMediaSettingsTable.foreignKeys
+      .project_media_settings_project_id_projects_id_fk,
+    {
+      name: "project_media_settings_project_id_projects_id_fk",
+      tableFrom: "project_media_settings",
+      tableTo: "projects",
+      columnsFrom: ["project_id"],
+      columnsTo: ["id"],
+      onDelete: "no action",
+      onUpdate: "no action",
+    },
+    "expected project_media_settings.project_id to reference projects.id",
+  );
+  assert.equal(
+    projectMediaSettingsTable.checkConstraints
+      .project_media_settings_image_max_size_positive.value,
+    '"project_media_settings"."image_max_upload_size_bytes" is null or "project_media_settings"."image_max_upload_size_bytes" > 0',
+    "expected image max upload size constraint to allow null or positive values only",
   );
 });
 
