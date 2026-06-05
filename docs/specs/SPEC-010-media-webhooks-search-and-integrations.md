@@ -294,15 +294,18 @@ forbidden.
 
 The configuration section shows loading, empty, error, unavailable, and
 populated states. Admins can create, edit, and delete webhook configurations.
-The create form includes URL, event multi-select, a generated signing secret,
-and active toggle controls. Studio generates a high-entropy signing secret for
-new webhooks, shows it before save so the operator can copy it to the receiver,
-and allows regeneration or manual replacement before submission. The edit form
-includes URL, event multi-select, an optional signing secret field for rotation,
-and active toggle controls. Secrets are never shown after save; leaving the edit
-secret empty omits `secret` from the update payload and preserves the existing
-secret. Delete requires explicit confirmation, removes only the webhook
-configuration, and leaves persisted delivery history append-only.
+Creation is an addressable page under the Webhooks settings section rather than
+a modal, so refresh and back navigation preserve the operator's location. The
+create page includes URL, event multi-select, a generated signing secret, and
+active toggle controls. Studio generates a high-entropy signing secret for new
+webhooks, shows it before save so the operator can copy it to the receiver, and
+allows regeneration or manual replacement before submission. A successful create
+returns the operator to the Webhooks settings list. The edit form includes URL,
+event multi-select, an optional signing secret field for rotation, and active
+toggle controls. Secrets are never shown after save; leaving the edit secret
+empty omits `secret` from the update payload and preserves the existing secret.
+Delete requires explicit confirmation, removes only the webhook configuration,
+and leaves persisted delivery history append-only.
 
 Successful create, edit, and delete mutations refresh the configuration list.
 Failed mutations surface the endpoint error message and keep the user's form or

@@ -49,6 +49,7 @@ import {
   useStudioMountInfo,
   type StudioMountInfo,
 } from "./mount-info-context.js";
+import { WebhookCreateConfigurationPage } from "./settings-webhook-configurations.js";
 import { SettingsWebhooksPanel } from "./settings-webhooks-panel.js";
 import { cn } from "../../lib/utils.js";
 import Link from "../../adapters/next-link.js";
@@ -74,6 +75,7 @@ const settingsTabs = [
 ] as const;
 
 type SettingsTabId = (typeof settingsTabs)[number]["id"];
+type SettingsSectionId = "new" | null;
 
 function toSettingsTabId(value: string | undefined): SettingsTabId {
   if (value === "api-keys" || value === "webhooks") {
@@ -81,6 +83,17 @@ function toSettingsTabId(value: string | undefined): SettingsTabId {
   }
 
   return "general";
+}
+
+function toSettingsSectionId(input: {
+  tab: SettingsTabId;
+  section: string | undefined;
+}): SettingsSectionId {
+  if (input.tab === "webhooks" && input.section === "new") {
+    return "new";
+  }
+
+  return null;
 }
 
 export type SettingsPageSchemaSummaryState =
@@ -667,6 +680,7 @@ function ApiKeysPanel({
 
 export function SettingsPageView({
   activeTab,
+  activeSection,
   canManageSettings,
   mountInfo,
   schemaSummary,
@@ -680,6 +694,7 @@ export function SettingsPageView({
   createError,
 }: {
   activeTab: string;
+  activeSection: SettingsSectionId;
   canManageSettings: boolean;
   mountInfo: SettingsPageMountContext;
   schemaSummary: SettingsPageSchemaSummaryState;
@@ -726,10 +741,14 @@ export function SettingsPageView({
                 setCreateDialogOpen={setCreateDialogOpen}
               />
             ) : activeTab === "webhooks" ? (
-              <SettingsWebhooksPanel
-                webhookConfigState={webhookConfigState}
-                webhookHistoryState={webhookHistoryState}
-              />
+              activeSection === "new" ? (
+                <WebhookCreateConfigurationPage state={webhookConfigState} />
+              ) : (
+                <SettingsWebhooksPanel
+                  webhookConfigState={webhookConfigState}
+                  webhookHistoryState={webhookHistoryState}
+                />
+              )
             ) : (
               <GeneralSettingsPanel
                 mountInfo={mountInfo}
@@ -752,8 +771,12 @@ export function SettingsPageView({
 }
 
 export default function SettingsPage({ initialTab }: { initialTab?: string }) {
-  const params = useParams<{ tab?: string }>();
+  const params = useParams<{ tab?: string; section?: string }>();
   const activeTab = toSettingsTabId(initialTab ?? params.tab);
+  const activeSection = toSettingsSectionId({
+    tab: activeTab,
+    section: params.section,
+  });
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const canManageSettings = useCanManageSettings();
   const mountInfo = useStudioMountInfo();
@@ -802,6 +825,7 @@ export default function SettingsPage({ initialTab }: { initialTab?: string }) {
   return (
     <SettingsPageView
       activeTab={activeTab}
+      activeSection={activeSection}
       canManageSettings={canManageSettings}
       mountInfo={{
         project: mountInfo.project,

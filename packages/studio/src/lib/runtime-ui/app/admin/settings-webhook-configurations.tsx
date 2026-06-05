@@ -1,10 +1,18 @@
 "use client";
 
 import { useState } from "react";
-import { AlertCircle, Pencil, Plus, Trash2, Webhook } from "lucide-react";
+import {
+  AlertCircle,
+  ArrowLeft,
+  Pencil,
+  Plus,
+  Trash2,
+  Webhook,
+} from "lucide-react";
 import type { WebhookConfig, WebhookEvent } from "@mdcms/shared";
 
 import { WebhookConfigDialog } from "../../components/webhook-config-dialog.js";
+import { WebhookConfigForm } from "../../components/webhook-config-form.js";
 import { Badge } from "../../components/ui/badge.js";
 import { Button } from "../../components/ui/button.js";
 import { Skeleton } from "../../components/ui/skeleton.js";
@@ -21,6 +29,8 @@ import { cn } from "../../lib/utils.js";
 import { formatClientDate } from "./settings-webhooks-format.js";
 import { WebhookDeleteConfirmationDialog } from "./webhook-delete-confirmation-dialog.js";
 import { getWebhookEventDisplay } from "../../components/webhook-event-display.js";
+import Link from "../../adapters/next-link.js";
+import { useRouter } from "../../navigation.js";
 
 function WebhookActiveBadge({ active }: { active: boolean }) {
   return (
@@ -74,7 +84,7 @@ function WebhookConfigLoadingState() {
   );
 }
 
-function WebhookConfigEmptyState({ onCreate }: { onCreate: () => void }) {
+function WebhookConfigEmptyState() {
   return (
     <div
       data-mdcms-settings-webhook-configs-state="empty"
@@ -88,9 +98,11 @@ function WebhookConfigEmptyState({ onCreate }: { onCreate: () => void }) {
         Create a webhook to notify external systems about content and media
         events.
       </p>
-      <Button onClick={onCreate} className="mt-4" size="sm">
-        <Plus className="size-4" />
-        Create webhook
+      <Button asChild className="mt-4" size="sm">
+        <Link href="/settings/webhooks/new">
+          <Plus className="size-4" />
+          Create webhook
+        </Link>
       </Button>
     </div>
   );
@@ -198,13 +210,11 @@ function WebhookConfigReadyState({
 function WebhookConfigStateView({
   state,
   isMutating,
-  onCreate,
   onEdit,
   onDelete,
 }: {
   state: SettingsPageWebhookConfigState;
   isMutating: boolean;
-  onCreate: () => void;
   onEdit: (config: WebhookConfig) => void;
   onDelete: (config: WebhookConfig) => void;
 }) {
@@ -229,7 +239,7 @@ function WebhookConfigStateView({
     );
   }
   if (state.status === "empty") {
-    return <WebhookConfigEmptyState onCreate={onCreate} />;
+    return <WebhookConfigEmptyState />;
   }
 
   return (
@@ -247,15 +257,13 @@ export function WebhookConfigurationsSection({
 }: {
   state: SettingsPageWebhookConfigState;
 }) {
-  const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [editingConfig, setEditingConfig] = useState<WebhookConfig | null>(
     null,
   );
   const [deletingConfig, setDeletingConfig] = useState<WebhookConfig | null>(
     null,
   );
-  const isMutating = state.isCreating || state.isUpdating || state.isDeleting;
-  const openCreateDialog = () => setCreateDialogOpen(true);
+  const isMutating = state.isUpdating || state.isDeleting;
   const openDeleteDialog = (config: WebhookConfig) => {
     state.clearDeleteError();
     setDeletingConfig(config);
@@ -278,28 +286,21 @@ export function WebhookConfigurationsSection({
           <Webhook className="size-4 text-primary" />
           Webhook configurations
         </div>
-        <Button onClick={openCreateDialog} className="sm:self-start">
-          <Plus className="size-4" />
-          Create webhook
+        <Button asChild className="sm:self-start">
+          <Link href="/settings/webhooks/new">
+            <Plus className="size-4" />
+            Create webhook
+          </Link>
         </Button>
       </div>
 
       <WebhookConfigStateView
         state={state}
         isMutating={isMutating}
-        onCreate={openCreateDialog}
         onEdit={setEditingConfig}
         onDelete={openDeleteDialog}
       />
 
-      <WebhookConfigDialog
-        mode="create"
-        open={createDialogOpen}
-        onOpenChange={setCreateDialogOpen}
-        onSubmit={state.createWebhook}
-        isSubmitting={state.isCreating}
-        error={state.createError}
-      />
       <WebhookConfigDialog
         mode="edit"
         open={editingConfig !== null}
@@ -327,5 +328,52 @@ export function WebhookConfigurationsSection({
         }}
       />
     </>
+  );
+}
+
+export function WebhookCreateConfigurationPage({
+  state,
+}: {
+  state: SettingsPageWebhookConfigState;
+}) {
+  const router = useRouter();
+  const returnToWebhooks = () => router.push("/settings/webhooks");
+
+  return (
+    <section data-mdcms-settings-webhook-create-page className="space-y-5">
+      <div className="space-y-4">
+        <Button asChild variant="ghost" size="sm" className="-ml-2">
+          <Link href="/settings/webhooks">
+            <ArrowLeft className="size-4" />
+            Back to webhooks
+          </Link>
+        </Button>
+        <div>
+          <h2 className="font-heading text-[30px] font-semibold leading-tight text-foreground">
+            Create webhook
+          </h2>
+          <p className="mt-1 max-w-2xl text-sm text-foreground-muted">
+            Add an HTTPS endpoint for selected MDCMS events.
+          </p>
+        </div>
+      </div>
+
+      <div className="rounded-lg border border-card-border bg-card p-5">
+        <WebhookConfigForm
+          mode="create"
+          onSubmit={async (input) => {
+            await state.createWebhook(input);
+            returnToWebhooks();
+          }}
+          onCancel={returnToWebhooks}
+          isSubmitting={state.isCreating}
+          error={state.createError}
+          formClassName="space-y-5"
+          bodyClassName="space-y-5"
+          footerClassName="flex flex-col-reverse gap-2 border-t border-border pt-4 sm:flex-row sm:justify-end"
+          dataScope="page"
+        />
+      </div>
+    </section>
   );
 }

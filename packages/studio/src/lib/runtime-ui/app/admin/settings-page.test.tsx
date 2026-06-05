@@ -26,15 +26,18 @@ import type { WebhookConfig, WebhookDeliveryHistoryEntry } from "@mdcms/shared";
 function renderSettingsPage(input: {
   initialTab?: string;
   routeTab?: string;
+  routeSection?: string;
   basePath?: string;
   capabilities?: Partial<AdminCapabilitiesValue>;
 }): string {
   const pathname =
-    input.routeTab === "webhooks"
-      ? "/admin/settings/webhooks"
-      : input.routeTab === "api-keys"
-        ? "/admin/settings/api-keys"
-        : "/admin/settings";
+    input.routeTab === "webhooks" && input.routeSection === "new"
+      ? "/admin/settings/webhooks/new"
+      : input.routeTab === "webhooks"
+        ? "/admin/settings/webhooks"
+        : input.routeTab === "api-keys"
+          ? "/admin/settings/api-keys"
+          : "/admin/settings";
   const settingsPageProps =
     input.initialTab === undefined ? {} : { initialTab: input.initialTab };
 
@@ -53,7 +56,10 @@ function renderSettingsPage(input: {
           {
             value: {
               pathname,
-              params: input.routeTab ? { tab: input.routeTab } : {},
+              params: {
+                ...(input.routeTab ? { tab: input.routeTab } : {}),
+                ...(input.routeSection ? { section: input.routeSection } : {}),
+              },
               basePath: input.basePath ?? "/admin",
               push: () => {},
               replace: () => {},
@@ -167,6 +173,19 @@ test("SettingsPage selects the Webhooks section from the route", () => {
   );
 });
 
+test("SettingsPage uses the webhooks create route as an addressable page", () => {
+  const markup = renderSettingsPage({
+    routeTab: "webhooks",
+    routeSection: "new",
+    capabilities: { canManageSettings: true },
+  });
+
+  assert.match(markup, /data-mdcms-settings-webhook-create-page/);
+  assert.match(markup, /Create webhook/);
+  assert.match(markup, /value="whsec_[0-9a-f]{64}"/);
+  assert.doesNotMatch(markup, /data-mdcms-webhook-dialog-content/);
+});
+
 test("SettingsPage General tab shows read-only project context", () => {
   const markup = renderSettingsPage({
     initialTab: "general",
@@ -259,6 +278,7 @@ const readyWebhookConfigState: SettingsPageWebhookConfigState = {
 
 function renderSettingsPageView(input: {
   initialTab: string;
+  activeSection?: "new" | null;
   apiKeysState?: Partial<SettingsPageApiKeysState>;
   webhookConfigState?: Partial<SettingsPageWebhookConfigState>;
   webhookHistoryState?: Partial<SettingsPageWebhookHistoryState>;
@@ -266,11 +286,13 @@ function renderSettingsPageView(input: {
   canManageSettings?: boolean;
 }): string {
   const pathname =
-    input.initialTab === "webhooks"
-      ? "/admin/settings/webhooks"
-      : input.initialTab === "api-keys"
-        ? "/admin/settings/api-keys"
-        : "/admin/settings";
+    input.initialTab === "webhooks" && input.activeSection === "new"
+      ? "/admin/settings/webhooks/new"
+      : input.initialTab === "webhooks"
+        ? "/admin/settings/webhooks"
+        : input.initialTab === "api-keys"
+          ? "/admin/settings/api-keys"
+          : "/admin/settings";
 
   return renderToStaticMarkup(
     createElement(
@@ -290,6 +312,7 @@ function renderSettingsPageView(input: {
         },
         createElement(SettingsPageView, {
           activeTab: input.initialTab,
+          activeSection: input.activeSection ?? null,
           canManageSettings: input.canManageSettings ?? true,
           mountInfo: {
             project: "test-project",
@@ -355,6 +378,7 @@ test("SettingsPageView renders webhook configuration rows and CRUD affordances",
 
   assert.match(markup, /Webhook configurations/);
   assert.match(markup, /Create webhook/);
+  assert.match(markup, /href="\/admin\/settings\/webhooks\/new"/);
   assert.match(markup, /data-mdcms-settings-webhook-configs-state="ready"/);
   assert.match(markup, /https:\/\/example\.com\/hooks\/mdcms/);
   assert.match(markup, /Published content/);
@@ -368,6 +392,21 @@ test("SettingsPageView renders webhook configuration rows and CRUD affordances",
     markup,
     /aria-label="Delete webhook 018f0c6d-98da-7f25-89fe-7c7ef5e8597d"/,
   );
+});
+
+test("SettingsPageView renders webhook creation as a settings subpage", () => {
+  const markup = renderSettingsPageView({
+    initialTab: "webhooks",
+    activeSection: "new",
+  });
+
+  assert.match(markup, /data-mdcms-settings-webhook-create-page/);
+  assert.match(markup, /Create webhook/);
+  assert.match(markup, /Add an HTTPS endpoint for selected MDCMS events/);
+  assert.match(markup, /href="\/admin\/settings\/webhooks"/);
+  assert.match(markup, /value="whsec_[0-9a-f]{64}"/);
+  assert.doesNotMatch(markup, /data-mdcms-webhook-dialog-content/);
+  assert.doesNotMatch(markup, /Delivery history/);
 });
 
 test("SettingsPageView renders webhook configuration loading empty error and unavailable states", () => {

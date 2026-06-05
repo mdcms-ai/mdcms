@@ -66,8 +66,10 @@ webhook configurations for the mounted project/environment with create, edit,
 and delete actions, including URL, event multi-select, generated signing secret,
 optional signing secret rotation, and active toggle controls. The same tab shows
 delivery history with filters for webhook id, event, and outcome. Webhook
-secrets are write-only; Studio never shows a saved secret, and leaving the edit
-secret field empty preserves the existing secret.
+creation uses the addressable `/admin/settings/webhooks/new` route so refresh
+and back navigation preserve the operator's location. Webhook secrets are
+write-only; Studio never shows a saved secret, and leaving the edit secret field
+empty preserves the existing secret.
 
 ## MDX Components
 
