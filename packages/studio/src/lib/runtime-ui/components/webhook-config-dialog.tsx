@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useReducer } from "react";
-import { Check } from "lucide-react";
+import { Check, RefreshCw } from "lucide-react";
 import {
   WEBHOOK_EVENTS,
   type WebhookConfig,
@@ -72,15 +72,56 @@ export type WebhookConfigDialogProps =
   | WebhookConfigCreateDialogProps
   | WebhookConfigEditDialogProps;
 
+export type WebhookSigningSecretRandomValues = (
+  bytes: Uint8Array,
+) => Uint8Array | void;
+
+export type CreateInitialWebhookConfigDialogFormStateOptions = {
+  createSecret?: () => string;
+};
+
+const WEBHOOK_SIGNING_SECRET_BYTE_LENGTH = 32;
+const WEBHOOK_SIGNING_SECRET_PREFIX = "whsec_";
+
+function getSecureRandomValues(bytes: Uint8Array): Uint8Array {
+  const crypto = globalThis.crypto;
+
+  if (!crypto?.getRandomValues) {
+    throw new Error(
+      "Webhook signing secret generation requires Web Crypto support.",
+    );
+  }
+
+  return crypto.getRandomValues(bytes);
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join(
+    "",
+  );
+}
+
+export function generateWebhookSigningSecret(
+  randomValues: WebhookSigningSecretRandomValues = getSecureRandomValues,
+): string {
+  const bytes = new Uint8Array(WEBHOOK_SIGNING_SECRET_BYTE_LENGTH);
+  randomValues(bytes);
+
+  return `${WEBHOOK_SIGNING_SECRET_PREFIX}${bytesToHex(bytes)}`;
+}
+
 export function createInitialWebhookConfigDialogFormState(
   mode: WebhookConfigDialogMode,
   config?: WebhookConfig | null,
+  options: CreateInitialWebhookConfigDialogFormStateOptions = {},
 ): WebhookConfigDialogFormState {
+  const createSecret = options.createSecret ?? generateWebhookSigningSecret;
+
   return {
     mode,
     url: config?.url ?? "",
     selectedEvents: new Set(config?.events ?? []),
-    secret: "",
+    secret: mode === "create" ? createSecret() : "",
     active: config?.active ?? true,
     submitError: null,
     hasSubmitAttempted: false,
@@ -198,7 +239,9 @@ export function WebhookConfigDialog(props: WebhookConfigDialogProps) {
   const config = mode === "edit" ? props.config : null;
   const [form, dispatch] = useReducer(
     webhookConfigDialogFormReducer,
-    createInitialWebhookConfigDialogFormState(mode, config),
+    { config, mode },
+    (initial) =>
+      createInitialWebhookConfigDialogFormState(initial.mode, initial.config),
   );
   const canSubmit = isWebhookConfigDialogSubmittable(form, isSubmitting);
   const errorMessage = getWebhookConfigDialogErrorMessage(form, error);
@@ -213,7 +256,7 @@ export function WebhookConfigDialog(props: WebhookConfigDialogProps) {
   const description =
     mode === "create"
       ? "Add an HTTPS endpoint for selected MDCMS events."
-      : "Update the endpoint, events, active state, or rotate the HMAC secret.";
+      : "Update the endpoint, events, active state, or rotate the signing secret.";
 
   const handleOpenChange = (nextOpen: boolean) => {
     if (!nextOpen) {
@@ -325,12 +368,33 @@ export function WebhookConfigDialog(props: WebhookConfigDialogProps) {
             </fieldset>
 
             <div className="space-y-2">
-              <Label htmlFor="webhook-secret">
-                {mode === "create" ? "HMAC secret" : "Rotate HMAC secret"}
-              </Label>
+              <div className="flex items-center justify-between gap-3">
+                <Label htmlFor="webhook-secret">
+                  {mode === "create"
+                    ? "Signing secret"
+                    : "Rotate signing secret"}
+                </Label>
+                {mode === "create" ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() =>
+                      dispatch({
+                        type: "secret-change",
+                        value: generateWebhookSigningSecret(),
+                      })
+                    }
+                    disabled={isSubmitting}
+                  >
+                    <RefreshCw className="size-3.5" />
+                    Regenerate
+                  </Button>
+                ) : null}
+              </div>
               <Input
                 id="webhook-secret"
-                type="password"
+                type={mode === "create" ? "text" : "password"}
                 value={form.secret}
                 onChange={(event) =>
                   dispatch({
@@ -344,10 +408,14 @@ export function WebhookConfigDialog(props: WebhookConfigDialogProps) {
                     : "Leave empty to preserve existing secret"
                 }
                 disabled={isSubmitting}
+                autoComplete="off"
+                spellCheck={false}
+                className="font-mono text-sm"
               />
               <p className="text-xs text-muted-foreground">
-                Secrets are write-only and must be at least 32 characters when
-                provided.
+                {mode === "create"
+                  ? "Generated automatically. Store it with the receiver before saving; it will not be shown again."
+                  : "Leave empty to preserve the existing signing secret."}
               </p>
             </div>
 

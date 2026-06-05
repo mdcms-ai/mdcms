@@ -156,12 +156,12 @@ The schema browser is useful for verifying that `mdcms schema sync` applied your
 
 Planned configuration per webhook:
 
-| Field      | Description                                                                                               |
-| ---------- | --------------------------------------------------------------------------------------------------------- |
-| **URL**    | The endpoint to receive POST requests                                                                     |
-| **Events** | Filter which events trigger the webhook (e.g., `content.published`, `content.updated`, `content.deleted`) |
-| **Secret** | A shared secret for HMAC signature verification of webhook payloads                                       |
-| **Active** | Toggle to enable or disable the webhook without deleting it                                               |
+| Field              | Description                                                                                               |
+| ------------------ | --------------------------------------------------------------------------------------------------------- |
+| **URL**            | The endpoint to receive POST requests                                                                     |
+| **Events**         | Filter which events trigger the webhook (e.g., `content.published`, `content.updated`, `content.deleted`) |
+| **Signing secret** | Generated on create and used by receivers to verify webhook payload signatures                            |
+| **Active**         | Toggle to enable or disable the webhook without deleting it                                               |
 
 </Accordion>
 

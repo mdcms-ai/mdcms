@@ -63,11 +63,11 @@ Once mounted, Studio provides these routes under your `basePath`:
 
 `/admin/settings` includes the Webhooks tab for admins and owners. It manages
 webhook configurations for the mounted project/environment with create, edit,
-and delete actions, including URL, event multi-select, HMAC secret rotation, and
-active toggle controls. The same tab shows delivery history with filters for
-webhook id, event, and outcome. Webhook secrets are write-only; Studio never
-shows a saved secret, and leaving the edit secret field empty preserves the
-existing secret.
+and delete actions, including URL, event multi-select, generated signing secret,
+optional signing secret rotation, and active toggle controls. The same tab shows
+delivery history with filters for webhook id, event, and outcome. Webhook
+secrets are write-only; Studio never shows a saved secret, and leaving the edit
+secret field empty preserves the existing secret.
 
 ## MDX Components
 

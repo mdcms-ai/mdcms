@@ -116,7 +116,7 @@ Each webhook has:
 
 - **URL** — The endpoint to call
 - **Events** — Which events trigger the webhook (multi-select)
-- **Secret** — HMAC secret for payload verification
+- **Secret** — signing secret for HMAC payload verification
 - **Active** — Enable/disable toggle
 
 Secrets are write-only API inputs. They are required on create, optional on
@@ -212,7 +212,7 @@ Media events include `media` and omit `document`:
 }
 ```
 
-Signed delivery headers use HMAC-SHA256 with the webhook secret.
+Signed delivery headers use HMAC-SHA256 with the webhook signing secret.
 
 #### Signing and Verification
 
@@ -294,13 +294,15 @@ forbidden.
 
 The configuration section shows loading, empty, error, unavailable, and
 populated states. Admins can create, edit, and delete webhook configurations.
-The create form includes URL, event multi-select, HMAC secret, and active toggle
-controls. The edit form includes URL, event multi-select, an optional HMAC
-secret field for rotation, and active toggle controls. Secrets are never shown
-after save; leaving the edit secret empty omits `secret` from the update payload
-and preserves the existing secret. Delete requires explicit confirmation,
-removes only the webhook configuration, and leaves persisted delivery history
-append-only.
+The create form includes URL, event multi-select, a generated signing secret,
+and active toggle controls. Studio generates a high-entropy signing secret for
+new webhooks, shows it before save so the operator can copy it to the receiver,
+and allows regeneration or manual replacement before submission. The edit form
+includes URL, event multi-select, an optional signing secret field for rotation,
+and active toggle controls. Secrets are never shown after save; leaving the edit
+secret empty omits `secret` from the update payload and preserves the existing
+secret. Delete requires explicit confirmation, removes only the webhook
+configuration, and leaves persisted delivery history append-only.
 
 Successful create, edit, and delete mutations refresh the configuration list.
 Failed mutations surface the endpoint error message and keep the user's form or

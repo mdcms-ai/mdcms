@@ -10,10 +10,35 @@ import {
   buildWebhookConfigCreateInput,
   buildWebhookConfigUpdateInput,
   createInitialWebhookConfigDialogFormState,
+  generateWebhookSigningSecret,
   getWebhookConfigDialogErrorMessage,
   isWebhookConfigDialogSubmittable,
   webhookConfigDialogFormReducer,
 } from "./webhook-config-dialog.js";
+
+test("generateWebhookSigningSecret creates a prefixed 32-byte hex secret", () => {
+  const secret = generateWebhookSigningSecret((bytes) => {
+    bytes.forEach((_, index) => {
+      bytes[index] = index;
+    });
+  });
+
+  assert.equal(
+    secret,
+    "whsec_000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  );
+  assert.equal(secret.length, 70);
+});
+
+test("create dialog state starts with a generated signing secret", () => {
+  const generatedSecret = `whsec_${"c".repeat(64)}`;
+
+  const state = createInitialWebhookConfigDialogFormState("create", null, {
+    createSecret: () => generatedSecret,
+  });
+
+  assert.equal(state.secret, generatedSecret);
+});
 
 test("buildWebhookConfigCreateInput trims url and preserves required secret exactly", () => {
   const secret = ` ${"a".repeat(30)} `;
@@ -115,7 +140,10 @@ test("isWebhookConfigDialogSubmittable enforces url event secret and pending sta
 
   const missingSecret = webhookConfigDialogFormReducer(
     webhookConfigDialogFormReducer(
-      createInitialWebhookConfigDialogFormState("create"),
+      webhookConfigDialogFormReducer(
+        createInitialWebhookConfigDialogFormState("create"),
+        { type: "secret-change", value: "" },
+      ),
       { type: "url-change", value: "https://example.com/hooks/mdcms" },
     ),
     { type: "event-toggle", event: "content.published" },
@@ -271,6 +299,24 @@ test("WebhookConfigDialog renders event choices as operator-facing actions", () 
   assert.match(markup, /Notify when content becomes visible to readers/);
   assert.match(markup, /Media uploaded/);
   assert.match(markup, /Notify when an asset is added to media storage/);
+});
+
+test("WebhookConfigDialog renders generated signing secret controls for create", () => {
+  const markup = renderToStaticMarkup(
+    createElement(WebhookConfigDialog, {
+      mode: "create",
+      open: true,
+      onOpenChange: () => {},
+      onSubmit: async () => {},
+      isSubmitting: false,
+      error: null,
+    }),
+  );
+
+  assert.match(markup, /Signing secret/);
+  assert.match(markup, /Regenerate/);
+  assert.match(markup, /value="whsec_[0-9a-f]{64}"/);
+  assert.doesNotMatch(markup, /HMAC secret/);
 });
 
 test("WebhookConfigDialog keeps long event choices inside a viewport-height modal", () => {
