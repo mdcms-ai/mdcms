@@ -306,8 +306,8 @@ test("SettingsPageView renders webhook configuration rows and CRUD affordances",
   assert.match(markup, /Create webhook/);
   assert.match(markup, /data-mdcms-settings-webhook-configs-state="ready"/);
   assert.match(markup, /https:\/\/example\.com\/hooks\/mdcms/);
-  assert.match(markup, /content\.published/);
-  assert.match(markup, /media\.uploaded/);
+  assert.match(markup, /Published content/);
+  assert.match(markup, /Media uploaded/);
   assert.match(markup, /Active/);
   assert.match(
     markup,

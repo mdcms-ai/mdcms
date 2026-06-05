@@ -242,10 +242,8 @@ test("failed submit path preserves form state and renders an error", () => {
   );
 
   assert.match(markup, /value="https:\/\/example\.com\/hooks\/mdcms"/);
-  assert.match(
-    markup,
-    /aria-pressed="true"[^>]*><span[^>]*>content\.published<\/span>/,
-  );
+  assert.match(markup, /aria-pressed="true"[^>]*>[\s\S]*Published content/);
+  assert.match(markup, /Notify when content becomes visible to readers/);
   assert.match(markup, /aria-checked="false"/);
 
   const errorMarkup = renderToStaticMarkup(
@@ -255,6 +253,24 @@ test("failed submit path preserves form state and renders an error", () => {
   );
   assert.match(errorMarkup, /role="alert"/);
   assert.match(errorMarkup, /Endpoint rejected webhook\./);
+});
+
+test("WebhookConfigDialog renders event choices as operator-facing actions", () => {
+  const markup = renderToStaticMarkup(
+    createElement(WebhookConfigDialog, {
+      mode: "create",
+      open: true,
+      onOpenChange: () => {},
+      onSubmit: async () => {},
+      isSubmitting: false,
+      error: null,
+    }),
+  );
+
+  assert.match(markup, /Published content/);
+  assert.match(markup, /Notify when content becomes visible to readers/);
+  assert.match(markup, /Media uploaded/);
+  assert.match(markup, /Notify when an asset is added to media storage/);
 });
 
 test("parent mutation errors are hidden until a submit attempt in the current open cycle", () => {

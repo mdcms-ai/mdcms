@@ -20,6 +20,7 @@ import type { SettingsPageWebhookConfigState } from "../../hooks/use-webhook-con
 import { cn } from "../../lib/utils.js";
 import { formatClientDate } from "./settings-webhooks-format.js";
 import { WebhookDeleteConfirmationDialog } from "./webhook-delete-confirmation-dialog.js";
+import { getWebhookEventDisplay } from "../../components/webhook-event-display.js";
 
 function WebhookActiveBadge({ active }: { active: boolean }) {
   return (
@@ -40,15 +41,19 @@ function WebhookActiveBadge({ active }: { active: boolean }) {
 function WebhookEventList({ events }: { events: WebhookEvent[] }) {
   return (
     <div className="flex max-w-[24rem] flex-wrap gap-1">
-      {events.map((event) => (
-        <Badge
-          key={event}
-          variant="outline"
-          className="rounded-sm font-mono text-[10px]"
-        >
-          {event}
-        </Badge>
-      ))}
+      {events.map((event) => {
+        const display = getWebhookEventDisplay(event);
+        return (
+          <Badge
+            key={event}
+            variant="outline"
+            title={event}
+            className="rounded-sm border-border bg-background-subtle text-[11px] font-medium"
+          >
+            {display.label}
+          </Badge>
+        );
+      })}
     </div>
   );
 }

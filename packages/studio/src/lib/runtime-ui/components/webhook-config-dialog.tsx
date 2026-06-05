@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useReducer } from "react";
+import { Check } from "lucide-react";
 import {
   WEBHOOK_EVENTS,
   type WebhookConfig,
@@ -10,7 +11,6 @@ import {
 } from "@mdcms/shared";
 
 import { cn } from "../lib/utils.js";
-import { Badge } from "./ui/badge.js";
 import { Button } from "./ui/button.js";
 import {
   Dialog,
@@ -23,6 +23,7 @@ import {
 import { Input } from "./ui/input.js";
 import { Label } from "./ui/label.js";
 import { Switch } from "./ui/switch.js";
+import { getWebhookEventDisplay } from "./webhook-event-display.js";
 
 export type WebhookConfigDialogMode = "create" | "edit";
 
@@ -264,33 +265,57 @@ export function WebhookConfigDialog(props: WebhookConfigDialogProps) {
               />
             </div>
 
-            <div className="space-y-3">
-              <Label>Events</Label>
-              <div className="flex flex-wrap gap-1.5">
+            <fieldset className="space-y-3">
+              <legend className="text-sm font-medium">Events</legend>
+              <div className="grid gap-2 sm:grid-cols-2">
                 {WEBHOOK_EVENTS.map((event) => {
                   const selected = form.selectedEvents.has(event);
+                  const display = getWebhookEventDisplay(event);
                   return (
                     <button
                       key={event}
                       type="button"
                       aria-pressed={selected}
+                      aria-label={`${display.label}: ${display.description}`}
                       disabled={isSubmitting}
                       onClick={() => dispatch({ type: "event-toggle", event })}
+                      className={cn(
+                        "group flex min-h-24 w-full items-start gap-3 rounded-md border border-border bg-background-subtle/40 p-3 text-left transition-colors hover:border-primary/40 hover:bg-primary/5 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+                        selected && "border-primary/60 bg-primary/10",
+                        isSubmitting && "cursor-not-allowed opacity-50",
+                      )}
                     >
-                      <Badge
-                        variant={selected ? "default" : "outline"}
+                      <span
                         className={cn(
-                          "cursor-pointer select-none rounded-sm font-mono text-[11px]",
-                          isSubmitting && "cursor-not-allowed opacity-50",
+                          "mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full border transition-colors",
+                          selected
+                            ? "border-primary bg-primary text-primary-foreground"
+                            : "border-border text-transparent group-hover:border-primary/50",
                         )}
                       >
-                        {event}
-                      </Badge>
+                        {selected ? <Check className="size-3" /> : null}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="flex flex-wrap items-center gap-2">
+                          <span className="text-sm font-medium text-foreground">
+                            {display.label}
+                          </span>
+                          <span className="rounded-sm border border-border bg-background px-1.5 py-0.5 text-[10px] font-medium text-foreground-muted">
+                            {display.scope}
+                          </span>
+                        </span>
+                        <span className="mt-1 block text-xs leading-snug text-foreground-muted">
+                          {display.description}
+                        </span>
+                        <code className="mt-2 block font-mono text-[10px] text-foreground-muted/70">
+                          {event}
+                        </code>
+                      </span>
                     </button>
                   );
                 })}
               </div>
-            </div>
+            </fieldset>
 
             <div className="space-y-2">
               <Label htmlFor="webhook-secret">
