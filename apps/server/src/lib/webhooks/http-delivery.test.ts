@@ -3,6 +3,7 @@ import { test } from "bun:test";
 
 import { createWebhookHttpDeliverySink } from "../webhooks-api.js";
 
+import { createPinnedWebhookTargetLookup } from "./http-delivery.js";
 import { createPayload, createTarget } from "./test-support.js";
 
 test("webhook HTTP delivery sink posts JSON payloads and rejects non-2xx responses", async () => {
@@ -152,5 +153,50 @@ test("webhook HTTP delivery sink passes timeout to pinned transport", async () =
     deliveryId: "018f0c6d-98da-7f25-89fe-7c7ef5e8597f",
     attempt: 1,
     maxAttempts: 3,
+  });
+});
+
+test("webhook pinned target lookup supports single and all-address callback shapes", async () => {
+  const lookup = createPinnedWebhookTargetLookup({
+    address: "93.184.216.34",
+    addressFamily: 4,
+  });
+
+  const singleResult = await new Promise<{
+    address: string | unknown[];
+    family: number | undefined;
+  }>((resolve, reject) => {
+    lookup("example.com", {}, (error, address, family) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve({ address, family });
+    });
+  });
+
+  assert.deepEqual(singleResult, {
+    address: "93.184.216.34",
+    family: 4,
+  });
+
+  const allResult = await new Promise<{
+    address: string | unknown[];
+    family: number | undefined;
+  }>((resolve, reject) => {
+    lookup("example.com", { all: true }, (error, address, family) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve({ address, family });
+    });
+  });
+
+  assert.deepEqual(allResult, {
+    address: [{ address: "93.184.216.34", family: 4 }],
+    family: undefined,
   });
 });

@@ -46,6 +46,24 @@ export class WebhookHttpDeliveryError extends Error {
   }
 }
 
+export function createPinnedWebhookTargetLookup(
+  target: Pick<ResolvedWebhookTarget, "address" | "addressFamily">,
+): NonNullable<RequestOptions["lookup"]> {
+  return (_hostname, options, callback) => {
+    if (options.all === true) {
+      callback(null, [
+        {
+          address: target.address,
+          family: target.addressFamily,
+        },
+      ]);
+      return;
+    }
+
+    callback(null, target.address, target.addressFamily);
+  };
+}
+
 function sendWithPinnedTarget(
   input: WebhookHttpTransportInput,
 ): Promise<{ status: number }> {
@@ -55,9 +73,7 @@ function sendWithPinnedTarget(
     host: url.host,
     "content-length": String(Buffer.byteLength(input.body)),
   };
-  const lookup: RequestOptions["lookup"] = (_hostname, _options, callback) => {
-    callback(null, input.target.address, input.target.addressFamily);
-  };
+  const lookup = createPinnedWebhookTargetLookup(input.target);
 
   return new Promise((resolve, reject) => {
     const request = httpsRequest(
