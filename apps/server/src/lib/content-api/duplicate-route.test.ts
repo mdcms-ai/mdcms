@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "bun:test";
 
 import { mountContentApiRoutes } from "./routes.js";
+import { authorizeTestRequest } from "../content-api-test-support.js";
 import type {
   ContentDocument,
   ContentRouteApp,
@@ -101,7 +102,7 @@ function mountAndGetDuplicateHandler(
   const store = createStore(storeOverrides);
   mountContentApiRoutes(app, {
     store,
-    authorize: async () => {},
+    authorize: authorizeTestRequest,
     requireCsrf: async () => {},
     getWriteSchemaSyncState: async () => ({ schemaHash: "test-hash" }),
   });

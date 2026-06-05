@@ -95,6 +95,16 @@ const RUNTIME_ROUTES: readonly StudioRuntimeRouteDefinition[] = [
     render: () => <SettingsPage />,
   },
   {
+    id: "settings.section",
+    path: "/settings/:tab",
+    render: () => <SettingsPage />,
+  },
+  {
+    id: "settings.section.detail",
+    path: "/settings/:tab/:section",
+    render: () => <SettingsPage />,
+  },
+  {
     id: "workflows",
     path: "/workflows",
     render: () => <WorkflowsPage />,

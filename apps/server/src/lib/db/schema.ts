@@ -500,6 +500,115 @@ export const media = pgTable("media", {
   uploadedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
 });
 
+export const webhooks = pgTable(
+  "webhooks",
+  {
+    id: uuid().defaultRandom().primaryKey(),
+    projectId: uuid()
+      .notNull()
+      .references(() => projects.id),
+    environmentId: uuid()
+      .notNull()
+      .references(() => environments.id),
+    url: text().notNull(),
+    events: jsonb().$type<string[]>().notNull(),
+    secret: text().notNull(),
+    active: boolean().default(true).notNull(),
+    createdBy: text()
+      .notNull()
+      .references(() => authUsers.id, { onDelete: "restrict" }),
+    updatedBy: text()
+      .notNull()
+      .references(() => authUsers.id, { onDelete: "restrict" }),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table): any => [
+    check(
+      "webhooks_events_check",
+      sql`jsonb_typeof(${table.events}) = 'array' and jsonb_array_length(${table.events}) > 0 and ${table.events} <@ '["content.created", "content.updated", "content.published", "content.unpublished", "content.deleted", "content.restored", "media.uploaded"]'::jsonb`,
+    ),
+    foreignKey({
+      name: "fk_webhooks_env_project",
+      columns: [table.environmentId, table.projectId],
+      foreignColumns: [environments.id, environments.projectId],
+    }),
+    index("idx_webhooks_scope").on(
+      table.projectId,
+      table.environmentId,
+      table.createdAt.desc(),
+    ),
+    index("idx_webhooks_active_event_lookup")
+      .using("gin", table.events)
+      .where(sql`${table.active} = true`),
+  ],
+);
+
+export const webhookDeliveryAttempts = pgTable(
+  "webhook_delivery_attempts",
+  {
+    id: uuid().defaultRandom().primaryKey(),
+    projectId: uuid()
+      .notNull()
+      .references(() => projects.id),
+    environmentId: uuid()
+      .notNull()
+      .references(() => environments.id),
+    webhookId: uuid().notNull(),
+    event: text().notNull(),
+    eventId: uuid().notNull(),
+    deliveryId: uuid().notNull(),
+    url: text().notNull(),
+    attempt: integer().notNull(),
+    maxAttempts: integer().notNull(),
+    outcome: text().notNull(),
+    statusCode: integer(),
+    error: text(),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (table): any => [
+    check("webhook_delivery_attempts_attempt_check", sql`${table.attempt} > 0`),
+    check(
+      "webhook_delivery_attempts_max_attempts_check",
+      sql`${table.maxAttempts} > 0`,
+    ),
+    check(
+      "webhook_delivery_attempts_attempt_le_max_attempts_check",
+      sql`${table.attempt} <= ${table.maxAttempts}`,
+    ),
+    check(
+      "webhook_delivery_attempts_outcome_check",
+      sql`${table.outcome} in ('succeeded', 'retrying', 'failed', 'discarded')`,
+    ),
+    check(
+      "webhook_delivery_attempts_event_check",
+      sql`${table.event} in ('content.created', 'content.updated', 'content.published', 'content.unpublished', 'content.deleted', 'content.restored', 'media.uploaded')`,
+    ),
+    check(
+      "webhook_delivery_attempts_status_code_check",
+      sql`${table.statusCode} is null or (${table.statusCode} >= 100 and ${table.statusCode} <= 599)`,
+    ),
+    foreignKey({
+      name: "fk_webhook_delivery_attempts_env_project",
+      columns: [table.environmentId, table.projectId],
+      foreignColumns: [environments.id, environments.projectId],
+    }),
+    index("idx_webhook_delivery_attempts_scope").on(
+      table.projectId,
+      table.environmentId,
+      table.createdAt.desc(),
+    ),
+    index("idx_webhook_delivery_attempts_filters").on(
+      table.projectId,
+      table.environmentId,
+      table.webhookId,
+      table.event,
+      table.outcome,
+      table.createdAt.desc(),
+    ),
+  ],
+);
+
 export const migrations = pgTable(
   "migrations",
   {

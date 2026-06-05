@@ -7,6 +7,7 @@
     "typecheck": "bun nx run-many -t typecheck",
     "quality": "bun run format:check && bun run typecheck",
     "unit": "bun nx run-many -t test && bun run studio:embed:smoke",
+    "e2e": "bun x playwright test",
     "integration": "bun run compose:health && bun run migrate:check && bun run integration:content",
     "integration:content": "bash scripts/content-api-integration-check.sh",
     "ci:required": "bun run quality && bun run unit && bun run integration",

@@ -128,18 +128,26 @@ curl "https://cms.example.com/api/v1/webhooks" \
 {
   "data": [
     {
-      "id": "wh_550e8400-e29b-41d4-a716-446655440000",
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "project": "marketing-site",
+      "environment": "production",
       "url": "https://api.example.com/webhooks/mdcms",
       "events": ["content.published", "content.unpublished"],
       "active": true,
+      "createdBy": "user_01HZX9N8Y6M2J4K7V3P6Q8R9SA",
+      "updatedBy": "user_01HZX9N8Y6M2J4K7V3P6Q8R9SA",
       "createdAt": "2026-01-10T12:00:00.000Z",
       "updatedAt": "2026-01-10T12:00:00.000Z"
     },
     {
-      "id": "wh_660e8400-e29b-41d4-a716-446655440001",
+      "id": "660e8400-e29b-41d4-a716-446655440001",
+      "project": "marketing-site",
+      "environment": "production",
       "url": "https://deploy.example.com/trigger",
       "events": ["content.published"],
       "active": true,
+      "createdBy": "user_01HZX9N8Y6M2J4K7V3P6Q8R9SA",
+      "updatedBy": "user_01HZX9N8Y6M2J4K7V3P6Q8R9SA",
       "createdAt": "2026-01-12T08:00:00.000Z",
       "updatedAt": "2026-01-12T08:00:00.000Z"
     }
@@ -164,7 +172,9 @@ curl "https://cms.example.com/api/v1/webhooks" \
 </ParamField>
 
 <ParamField body="secret" type="string" required>
-  Shared secret for HMAC signature verification. Must be at least 32 characters.
+  Shared signing secret for HMAC signature verification. Must be 32 to 4096
+  characters. Studio generates this value automatically for new webhooks; API
+  clients must provide a cryptographically random value.
 </ParamField>
 
 <ParamField body="active" type="boolean">
@@ -183,7 +193,7 @@ curl -X POST "https://cms.example.com/api/v1/webhooks" \
   -d '{
     "url": "https://api.example.com/webhooks/mdcms",
     "events": ["content.published", "content.unpublished", "content.deleted"],
-    "secret": "whsec_a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6",
+    "secret": "whsec_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
     "active": true
   }'
 ```
@@ -193,10 +203,14 @@ curl -X POST "https://cms.example.com/api/v1/webhooks" \
 ```json
 {
   "data": {
-    "id": "wh_770e8400-e29b-41d4-a716-446655440002",
+    "id": "770e8400-e29b-41d4-a716-446655440002",
+    "project": "marketing-site",
+    "environment": "production",
     "url": "https://api.example.com/webhooks/mdcms",
     "events": ["content.published", "content.unpublished", "content.deleted"],
     "active": true,
+    "createdBy": "user_01HZX9N8Y6M2J4K7V3P6Q8R9SA",
+    "updatedBy": "user_01HZX9N8Y6M2J4K7V3P6Q8R9SA",
     "createdAt": "2026-01-20T10:00:00.000Z",
     "updatedAt": "2026-01-20T10:00:00.000Z"
   }
@@ -226,7 +240,8 @@ curl -X POST "https://cms.example.com/api/v1/webhooks" \
 </ParamField>
 
 <ParamField body="secret" type="string">
-  Updated shared secret.
+  Updated shared signing secret. Omit this field to preserve the existing
+  write-only secret.
 </ParamField>
 
 <ParamField body="active" type="boolean">
@@ -236,7 +251,7 @@ curl -X POST "https://cms.example.com/api/v1/webhooks" \
 **Example request:**
 
 ```bash
-curl -X PUT "https://cms.example.com/api/v1/webhooks/wh_770e8400-e29b-41d4-a716-446655440002" \
+curl -X PUT "https://cms.example.com/api/v1/webhooks/770e8400-e29b-41d4-a716-446655440002" \
   -H "Content-Type: application/json" \
   -H "X-MDCMS-Project: marketing-site" \
   -H "X-MDCMS-Environment: production" \
@@ -253,7 +268,9 @@ curl -X PUT "https://cms.example.com/api/v1/webhooks/wh_770e8400-e29b-41d4-a716-
 ```json
 {
   "data": {
-    "id": "wh_770e8400-e29b-41d4-a716-446655440002",
+    "id": "770e8400-e29b-41d4-a716-446655440002",
+    "project": "marketing-site",
+    "environment": "production",
     "url": "https://api.example.com/webhooks/mdcms",
     "events": [
       "content.published",
@@ -262,6 +279,8 @@ curl -X PUT "https://cms.example.com/api/v1/webhooks/wh_770e8400-e29b-41d4-a716-
       "content.created"
     ],
     "active": true,
+    "createdBy": "user_01HZX9N8Y6M2J4K7V3P6Q8R9SA",
+    "updatedBy": "user_01HZX9N8Y6M2J4K7V3P6Q8R9SA",
     "createdAt": "2026-01-20T10:00:00.000Z",
     "updatedAt": "2026-01-20T11:00:00.000Z"
   }
@@ -285,7 +304,7 @@ curl -X PUT "https://cms.example.com/api/v1/webhooks/wh_770e8400-e29b-41d4-a716-
 **Example request:**
 
 ```bash
-curl -X DELETE "https://cms.example.com/api/v1/webhooks/wh_770e8400-e29b-41d4-a716-446655440002" \
+curl -X DELETE "https://cms.example.com/api/v1/webhooks/770e8400-e29b-41d4-a716-446655440002" \
   -H "X-MDCMS-Project: marketing-site" \
   -H "X-MDCMS-Environment: production" \
   -H "X-MDCMS-CSRF-Token: csrf_token_value" \
@@ -297,9 +316,8 @@ curl -X DELETE "https://cms.example.com/api/v1/webhooks/wh_770e8400-e29b-41d4-a7
 ```json
 {
   "data": {
-    "success": true,
-    "id": "wh_770e8400-e29b-41d4-a716-446655440002",
-    "deletedAt": "2026-01-21T10:00:00.000Z"
+    "deleted": true,
+    "id": "770e8400-e29b-41d4-a716-446655440002"
   }
 }
 ```
@@ -328,12 +346,18 @@ All webhook deliveries use the following envelope:
   "timestamp": "2026-01-20T12:00:00.000Z",
   "project": "marketing-site",
   "environment": "production",
-  "data": {
+  "document": {
     "documentId": "550e8400-e29b-41d4-a716-446655440000",
+    "translationGroupId": "660e8400-e29b-41d4-a716-446655440001",
     "type": "BlogPost",
     "path": "content/blog/hello-world",
     "locale": "en",
+    "format": "mdx",
     "version": 4
+  },
+  "user": {
+    "id": "user_01HZX9N8Y6M2J4K7V3P6Q8R9SA",
+    "email": "editor@example.com"
   }
 }
 ```
@@ -346,7 +370,7 @@ Every webhook delivery includes an `X-MDCMS-Signature` header for payload verifi
 X-MDCMS-Signature: t=1705747200,v1=5257a869e7ecebeda32affa62cdca3fa51cad7e77a0e56ff536d0ce8e108d8bd
 ```
 
-The signature is an HMAC-SHA256 digest computed over the concatenation of the timestamp and the raw request body, using the webhook's `secret` as the key.
+The signature is an HMAC-SHA256 digest computed over the concatenation of the timestamp and the raw request body, using the webhook's `secret` as the key. The raw body must be the exact bytes MDCMS sent; parsing JSON and serializing it again can change whitespace or key order and invalidate the signature.
 
 **Verification algorithm:**
 
@@ -356,7 +380,7 @@ The signature is an HMAC-SHA256 digest computed over the concatenation of the ti
 4. Compare the computed digest with the `v1` value (use constant-time comparison).
 5. Optionally, reject payloads where the timestamp is more than 5 minutes old to prevent replay attacks.
 
-**Verification example (Node.js):**
+**Verification helper (Node.js):**
 
 ```typescript
 import { createHmac, timingSafeEqual } from "crypto";
@@ -381,27 +405,65 @@ function verifyWebhookSignature(
     return false;
   }
 
-  // Check timestamp tolerance
-  const age = Math.floor(Date.now() / 1000) - parseInt(timestamp, 10);
+  const timestampSeconds = Number.parseInt(timestamp, 10);
+  if (!Number.isSafeInteger(timestampSeconds) || timestampSeconds < 0) {
+    return false;
+  }
+
+  const age = Math.abs(Math.floor(Date.now() / 1000) - timestampSeconds);
   if (age > toleranceSeconds) {
     return false;
   }
 
-  // Compute expected signature
   const signedPayload = `${timestamp}.${rawBody}`;
   const expected = createHmac("sha256", secret)
     .update(signedPayload)
     .digest("hex");
+  const actualBuffer = Buffer.from(signature, "hex");
+  const expectedBuffer = Buffer.from(expected, "hex");
 
-  // Constant-time comparison
-  return timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+  if (actualBuffer.length !== expectedBuffer.length) {
+    return false;
+  }
+
+  return timingSafeEqual(actualBuffer, expectedBuffer);
 }
+```
+
+**Express receiver example:**
+
+```typescript
+import express from "express";
+
+const app = express();
+const signingSecret = process.env.MDCMS_WEBHOOK_SIGNING_SECRET!;
+
+app.post(
+  "/webhooks/mdcms",
+  express.raw({ type: "application/json" }),
+  (req, res) => {
+    const rawBody = req.body.toString("utf8");
+    const signature = req.header("x-mdcms-signature");
+
+    if (!verifyWebhookSignature(rawBody, signature ?? "", signingSecret)) {
+      res.status(401).send("Invalid webhook signature");
+      return;
+    }
+
+    const payload = JSON.parse(rawBody);
+
+    // Process the verified payload asynchronously if work may take longer than
+    // a few seconds.
+    queueWebhookJob(payload);
+    res.sendStatus(200);
+  },
+);
 ```
 
 ### Delivery Behavior
 
 - **Async delivery** -- Webhooks are dispatched asynchronously and do not block the originating API request.
-- **Retries** -- Failed deliveries (non-2xx responses or network errors) are retried up to 3 times with exponential backoff (1 minute, 5 minutes, 30 minutes).
+- **Retries** -- Failed deliveries (non-2xx responses or network errors) use three total attempts: the initial attempt, then retries after 1 second and 2 seconds.
 - **HTTPS only** -- Webhook URLs must use HTTPS. HTTP URLs are rejected at configuration time.
 - **Timeout** -- Each delivery attempt has a 10-second timeout. If the endpoint does not respond within 10 seconds, the attempt is marked as failed.
 

@@ -61,6 +61,18 @@ Once mounted, Studio provides these routes under your `basePath`:
 | `/admin/settings`                  | Settings (admin/owner only)                                   |
 | `/admin/trash`                     | Deleted content                                               |
 
+`/admin/settings` includes the Webhooks tab for admins and owners. It manages
+webhook configurations for the mounted project/environment with create, edit,
+and delete actions, including URL, event multi-select, generated signing secret,
+optional signing secret rotation, and active toggle controls. The same tab shows
+delivery history with filters for webhook id, event, and outcome. Webhook
+creation and editing use addressable `/admin/settings/webhooks/new` and
+`/admin/settings/webhooks/:id` routes so refresh and back navigation preserve
+the operator's location. The table also includes a direct active/inactive toggle
+for quick enablement changes. Webhook secrets are write-only; Studio never shows
+a saved secret, and leaving the edit secret field empty preserves the existing
+secret.
+
 ## MDX Components
 
 Register local MDX components in your `mdcms.config.ts` to make them available in the Studio editor:

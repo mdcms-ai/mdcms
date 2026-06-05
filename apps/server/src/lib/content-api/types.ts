@@ -6,7 +6,11 @@ import type {
   SchemaRegistryTypeSnapshot,
   TranslationVariantSummary,
 } from "@mdcms/shared";
-import type { AuthorizationRequirement } from "../auth.js";
+import type {
+  AuthorizationRequirement,
+  AuthorizedActor,
+  AuthorizedRequest,
+} from "../auth.js";
 import type { DrizzleDatabase } from "../db.js";
 import { z } from "zod";
 
@@ -245,7 +249,7 @@ export type CreateInMemoryContentStoreOptions = {
 export type ContentRequestAuthorizer = (
   request: Request,
   requirement: AuthorizationRequirement,
-) => Promise<unknown>;
+) => Promise<AuthorizedRequest>;
 
 export type ContentRequestCsrfProtector = (request: Request) => Promise<void>;
 
@@ -257,12 +261,35 @@ export type ContentUserSummaryLookup = (
   userIds: string[],
 ) => Promise<Record<string, { name: string; email: string }>>;
 
+export const CONTENT_LIFECYCLE_EVENTS = [
+  "content.created",
+  "content.updated",
+  "content.published",
+  "content.unpublished",
+  "content.deleted",
+  "content.restored",
+] as const;
+
+export type ContentLifecycleEvent = (typeof CONTENT_LIFECYCLE_EVENTS)[number];
+
+export type ContentLifecycleActor = AuthorizedActor;
+
+export type ContentLifecycleEventSink = {
+  emitContentEvent: (input: {
+    event: ContentLifecycleEvent;
+    scope: ContentScope;
+    document: ContentDocument;
+    actor: ContentLifecycleActor;
+  }) => Promise<void>;
+};
+
 export type MountContentApiRoutesOptions = {
   store: ContentStore;
   authorize: ContentRequestAuthorizer;
   requireCsrf: ContentRequestCsrfProtector;
   getWriteSchemaSyncState: ContentWriteSchemaSyncLookup;
   resolveUsers?: ContentUserSummaryLookup;
+  lifecycleEvents?: ContentLifecycleEventSink;
   previewTokenSecret?: string;
   previewTokenTtlSeconds?: number;
 };

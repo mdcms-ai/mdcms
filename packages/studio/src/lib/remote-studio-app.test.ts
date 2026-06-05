@@ -338,3 +338,67 @@ test("RemoteStudioApp renders the expanded admin route surfaces", () => {
   assert.match(workflowsMarkup, /Workflows/);
   assert.match(settingsMarkup, /Settings/);
 });
+
+test("RemoteStudioApp preserves the active Settings section in the route", () => {
+  const context: StudioMountContext = {
+    apiBaseUrl: "http://localhost:4000",
+    basePath: "/admin",
+    auth: { mode: "cookie" },
+    hostBridge: {
+      version: "1",
+      resolveComponent: () => null,
+      renderMdxPreview: () => () => {},
+    },
+    documentRoute: {
+      project: "marketing-site",
+      initialEnvironment: "staging",
+      write: {
+        canWrite: false,
+        message: "Schema sync required before Studio can write drafts.",
+      },
+    },
+  };
+
+  const markup = renderToStaticMarkup(
+    createElement(RemoteStudioApp, {
+      context,
+      initialPathname: "/admin/settings/webhooks",
+      initialActions: [],
+    }),
+  );
+
+  assert.match(markup, /data-mdcms-active-route="settings.section"/);
+  assert.match(markup, /data-mdcms-internal-path="\/settings\/webhooks"/);
+});
+
+test("RemoteStudioApp preserves the active Settings subsection in the route", () => {
+  const context: StudioMountContext = {
+    apiBaseUrl: "http://localhost:4000",
+    basePath: "/admin",
+    auth: { mode: "cookie" },
+    hostBridge: {
+      version: "1",
+      resolveComponent: () => null,
+      renderMdxPreview: () => () => {},
+    },
+    documentRoute: {
+      project: "marketing-site",
+      initialEnvironment: "staging",
+      write: {
+        canWrite: false,
+        message: "Schema sync required before Studio can write drafts.",
+      },
+    },
+  };
+
+  const markup = renderToStaticMarkup(
+    createElement(RemoteStudioApp, {
+      context,
+      initialPathname: "/admin/settings/webhooks/new",
+      initialActions: [],
+    }),
+  );
+
+  assert.match(markup, /data-mdcms-active-route="settings.section.detail"/);
+  assert.match(markup, /data-mdcms-internal-path="\/settings\/webhooks\/new"/);
+});

@@ -38,6 +38,8 @@ import {
   createDatabaseProjectStore,
   mountProjectApiRoutes,
 } from "./projects-api.js";
+import { mountWebhookApiRoutes } from "./webhooks-api.js";
+import { createRuntimeWebhookRuntime } from "./webhooks/runtime.js";
 import type { ParsedMdcmsConfig } from "@mdcms/shared";
 import {
   createRefreshingStudioRuntimePublicationSelection,
@@ -126,6 +128,10 @@ export function createServerRequestHandlerWithModules(
     db: dbConnection.db,
   });
   const projectStore = createDatabaseProjectStore({ db: dbConnection.db });
+  const webhookRuntime = createRuntimeWebhookRuntime({
+    db: dbConnection.db,
+    logger,
+  });
   const actions = collectServerModuleActions(moduleLoadReport);
 
   const lookupSchemaHashForScope = async (scope: {
@@ -464,6 +470,12 @@ export function createServerRequestHandlerWithModules(
     actions,
     configureApp: (app) => {
       mountAuthRoutes(app, { authService });
+      mountWebhookApiRoutes(app, {
+        store: webhookRuntime.store,
+        authorize: (request, requirement) =>
+          authService.authorizeRequest(request, requirement),
+        requireCsrf: (request) => authService.requireCsrfProtection(request),
+      });
       mountContentApiRoutes(app, {
         store: contentStore,
         authorize: (request, requirement) =>
@@ -490,6 +502,7 @@ export function createServerRequestHandlerWithModules(
           }
           return map;
         },
+        lifecycleEvents: webhookRuntime.dispatcher,
         previewTokenSecret: env.MDCMS_PREVIEW_TOKEN_SECRET,
       });
       mountSchemaApiRoutes(app, {

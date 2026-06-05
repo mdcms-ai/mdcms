@@ -154,14 +154,20 @@ The schema browser is useful for verifying that `mdcms schema sync` applied your
 <Accordion title="Webhook configuration (planned)">
   Webhook support will allow you to configure HTTP endpoints that receive notifications when content events occur.
 
+Webhook creation and editing open addressable settings pages at
+`/admin/settings/webhooks/new` and `/admin/settings/webhooks/:id`, so refreshing
+the browser or using back navigation keeps operators in the webhook workflow.
+The configuration table also includes a direct active/inactive toggle for quick
+enablement changes.
+
 Planned configuration per webhook:
 
-| Field      | Description                                                                                               |
-| ---------- | --------------------------------------------------------------------------------------------------------- |
-| **URL**    | The endpoint to receive POST requests                                                                     |
-| **Events** | Filter which events trigger the webhook (e.g., `content.published`, `content.updated`, `content.deleted`) |
-| **Secret** | A shared secret for HMAC signature verification of webhook payloads                                       |
-| **Active** | Toggle to enable or disable the webhook without deleting it                                               |
+| Field              | Description                                                                                               |
+| ------------------ | --------------------------------------------------------------------------------------------------------- |
+| **URL**            | The endpoint to receive POST requests                                                                     |
+| **Events**         | Filter which events trigger the webhook (e.g., `content.published`, `content.updated`, `content.deleted`) |
+| **Signing secret** | Generated on create and used by receivers to verify webhook payload signatures                            |
+| **Active**         | Toggle to enable or disable the webhook without deleting it                                               |
 
 </Accordion>
 

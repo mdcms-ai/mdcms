@@ -10,3 +10,4 @@ export * from "./lib/contracts/extensibility.js";
 export * from "./lib/contracts/preview-token.js";
 export * from "./lib/contracts/schema.js";
 export * from "./lib/contracts/target-routing.js";
+export * from "./lib/contracts/webhooks.js";

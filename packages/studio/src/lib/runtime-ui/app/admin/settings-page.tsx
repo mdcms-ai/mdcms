@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
+  Activity,
   AlertCircle,
   Fingerprint,
   Key,
@@ -22,6 +23,14 @@ import {
 } from "../../../api-keys-api.js";
 import { createStudioSchemaRouteApi } from "../../../schema-route-api.js";
 import { useApiKeyList } from "../../hooks/use-api-key-list.js";
+import {
+  useWebhookConfigList,
+  type SettingsPageWebhookConfigState,
+} from "../../hooks/use-webhook-config-list.js";
+import {
+  useWebhookDeliveryHistory,
+  type SettingsPageWebhookHistoryState,
+} from "../../hooks/use-webhook-delivery-history.js";
 import { ApiKeyCreateDialog } from "../../components/api-key-create-dialog.js";
 import { Button } from "../../components/ui/button.js";
 import { Badge } from "../../components/ui/badge.js";
@@ -40,14 +49,55 @@ import {
   useStudioMountInfo,
   type StudioMountInfo,
 } from "./mount-info-context.js";
+import {
+  WebhookCreateConfigurationPage,
+  WebhookEditConfigurationPage,
+} from "./settings-webhook-configurations.js";
+import { SettingsWebhooksPanel } from "./settings-webhooks-panel.js";
 import { cn } from "../../lib/utils.js";
+import Link from "../../adapters/next-link.js";
+import { useParams } from "../../navigation.js";
+
+export type { SettingsPageWebhookHistoryState } from "../../hooks/use-webhook-delivery-history.js";
+export type { SettingsPageWebhookConfigState } from "../../hooks/use-webhook-config-list.js";
 
 const settingsTabs = [
-  { id: "general", label: "General", icon: Settings },
-  { id: "api-keys", label: "API keys", icon: Key },
+  { id: "general", label: "General", icon: Settings, href: "/settings" },
+  {
+    id: "api-keys",
+    label: "API keys",
+    icon: Key,
+    href: "/settings/api-keys",
+  },
+  {
+    id: "webhooks",
+    label: "Webhooks",
+    icon: Activity,
+    href: "/settings/webhooks",
+  },
 ] as const;
 
 type SettingsTabId = (typeof settingsTabs)[number]["id"];
+type SettingsSectionId = string | null;
+
+function toSettingsTabId(value: string | undefined): SettingsTabId {
+  if (value === "api-keys" || value === "webhooks") {
+    return value;
+  }
+
+  return "general";
+}
+
+function toSettingsSectionId(input: {
+  tab: SettingsTabId;
+  section: string | undefined;
+}): SettingsSectionId {
+  if (input.tab === "webhooks" && input.section) {
+    return input.section;
+  }
+
+  return null;
+}
 
 export type SettingsPageSchemaSummaryState =
   | { status: "loading" }
@@ -259,13 +309,7 @@ function SettingsNotice({
   );
 }
 
-function SettingsSubnav({
-  activeTab,
-  setActiveTab,
-}: {
-  activeTab: string;
-  setActiveTab: (tab: SettingsTabId) => void;
-}) {
+function SettingsSubnav({ activeTab }: { activeTab: string }) {
   return (
     <aside
       data-mdcms-settings-subnav
@@ -276,11 +320,11 @@ function SettingsSubnav({
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
           return (
-            <button
-              type="button"
+            <Link
               key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
+              href={tab.href}
               data-active={isActive ? "true" : "false"}
+              aria-current={isActive ? "page" : undefined}
               className={cn(
                 "flex min-w-0 flex-1 items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-medium transition-colors lg:flex-none",
                 isActive
@@ -290,7 +334,7 @@ function SettingsSubnav({
             >
               <Icon className="size-4 shrink-0" />
               <span className="truncate">{tab.label}</span>
-            </button>
+            </Link>
           );
         })}
       </nav>
@@ -639,11 +683,13 @@ function ApiKeysPanel({
 
 export function SettingsPageView({
   activeTab,
-  setActiveTab,
+  activeSection,
   canManageSettings,
   mountInfo,
   schemaSummary,
   apiKeysState,
+  webhookConfigState,
+  webhookHistoryState,
   createDialogOpen,
   setCreateDialogOpen,
   createKey,
@@ -651,11 +697,13 @@ export function SettingsPageView({
   createError,
 }: {
   activeTab: string;
-  setActiveTab: (tab: SettingsTabId) => void;
+  activeSection: SettingsSectionId;
   canManageSettings: boolean;
   mountInfo: SettingsPageMountContext;
   schemaSummary: SettingsPageSchemaSummaryState;
   apiKeysState: SettingsPageApiKeysState;
+  webhookConfigState: SettingsPageWebhookConfigState;
+  webhookHistoryState: SettingsPageWebhookHistoryState;
   createDialogOpen: boolean;
   setCreateDialogOpen: (open: boolean) => void;
   createKey: (input: ApiKeyCreateInput) => Promise<ApiKeyCreateResult>;
@@ -688,13 +736,27 @@ export function SettingsPageView({
         </div>
 
         <div className="grid gap-5 lg:grid-cols-[220px_minmax(0,1fr)]">
-          <SettingsSubnav activeTab={activeTab} setActiveTab={setActiveTab} />
+          <SettingsSubnav activeTab={activeTab} />
           <main className="min-w-0">
             {activeTab === "api-keys" ? (
               <ApiKeysPanel
                 apiKeysState={apiKeysState}
                 setCreateDialogOpen={setCreateDialogOpen}
               />
+            ) : activeTab === "webhooks" ? (
+              activeSection === "new" ? (
+                <WebhookCreateConfigurationPage state={webhookConfigState} />
+              ) : activeSection ? (
+                <WebhookEditConfigurationPage
+                  webhookId={activeSection}
+                  state={webhookConfigState}
+                />
+              ) : (
+                <SettingsWebhooksPanel
+                  webhookConfigState={webhookConfigState}
+                  webhookHistoryState={webhookHistoryState}
+                />
+              )
             ) : (
               <GeneralSettingsPanel
                 mountInfo={mountInfo}
@@ -716,14 +778,13 @@ export function SettingsPageView({
   );
 }
 
-export default function SettingsPage({
-  initialTab = "general",
-}: {
-  initialTab?: string;
-}) {
-  const [activeTab, setActiveTab] = useState<SettingsTabId>(
-    initialTab === "api-keys" ? "api-keys" : "general",
-  );
+export default function SettingsPage({ initialTab }: { initialTab?: string }) {
+  const params = useParams<{ tab?: string; section?: string }>();
+  const activeTab = toSettingsTabId(initialTab ?? params.tab);
+  const activeSection = toSettingsSectionId({
+    tab: activeTab,
+    section: params.section,
+  });
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const canManageSettings = useCanManageSettings();
   const mountInfo = useStudioMountInfo();
@@ -739,6 +800,12 @@ export default function SettingsPage({
     isRevoking,
     revokeError,
   } = useApiKeyList();
+  const webhookConfigState = useWebhookConfigList({
+    enabled: canManageSettings,
+  });
+  const webhookHistoryState = useWebhookDeliveryHistory({
+    enabled: canManageSettings,
+  });
 
   const apiKeysState = useMemo<SettingsPageApiKeysState>(
     () => ({
@@ -766,7 +833,7 @@ export default function SettingsPage({
   return (
     <SettingsPageView
       activeTab={activeTab}
-      setActiveTab={setActiveTab}
+      activeSection={activeSection}
       canManageSettings={canManageSettings}
       mountInfo={{
         project: mountInfo.project,
@@ -775,6 +842,8 @@ export default function SettingsPage({
       }}
       schemaSummary={schemaSummary}
       apiKeysState={apiKeysState}
+      webhookConfigState={webhookConfigState}
+      webhookHistoryState={webhookHistoryState}
       createDialogOpen={createDialogOpen}
       setCreateDialogOpen={setCreateDialogOpen}
       createKey={createKey}

@@ -3915,7 +3915,7 @@ testWithDatabase(
           }),
           body: JSON.stringify({
             label: "capabilities-readonly",
-            scopes: ["schema:read", "content:read"],
+            scopes: ["schema:read", "content:read", "webhooks:read"],
             contextAllowlist: [
               {
                 project: scope.project,
@@ -3975,7 +3975,7 @@ testWithDatabase(
           manage: false,
         },
         settings: {
-          manage: false,
+          manage: true,
         },
         ai: {
           use: false,

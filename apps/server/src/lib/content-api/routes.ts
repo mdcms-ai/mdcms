@@ -23,6 +23,7 @@ import {
   parseRequestedResolvePaths,
   prepareResolvePlan,
 } from "./resolve.js";
+import { createContentLifecycleMutationCommitter } from "./lifecycle-events.js";
 import {
   stripUnknownFrontmatterFields,
   toDocumentResponse,
@@ -147,6 +148,9 @@ export function mountContentApiRoutes(
   options: MountContentApiRoutesOptions,
 ): void {
   const contentApp = app as ContentRouteApp;
+  const commitMutation = createContentLifecycleMutationCommitter(
+    options.lifecycleEvents,
+  );
 
   contentApp.get?.("/api/v1/content/overview", ({ request }: any) => {
     return executeWithRuntimeErrorsHandled(request, async () => {
@@ -622,7 +626,7 @@ export function mountContentApiRoutes(
       const payload = (body ?? {}) as ContentWritePayload;
       const requestedPath =
         typeof payload.path === "string" ? payload.path.trim() : undefined;
-      await options.authorize(request, {
+      const authorization = await options.authorize(request, {
         requiredScope: "content:write",
         project: scope.project,
         environment: scope.environment,
@@ -634,9 +638,15 @@ export function mountContentApiRoutes(
         scope,
         options.getWriteSchemaSyncState,
       );
-      const document = await options.store.create(scope, payload, {
-        expectedSchemaHash: schemaHash,
-      });
+      const document = await commitMutation(
+        "content.created",
+        scope,
+        authorization,
+        () =>
+          options.store.create(scope, payload, {
+            expectedSchemaHash: schemaHash,
+          }),
+      );
 
       return {
         data: toDocumentResponse(document),
@@ -652,7 +662,7 @@ export function mountContentApiRoutes(
         await options.requireCsrf(request);
         const payload = (body ?? {}) as ContentWritePayload;
 
-        await options.authorize(request, {
+        const authorization = await options.authorize(request, {
           requiredScope: "content:write",
           project: scope.project,
           environment: scope.environment,
@@ -703,14 +713,15 @@ export function mountContentApiRoutes(
             ? payload.draftRevision
             : undefined;
 
-        const document = await options.store.update(
+        const document = await commitMutation(
+          "content.updated",
           scope,
-          params.documentId,
-          payload,
-          {
-            expectedSchemaHash: schemaHash,
-            expectedDraftRevision,
-          },
+          authorization,
+          () =>
+            options.store.update(scope, params.documentId, payload, {
+              expectedSchemaHash: schemaHash,
+              expectedDraftRevision,
+            }),
         );
 
         return {
@@ -727,7 +738,7 @@ export function mountContentApiRoutes(
         const scope = pickScope(request);
         await options.requireCsrf(request);
 
-        await options.authorize(request, {
+        const authorization = await options.authorize(request, {
           requiredScope: "content:write",
           project: scope.project,
           environment: scope.environment,
@@ -755,7 +766,12 @@ export function mountContentApiRoutes(
           documentPath: existing.path,
         });
 
-        const document = await options.store.restore(scope, params.documentId);
+        const document = await commitMutation(
+          "content.restored",
+          scope,
+          authorization,
+          () => options.store.restore(scope, params.documentId),
+        );
 
         return {
           data: toDocumentResponse(document),
@@ -776,7 +792,7 @@ export function mountContentApiRoutes(
           targetStatus === "published" ? "content:publish" : "content:write";
         const version = parsePathInt(params.version, "version");
 
-        await options.authorize(request, {
+        const authorization = await options.authorize(request, {
           requiredScope,
           project: scope.project,
           environment: scope.environment,
@@ -824,15 +840,18 @@ export function mountContentApiRoutes(
           "changeSummary",
         );
         const actorId = parseOptionalString(payload.actorId, "actorId");
-        const document = await options.store.restoreVersion(
+        const document = await commitMutation(
+          targetStatus === "published"
+            ? "content.published"
+            : "content.updated",
           scope,
-          params.documentId,
-          version,
-          {
-            targetStatus,
-            changeSummary,
-            actorId,
-          },
+          authorization,
+          () =>
+            options.store.restoreVersion(scope, params.documentId, version, {
+              targetStatus,
+              changeSummary,
+              actorId,
+            }),
         );
 
         return {
@@ -848,7 +867,7 @@ export function mountContentApiRoutes(
       return executeWithRuntimeErrorsHandled(request, async () => {
         const scope = pickScope(request);
         await options.requireCsrf(request);
-        await options.authorize(request, {
+        const authorization = await options.authorize(request, {
           requiredScope: "content:publish",
           project: scope.project,
           environment: scope.environment,
@@ -881,10 +900,16 @@ export function mountContentApiRoutes(
           "changeSummary",
         );
         const actorId = parseOptionalString(payload.actorId, "actorId");
-        const document = await options.store.publish(scope, params.documentId, {
-          changeSummary,
-          actorId,
-        });
+        const document = await commitMutation(
+          "content.published",
+          scope,
+          authorization,
+          () =>
+            options.store.publish(scope, params.documentId, {
+              changeSummary,
+              actorId,
+            }),
+        );
 
         return {
           data: toDocumentResponse(document),
@@ -899,11 +924,12 @@ export function mountContentApiRoutes(
       return executeWithRuntimeErrorsHandled(request, async () => {
         const scope = pickScope(request);
         await options.requireCsrf(request);
-        await options.authorize(request, {
+        const authorization = await options.authorize(request, {
           requiredScope: "content:publish",
           project: scope.project,
           environment: scope.environment,
         });
+
         const existing = await options.store.getById(scope, params.documentId, {
           draft: true,
         });
@@ -928,12 +954,14 @@ export function mountContentApiRoutes(
 
         const payload = (body ?? {}) as ContentPublishPayload;
         const actorId = parseOptionalString(payload.actorId, "actorId");
-        const document = await options.store.unpublish(
+        const document = await commitMutation(
+          "content.unpublished",
           scope,
-          params.documentId,
-          {
-            actorId,
-          },
+          authorization,
+          () =>
+            options.store.unpublish(scope, params.documentId, {
+              actorId,
+            }),
         );
 
         return {
@@ -945,11 +973,11 @@ export function mountContentApiRoutes(
 
   contentApp.post?.(
     "/api/v1/content/:documentId/duplicate",
-    ({ request, params, body }: any) => {
+    ({ request, params }: any) => {
       return executeWithRuntimeErrorsHandled(request, async () => {
         const scope = pickScope(request);
         await options.requireCsrf(request);
-        await options.authorize(request, {
+        const authorization = await options.authorize(request, {
           requiredScope: "content:write",
           project: scope.project,
           environment: scope.environment,
@@ -992,17 +1020,23 @@ export function mountContentApiRoutes(
           });
 
           try {
-            const document = await options.store.create(
+            const document = await commitMutation(
+              "content.created",
               scope,
-              {
-                path: candidatePath,
-                type: source.type,
-                locale: source.locale,
-                format: source.format,
-                frontmatter: source.frontmatter,
-                body: source.body,
-              },
-              schemaHash ? { expectedSchemaHash: schemaHash } : undefined,
+              authorization,
+              () =>
+                options.store.create(
+                  scope,
+                  {
+                    path: candidatePath,
+                    type: source.type,
+                    locale: source.locale,
+                    format: source.format,
+                    frontmatter: source.frontmatter,
+                    body: source.body,
+                  },
+                  schemaHash ? { expectedSchemaHash: schemaHash } : undefined,
+                ),
             );
 
             return {
@@ -1040,7 +1074,7 @@ export function mountContentApiRoutes(
       return executeWithRuntimeErrorsHandled(request, async () => {
         const scope = pickScope(request);
         await options.requireCsrf(request);
-        await options.authorize(request, {
+        const authorization = await options.authorize(request, {
           requiredScope: "content:delete",
           project: scope.project,
           environment: scope.environment,
@@ -1066,9 +1100,11 @@ export function mountContentApiRoutes(
           environment: scope.environment,
           documentPath: existing.path,
         });
-        const document = await options.store.softDelete(
+        const document = await commitMutation(
+          "content.deleted",
           scope,
-          params.documentId,
+          authorization,
+          () => options.store.softDelete(scope, params.documentId),
         );
 
         return {
