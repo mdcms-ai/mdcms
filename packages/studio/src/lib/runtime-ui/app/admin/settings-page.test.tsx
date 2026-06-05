@@ -31,8 +31,8 @@ function renderSettingsPage(input: {
   capabilities?: Partial<AdminCapabilitiesValue>;
 }): string {
   const pathname =
-    input.routeTab === "webhooks" && input.routeSection === "new"
-      ? "/admin/settings/webhooks/new"
+    input.routeTab === "webhooks" && input.routeSection
+      ? `/admin/settings/webhooks/${input.routeSection}`
       : input.routeTab === "webhooks"
         ? "/admin/settings/webhooks"
         : input.routeTab === "api-keys"
@@ -186,6 +186,18 @@ test("SettingsPage uses the webhooks create route as an addressable page", () =>
   assert.doesNotMatch(markup, /data-mdcms-webhook-dialog-content/);
 });
 
+test("SettingsPage uses webhook ids as addressable edit pages", () => {
+  const markup = renderSettingsPage({
+    routeTab: "webhooks",
+    routeSection: "018f0c6d-98da-7f25-89fe-7c7ef5e8597d",
+    capabilities: { canManageSettings: true },
+  });
+
+  assert.match(markup, /data-mdcms-settings-webhook-edit-page/);
+  assert.match(markup, /Edit webhook/);
+  assert.doesNotMatch(markup, /data-mdcms-webhook-dialog-content/);
+});
+
 test("SettingsPage General tab shows read-only project context", () => {
   const markup = renderSettingsPage({
     initialTab: "general",
@@ -278,7 +290,7 @@ const readyWebhookConfigState: SettingsPageWebhookConfigState = {
 
 function renderSettingsPageView(input: {
   initialTab: string;
-  activeSection?: "new" | null;
+  activeSection?: string | null;
   apiKeysState?: Partial<SettingsPageApiKeysState>;
   webhookConfigState?: Partial<SettingsPageWebhookConfigState>;
   webhookHistoryState?: Partial<SettingsPageWebhookHistoryState>;
@@ -286,8 +298,8 @@ function renderSettingsPageView(input: {
   canManageSettings?: boolean;
 }): string {
   const pathname =
-    input.initialTab === "webhooks" && input.activeSection === "new"
-      ? "/admin/settings/webhooks/new"
+    input.initialTab === "webhooks" && input.activeSection
+      ? `/admin/settings/webhooks/${input.activeSection}`
       : input.initialTab === "webhooks"
         ? "/admin/settings/webhooks"
         : input.initialTab === "api-keys"
@@ -386,6 +398,15 @@ test("SettingsPageView renders webhook configuration rows and CRUD affordances",
   assert.match(markup, /Active/);
   assert.match(
     markup,
+    /aria-label="Disable webhook 018f0c6d-98da-7f25-89fe-7c7ef5e8597d"/,
+  );
+  assert.match(markup, /aria-checked="true"/);
+  assert.match(
+    markup,
+    /href="\/admin\/settings\/webhooks\/018f0c6d-98da-7f25-89fe-7c7ef5e8597d"/,
+  );
+  assert.match(
+    markup,
     /aria-label="Edit webhook 018f0c6d-98da-7f25-89fe-7c7ef5e8597d"/,
   );
   assert.match(
@@ -405,6 +426,21 @@ test("SettingsPageView renders webhook creation as a settings subpage", () => {
   assert.match(markup, /Add an HTTPS endpoint for selected MDCMS events/);
   assert.match(markup, /href="\/admin\/settings\/webhooks"/);
   assert.match(markup, /value="whsec_[0-9a-f]{64}"/);
+  assert.doesNotMatch(markup, /data-mdcms-webhook-dialog-content/);
+  assert.doesNotMatch(markup, /Delivery history/);
+});
+
+test("SettingsPageView renders webhook editing as a settings subpage", () => {
+  const markup = renderSettingsPageView({
+    initialTab: "webhooks",
+    activeSection: "018f0c6d-98da-7f25-89fe-7c7ef5e8597d",
+  });
+
+  assert.match(markup, /data-mdcms-settings-webhook-edit-page/);
+  assert.match(markup, /Edit webhook/);
+  assert.match(markup, /https:\/\/example\.com\/hooks\/mdcms/);
+  assert.match(markup, /Rotate signing secret/);
+  assert.match(markup, /href="\/admin\/settings\/webhooks"/);
   assert.doesNotMatch(markup, /data-mdcms-webhook-dialog-content/);
   assert.doesNotMatch(markup, /Delivery history/);
 });

@@ -18,16 +18,15 @@ import {
 
 import { cn } from "../lib/utils.js";
 import { Button } from "./ui/button.js";
-import { DialogFooter } from "./ui/dialog.js";
 import { Input } from "./ui/input.js";
 import { Label } from "./ui/label.js";
 import { Switch } from "./ui/switch.js";
 import { getWebhookEventDisplay } from "./webhook-event-display.js";
 
-export type WebhookConfigDialogMode = "create" | "edit";
+export type WebhookConfigFormMode = "create" | "edit";
 
-export type WebhookConfigDialogFormState = {
-  mode: WebhookConfigDialogMode;
+export type WebhookConfigFormState = {
+  mode: WebhookConfigFormMode;
   url: string;
   selectedEvents: Set<WebhookEvent>;
   secret: string;
@@ -36,10 +35,10 @@ export type WebhookConfigDialogFormState = {
   hasSubmitAttempted: boolean;
 };
 
-export type WebhookConfigDialogFormAction =
+export type WebhookConfigFormAction =
   | {
       type: "reset";
-      mode: WebhookConfigDialogMode;
+      mode: WebhookConfigFormMode;
       config?: WebhookConfig | null;
     }
   | { type: "url-change"; value: string }
@@ -57,8 +56,6 @@ type WebhookConfigFormBaseProps = {
   formClassName?: string;
   bodyClassName?: string;
   footerClassName?: string;
-  useDialogFooter?: boolean;
-  dataScope?: "dialog" | "page";
 };
 
 export type WebhookConfigCreateFormProps = WebhookConfigFormBaseProps & {
@@ -81,7 +78,7 @@ export type WebhookSigningSecretRandomValues = (
   bytes: Uint8Array,
 ) => Uint8Array | void;
 
-export type CreateInitialWebhookConfigDialogFormStateOptions = {
+export type CreateInitialWebhookConfigFormStateOptions = {
   createSecret?: () => string;
 };
 
@@ -115,11 +112,11 @@ export function generateWebhookSigningSecret(
   return `${WEBHOOK_SIGNING_SECRET_PREFIX}${bytesToHex(bytes)}`;
 }
 
-export function createInitialWebhookConfigDialogFormState(
-  mode: WebhookConfigDialogMode,
+export function createInitialWebhookConfigFormState(
+  mode: WebhookConfigFormMode,
   config?: WebhookConfig | null,
-  options: CreateInitialWebhookConfigDialogFormStateOptions = {},
-): WebhookConfigDialogFormState {
+  options: CreateInitialWebhookConfigFormStateOptions = {},
+): WebhookConfigFormState {
   const createSecret = options.createSecret ?? generateWebhookSigningSecret;
 
   return {
@@ -133,16 +130,13 @@ export function createInitialWebhookConfigDialogFormState(
   };
 }
 
-export function webhookConfigDialogFormReducer(
-  state: WebhookConfigDialogFormState,
-  action: WebhookConfigDialogFormAction,
-): WebhookConfigDialogFormState {
+export function webhookConfigFormReducer(
+  state: WebhookConfigFormState,
+  action: WebhookConfigFormAction,
+): WebhookConfigFormState {
   switch (action.type) {
     case "reset":
-      return createInitialWebhookConfigDialogFormState(
-        action.mode,
-        action.config,
-      );
+      return createInitialWebhookConfigFormState(action.mode, action.config);
     case "url-change":
       return { ...state, url: action.value };
     case "event-toggle": {
@@ -169,7 +163,7 @@ export function webhookConfigDialogFormReducer(
   }
 }
 
-function hasValidSecretForMode(state: WebhookConfigDialogFormState): boolean {
+function hasValidSecretForMode(state: WebhookConfigFormState): boolean {
   const secretLength = state.secret.length;
   if (state.mode === "create") {
     return secretLength >= 32;
@@ -178,8 +172,8 @@ function hasValidSecretForMode(state: WebhookConfigDialogFormState): boolean {
   return secretLength === 0 || secretLength >= 32;
 }
 
-export function isWebhookConfigDialogSubmittable(
-  state: WebhookConfigDialogFormState,
+export function isWebhookConfigFormSubmittable(
+  state: WebhookConfigFormState,
   isSubmitting: boolean,
 ): boolean {
   return (
@@ -191,7 +185,7 @@ export function isWebhookConfigDialogSubmittable(
 }
 
 export function buildWebhookConfigCreateInput(
-  state: WebhookConfigDialogFormState,
+  state: WebhookConfigFormState,
 ): WebhookCreateInput {
   return {
     url: state.url.trim(),
@@ -202,7 +196,7 @@ export function buildWebhookConfigCreateInput(
 }
 
 export function buildWebhookConfigUpdateInput(
-  state: WebhookConfigDialogFormState,
+  state: WebhookConfigFormState,
 ): WebhookUpdateInput {
   const secret = state.secret;
 
@@ -214,8 +208,8 @@ export function buildWebhookConfigUpdateInput(
   };
 }
 
-export function getWebhookConfigDialogErrorMessage(
-  state: WebhookConfigDialogFormState,
+export function getWebhookConfigFormErrorMessage(
+  state: WebhookConfigFormState,
   error: Error | null,
 ): string | null {
   if (state.submitError) {
@@ -225,7 +219,7 @@ export function getWebhookConfigDialogErrorMessage(
   return state.hasSubmitAttempted ? (error?.message ?? null) : null;
 }
 
-export function WebhookConfigDialogError({
+export function WebhookConfigFormError({
   message,
 }: {
   message: string | null;
@@ -245,8 +239,8 @@ function WebhookConfigFormFields({
   isSubmitting,
   errorMessage,
 }: {
-  form: WebhookConfigDialogFormState;
-  dispatch: Dispatch<WebhookConfigDialogFormAction>;
+  form: WebhookConfigFormState;
+  dispatch: Dispatch<WebhookConfigFormAction>;
   isSubmitting: boolean;
   errorMessage: string | null;
 }) {
@@ -380,7 +374,7 @@ function WebhookConfigFormFields({
         />
       </div>
 
-      <WebhookConfigDialogError message={errorMessage} />
+      <WebhookConfigFormError message={errorMessage} />
     </>
   );
 }
@@ -391,22 +385,15 @@ function WebhookConfigFormFooter({
   mode,
   onCancel,
   className,
-  useDialogFooter,
-  dataScope,
 }: {
   canSubmit: boolean;
   isSubmitting: boolean;
-  mode: WebhookConfigDialogMode;
+  mode: WebhookConfigFormMode;
   onCancel: () => void;
   className?: string;
-  useDialogFooter?: boolean;
-  dataScope?: "dialog" | "page";
 }) {
   const footerProps = {
     "data-mdcms-webhook-config-form-footer": true,
-    ...(dataScope === "dialog"
-      ? { "data-mdcms-webhook-dialog-footer": true }
-      : {}),
     className,
   };
   const content = (
@@ -433,10 +420,6 @@ function WebhookConfigFormFooter({
     </>
   );
 
-  if (useDialogFooter) {
-    return <DialogFooter {...footerProps}>{content}</DialogFooter>;
-  }
-
   return <div {...footerProps}>{content}</div>;
 }
 
@@ -444,14 +427,14 @@ export function WebhookConfigForm(props: WebhookConfigFormProps) {
   const { mode, isSubmitting, error } = props;
   const config = mode === "edit" ? props.config : null;
   const [form, dispatch] = useReducer(
-    webhookConfigDialogFormReducer,
+    webhookConfigFormReducer,
     { config, mode },
     (initial) =>
-      createInitialWebhookConfigDialogFormState(initial.mode, initial.config),
+      createInitialWebhookConfigFormState(initial.mode, initial.config),
   );
   const previousInputs = useRef({ config, mode });
-  const canSubmit = isWebhookConfigDialogSubmittable(form, isSubmitting);
-  const errorMessage = getWebhookConfigDialogErrorMessage(form, error);
+  const canSubmit = isWebhookConfigFormSubmittable(form, isSubmitting);
+  const errorMessage = getWebhookConfigFormErrorMessage(form, error);
 
   useEffect(() => {
     if (
@@ -486,17 +469,11 @@ export function WebhookConfigForm(props: WebhookConfigFormProps) {
   return (
     <form
       data-mdcms-webhook-config-form={mode}
-      {...(props.dataScope === "dialog"
-        ? { "data-mdcms-webhook-dialog-form": true }
-        : {})}
       onSubmit={handleSubmit}
       className={props.formClassName}
     >
       <div
         data-mdcms-webhook-config-form-body={mode}
-        {...(props.dataScope === "dialog"
-          ? { "data-mdcms-webhook-dialog-body": true }
-          : {})}
         className={props.bodyClassName}
       >
         <WebhookConfigFormFields
@@ -513,8 +490,6 @@ export function WebhookConfigForm(props: WebhookConfigFormProps) {
         mode={mode}
         onCancel={props.onCancel}
         className={props.footerClassName}
-        useDialogFooter={props.useDialogFooter}
-        dataScope={props.dataScope}
       />
     </form>
   );

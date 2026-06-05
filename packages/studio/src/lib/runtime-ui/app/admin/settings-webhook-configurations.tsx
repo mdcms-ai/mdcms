@@ -11,11 +11,11 @@ import {
 } from "lucide-react";
 import type { WebhookConfig, WebhookEvent } from "@mdcms/shared";
 
-import { WebhookConfigDialog } from "../../components/webhook-config-dialog.js";
 import { WebhookConfigForm } from "../../components/webhook-config-form.js";
 import { Badge } from "../../components/ui/badge.js";
 import { Button } from "../../components/ui/button.js";
 import { Skeleton } from "../../components/ui/skeleton.js";
+import { Switch } from "../../components/ui/switch.js";
 import {
   Table,
   TableBody,
@@ -31,22 +31,6 @@ import { WebhookDeleteConfirmationDialog } from "./webhook-delete-confirmation-d
 import { getWebhookEventDisplay } from "../../components/webhook-event-display.js";
 import Link from "../../adapters/next-link.js";
 import { useRouter } from "../../navigation.js";
-
-function WebhookActiveBadge({ active }: { active: boolean }) {
-  return (
-    <Badge
-      variant="outline"
-      className={cn(
-        "rounded-sm border px-2 py-0.5 font-mono text-[11px]",
-        active
-          ? "border-success/20 bg-success/10 text-success"
-          : "border-border bg-background-subtle text-foreground-muted",
-      )}
-    >
-      {active ? "Active" : "Inactive"}
-    </Badge>
-  );
-}
 
 function WebhookEventList({ events }: { events: WebhookEvent[] }) {
   return (
@@ -131,12 +115,12 @@ function WebhookConfigErrorState({
 function WebhookConfigReadyState({
   configs,
   isMutating,
-  onEdit,
+  onToggleActive,
   onDelete,
 }: {
   configs: WebhookConfig[];
   isMutating: boolean;
-  onEdit: (config: WebhookConfig) => void;
+  onToggleActive: (config: WebhookConfig, active: boolean) => void;
   onDelete: (config: WebhookConfig) => void;
 }) {
   return (
@@ -167,7 +151,22 @@ function WebhookConfigReadyState({
                 <WebhookEventList events={config.events} />
               </TableCell>
               <TableCell>
-                <WebhookActiveBadge active={config.active} />
+                <div className="flex items-center gap-2">
+                  <Switch
+                    checked={config.active}
+                    onCheckedChange={(active) => onToggleActive(config, active)}
+                    disabled={isMutating}
+                    aria-label={`${config.active ? "Disable" : "Enable"} webhook ${config.id}`}
+                  />
+                  <span
+                    className={cn(
+                      "text-xs font-medium",
+                      config.active ? "text-success" : "text-foreground-muted",
+                    )}
+                  >
+                    {config.active ? "Active" : "Inactive"}
+                  </span>
+                </div>
               </TableCell>
               <TableCell className="min-w-[11rem] text-sm text-foreground-muted">
                 <div suppressHydrationWarning>
@@ -176,15 +175,13 @@ function WebhookConfigReadyState({
               </TableCell>
               <TableCell>
                 <div className="flex justify-end gap-1">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    aria-label={`Edit webhook ${config.id}`}
-                    disabled={isMutating}
-                    onClick={() => onEdit(config)}
-                  >
-                    <Pencil className="size-4" />
+                  <Button variant="ghost" size="icon" asChild>
+                    <Link
+                      href={`/settings/webhooks/${config.id}`}
+                      aria-label={`Edit webhook ${config.id}`}
+                    >
+                      <Pencil className="size-4" />
+                    </Link>
                   </Button>
                   <Button
                     type="button"
@@ -210,12 +207,12 @@ function WebhookConfigReadyState({
 function WebhookConfigStateView({
   state,
   isMutating,
-  onEdit,
+  onToggleActive,
   onDelete,
 }: {
   state: SettingsPageWebhookConfigState;
   isMutating: boolean;
-  onEdit: (config: WebhookConfig) => void;
+  onToggleActive: (config: WebhookConfig, active: boolean) => void;
   onDelete: (config: WebhookConfig) => void;
 }) {
   if (state.status === "loading") return <WebhookConfigLoadingState />;
@@ -246,7 +243,7 @@ function WebhookConfigStateView({
     <WebhookConfigReadyState
       configs={state.configs}
       isMutating={isMutating}
-      onEdit={onEdit}
+      onToggleActive={onToggleActive}
       onDelete={onDelete}
     />
   );
@@ -257,9 +254,6 @@ export function WebhookConfigurationsSection({
 }: {
   state: SettingsPageWebhookConfigState;
 }) {
-  const [editingConfig, setEditingConfig] = useState<WebhookConfig | null>(
-    null,
-  );
   const [deletingConfig, setDeletingConfig] = useState<WebhookConfig | null>(
     null,
   );
@@ -277,6 +271,12 @@ export function WebhookConfigurationsSection({
     } catch {
       // Error is surfaced through deleteError.
     }
+  };
+
+  const toggleActive = (config: WebhookConfig, active: boolean) => {
+    state.updateWebhook(config.id, { active }).catch(() => {
+      // Error is surfaced through updateError in the hook state.
+    });
   };
 
   return (
@@ -297,24 +297,10 @@ export function WebhookConfigurationsSection({
       <WebhookConfigStateView
         state={state}
         isMutating={isMutating}
-        onEdit={setEditingConfig}
+        onToggleActive={toggleActive}
         onDelete={openDeleteDialog}
       />
 
-      <WebhookConfigDialog
-        mode="edit"
-        open={editingConfig !== null}
-        config={editingConfig}
-        onOpenChange={(open) => {
-          if (!open) setEditingConfig(null);
-        }}
-        onSubmit={async (input) => {
-          if (!editingConfig) return;
-          await state.updateWebhook(editingConfig.id, input);
-        }}
-        isSubmitting={state.isUpdating}
-        error={state.updateError}
-      />
       <WebhookDeleteConfirmationDialog
         config={deletingConfig}
         error={state.deleteError}
@@ -371,9 +357,105 @@ export function WebhookCreateConfigurationPage({
           formClassName="space-y-5"
           bodyClassName="space-y-5"
           footerClassName="flex flex-col-reverse gap-2 border-t border-border pt-4 sm:flex-row sm:justify-end"
-          dataScope="page"
         />
       </div>
+    </section>
+  );
+}
+
+function WebhookEditConfigurationLoadingState() {
+  return (
+    <div className="rounded-lg border border-card-border bg-card p-5">
+      <div className="space-y-4">
+        <Skeleton className="h-4 w-20" />
+        <Skeleton className="h-9 w-full" />
+        <Skeleton className="h-24 w-full" />
+        <Skeleton className="h-9 w-full" />
+      </div>
+    </div>
+  );
+}
+
+function WebhookEditConfigurationErrorState({ message }: { message: string }) {
+  return (
+    <div className="rounded-lg border border-destructive/25 bg-destructive/10 p-4 text-sm text-destructive">
+      <div className="flex items-start gap-2">
+        <AlertCircle className="mt-0.5 size-4 shrink-0" />
+        <span>{message}</span>
+      </div>
+    </div>
+  );
+}
+
+export function WebhookEditConfigurationPage({
+  webhookId,
+  state,
+}: {
+  webhookId: string;
+  state: SettingsPageWebhookConfigState;
+}) {
+  const router = useRouter();
+  const returnToWebhooks = () => router.push("/settings/webhooks");
+  const config =
+    state.status === "ready"
+      ? state.configs.find((candidate) => candidate.id === webhookId)
+      : null;
+
+  return (
+    <section data-mdcms-settings-webhook-edit-page className="space-y-5">
+      <div className="space-y-4">
+        <Button asChild variant="ghost" size="sm" className="-ml-2">
+          <Link href="/settings/webhooks">
+            <ArrowLeft className="size-4" />
+            Back to webhooks
+          </Link>
+        </Button>
+        <div>
+          <h2 className="font-heading text-[30px] font-semibold leading-tight text-foreground">
+            Edit webhook
+          </h2>
+          <p className="mt-1 max-w-2xl text-sm text-foreground-muted">
+            Update the endpoint, events, active state, or rotate the signing
+            secret.
+          </p>
+        </div>
+      </div>
+
+      {state.status === "loading" ? (
+        <WebhookEditConfigurationLoadingState />
+      ) : state.status === "error" ? (
+        <WebhookEditConfigurationErrorState
+          message={
+            state.errorMessage ?? "Failed to load webhook configuration."
+          }
+        />
+      ) : state.status === "unavailable" ? (
+        <WebhookEditConfigurationErrorState
+          message={
+            state.errorMessage ??
+            "Studio is missing project or environment context."
+          }
+        />
+      ) : config ? (
+        <div className="rounded-lg border border-card-border bg-card p-5">
+          <WebhookConfigForm
+            mode="edit"
+            config={config}
+            onSubmit={async (input) => {
+              await state.updateWebhook(config.id, input);
+              returnToWebhooks();
+            }}
+            onCancel={returnToWebhooks}
+            isSubmitting={state.isUpdating}
+            error={state.updateError}
+            formClassName="space-y-5"
+            bodyClassName="space-y-5"
+            footerClassName="flex flex-col-reverse gap-2 border-t border-border pt-4 sm:flex-row sm:justify-end"
+          />
+        </div>
+      ) : (
+        <WebhookEditConfigurationErrorState message="Webhook not found." />
+      )}
     </section>
   );
 }

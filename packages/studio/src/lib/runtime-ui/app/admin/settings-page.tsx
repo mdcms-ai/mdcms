@@ -49,7 +49,10 @@ import {
   useStudioMountInfo,
   type StudioMountInfo,
 } from "./mount-info-context.js";
-import { WebhookCreateConfigurationPage } from "./settings-webhook-configurations.js";
+import {
+  WebhookCreateConfigurationPage,
+  WebhookEditConfigurationPage,
+} from "./settings-webhook-configurations.js";
 import { SettingsWebhooksPanel } from "./settings-webhooks-panel.js";
 import { cn } from "../../lib/utils.js";
 import Link from "../../adapters/next-link.js";
@@ -75,7 +78,7 @@ const settingsTabs = [
 ] as const;
 
 type SettingsTabId = (typeof settingsTabs)[number]["id"];
-type SettingsSectionId = "new" | null;
+type SettingsSectionId = string | null;
 
 function toSettingsTabId(value: string | undefined): SettingsTabId {
   if (value === "api-keys" || value === "webhooks") {
@@ -89,8 +92,8 @@ function toSettingsSectionId(input: {
   tab: SettingsTabId;
   section: string | undefined;
 }): SettingsSectionId {
-  if (input.tab === "webhooks" && input.section === "new") {
-    return "new";
+  if (input.tab === "webhooks" && input.section) {
+    return input.section;
   }
 
   return null;
@@ -743,6 +746,11 @@ export function SettingsPageView({
             ) : activeTab === "webhooks" ? (
               activeSection === "new" ? (
                 <WebhookCreateConfigurationPage state={webhookConfigState} />
+              ) : activeSection ? (
+                <WebhookEditConfigurationPage
+                  webhookId={activeSection}
+                  state={webhookConfigState}
+                />
               ) : (
                 <SettingsWebhooksPanel
                   webhookConfigState={webhookConfigState}

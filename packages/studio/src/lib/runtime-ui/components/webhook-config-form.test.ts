@@ -5,16 +5,16 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import {
-  WebhookConfigDialog,
-  WebhookConfigDialogError,
+  WebhookConfigFormError,
+  WebhookConfigForm,
   buildWebhookConfigCreateInput,
   buildWebhookConfigUpdateInput,
-  createInitialWebhookConfigDialogFormState,
+  createInitialWebhookConfigFormState,
   generateWebhookSigningSecret,
-  getWebhookConfigDialogErrorMessage,
-  isWebhookConfigDialogSubmittable,
-  webhookConfigDialogFormReducer,
-} from "./webhook-config-dialog.js";
+  getWebhookConfigFormErrorMessage,
+  isWebhookConfigFormSubmittable,
+  webhookConfigFormReducer,
+} from "./webhook-config-form.js";
 
 test("generateWebhookSigningSecret creates a prefixed 32-byte hex secret", () => {
   const secret = generateWebhookSigningSecret((bytes) => {
@@ -30,10 +30,10 @@ test("generateWebhookSigningSecret creates a prefixed 32-byte hex secret", () =>
   assert.equal(secret.length, 70);
 });
 
-test("create dialog state starts with a generated signing secret", () => {
+test("create form state starts with a generated signing secret", () => {
   const generatedSecret = `whsec_${"c".repeat(64)}`;
 
-  const state = createInitialWebhookConfigDialogFormState("create", null, {
+  const state = createInitialWebhookConfigFormState("create", null, {
     createSecret: () => generatedSecret,
   });
 
@@ -42,12 +42,12 @@ test("create dialog state starts with a generated signing secret", () => {
 
 test("buildWebhookConfigCreateInput trims url and preserves required secret exactly", () => {
   const secret = ` ${"a".repeat(30)} `;
-  const state = webhookConfigDialogFormReducer(
-    webhookConfigDialogFormReducer(
-      webhookConfigDialogFormReducer(
-        createInitialWebhookConfigDialogFormState("create"),
-        { type: "url-change", value: " https://example.com/hooks/mdcms " },
-      ),
+  const state = webhookConfigFormReducer(
+    webhookConfigFormReducer(
+      webhookConfigFormReducer(createInitialWebhookConfigFormState("create"), {
+        type: "url-change",
+        value: " https://example.com/hooks/mdcms ",
+      }),
       { type: "secret-change", value: secret },
     ),
     { type: "event-toggle", event: "content.published" },
@@ -64,8 +64,8 @@ test("buildWebhookConfigCreateInput trims url and preserves required secret exac
 });
 
 test("buildWebhookConfigUpdateInput omits blank edit secret", () => {
-  const state = webhookConfigDialogFormReducer(
-    createInitialWebhookConfigDialogFormState("edit", {
+  const state = webhookConfigFormReducer(
+    createInitialWebhookConfigFormState("edit", {
       id: "webhook-1",
       project: "marketing-site",
       environment: "production",
@@ -89,9 +89,9 @@ test("buildWebhookConfigUpdateInput omits blank edit secret", () => {
 
 test("buildWebhookConfigUpdateInput preserves provided edit secret exactly", () => {
   const secret = ` ${"b".repeat(32)} `;
-  const state = webhookConfigDialogFormReducer(
-    webhookConfigDialogFormReducer(
-      createInitialWebhookConfigDialogFormState("edit", {
+  const state = webhookConfigFormReducer(
+    webhookConfigFormReducer(
+      createInitialWebhookConfigFormState("edit", {
         id: "webhook-1",
         project: "marketing-site",
         environment: "production",
@@ -116,48 +116,48 @@ test("buildWebhookConfigUpdateInput preserves provided edit secret exactly", () 
   });
 });
 
-test("isWebhookConfigDialogSubmittable enforces url event secret and pending state", () => {
-  const missingUrl = webhookConfigDialogFormReducer(
-    webhookConfigDialogFormReducer(
-      webhookConfigDialogFormReducer(
-        createInitialWebhookConfigDialogFormState("create"),
-        { type: "url-change", value: "   " },
-      ),
+test("isWebhookConfigFormSubmittable enforces url event secret and pending state", () => {
+  const missingUrl = webhookConfigFormReducer(
+    webhookConfigFormReducer(
+      webhookConfigFormReducer(createInitialWebhookConfigFormState("create"), {
+        type: "url-change",
+        value: "   ",
+      }),
       { type: "event-toggle", event: "content.published" },
     ),
     { type: "secret-change", value: "a".repeat(32) },
   );
-  assert.equal(isWebhookConfigDialogSubmittable(missingUrl, false), false);
+  assert.equal(isWebhookConfigFormSubmittable(missingUrl, false), false);
 
-  const missingEvents = webhookConfigDialogFormReducer(
-    webhookConfigDialogFormReducer(
-      createInitialWebhookConfigDialogFormState("create"),
-      { type: "url-change", value: "https://example.com/hooks/mdcms" },
-    ),
+  const missingEvents = webhookConfigFormReducer(
+    webhookConfigFormReducer(createInitialWebhookConfigFormState("create"), {
+      type: "url-change",
+      value: "https://example.com/hooks/mdcms",
+    }),
     { type: "secret-change", value: "a".repeat(32) },
   );
-  assert.equal(isWebhookConfigDialogSubmittable(missingEvents, false), false);
+  assert.equal(isWebhookConfigFormSubmittable(missingEvents, false), false);
 
-  const missingSecret = webhookConfigDialogFormReducer(
-    webhookConfigDialogFormReducer(
-      webhookConfigDialogFormReducer(
-        createInitialWebhookConfigDialogFormState("create"),
-        { type: "secret-change", value: "" },
-      ),
+  const missingSecret = webhookConfigFormReducer(
+    webhookConfigFormReducer(
+      webhookConfigFormReducer(createInitialWebhookConfigFormState("create"), {
+        type: "secret-change",
+        value: "",
+      }),
       { type: "url-change", value: "https://example.com/hooks/mdcms" },
     ),
     { type: "event-toggle", event: "content.published" },
   );
-  assert.equal(isWebhookConfigDialogSubmittable(missingSecret, false), false);
+  assert.equal(isWebhookConfigFormSubmittable(missingSecret, false), false);
 
-  const ready = webhookConfigDialogFormReducer(missingSecret, {
+  const ready = webhookConfigFormReducer(missingSecret, {
     type: "secret-change",
     value: ` ${"a".repeat(30)} `,
   });
-  assert.equal(isWebhookConfigDialogSubmittable(ready, false), true);
-  assert.equal(isWebhookConfigDialogSubmittable(ready, true), false);
+  assert.equal(isWebhookConfigFormSubmittable(ready, false), true);
+  assert.equal(isWebhookConfigFormSubmittable(ready, true), false);
 
-  const editReady = createInitialWebhookConfigDialogFormState("edit", {
+  const editReady = createInitialWebhookConfigFormState("edit", {
     id: "webhook-1",
     project: "marketing-site",
     environment: "production",
@@ -169,34 +169,31 @@ test("isWebhookConfigDialogSubmittable enforces url event secret and pending sta
     createdAt: "2026-06-03T00:00:00.000Z",
     updatedAt: "2026-06-03T00:00:00.000Z",
   });
-  assert.equal(isWebhookConfigDialogSubmittable(editReady, false), true);
+  assert.equal(isWebhookConfigFormSubmittable(editReady, false), true);
 
-  const editShortSecret = webhookConfigDialogFormReducer(editReady, {
+  const editShortSecret = webhookConfigFormReducer(editReady, {
     type: "secret-change",
     value: "short",
   });
-  assert.equal(isWebhookConfigDialogSubmittable(editShortSecret, false), false);
+  assert.equal(isWebhookConfigFormSubmittable(editShortSecret, false), false);
 
-  const editRotatingSecret = webhookConfigDialogFormReducer(editReady, {
+  const editRotatingSecret = webhookConfigFormReducer(editReady, {
     type: "secret-change",
     value: ` ${"b".repeat(30)} `,
   });
-  assert.equal(
-    isWebhookConfigDialogSubmittable(editRotatingSecret, false),
-    true,
-  );
+  assert.equal(isWebhookConfigFormSubmittable(editRotatingSecret, false), true);
 });
 
-test("webhookConfigDialogFormReducer toggles events and active state immutably", () => {
-  const selected = webhookConfigDialogFormReducer(
-    createInitialWebhookConfigDialogFormState("create"),
+test("webhookConfigFormReducer toggles events and active state immutably", () => {
+  const selected = webhookConfigFormReducer(
+    createInitialWebhookConfigFormState("create"),
     { type: "event-toggle", event: "content.published" },
   );
-  const unselected = webhookConfigDialogFormReducer(selected, {
+  const unselected = webhookConfigFormReducer(selected, {
     type: "event-toggle",
     event: "content.published",
   });
-  const inactive = webhookConfigDialogFormReducer(selected, {
+  const inactive = webhookConfigFormReducer(selected, {
     type: "active-change",
     value: false,
   });
@@ -208,11 +205,11 @@ test("webhookConfigDialogFormReducer toggles events and active state immutably",
 });
 
 test("failed submit path preserves form state and renders an error", () => {
-  const ready = webhookConfigDialogFormReducer(
-    webhookConfigDialogFormReducer(
-      webhookConfigDialogFormReducer(
-        webhookConfigDialogFormReducer(
-          createInitialWebhookConfigDialogFormState("create"),
+  const ready = webhookConfigFormReducer(
+    webhookConfigFormReducer(
+      webhookConfigFormReducer(
+        webhookConfigFormReducer(
+          createInitialWebhookConfigFormState("create"),
           { type: "url-change", value: "https://example.com/hooks/mdcms" },
         ),
         { type: "event-toggle", event: "content.published" },
@@ -222,10 +219,10 @@ test("failed submit path preserves form state and renders an error", () => {
     { type: "active-change", value: false },
   );
 
-  const submitting = webhookConfigDialogFormReducer(ready, {
+  const submitting = webhookConfigFormReducer(ready, {
     type: "submit-start",
   });
-  const failed = webhookConfigDialogFormReducer(submitting, {
+  const failed = webhookConfigFormReducer(submitting, {
     type: "submit-error",
     message: "Endpoint rejected webhook.",
   });
@@ -237,17 +234,13 @@ test("failed submit path preserves form state and renders an error", () => {
   assert.equal(failed.secret, "a".repeat(32));
 
   assert.equal(
-    getWebhookConfigDialogErrorMessage(failed, null),
+    getWebhookConfigFormErrorMessage(failed, null),
     "Endpoint rejected webhook.",
   );
 
-  // This package does not ship a DOM interaction helper. The reducer covers the
-  // rejected-submit state transition; static markup covers preserved field
-  // rendering without adding a test-only dependency.
   const markup = renderToStaticMarkup(
-    createElement(WebhookConfigDialog, {
+    createElement(WebhookConfigForm, {
       mode: "edit",
-      open: true,
       config: {
         id: "webhook-1",
         project: "marketing-site",
@@ -260,7 +253,7 @@ test("failed submit path preserves form state and renders an error", () => {
         createdAt: "2026-06-03T00:00:00.000Z",
         updatedAt: "2026-06-03T00:00:00.000Z",
       },
-      onOpenChange: () => {},
+      onCancel: () => {},
       onSubmit: async () => {
         throw new Error("Endpoint rejected webhook.");
       },
@@ -275,7 +268,7 @@ test("failed submit path preserves form state and renders an error", () => {
   assert.match(markup, /aria-checked="false"/);
 
   const errorMarkup = renderToStaticMarkup(
-    createElement(WebhookConfigDialogError, {
+    createElement(WebhookConfigFormError, {
       message: "Endpoint rejected webhook.",
     }),
   );
@@ -283,12 +276,11 @@ test("failed submit path preserves form state and renders an error", () => {
   assert.match(errorMarkup, /Endpoint rejected webhook\./);
 });
 
-test("WebhookConfigDialog renders event choices as operator-facing actions", () => {
+test("WebhookConfigForm renders event choices as operator-facing actions", () => {
   const markup = renderToStaticMarkup(
-    createElement(WebhookConfigDialog, {
+    createElement(WebhookConfigForm, {
       mode: "create",
-      open: true,
-      onOpenChange: () => {},
+      onCancel: () => {},
       onSubmit: async () => {},
       isSubmitting: false,
       error: null,
@@ -301,12 +293,11 @@ test("WebhookConfigDialog renders event choices as operator-facing actions", () 
   assert.match(markup, /Notify when an asset is added to media storage/);
 });
 
-test("WebhookConfigDialog renders generated signing secret controls for create", () => {
+test("WebhookConfigForm renders generated signing secret controls for create", () => {
   const markup = renderToStaticMarkup(
-    createElement(WebhookConfigDialog, {
+    createElement(WebhookConfigForm, {
       mode: "create",
-      open: true,
-      onOpenChange: () => {},
+      onCancel: () => {},
       onSubmit: async () => {},
       isSubmitting: false,
       error: null,
@@ -319,68 +310,64 @@ test("WebhookConfigDialog renders generated signing secret controls for create",
   assert.doesNotMatch(markup, /HMAC secret/);
 });
 
-test("WebhookConfigDialog keeps long event choices inside a viewport-height modal", () => {
+test("WebhookConfigForm exposes stable body and footer layout hooks", () => {
   const markup = renderToStaticMarkup(
-    createElement(WebhookConfigDialog, {
+    createElement(WebhookConfigForm, {
       mode: "create",
-      open: true,
-      onOpenChange: () => {},
+      onCancel: () => {},
       onSubmit: async () => {},
       isSubmitting: false,
       error: null,
+      bodyClassName: "test-body",
+      footerClassName: "test-footer",
     }),
   );
 
   assert.match(
     markup,
-    /<div(?=[^>]*data-mdcms-webhook-dialog-content="true")(?=[^>]*class="[^"]*max-h-\[calc\(100dvh-2rem\)\][^"]*overflow-hidden)[^>]*>/,
+    /<div(?=[^>]*data-mdcms-webhook-config-form-body="create")(?=[^>]*class="test-body")[^>]*>/,
   );
   assert.match(
     markup,
-    /<div(?=[^>]*data-mdcms-webhook-dialog-body="true")(?=[^>]*class="[^"]*min-h-0[^"]*flex-1[^"]*overflow-y-auto)[^>]*>/,
-  );
-  assert.match(
-    markup,
-    /<div(?=[^>]*data-mdcms-webhook-dialog-footer="true")(?=[^>]*class="[^"]*shrink-0)[^>]*>/,
+    /<div(?=[^>]*data-mdcms-webhook-config-form-footer="true")(?=[^>]*class="test-footer")[^>]*>/,
   );
 });
 
 test("parent mutation errors are hidden until a submit attempt in the current open cycle", () => {
   const parentError = new Error("Stale mutation failure.");
-  const initial = createInitialWebhookConfigDialogFormState("create");
+  const initial = createInitialWebhookConfigFormState("create");
 
-  assert.equal(getWebhookConfigDialogErrorMessage(initial, parentError), null);
+  assert.equal(getWebhookConfigFormErrorMessage(initial, parentError), null);
 
-  const submitting = webhookConfigDialogFormReducer(initial, {
+  const submitting = webhookConfigFormReducer(initial, {
     type: "submit-start",
   });
   assert.equal(
-    getWebhookConfigDialogErrorMessage(submitting, parentError),
+    getWebhookConfigFormErrorMessage(submitting, parentError),
     "Stale mutation failure.",
   );
 
-  const failed = webhookConfigDialogFormReducer(submitting, {
+  const failed = webhookConfigFormReducer(submitting, {
     type: "submit-error",
     message: "Current submit failed.",
   });
   assert.equal(
-    getWebhookConfigDialogErrorMessage(failed, parentError),
+    getWebhookConfigFormErrorMessage(failed, parentError),
     "Current submit failed.",
   );
 
-  const reset = webhookConfigDialogFormReducer(failed, {
+  const reset = webhookConfigFormReducer(failed, {
     type: "reset",
     mode: "create",
   });
-  assert.equal(getWebhookConfigDialogErrorMessage(reset, parentError), null);
+  assert.equal(getWebhookConfigFormErrorMessage(reset, parentError), null);
 });
 
-test("fresh dialog render suppresses stale parent errors and exposes rendered errors accessibly", () => {
+test("fresh form render suppresses stale parent errors and exposes rendered errors accessibly", () => {
   const staleMarkup = renderToStaticMarkup(
-    createElement(WebhookConfigDialog, {
+    createElement(WebhookConfigForm, {
       mode: "create",
-      open: true,
-      onOpenChange: () => {},
+      onCancel: () => {},
       onSubmit: async () => {},
       isSubmitting: false,
       error: new Error("Stale mutation failure."),
@@ -390,24 +377,24 @@ test("fresh dialog render suppresses stale parent errors and exposes rendered er
   assert.doesNotMatch(staleMarkup, /Stale mutation failure\./);
   assert.doesNotMatch(staleMarkup, /role="alert"/);
 
-  const submitFailed = webhookConfigDialogFormReducer(
-    createInitialWebhookConfigDialogFormState("create"),
+  const submitFailed = webhookConfigFormReducer(
+    createInitialWebhookConfigFormState("create"),
     {
       type: "submit-error",
       message: "Current submit failed.",
     },
   );
   assert.equal(
-    getWebhookConfigDialogErrorMessage(submitFailed, null),
+    getWebhookConfigFormErrorMessage(submitFailed, null),
     "Current submit failed.",
   );
 
-  const parentFailedAfterSubmit = webhookConfigDialogFormReducer(
-    createInitialWebhookConfigDialogFormState("create"),
+  const parentFailedAfterSubmit = webhookConfigFormReducer(
+    createInitialWebhookConfigFormState("create"),
     { type: "submit-start" },
   );
   assert.equal(
-    getWebhookConfigDialogErrorMessage(
+    getWebhookConfigFormErrorMessage(
       parentFailedAfterSubmit,
       new Error("Current parent mutation failed."),
     ),
@@ -415,8 +402,8 @@ test("fresh dialog render suppresses stale parent errors and exposes rendered er
   );
 
   const parentErrorMarkup = renderToStaticMarkup(
-    createElement(WebhookConfigDialogError, {
-      message: getWebhookConfigDialogErrorMessage(
+    createElement(WebhookConfigFormError, {
+      message: getWebhookConfigFormErrorMessage(
         parentFailedAfterSubmit,
         new Error("Current parent mutation failed."),
       ),
