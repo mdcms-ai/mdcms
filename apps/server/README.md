@@ -59,6 +59,11 @@ Do not run `docker compose up -d --build` before starting the server locally; th
 | `MDCMS_AUTH_ADMIN_USER_IDS`    | No       |         | Comma-separated admin user IDs                            |
 | `MDCMS_AUTH_ADMIN_EMAILS`      | No       |         | Comma-separated admin emails                              |
 | `MDCMS_AUTH_INSECURE_COOKIES`  | No       | `false` | Set `true` for local dev without HTTPS                    |
+| `S3_ENDPOINT`                  | Yes      |         | S3-compatible endpoint URL                                |
+| `S3_ACCESS_KEY`                | Yes      |         | S3 access key                                             |
+| `S3_SECRET_KEY`                | Yes      |         | S3 secret key                                             |
+| `S3_BUCKET`                    | Yes      |         | S3 bucket name                                            |
+| `S3_PUBLIC_BASE_URL`           | No       |         | Optional public base URL for generated asset links        |
 
 ## Database Migrations
 

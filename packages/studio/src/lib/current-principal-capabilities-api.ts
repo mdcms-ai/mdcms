@@ -2,6 +2,7 @@ import {
   RuntimeError,
   type CurrentPrincipalCapabilitiesResponse,
 } from "@mdcms/shared";
+import { z } from "zod";
 
 import type { MdcmsConfig } from "./studio-component.js";
 import {
@@ -32,14 +33,6 @@ type RoutePayload = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
-}
-
-function isBoolean(value: unknown): value is boolean {
-  return typeof value === "boolean";
-}
-
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0;
 }
 
 function mergeHeaders(
@@ -132,111 +125,67 @@ function toInvalidResponseError(
   });
 }
 
-function validateBooleanRecord(
-  value: unknown,
-  keys: readonly string[],
-  path: string,
-): Record<string, boolean> {
-  if (!isRecord(value)) {
-    throw toInvalidResponseError(path, value);
-  }
+const nonEmptyResponseStringSchema = z
+  .string()
+  .refine((value) => value.trim().length > 0);
 
-  const record: Record<string, boolean> = {};
+const currentPrincipalCapabilitiesDataSchema: z.ZodType<CurrentPrincipalCapabilitiesResponse> =
+  z.object({
+    project: nonEmptyResponseStringSchema,
+    environment: nonEmptyResponseStringSchema,
+    capabilities: z.object({
+      schema: z.object({
+        read: z.boolean(),
+        write: z.boolean(),
+      }),
+      content: z.object({
+        read: z.boolean(),
+        readDraft: z.boolean(),
+        write: z.boolean(),
+        publish: z.boolean(),
+        unpublish: z.boolean(),
+        delete: z.boolean(),
+      }),
+      users: z.object({
+        manage: z.boolean(),
+      }),
+      settings: z.object({
+        manage: z.boolean(),
+      }),
+      media: z
+        .object({
+          read: z.boolean(),
+          upload: z.boolean(),
+          delete: z.boolean(),
+        })
+        .default({ read: false, upload: false, delete: false }),
+      ai: z
+        .object({
+          use: z.boolean(),
+        })
+        .default({ use: false }),
+    }),
+  });
 
-  for (const key of keys) {
-    const entry = value[key];
-    if (!isBoolean(entry)) {
-      throw toInvalidResponseError(path, value);
-    }
-    record[key] = entry;
-  }
-
-  return record;
-}
+const currentPrincipalCapabilitiesRoutePayloadSchema = z.object({
+  data: currentPrincipalCapabilitiesDataSchema,
+});
 
 function validateCurrentPrincipalCapabilitiesResponse(
   operation: string,
   payload: unknown,
 ): CurrentPrincipalCapabilitiesResponse {
-  const parsed = extractRoutePayload(payload);
+  try {
+    return currentPrincipalCapabilitiesRoutePayloadSchema.parse(
+      extractRoutePayload(payload),
+    ).data;
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      throw toInvalidResponseError(operation, payload);
+    }
 
-  if (!isRecord(parsed.data)) {
-    throw toInvalidResponseError(operation, payload);
+    throw error;
   }
-
-  const data = parsed.data;
-  if (
-    !isNonEmptyString(data.project) ||
-    !isNonEmptyString(data.environment) ||
-    !isRecord(data.capabilities)
-  ) {
-    throw toInvalidResponseError(operation, payload);
-  }
-
-  const capabilities = data.capabilities;
-  const schema = validateBooleanRecord(
-    capabilities.schema,
-    ["read", "write"],
-    operation,
-  );
-  const content = validateBooleanRecord(
-    capabilities.content,
-    ["read", "readDraft", "write", "publish", "unpublish", "delete"],
-    operation,
-  );
-  const users = validateBooleanRecord(
-    capabilities.users,
-    ["manage"],
-    operation,
-  );
-  const settings = validateBooleanRecord(
-    capabilities.settings,
-    ["manage"],
-    operation,
-  );
-  const media = isRecord(capabilities.media)
-    ? validateBooleanRecord(
-        capabilities.media,
-        ["read", "upload", "delete"],
-        operation,
-      )
-    : { read: false, upload: false, delete: false };
-  const ai = isRecord(capabilities.ai)
-    ? validateBooleanRecord(capabilities.ai, ["use"], operation)
-    : { use: false };
-
-  return {
-    project: data.project,
-    environment: data.environment,
-    capabilities: {
-      schema: {
-        read: schema.read,
-        write: schema.write,
-      },
-      content: {
-        read: content.read,
-        readDraft: content.readDraft,
-        write: content.write,
-        publish: content.publish,
-        unpublish: content.unpublish,
-        delete: content.delete,
-      },
-      users: {
-        manage: users.manage,
-      },
-      settings: {
-        manage: settings.manage,
-      },
-      media: {
-        read: media.read,
-        upload: media.upload,
-        delete: media.delete,
-      },
-      ai: {
-        use: ai.use,
-      },
-    },
-  };
 }
 
 async function requestCapabilitiesRouteJson(

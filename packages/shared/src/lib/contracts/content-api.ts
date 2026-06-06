@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 export type ApiDataEnvelope<T> = {
   data: T;
 };
@@ -54,17 +56,30 @@ export type ContentDocumentResponse = {
   updatedAt: string;
 };
 
-export type ContentBulkAction = "publish" | "unpublish" | "delete" | "move";
+export const ContentBulkActionSchema = z.enum([
+  "publish",
+  "unpublish",
+  "delete",
+  "move",
+]);
 
-export type ContentBulkOperationInput = {
-  action: ContentBulkAction;
-  documentIds: string[];
-  changeSummary?: string;
-  actorId?: string;
-  move?: {
-    targetDirectory: string;
-  };
-};
+export type ContentBulkAction = z.infer<typeof ContentBulkActionSchema>;
+
+export const ContentBulkOperationInputSchema = z.object({
+  action: ContentBulkActionSchema,
+  documentIds: z.array(z.string()),
+  changeSummary: z.string().optional(),
+  actorId: z.string().optional(),
+  move: z
+    .object({
+      targetDirectory: z.string(),
+    })
+    .optional(),
+});
+
+export type ContentBulkOperationInput = z.infer<
+  typeof ContentBulkOperationInputSchema
+>;
 
 export type ContentBulkOperationItemError = {
   code: string;

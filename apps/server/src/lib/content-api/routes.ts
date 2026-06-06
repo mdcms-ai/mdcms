@@ -4,10 +4,12 @@ import type {
   PaginationMetadata,
 } from "@mdcms/shared";
 import {
+  ContentBulkOperationInputSchema,
   RuntimeError,
   isRuntimeErrorLike,
   signMdcmsPreviewToken,
 } from "@mdcms/shared";
+import { z } from "zod";
 
 import type { ApiKeyOperationScope } from "../auth.js";
 import { executeWithRuntimeErrorsHandled } from "../http-utils.js";
@@ -155,13 +157,6 @@ function parsePreviewTokenRequestBody(
   return { previewUrl: previewUrl.trim() };
 }
 
-const CONTENT_BULK_ACTIONS = new Set<ContentBulkAction>([
-  "publish",
-  "unpublish",
-  "delete",
-  "move",
-]);
-
 function createInvalidBulkInputError(
   message: string,
   details: Record<string, unknown>,
@@ -174,192 +169,262 @@ function createInvalidBulkInputError(
   });
 }
 
-function parseBulkAction(value: unknown): ContentBulkAction {
-  if (typeof value !== "string") {
-    throw createInvalidBulkInputError(
-      'Field "action" must be one of "publish", "unpublish", "delete", or "move".',
-      { field: "action" },
-    );
-  }
-
-  const action = value.trim();
-
-  if (CONTENT_BULK_ACTIONS.has(action as ContentBulkAction)) {
-    return action as ContentBulkAction;
-  }
-
-  throw createInvalidBulkInputError(
-    'Field "action" must be one of "publish", "unpublish", "delete", or "move".',
-    { field: "action", value },
-  );
-}
-
-function parseBulkDocumentIds(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    throw createInvalidBulkInputError('Field "documentIds" must be an array.', {
-      field: "documentIds",
-    });
-  }
-
-  if (value.length < 1 || value.length > 100) {
-    throw createInvalidBulkInputError(
-      'Field "documentIds" must contain between 1 and 100 document IDs.',
-      { field: "documentIds" },
-    );
-  }
-
-  const documentIds = value.map((documentId, index) => {
-    if (typeof documentId !== "string") {
-      throw createInvalidBulkInputError(
-        'Field "documentIds" must contain only non-empty strings.',
-        { field: "documentIds", index },
-      );
-    }
-
-    const trimmed = documentId.trim();
-
-    if (trimmed.length === 0) {
-      throw createInvalidBulkInputError(
-        'Field "documentIds" must contain only non-empty strings.',
-        { field: "documentIds", index },
-      );
-    }
-
-    return trimmed;
-  });
-
-  if (new Set(documentIds).size !== documentIds.length) {
-    throw createInvalidBulkInputError(
-      'Field "documentIds" must contain unique document IDs.',
-      { field: "documentIds" },
-    );
-  }
-
-  return documentIds;
-}
-
-function parseBulkMoveTargetDirectory(value: unknown): string {
-  if (!isRecord(value)) {
-    throw createInvalidBulkInputError(
-      'Field "move.targetDirectory" is required for move.',
-      { field: "move.targetDirectory" },
-    );
-  }
-
-  const targetDirectory = value.targetDirectory;
-
-  if (typeof targetDirectory !== "string") {
-    throw createInvalidBulkInputError(
-      'Field "move.targetDirectory" must be a string.',
-      { field: "move.targetDirectory" },
-    );
-  }
-
-  const trimmed = targetDirectory.trim();
-
-  if (trimmed.length === 0) {
-    return "";
-  }
-
-  if (trimmed.startsWith("/")) {
-    throw createInvalidBulkInputError(
-      'Field "move.targetDirectory" must not start with a leading slash.',
-      { field: "move.targetDirectory", value: trimmed },
-    );
-  }
-
-  if (trimmed.endsWith("/")) {
-    throw createInvalidBulkInputError(
-      'Field "move.targetDirectory" must not end with a trailing slash.',
-      { field: "move.targetDirectory", value: trimmed },
-    );
-  }
-
-  if (/(^|\/)\.\.(\/|$)/.test(trimmed)) {
-    throw createInvalidBulkInputError(
-      'Field "move.targetDirectory" must not contain path traversal segments ("..").',
-      { field: "move.targetDirectory", value: trimmed },
-    );
-  }
-
-  return trimmed;
-}
-
 function hasInputField(input: Record<string, unknown>, field: string): boolean {
   return Object.prototype.hasOwnProperty.call(input, field);
 }
 
-function assertBulkActionFieldAllowed(input: {
-  body: Record<string, unknown>;
-  action: ContentBulkAction;
-  field: "changeSummary" | "actorId" | "move";
-  allowedActions: readonly ContentBulkAction[];
-}): void {
-  if (
-    !hasInputField(input.body, input.field) ||
-    input.allowedActions.includes(input.action)
-  ) {
+const BulkActionInputSchema = z.preprocess(
+  (value) => (typeof value === "string" ? value.trim() : value),
+  ContentBulkOperationInputSchema.shape.action,
+);
+
+const BulkOptionalStringInputSchema = z.preprocess((value) => {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (typeof value !== "string") {
+    return value;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}, z.string().optional());
+
+const BulkDocumentIdsInputSchema = z
+  .array(z.string())
+  .min(1, {
+    message: 'Field "documentIds" must contain between 1 and 100 document IDs.',
+  })
+  .max(100, {
+    message: 'Field "documentIds" must contain between 1 and 100 document IDs.',
+  })
+  .transform((documentIds) =>
+    documentIds.map((documentId) => documentId.trim()),
+  )
+  .superRefine((documentIds, ctx) => {
+    for (const [index, documentId] of documentIds.entries()) {
+      if (documentId.length === 0) {
+        ctx.addIssue({
+          code: "custom",
+          message: 'Field "documentIds" must contain only non-empty strings.',
+          path: [index],
+        });
+      }
+    }
+
+    if (new Set(documentIds).size !== documentIds.length) {
+      ctx.addIssue({
+        code: "custom",
+        message: 'Field "documentIds" must contain unique document IDs.',
+      });
+    }
+  });
+
+const BulkMoveTargetDirectoryInputSchema = z
+  .preprocess(
+    (value) => (typeof value === "string" ? value.trim() : value),
+    z.string(),
+  )
+  .superRefine((targetDirectory, ctx) => {
+    if (targetDirectory.length === 0) {
+      return;
+    }
+
+    if (targetDirectory.startsWith("/")) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          'Field "move.targetDirectory" must not start with a leading slash.',
+      });
+    }
+
+    if (targetDirectory.endsWith("/")) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          'Field "move.targetDirectory" must not end with a trailing slash.',
+      });
+    }
+
+    if (/(^|\/)\.\.(\/|$)/.test(targetDirectory)) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          'Field "move.targetDirectory" must not contain path traversal segments ("..").',
+      });
+    }
+  });
+
+const BulkMoveInputSchema = z.object({
+  targetDirectory: BulkMoveTargetDirectoryInputSchema,
+});
+
+const ContentBulkOperationRouteInputSchema = z
+  .object({
+    action: BulkActionInputSchema,
+    documentIds: BulkDocumentIdsInputSchema,
+    changeSummary: z.unknown().optional(),
+    actorId: z.unknown().optional(),
+    move: z.unknown().optional(),
+  })
+  .superRefine((input, ctx) => {
+    if (hasInputField(input, "changeSummary") && input.action !== "publish") {
+      ctx.addIssue({
+        code: "custom",
+        message: `Field "changeSummary" is not accepted for "${input.action}" bulk operations.`,
+        path: ["changeSummary"],
+      });
+    }
+
+    if (
+      hasInputField(input, "actorId") &&
+      input.action !== "publish" &&
+      input.action !== "unpublish"
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: `Field "actorId" is not accepted for "${input.action}" bulk operations.`,
+        path: ["actorId"],
+      });
+    }
+
+    if (hasInputField(input, "move") && input.action !== "move") {
+      ctx.addIssue({
+        code: "custom",
+        message: `Field "move" is not accepted for "${input.action}" bulk operations.`,
+        path: ["move"],
+      });
+    }
+
+    if (input.action === "publish") {
+      addNestedBulkIssues(
+        ctx,
+        BulkOptionalStringInputSchema.safeParse(input.changeSummary),
+        ["changeSummary"],
+      );
+    }
+
+    if (input.action === "publish" || input.action === "unpublish") {
+      addNestedBulkIssues(
+        ctx,
+        BulkOptionalStringInputSchema.safeParse(input.actorId),
+        ["actorId"],
+      );
+    }
+
+    if (input.action === "move") {
+      const move = BulkMoveInputSchema.safeParse(input.move);
+      if (!move.success && input.move === undefined) {
+        ctx.addIssue({
+          code: "custom",
+          message: 'Field "move.targetDirectory" is required for move.',
+          path: ["move", "targetDirectory"],
+        });
+        return;
+      }
+
+      addNestedBulkIssues(ctx, move, ["move"]);
+    }
+  })
+  .transform((input): ContentBulkOperationInput => {
+    const changeSummary =
+      input.action === "publish"
+        ? BulkOptionalStringInputSchema.parse(input.changeSummary)
+        : undefined;
+    const actorId =
+      input.action === "publish" || input.action === "unpublish"
+        ? BulkOptionalStringInputSchema.parse(input.actorId)
+        : undefined;
+
+    return {
+      action: input.action,
+      documentIds: input.documentIds,
+      ...(changeSummary ? { changeSummary } : undefined),
+      ...(actorId ? { actorId } : undefined),
+      ...(input.action === "move"
+        ? { move: BulkMoveInputSchema.parse(input.move) }
+        : undefined),
+    };
+  });
+
+type BulkSafeParseResult =
+  | { success: true }
+  | { success: false; error: z.ZodError };
+
+function addNestedBulkIssues(
+  ctx: z.RefinementCtx,
+  result: BulkSafeParseResult,
+  path: Array<string | number>,
+): void {
+  if (result.success) {
     return;
   }
 
-  throw createInvalidBulkInputError(
-    `Field "${input.field}" is not accepted for "${input.action}" bulk operations.`,
-    { field: input.field, action: input.action },
+  for (const issue of result.error.issues) {
+    ctx.addIssue({
+      code: "custom",
+      message: issue.message,
+      path:
+        path[0] === "move" && issue.path.length === 0
+          ? ["move", "targetDirectory"]
+          : [...path, ...issue.path],
+    });
+  }
+}
+
+function bulkInputIssueField(issue: z.ZodIssue | undefined): string {
+  const path = issue?.path ?? [];
+  const first = path[0];
+
+  if (first === "move" && path[1] === "targetDirectory") {
+    return "move.targetDirectory";
+  }
+
+  if (first === "documentIds") {
+    return "documentIds";
+  }
+
+  return typeof first === "string" ? first : "body";
+}
+
+function bulkInputAction(body: unknown): string | undefined {
+  if (!isRecord(body) || typeof body.action !== "string") {
+    return undefined;
+  }
+
+  return body.action.trim();
+}
+
+function createBulkInputParseError(
+  body: unknown,
+  error: z.ZodError,
+): RuntimeError {
+  const issue = error.issues[0];
+  const field = bulkInputIssueField(issue);
+  const action = bulkInputAction(body);
+
+  return createInvalidBulkInputError(
+    issue?.message ?? "Bulk content request body is invalid.",
+    {
+      field,
+      ...(action !== undefined &&
+      (field === "changeSummary" || field === "actorId" || field === "move")
+        ? { action }
+        : undefined),
+    },
   );
 }
 
 function parseContentBulkOperationInput(
   body: unknown,
 ): ContentBulkOperationInput {
-  if (!isRecord(body)) {
-    throw createInvalidBulkInputError(
-      "Bulk content request body must be an object.",
-      { field: "body" },
-    );
+  const parsed = ContentBulkOperationRouteInputSchema.safeParse(body);
+  if (!parsed.success) {
+    throw createBulkInputParseError(body, parsed.error);
   }
 
-  const action = parseBulkAction(body.action);
-  const documentIds = parseBulkDocumentIds(body.documentIds);
-  assertBulkActionFieldAllowed({
-    body,
-    action,
-    field: "changeSummary",
-    allowedActions: ["publish"],
-  });
-  assertBulkActionFieldAllowed({
-    body,
-    action,
-    field: "actorId",
-    allowedActions: ["publish", "unpublish"],
-  });
-  assertBulkActionFieldAllowed({
-    body,
-    action,
-    field: "move",
-    allowedActions: ["move"],
-  });
-  const changeSummary =
-    action === "publish"
-      ? parseOptionalString(body.changeSummary, "changeSummary")
-      : undefined;
-  const actorId =
-    action === "publish" || action === "unpublish"
-      ? parseOptionalString(body.actorId, "actorId")
-      : undefined;
-
-  return {
-    action,
-    documentIds,
-    ...(changeSummary ? { changeSummary } : undefined),
-    ...(actorId ? { actorId } : undefined),
-    ...(action === "move"
-      ? {
-          move: {
-            targetDirectory: parseBulkMoveTargetDirectory(body.move),
-          },
-        }
-      : undefined),
-  };
+  return parsed.data;
 }
 
 function getBulkRequiredScope(action: ContentBulkAction): ApiKeyOperationScope {

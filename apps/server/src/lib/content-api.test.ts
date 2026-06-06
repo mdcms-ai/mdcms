@@ -607,6 +607,29 @@ test("content API bulk rejects duplicate document IDs", async () => {
   assert.equal(body.details?.field, "documentIds");
 });
 
+test("content API bulk trims document IDs before uniqueness validation", async () => {
+  const handler = createHandler();
+
+  const response = await handler(
+    new Request("http://localhost/api/v1/content/bulk", {
+      method: "POST",
+      headers: { ...scopeHeaders, "content-type": "application/json" },
+      body: JSON.stringify({
+        action: "delete",
+        documentIds: [" duplicate-document ", "duplicate-document"],
+      }),
+    }),
+  );
+  const body = (await response.json()) as {
+    code: string;
+    details?: { field?: string };
+  };
+
+  assert.equal(response.status, 400);
+  assert.equal(body.code, "INVALID_INPUT");
+  assert.equal(body.details?.field, "documentIds");
+});
+
 test("content API bulk move constructs archive slug paths and updates drafts", async () => {
   const handler = createHandler();
   const document = await createContentDocument(
