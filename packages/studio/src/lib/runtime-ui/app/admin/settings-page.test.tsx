@@ -3,9 +3,15 @@ import { test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type {
+  MediaSettings,
+  WebhookConfig,
+  WebhookDeliveryHistoryEntry,
+} from "@mdcms/shared";
 
 import { ThemeProvider } from "../../adapters/next-themes.js";
 import { StudioNavigationProvider } from "../../navigation.js";
+import type { SettingsPageMediaSettingsState } from "../../hooks/use-media-settings.js";
 import {
   AdminCapabilitiesProvider,
   type AdminCapabilitiesValue,
@@ -20,8 +26,8 @@ import {
   type SettingsPageWebhookConfigState,
   type SettingsPageWebhookHistoryState,
 } from "./settings-page.js";
+import type { MediaSettingsDraft } from "./settings-media-model.js";
 import type { ApiKeyMetadata } from "../../../api-keys-api.js";
-import type { WebhookConfig, WebhookDeliveryHistoryEntry } from "@mdcms/shared";
 
 function renderSettingsPage(input: {
   initialTab?: string;
@@ -35,9 +41,11 @@ function renderSettingsPage(input: {
       ? `/admin/settings/webhooks/${input.routeSection}`
       : input.routeTab === "webhooks"
         ? "/admin/settings/webhooks"
-        : input.routeTab === "api-keys"
-          ? "/admin/settings/api-keys"
-          : "/admin/settings";
+        : input.routeTab === "media"
+          ? "/admin/settings/media"
+          : input.routeTab === "api-keys"
+            ? "/admin/settings/api-keys"
+            : "/admin/settings";
   const settingsPageProps =
     input.initialTab === undefined ? {} : { initialTab: input.initialTab };
 
@@ -140,13 +148,13 @@ test("SettingsPage renders content when canManageSettings is true", () => {
   assert.doesNotMatch(markup, /Access denied/);
 });
 
-test("SettingsPage renders Webhooks tab and still omits Media tab", () => {
+test("SettingsPage renders Media tab in Settings navigation", () => {
   const markup = renderSettingsPage({
     initialTab: "general",
     capabilities: { canManageSettings: true },
   });
   assert.match(markup, /Webhooks/);
-  assert.doesNotMatch(markup, /Media/);
+  assert.match(markup, /Media/);
 });
 
 test("SettingsPage subnav links to addressable settings sections", () => {
@@ -158,6 +166,7 @@ test("SettingsPage subnav links to addressable settings sections", () => {
   assert.match(markup, /href="\/admin\/settings"/);
   assert.match(markup, /href="\/admin\/settings\/api-keys"/);
   assert.match(markup, /href="\/admin\/settings\/webhooks"/);
+  assert.match(markup, /href="\/admin\/settings\/media"/);
 });
 
 test("SettingsPage selects the Webhooks section from the route", () => {
@@ -170,6 +179,19 @@ test("SettingsPage selects the Webhooks section from the route", () => {
   assert.match(
     markup,
     /data-active="true"[^>]*href="\/admin\/settings\/webhooks"/,
+  );
+});
+
+test("SettingsPage selects the Media section from the route", () => {
+  const markup = renderSettingsPage({
+    routeTab: "media",
+    capabilities: { canManageSettings: true },
+  });
+
+  assert.match(markup, /data-mdcms-settings-media-state="loading"/);
+  assert.match(
+    markup,
+    /data-active="true"[^>]*href="\/admin\/settings\/media"/,
   );
 });
 
@@ -288,12 +310,29 @@ const readyWebhookConfigState: SettingsPageWebhookConfigState = {
   clearDeleteError: () => {},
 };
 
+const readyMediaSettings: MediaSettings = {
+  media: { image: { maxUploadSizeBytes: 10_485_760 } },
+};
+
+const readyMediaSettingsState: SettingsPageMediaSettingsState = {
+  status: "ready",
+  settings: readyMediaSettings,
+  errorMessage: undefined,
+  refetch: () => {},
+  updateSettings: async () => readyMediaSettings,
+  isUpdating: false,
+  updateError: null,
+  resetUpdateError: () => {},
+};
+
 function renderSettingsPageView(input: {
   initialTab: string;
   activeSection?: string | null;
   apiKeysState?: Partial<SettingsPageApiKeysState>;
   webhookConfigState?: Partial<SettingsPageWebhookConfigState>;
   webhookHistoryState?: Partial<SettingsPageWebhookHistoryState>;
+  mediaSettingsState?: Partial<SettingsPageMediaSettingsState>;
+  mediaDraftOverride?: MediaSettingsDraft;
   schemaSummary?: SettingsPageSchemaSummaryState;
   canManageSettings?: boolean;
 }): string {
@@ -348,6 +387,11 @@ function renderSettingsPageView(input: {
             ...readyWebhookHistoryState,
             ...input.webhookHistoryState,
           },
+          mediaSettingsState: {
+            ...readyMediaSettingsState,
+            ...input.mediaSettingsState,
+          },
+          mediaInitialDraft: input.mediaDraftOverride,
           createDialogOpen: false,
           setCreateDialogOpen: () => {},
           createKey: async () => ({
@@ -383,6 +427,73 @@ test("SettingsPageView renders API key metadata and revoke affordance", () => {
   assert.match(markup, /production/);
   assert.match(markup, /Active/);
   assert.match(markup, /Revoke/);
+});
+
+test("SettingsPageView renders media settings ready state with backend semantics", () => {
+  const markup = renderSettingsPageView({ initialTab: "media" });
+
+  assert.match(markup, /data-mdcms-settings-media-state="ready"/);
+  assert.match(markup, /Image upload limit/);
+  assert.match(markup, /No file-type allowlist/);
+  assert.match(markup, /image\//);
+  assert.match(markup, /10,485,760 bytes/);
+  assert.match(markup, /Save changes/);
+  assert.match(markup, /role="status"/);
+});
+
+test("SettingsPageView renders media settings loading error and unavailable states", () => {
+  const loadingMarkup = renderSettingsPageView({
+    initialTab: "media",
+    mediaSettingsState: { status: "loading", settings: null },
+  });
+  assert.match(loadingMarkup, /data-mdcms-settings-media-state="loading"/);
+
+  const errorMarkup = renderSettingsPageView({
+    initialTab: "media",
+    mediaSettingsState: {
+      status: "error",
+      settings: null,
+      errorMessage: "Failed to load media settings.",
+    },
+  });
+  assert.match(errorMarkup, /Failed to load media settings/);
+  assert.match(errorMarkup, /Retry/);
+  assert.match(errorMarkup, /role="alert"/);
+  assert.match(errorMarkup, /aria-live="assertive"/);
+
+  const unavailableMarkup = renderSettingsPageView({
+    initialTab: "media",
+    mediaSettingsState: {
+      status: "unavailable",
+      settings: null,
+      errorMessage: "Studio is missing project or environment context.",
+    },
+  });
+  assert.match(
+    unavailableMarkup,
+    /Studio is missing project or environment context/,
+  );
+  assert.match(unavailableMarkup, /role="alert"/);
+  assert.match(unavailableMarkup, /aria-live="assertive"/);
+});
+
+test("SettingsPageView surfaces invalid and failed media settings saves inline", () => {
+  const invalidMarkup = renderSettingsPageView({
+    initialTab: "media",
+    mediaDraftOverride: { mode: "explicit", explicitBytes: "0" },
+  });
+  assert.match(invalidMarkup, /Enter a positive whole number of bytes/);
+  assert.match(invalidMarkup, /aria-invalid="true"/);
+
+  const failedMarkup = renderSettingsPageView({
+    initialTab: "media",
+    mediaSettingsState: {
+      ...readyMediaSettingsState,
+      updateError: new Error("Save failed."),
+    },
+  });
+  assert.match(failedMarkup, /Save failed\./);
+  assert.match(failedMarkup, /role="alert"/);
 });
 
 test("SettingsPageView renders webhook configuration rows and CRUD affordances", () => {

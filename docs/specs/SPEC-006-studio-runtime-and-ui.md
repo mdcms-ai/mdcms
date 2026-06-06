@@ -221,6 +221,39 @@ permits Studio-runtime-owned shell rendering backed by local mock state or
 placeholder content while their future live data and mutation contracts remain
 deferred to the owning work for those domains.
 
+### Settings Media Panel
+
+The `/admin/settings/media` route is the Studio surface for project-level
+media settings. It is visible from the Settings subnavigation when the caller
+can manage settings for the mounted target. Direct navigation remains
+supported, but the route renders the same forbidden state as other Settings
+surfaces when the caller lacks `capabilities.settings.manage`.
+
+Normative behavior:
+
+- The panel reads `GET /api/v1/media/settings` for the active
+  `(project, environment)` target and writes `PUT /api/v1/media/settings`
+  using the same mounted target headers. The environment participates in
+  routing and authorization only; the setting itself remains project-scoped.
+- The panel edits only `media.image.maxUploadSizeBytes`.
+- The ready state offers an unlimited mode and an explicit byte-limit mode.
+  Unlimited mode persists `maxUploadSizeBytes: null`. Explicit mode persists a
+  positive safe integer byte value.
+- Client-side validation rejects blank, zero, negative, fractional, unsafe, or
+  non-numeric explicit values before submitting. The inline validation message
+  must identify that the value must be a positive whole number of bytes.
+- User-facing copy must state that MDCMS does not enforce a file-type allowlist
+  and that the configured limit applies only to uploads whose MIME type starts
+  with `image/`.
+- Save controls are disabled while loading, while the current form is invalid,
+  while the form is unchanged, and while a save request is in flight.
+- A failed load renders a deterministic error state with a retry affordance. A
+  failed save keeps the current draft values visible and shows the failure
+  inline. A successful save updates the clean baseline to the returned settings
+  and shows a saved state without leaving the panel.
+- If Studio lacks a mounted project, environment, or server URL, the panel
+  renders an unavailable state and does not call the media settings endpoints.
+
 ### User Management Route
 
 The `/admin/users` route is the Studio user-management surface for the active
