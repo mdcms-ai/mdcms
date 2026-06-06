@@ -1,4 +1,9 @@
 import type {
+  ContentBulkAction as SharedContentBulkAction,
+  ContentBulkOperationInput as SharedContentBulkOperationInput,
+  ContentBulkOperationItemError as SharedContentBulkOperationItemError,
+  ContentBulkOperationResponse as SharedContentBulkOperationResponse,
+  ContentBulkOperationResult as SharedContentBulkOperationResult,
   ContentDocumentResponse,
   ContentOverviewCountsResponse,
   ContentVersionDocumentResponse,
@@ -44,6 +49,16 @@ export type ContentWriteSchemaSyncState = {
 };
 
 export type ContentDocument = ContentDocumentResponse;
+
+export type ContentBulkAction = SharedContentBulkAction;
+
+export type ContentBulkOperationInput = SharedContentBulkOperationInput;
+
+export type ContentBulkOperationItemError = SharedContentBulkOperationItemError;
+
+export type ContentBulkOperationResult = SharedContentBulkOperationResult;
+
+export type ContentBulkOperationResponse = SharedContentBulkOperationResponse;
 
 export type ContentVersionSummary = ContentVersionSummaryResponse;
 

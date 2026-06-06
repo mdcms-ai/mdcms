@@ -28,6 +28,14 @@ function readHeader(
   return null;
 }
 
+function readJsonBody(init: RequestInit | undefined): unknown {
+  if (typeof init?.body !== "string") {
+    return undefined;
+  }
+
+  return JSON.parse(init.body);
+}
+
 function createApi(options: StudioContentListApiOptions = {}) {
   return createStudioContentListApi(
     {
@@ -68,6 +76,31 @@ const validPaginatedResponse = {
     limit: 1,
     offset: 0,
     hasMore: true,
+  },
+};
+
+const validBulkResponse = {
+  data: {
+    action: "publish",
+    requested: 2,
+    succeeded: 1,
+    failed: 1,
+    results: [
+      {
+        documentId: "doc-1",
+        status: "succeeded",
+        document: validPaginatedResponse.data[0],
+      },
+      {
+        documentId: "doc-missing",
+        status: "failed",
+        error: {
+          code: "NOT_FOUND",
+          message: "Document not found.",
+          statusCode: 404,
+        },
+      },
+    ],
   },
 };
 
@@ -318,4 +351,244 @@ test("list omits q param when not provided", async () => {
 
   const url = new URL(String(calls[0]?.input));
   assert.equal(url.searchParams.get("q"), null);
+});
+
+test("bulkOperation sends scoped JSON request with CSRF and schema hash in cookie auth mode", async () => {
+  const calls: Array<{ input: string | URL | Request; init?: RequestInit }> =
+    [];
+  const controller = new AbortController();
+  const api = createApi({
+    auth: { mode: "cookie" },
+    fetcher: async (input, init) => {
+      calls.push({ input, init });
+
+      if (String(input) === "http://localhost:4000/api/v1/auth/session") {
+        assert.equal(init?.method, "GET");
+        assert.equal(init?.credentials, "include");
+
+        return new Response(
+          JSON.stringify({ data: { csrfToken: "csrf-cookie-token" } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+
+      assert.equal(String(input), "http://localhost:4000/api/v1/content/bulk");
+      assert.equal(init?.method, "POST");
+      assert.equal(init?.signal, controller.signal);
+      assert.equal(init?.credentials, "include");
+      assert.equal(readHeader(init, "x-mdcms-project"), "marketing-site");
+      assert.equal(readHeader(init, "x-mdcms-environment"), "production");
+      assert.equal(readHeader(init, "content-type"), "application/json");
+      assert.equal(readHeader(init, "x-mdcms-csrf-token"), "csrf-cookie-token");
+      assert.equal(readHeader(init, "x-mdcms-schema-hash"), "schema-hash-123");
+      assert.equal(readHeader(init, "authorization"), null);
+      assert.deepEqual(readJsonBody(init), {
+        action: "move",
+        documentIds: ["doc-1", "doc-2"],
+        move: { targetDirectory: "archive/news" },
+      });
+
+      return new Response(
+        JSON.stringify({
+          data: {
+            ...validBulkResponse.data,
+            action: "move",
+            requested: 2,
+            succeeded: 2,
+            failed: 0,
+            results: [
+              {
+                documentId: "doc-1",
+                status: "succeeded",
+                document: validPaginatedResponse.data[0],
+              },
+              {
+                documentId: "doc-2",
+                status: "succeeded",
+                document: {
+                  ...validPaginatedResponse.data[0],
+                  documentId: "doc-2",
+                  path: "archive/news/second",
+                },
+              },
+            ],
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    },
+  });
+
+  const result = await api.bulkOperation({
+    action: "move",
+    documentIds: ["doc-1", "doc-2"],
+    move: { targetDirectory: "archive/news" },
+    schemaHash: "schema-hash-123",
+    signal: controller.signal,
+  });
+
+  assert.equal(calls.length, 2);
+  assert.equal(result.action, "move");
+  assert.equal(result.requested, 2);
+  assert.equal(result.succeeded, 2);
+  assert.equal(result.failed, 0);
+  assert.equal(result.results.length, 2);
+});
+
+test("bulkOperation uses Authorization and omits CSRF bootstrap in token auth mode", async () => {
+  const calls: Array<{ input: string | URL | Request; init?: RequestInit }> =
+    [];
+  const api = createApi({
+    auth: { mode: "token", token: "mdcms_key_test" },
+    fetcher: async (input, init) => {
+      calls.push({ input, init });
+
+      assert.equal(String(input), "http://localhost:4000/api/v1/content/bulk");
+      assert.equal(init?.method, "POST");
+      assert.equal(readHeader(init, "authorization"), "Bearer mdcms_key_test");
+      assert.equal(readHeader(init, "x-mdcms-csrf-token"), null);
+      assert.deepEqual(readJsonBody(init), {
+        action: "publish",
+        documentIds: ["doc-1", "doc-2"],
+        changeSummary: "Ready",
+        actorId: "user-1",
+      });
+
+      return new Response(JSON.stringify(validBulkResponse), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    },
+  });
+
+  const result = await api.bulkOperation({
+    action: "publish",
+    documentIds: ["doc-1", "doc-2"],
+    changeSummary: "Ready",
+    actorId: "user-1",
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(result.action, "publish");
+  assert.equal(result.results[1]?.status, "failed");
+});
+
+test("bulkOperation throws RuntimeError when cookie auth session lacks CSRF token", async () => {
+  const api = createApi({
+    auth: { mode: "cookie" },
+    fetcher: async () =>
+      new Response(JSON.stringify({ data: {} }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+  });
+
+  await assert.rejects(
+    () =>
+      api.bulkOperation({
+        action: "delete",
+        documentIds: ["doc-1"],
+      }),
+    (error: unknown) =>
+      error instanceof RuntimeError &&
+      error.code === "CONTENT_LIST_RESPONSE_INVALID" &&
+      error.statusCode === 500,
+  );
+});
+
+test("bulkOperation throws RuntimeError with route payload for non-2xx responses", async () => {
+  const api = createApi({
+    fetcher: async () =>
+      new Response(
+        JSON.stringify({
+          code: "SCHEMA_HASH_MISMATCH",
+          message: "Schema hash mismatch.",
+          details: { expected: "server-hash" },
+        }),
+        {
+          status: 409,
+          headers: { "content-type": "application/json" },
+        },
+      ),
+  });
+
+  await assert.rejects(
+    () =>
+      api.bulkOperation({
+        action: "move",
+        documentIds: ["doc-1"],
+        move: { targetDirectory: "archive" },
+        schemaHash: "client-hash",
+      }),
+    (error: unknown) =>
+      error instanceof RuntimeError &&
+      error.code === "SCHEMA_HASH_MISMATCH" &&
+      error.message === "Schema hash mismatch." &&
+      error.statusCode === 409,
+  );
+});
+
+test("bulkOperation throws RuntimeError for invalid success payloads", async () => {
+  const api = createApi({
+    fetcher: async () =>
+      new Response(
+        JSON.stringify({
+          data: {
+            action: "publish",
+            requested: 1,
+            succeeded: 1,
+            failed: 0,
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+  });
+
+  await assert.rejects(
+    () =>
+      api.bulkOperation({
+        action: "publish",
+        documentIds: ["doc-1"],
+      }),
+    (error: unknown) =>
+      error instanceof RuntimeError &&
+      error.code === "CONTENT_LIST_RESPONSE_INVALID" &&
+      error.statusCode === 500,
+  );
+});
+
+test("bulkOperation throws RuntimeError for succeeded results with invalid documents", async () => {
+  const api = createApi({
+    fetcher: async () =>
+      new Response(
+        JSON.stringify({
+          data: {
+            action: "publish",
+            requested: 1,
+            succeeded: 1,
+            failed: 0,
+            results: [
+              {
+                documentId: "doc-1",
+                status: "succeeded",
+                document: {},
+              },
+            ],
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+  });
+
+  await assert.rejects(
+    () =>
+      api.bulkOperation({
+        action: "publish",
+        documentIds: ["doc-1"],
+      }),
+    (error: unknown) =>
+      error instanceof RuntimeError &&
+      error.code === "CONTENT_LIST_RESPONSE_INVALID" &&
+      error.statusCode === 500,
+  );
 });

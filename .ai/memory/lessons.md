@@ -6,6 +6,12 @@ Entries are reverse-chronological (newest first).
 
 ---
 
+## 2026-06-06 — patch the active worktree by absolute path
+
+**Rule:** When editing from a feature worktree, pass absolute worktree paths to `apply_patch` instead of relying on the thread root.
+**Why:** Codex tool calls can default to the original checkout even while shell commands run from the worktree, so a spec patch can land in the wrong checkout and require manual reversal.
+**How to apply:** Before applying patches in a worktree-backed task, confirm `pwd` and use `/absolute/worktree/path/...` in patch headers for every edited file.
+
 ## 2026-06-04 — preserve webhook sink results through wrappers
 
 **Rule:** Webhook delivery wrappers must return the wrapped sink result after logging or instrumentation.

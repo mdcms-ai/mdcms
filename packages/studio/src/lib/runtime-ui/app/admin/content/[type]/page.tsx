@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
+import type { ContentBulkAction } from "@mdcms/shared";
 import { useParams, useRouter } from "../../../../adapters/next-navigation.js";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -15,6 +16,7 @@ import {
   AlertCircle,
   ShieldAlert,
   ArrowUpFromLine,
+  FolderInput,
 } from "lucide-react";
 import { Button } from "../../../../components/ui/button.js";
 import { Input } from "../../../../components/ui/input.js";
@@ -50,6 +52,14 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from "../../../../components/ui/pagination.js";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../../../../components/ui/dialog.js";
 import { PageHeader } from "../../../../components/layout/page-header.js";
 import { Skeleton } from "../../../../components/ui/skeleton.js";
 
@@ -65,6 +75,7 @@ import {
 } from "../../../../hooks/use-content-type-list.js";
 import { useCreateDocument } from "../../../../hooks/use-create-document.js";
 import { CreateDocumentDialog } from "../../../../components/create-document-dialog.js";
+import { createStudioContentListApi } from "../../../../../content-list-api.js";
 import { createStudioSchemaRouteApi } from "../../../../../schema-route-api.js";
 import { createStudioDocumentRouteApi } from "../../../../../document-route-api.js";
 import { useToast } from "../../../../components/toast.js";
@@ -73,6 +84,14 @@ import {
   getContentTranslationCoverageQueryKey,
   type ContentTranslationCoverage,
 } from "../../../../lib/content-translation-coverage.js";
+import {
+  formatBulkOperationSummary,
+  getAvailableBulkActions,
+  getBulkOperationTargets,
+  getSelectedDocuments,
+  validateBulkMoveTargetDirectory,
+  type ContentBulkCapabilities,
+} from "../../../../lib/content-bulk-actions.js";
 
 const statusConfig = {
   published: {
@@ -98,15 +117,42 @@ type TranslationCoverageSummaryProps = {
 };
 
 type ContentTypeTableColumn = {
-  key: "title" | "translations" | "status" | "updated" | "author" | "actions";
+  key:
+    | "selection"
+    | "title"
+    | "translations"
+    | "status"
+    | "updated"
+    | "author"
+    | "actions";
   label: string;
   className?: string;
+};
+
+type BulkConfirmationText = {
+  title: string;
+  description: string;
+  confirmLabel: string;
+};
+
+type BulkOperationFailureBanner = {
+  succeeded: number;
+  failed: number;
+  message: string;
+};
+
+const bulkActionLabels: Record<ContentBulkAction, string> = {
+  publish: "Publish",
+  unpublish: "Unpublish",
+  move: "Move",
+  delete: "Delete",
 };
 
 export function getContentTypeTableColumns(
   showTranslationCoverage: boolean,
 ): ContentTypeTableColumn[] {
   return [
+    { key: "selection", label: "", className: "w-10" },
     { key: "title", label: "Title / Path" },
     ...(showTranslationCoverage
       ? ([
@@ -122,6 +168,47 @@ export function getContentTypeTableColumns(
     { key: "author", label: "Author", className: "w-28" },
     { key: "actions", label: "", className: "w-14" },
   ];
+}
+
+export function getBulkConfirmationText({
+  action,
+  selectedCount,
+  targetCount,
+}: {
+  action: ContentBulkAction;
+  selectedCount: number;
+  targetCount: number;
+}): BulkConfirmationText {
+  const selectedDocuments =
+    selectedCount === 1 ? "selected document" : "selected documents";
+  const targetDocuments = targetCount === 1 ? "document" : "documents";
+
+  switch (action) {
+    case "publish":
+      return {
+        title: "Publish documents",
+        description: `${targetCount} ${targetDocuments} will be published from ${selectedCount} ${selectedDocuments}. Already published documents without changes are skipped.`,
+        confirmLabel: "Publish",
+      };
+    case "unpublish":
+      return {
+        title: "Unpublish documents",
+        description: `${targetCount} published ${targetDocuments} will be unpublished from ${selectedCount} ${selectedDocuments}.`,
+        confirmLabel: "Unpublish",
+      };
+    case "move":
+      return {
+        title: "Move documents",
+        description: `${selectedCount} ${selectedDocuments} will be moved to the target folder.`,
+        confirmLabel: "Move",
+      };
+    case "delete":
+      return {
+        title: "Move documents to Trash",
+        description: `${selectedCount} ${selectedDocuments} will move to Trash. This does not permanently delete them.`,
+        confirmLabel: "Move to Trash",
+      };
+  }
 }
 
 export function TranslationCoverageSummary({
@@ -192,6 +279,163 @@ function deriveAuthorInitials(email: string | undefined): string {
   return local.slice(0, 2).toUpperCase();
 }
 
+function BulkActionIcon({ action }: { action: ContentBulkAction }) {
+  switch (action) {
+    case "publish":
+      return <Send className="size-4" />;
+    case "unpublish":
+      return <ArrowUpFromLine className="size-4" />;
+    case "move":
+      return <FolderInput className="size-4" />;
+    case "delete":
+      return <Trash2 className="size-4" />;
+  }
+}
+
+function ContentBulkToolbar({
+  selectedCount,
+  availableActions,
+  pending,
+  onAction,
+}: {
+  selectedCount: number;
+  availableActions: ContentBulkAction[];
+  pending: boolean;
+  onAction: (action: ContentBulkAction) => void;
+}) {
+  if (selectedCount === 0) {
+    return null;
+  }
+
+  return (
+    <div
+      className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3"
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
+    >
+      <p className="font-mono text-[12px] text-foreground-muted">
+        {selectedCount} selected
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        {availableActions.map((action) => (
+          <Button
+            key={action}
+            type="button"
+            size="sm"
+            variant={action === "delete" ? "destructive" : "ghost"}
+            disabled={pending}
+            onClick={() => onAction(action)}
+          >
+            <BulkActionIcon action={action} />
+            {bulkActionLabels[action]}
+          </Button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function BulkOperationConfirmationDialog({
+  action,
+  selectedCount,
+  targetCount,
+  moveTargetDirectory,
+  moveTargetDirectoryError,
+  pending,
+  onMoveTargetDirectoryChange,
+  onCancel,
+  onConfirm,
+}: {
+  action: ContentBulkAction | null;
+  selectedCount: number;
+  targetCount: number;
+  moveTargetDirectory: string;
+  moveTargetDirectoryError: string | null;
+  pending: boolean;
+  onMoveTargetDirectoryChange: (value: string) => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  if (!action) {
+    return null;
+  }
+
+  const text = getBulkConfirmationText({
+    action,
+    selectedCount,
+    targetCount,
+  });
+  const isDelete = action === "delete";
+
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open && !pending) {
+          onCancel();
+        }
+      }}
+    >
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className={isDelete ? "text-destructive" : undefined}>
+            {text.title}
+          </DialogTitle>
+          <DialogDescription>{text.description}</DialogDescription>
+        </DialogHeader>
+
+        {action === "move" && (
+          <div className="space-y-2">
+            <label
+              htmlFor="bulk-move-target-directory"
+              className="text-sm font-medium text-foreground"
+            >
+              Target folder
+            </label>
+            <Input
+              id="bulk-move-target-directory"
+              value={moveTargetDirectory}
+              disabled={pending}
+              aria-invalid={moveTargetDirectoryError ? true : undefined}
+              placeholder="archive/news"
+              onChange={(event) =>
+                onMoveTargetDirectoryChange(event.target.value)
+              }
+            />
+            <p className="text-xs text-foreground-muted">
+              Leave empty to move documents to the content root.
+            </p>
+            {moveTargetDirectoryError && (
+              <p className="text-xs text-destructive">
+                {moveTargetDirectoryError}
+              </p>
+            )}
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="ghost"
+            disabled={pending}
+            onClick={onCancel}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            variant={isDelete ? "destructive" : "default"}
+            disabled={pending || targetCount === 0}
+            onClick={onConfirm}
+          >
+            {text.confirmLabel}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function RowActions({
   doc,
   capabilities,
@@ -219,12 +463,20 @@ function RowActions({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" className="size-8">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-8"
+          disabled={pending}
+        >
           <MoreHorizontal className="size-4" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        <DropdownMenuItem onClick={() => onEdit(doc.documentId)}>
+        <DropdownMenuItem
+          disabled={pending}
+          onClick={() => onEdit(doc.documentId)}
+        >
           <Edit className="mr-2 size-4" />
           Edit
         </DropdownMenuItem>
@@ -279,10 +531,16 @@ function ContentTypeDocumentsTable({
   users,
   capabilities,
   pendingRowAction,
+  selectedDocumentIds,
+  allRenderedSelected,
+  someRenderedSelected,
+  selectionDisabled,
   showTranslationCoverage,
   translationCoverageStatus,
   translationCoverageByGroup,
   tableColumns,
+  onToggleDocumentSelected,
+  onToggleRenderedSelection,
   onRowClick,
   rowActionHandlers,
 }: {
@@ -295,6 +553,10 @@ function ContentTypeDocumentsTable({
     canDeleteContent: boolean;
   };
   pendingRowAction: boolean;
+  selectedDocumentIds: ReadonlySet<string>;
+  allRenderedSelected: boolean;
+  someRenderedSelected: boolean;
+  selectionDisabled: boolean;
   showTranslationCoverage: boolean;
   translationCoverageStatus: ReturnType<
     typeof useContentTypeList
@@ -303,6 +565,8 @@ function ContentTypeDocumentsTable({
     typeof useContentTypeList
   >["translationCoverageByGroup"];
   tableColumns: ReturnType<typeof getContentTypeTableColumns>;
+  onToggleDocumentSelected: (documentId: string, checked: boolean) => void;
+  onToggleRenderedSelection: (checked: boolean) => void;
   onRowClick: (documentId: string) => void;
   rowActionHandlers: {
     onEdit: (documentId: string) => void;
@@ -325,7 +589,26 @@ function ContentTypeDocumentsTable({
                   column.className,
                 )}
               >
-                {column.label}
+                {column.key === "selection" ? (
+                  <input
+                    type="checkbox"
+                    aria-label="Select all visible documents"
+                    checked={allRenderedSelected}
+                    disabled={selectionDisabled || documents.length === 0}
+                    ref={(element) => {
+                      if (element) {
+                        element.indeterminate =
+                          someRenderedSelected && !allRenderedSelected;
+                      }
+                    }}
+                    className="size-4 rounded border-border accent-primary"
+                    onChange={(event) =>
+                      onToggleRenderedSelection(event.target.checked)
+                    }
+                  />
+                ) : (
+                  column.label
+                )}
               </TableHead>
             ))}
           </TableRow>
@@ -346,6 +629,25 @@ function ContentTypeDocumentsTable({
                 }
               }}
             >
+              <TableCell
+                className="px-4 py-3"
+                onClick={(event) => event.stopPropagation()}
+                onKeyDown={(event) => event.stopPropagation()}
+              >
+                <input
+                  type="checkbox"
+                  aria-label={`Select document ${doc.title}`}
+                  checked={selectedDocumentIds.has(doc.documentId)}
+                  disabled={selectionDisabled}
+                  className="size-4 rounded border-border accent-primary"
+                  onChange={(event) =>
+                    onToggleDocumentSelected(
+                      doc.documentId,
+                      event.target.checked,
+                    )
+                  }
+                />
+              </TableCell>
               <TableCell className="px-4 py-3">
                 <div className="max-w-[480px]">
                   <p className="truncate text-[13px] font-semibold text-foreground">
@@ -386,6 +688,7 @@ function ContentTypeDocumentsTable({
               <TableCell
                 className="px-4 py-3"
                 onClick={(e) => e.stopPropagation()}
+                onKeyDown={(event) => event.stopPropagation()}
               >
                 <RowActions
                   doc={doc}
@@ -411,12 +714,14 @@ function ContentTypePaginationBar({
   total,
   currentPage,
   totalPages,
+  disabled,
   onPageChange,
 }: {
   offset: number;
   total: number;
   currentPage: number;
   totalPages: number;
+  disabled: boolean;
   onPageChange: (newOffset: number) => void;
 }) {
   const maxOffset = Math.max(0, (totalPages - 1) * PAGE_SIZE);
@@ -436,9 +741,15 @@ function ContentTypePaginationBar({
         <PaginationContent>
           <PaginationItem>
             <PaginationPrevious
-              onClick={() => onPageChange(clamp(offset - PAGE_SIZE))}
+              aria-disabled={disabled || currentPage === 1}
+              onClick={(event) => {
+                event.preventDefault();
+                if (!disabled && currentPage !== 1) {
+                  onPageChange(clamp(offset - PAGE_SIZE));
+                }
+              }}
               className={
-                currentPage === 1
+                disabled || currentPage === 1
                   ? "pointer-events-none opacity-50"
                   : "cursor-pointer"
               }
@@ -449,9 +760,19 @@ function ContentTypePaginationBar({
             return (
               <PaginationItem key={page}>
                 <PaginationLink
-                  onClick={() => onPageChange(clamp((page - 1) * PAGE_SIZE))}
+                  aria-disabled={disabled}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    if (!disabled) {
+                      onPageChange(clamp((page - 1) * PAGE_SIZE));
+                    }
+                  }}
                   isActive={currentPage === page}
-                  className="cursor-pointer"
+                  className={
+                    disabled
+                      ? "pointer-events-none opacity-50"
+                      : "cursor-pointer"
+                  }
                 >
                   {page}
                 </PaginationLink>
@@ -460,9 +781,15 @@ function ContentTypePaginationBar({
           })}
           <PaginationItem>
             <PaginationNext
-              onClick={() => onPageChange(clamp(offset + PAGE_SIZE))}
+              aria-disabled={disabled || currentPage === totalPages}
+              onClick={(event) => {
+                event.preventDefault();
+                if (!disabled && currentPage !== totalPages) {
+                  onPageChange(clamp(offset + PAGE_SIZE));
+                }
+              }}
               className={
-                currentPage === totalPages
+                disabled || currentPage === totalPages
                   ? "pointer-events-none opacity-50"
                   : "cursor-pointer"
               }
@@ -485,6 +812,17 @@ function useContentTypePageController() {
   const toast = useToast();
   const [searchInput, setSearchInput] = useState("");
   const [rowActionError, setRowActionError] = useState<string | null>(null);
+  const [selectedDocumentIds, setSelectedDocumentIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [activeBulkAction, setActiveBulkAction] =
+    useState<ContentBulkAction | null>(null);
+  const [moveTargetDirectory, setMoveTargetDirectory] = useState("");
+  const [moveTargetDirectoryError, setMoveTargetDirectoryError] = useState<
+    string | null
+  >(null);
+  const [bulkOperationBanner, setBulkOperationBanner] =
+    useState<BulkOperationFailureBanner | null>(null);
 
   // Schema query for type metadata (localized, locales, directory)
   const schemaApi = useMemo(() => {
@@ -552,6 +890,24 @@ function useContentTypePageController() {
     mountInfo.auth,
   ]);
 
+  const contentListApi = useMemo(() => {
+    if (!mountInfo.project || !mountInfo.environment || !mountInfo.apiBaseUrl)
+      return null;
+    return createStudioContentListApi(
+      {
+        project: mountInfo.project,
+        environment: mountInfo.environment,
+        serverUrl: mountInfo.apiBaseUrl,
+      },
+      { auth: mountInfo.auth },
+    );
+  }, [
+    mountInfo.project,
+    mountInfo.environment,
+    mountInfo.apiBaseUrl,
+    mountInfo.auth,
+  ]);
+
   const onRowActionError = (error: Error) => {
     setRowActionError(error.message || "Action failed.");
   };
@@ -565,6 +921,61 @@ function useContentTypePageController() {
     mountInfo.environment,
     typeId,
   );
+  const renderedDocumentIds = useMemo(
+    () => list.documents.map((document) => document.documentId),
+    [list.documents],
+  );
+  const renderedDocumentIdsKey = renderedDocumentIds.join("\u0000");
+  const selectedDocuments = useMemo(
+    () => getSelectedDocuments(list.documents, selectedDocumentIds),
+    [list.documents, selectedDocumentIds],
+  );
+  const bulkCapabilities = useMemo<ContentBulkCapabilities>(
+    () => ({
+      canPublishContent: capabilities.canPublishContent,
+      canUnpublishContent: capabilities.canUnpublishContent,
+      canWriteContent: capabilities.canCreateContent,
+      canDeleteContent: capabilities.canDeleteContent,
+    }),
+    [
+      capabilities.canPublishContent,
+      capabilities.canUnpublishContent,
+      capabilities.canCreateContent,
+      capabilities.canDeleteContent,
+    ],
+  );
+  const availableBulkActions = useMemo(
+    () => getAvailableBulkActions(selectedDocuments, bulkCapabilities),
+    [selectedDocuments, bulkCapabilities],
+  );
+  const allRenderedSelected =
+    renderedDocumentIds.length > 0 &&
+    renderedDocumentIds.every((documentId) =>
+      selectedDocumentIds.has(documentId),
+    );
+  const someRenderedSelected = renderedDocumentIds.some((documentId) =>
+    selectedDocumentIds.has(documentId),
+  );
+  const activeBulkTargets = activeBulkAction
+    ? getBulkOperationTargets(activeBulkAction, selectedDocuments)
+    : [];
+
+  useEffect(() => {
+    setSelectedDocumentIds(new Set());
+    setActiveBulkAction(null);
+    setMoveTargetDirectory("");
+    setMoveTargetDirectoryError(null);
+  }, [
+    typeId,
+    mountInfo.project,
+    mountInfo.environment,
+    searchInput,
+    list.filters.q,
+    list.filters.status,
+    list.filters.sort,
+    list.pagination?.offset,
+    renderedDocumentIdsKey,
+  ]);
 
   const publishMutation = useMutation({
     mutationFn: (documentId: string) => {
@@ -630,11 +1041,85 @@ function useContentTypePageController() {
     onError: onRowActionError,
   });
 
+  const bulkOperationMutation = useMutation({
+    mutationFn: ({
+      action,
+      targetDirectory,
+    }: {
+      action: ContentBulkAction;
+      targetDirectory?: string;
+    }) => {
+      if (!contentListApi) throw new Error("Content list API not available.");
+
+      const targets = getBulkOperationTargets(action, selectedDocuments);
+      if (targets.length === 0) {
+        throw new Error("No eligible documents selected.");
+      }
+
+      setRowActionError(null);
+      setBulkOperationBanner(null);
+
+      return contentListApi.bulkOperation({
+        action,
+        documentIds: targets.map((document) => document.documentId),
+        ...(action === "move"
+          ? {
+              move: {
+                targetDirectory: targetDirectory ?? "",
+              },
+              schemaHash: schemaEntry?.schemaHash,
+            }
+          : {}),
+      });
+    },
+    onSuccess: (result) => {
+      void queryClient.invalidateQueries({ queryKey: contentListQueryKey });
+      void queryClient.invalidateQueries({
+        queryKey: translationCoverageQueryKey,
+      });
+      list.refresh();
+
+      if (result.failed === 0) {
+        setBulkOperationBanner(null);
+        toast.success(
+          formatBulkOperationSummary(result.action, result.succeeded),
+        );
+        return;
+      }
+
+      const firstFailure = result.results.find(
+        (item) => item.status === "failed",
+      );
+      setBulkOperationBanner({
+        succeeded: result.succeeded,
+        failed: result.failed,
+        message:
+          firstFailure?.status === "failed"
+            ? firstFailure.error.message
+            : "Bulk operation failed for one or more documents.",
+      });
+    },
+    onError: (error) => {
+      setBulkOperationBanner(null);
+      setRowActionError(
+        error instanceof Error ? error.message : "Bulk operation failed.",
+      );
+    },
+    onSettled: () => {
+      setSelectedDocumentIds(new Set());
+      setActiveBulkAction(null);
+      setMoveTargetDirectory("");
+      setMoveTargetDirectoryError(null);
+    },
+  });
+
   const isRowActionPending =
     publishMutation.isPending ||
     unpublishMutation.isPending ||
     duplicateMutation.isPending ||
     deleteMutation.isPending;
+  const isListInteractionLocked =
+    isRowActionPending || bulkOperationMutation.isPending;
 
   const totalPages = list.pagination
     ? Math.ceil(list.pagination.total / PAGE_SIZE)
@@ -649,6 +1134,89 @@ function useContentTypePageController() {
     [showTranslationCoverage],
   );
 
+  const toggleDocumentSelection = (documentId: string, checked: boolean) => {
+    if (isListInteractionLocked) return;
+
+    setSelectedDocumentIds((current) => {
+      const next = new Set(current);
+      if (checked) {
+        next.add(documentId);
+      } else {
+        next.delete(documentId);
+      }
+      return next;
+    });
+  };
+
+  const toggleRenderedSelection = (checked: boolean) => {
+    if (isListInteractionLocked) return;
+
+    setSelectedDocumentIds((current) => {
+      const next = new Set(current);
+      for (const documentId of renderedDocumentIds) {
+        if (checked) {
+          next.add(documentId);
+        } else {
+          next.delete(documentId);
+        }
+      }
+      return next;
+    });
+  };
+
+  const openBulkAction = (action: ContentBulkAction) => {
+    if (
+      isListInteractionLocked ||
+      !availableBulkActions.includes(action) ||
+      selectedDocuments.length === 0
+    ) {
+      return;
+    }
+
+    setRowActionError(null);
+    setBulkOperationBanner(null);
+    setMoveTargetDirectory("");
+    setMoveTargetDirectoryError(null);
+    setActiveBulkAction(action);
+  };
+
+  const closeBulkAction = () => {
+    if (bulkOperationMutation.isPending) return;
+
+    setActiveBulkAction(null);
+    setMoveTargetDirectory("");
+    setMoveTargetDirectoryError(null);
+  };
+
+  const confirmBulkAction = () => {
+    if (!activeBulkAction || isListInteractionLocked) return;
+
+    if (activeBulkAction === "move") {
+      const validation = validateBulkMoveTargetDirectory(moveTargetDirectory);
+      if (!validation.ok) {
+        setMoveTargetDirectoryError(validation.message);
+        return;
+      }
+
+      bulkOperationMutation.mutate({
+        action: activeBulkAction,
+        targetDirectory: validation.value,
+      });
+      return;
+    }
+
+    bulkOperationMutation.mutate({ action: activeBulkAction });
+  };
+
+  const updateMoveTargetDirectory = (value: string) => {
+    setMoveTargetDirectory(value);
+    setMoveTargetDirectoryError(null);
+  };
+
+  const dismissBulkOperationBanner = () => {
+    setBulkOperationBanner(null);
+  };
+
   const rowActionHandlers = {
     onEdit: (documentId: string) =>
       push(`/admin/content/${typeId}/${documentId}`),
@@ -659,47 +1227,81 @@ function useContentTypePageController() {
   };
 
   return {
+    activeBulkAction,
+    activeBulkTargets,
+    allRenderedSelected,
+    availableBulkActions,
+    bulkOperationBanner,
     capabilities,
+    closeBulkAction,
+    confirmBulkAction,
     create,
     currentPage,
-    isRowActionPending,
+    dismissBulkOperationBanner,
+    isListInteractionLocked,
     list,
     mountInfo,
+    moveTargetDirectory,
+    moveTargetDirectoryError,
+    openBulkAction,
     rowActionError,
     rowActionHandlers,
     schemaEntry,
     searchInput,
+    selectedDocuments,
+    selectedDocumentIds,
     setRowActionError,
     setSearchInput,
     showLoading,
     showTranslationCoverage,
+    someRenderedSelected,
     tableColumns,
+    toggleDocumentSelection,
+    toggleRenderedSelection,
     totalPages,
     typeId,
     typeName,
+    updateMoveTargetDirectory,
     push,
   };
 }
 
 function ContentTypePageView({
+  activeBulkAction,
+  activeBulkTargets,
+  allRenderedSelected,
+  availableBulkActions,
+  bulkOperationBanner,
   capabilities,
+  closeBulkAction,
+  confirmBulkAction,
   create,
   currentPage,
-  isRowActionPending,
+  dismissBulkOperationBanner,
+  isListInteractionLocked,
   list,
   mountInfo,
+  moveTargetDirectory,
+  moveTargetDirectoryError,
+  openBulkAction,
   rowActionError,
   rowActionHandlers,
   schemaEntry,
   searchInput,
+  selectedDocuments,
+  selectedDocumentIds,
   setRowActionError,
   setSearchInput,
   showLoading,
   showTranslationCoverage,
+  someRenderedSelected,
   tableColumns,
+  toggleDocumentSelection,
+  toggleRenderedSelection,
   totalPages,
   typeId,
   typeName,
+  updateMoveTargetDirectory,
   push,
 }: ReturnType<typeof useContentTypePageController>) {
   return (
@@ -727,7 +1329,7 @@ function ContentTypePageView({
             </p>
           </div>
           {capabilities.canCreateContent && schemaEntry && (
-            <Button onClick={create.open}>
+            <Button onClick={create.open} disabled={isListInteractionLocked}>
               <Plus className="mr-2 size-4" />
               New document
             </Button>
@@ -742,12 +1344,14 @@ function ContentTypePageView({
               <Input
                 placeholder="Search documents..."
                 value={searchInput}
+                disabled={isListInteractionLocked}
                 onChange={(e) => setSearchInput(e.target.value)}
                 className="pl-9 w-72"
               />
             </div>
             <Select
               value={list.filters.status ?? "all"}
+              disabled={isListInteractionLocked}
               onValueChange={(value) =>
                 list.setFilters({
                   status: value as ContentTypeListFilters["status"],
@@ -767,6 +1371,7 @@ function ContentTypePageView({
           </div>
           <Select
             value={list.filters.sort ?? "updated"}
+            disabled={isListInteractionLocked}
             onValueChange={(value) => list.setFilters({ sort: value })}
           >
             <SelectTrigger className="w-36">
@@ -781,6 +1386,13 @@ function ContentTypePageView({
           </Select>
         </div>
 
+        <ContentBulkToolbar
+          selectedCount={selectedDocuments.length}
+          availableActions={availableBulkActions}
+          pending={isListInteractionLocked}
+          onAction={openBulkAction}
+        />
+
         {/* Row action error banner */}
         {rowActionError && (
           <div className="flex items-center justify-between rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3">
@@ -789,6 +1401,24 @@ function ContentTypePageView({
               variant="ghost"
               size="sm"
               onClick={() => setRowActionError(null)}
+              className="text-destructive hover:text-destructive"
+            >
+              Dismiss
+            </Button>
+          </div>
+        )}
+
+        {bulkOperationBanner && (
+          <div className="flex items-center justify-between gap-4 rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3">
+            <p className="text-sm text-destructive">
+              {bulkOperationBanner.succeeded} succeeded,{" "}
+              {bulkOperationBanner.failed} failed. First failure:{" "}
+              {bulkOperationBanner.message}
+            </p>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={dismissBulkOperationBanner}
               className="text-destructive hover:text-destructive"
             >
               Dismiss
@@ -857,7 +1487,7 @@ function ContentTypePageView({
               Create your first {typeName} document to get started.
             </p>
             {capabilities.canCreateContent && schemaEntry && (
-              <Button onClick={create.open}>
+              <Button onClick={create.open} disabled={isListInteractionLocked}>
                 <Plus className="mr-2 size-4" />
                 New Document
               </Button>
@@ -872,11 +1502,17 @@ function ContentTypePageView({
                 documents={list.documents}
                 users={list.users}
                 capabilities={capabilities}
-                pendingRowAction={isRowActionPending}
+                pendingRowAction={isListInteractionLocked}
+                selectedDocumentIds={selectedDocumentIds}
+                allRenderedSelected={allRenderedSelected}
+                someRenderedSelected={someRenderedSelected}
+                selectionDisabled={isListInteractionLocked}
                 showTranslationCoverage={showTranslationCoverage}
                 translationCoverageStatus={list.translationCoverageStatus}
                 translationCoverageByGroup={list.translationCoverageByGroup}
                 tableColumns={tableColumns}
+                onToggleDocumentSelected={toggleDocumentSelection}
+                onToggleRenderedSelection={toggleRenderedSelection}
                 onRowClick={(documentId) =>
                   push(`/admin/content/${typeId}/${documentId}`)
                 }
@@ -900,6 +1536,7 @@ function ContentTypePageView({
                 total={list.pagination.total}
                 currentPage={currentPage}
                 totalPages={totalPages}
+                disabled={isListInteractionLocked}
                 onPageChange={(newOffset) => list.setPage(newOffset)}
               />
             )}
@@ -922,6 +1559,17 @@ function ContentTypePageView({
             schemaHash: schemaEntry?.schemaHash,
           });
         }}
+      />
+      <BulkOperationConfirmationDialog
+        action={activeBulkAction}
+        selectedCount={selectedDocuments.length}
+        targetCount={activeBulkTargets.length}
+        moveTargetDirectory={moveTargetDirectory}
+        moveTargetDirectoryError={moveTargetDirectoryError}
+        pending={isListInteractionLocked}
+        onMoveTargetDirectoryChange={updateMoveTargetDirectory}
+        onCancel={closeBulkAction}
+        onConfirm={confirmBulkAction}
       />
     </div>
   );

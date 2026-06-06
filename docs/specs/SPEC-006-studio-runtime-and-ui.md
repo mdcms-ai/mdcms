@@ -2,7 +2,7 @@
 status: live
 canonical: true
 created: 2026-03-11
-last_updated: 2026-06-05
+last_updated: 2026-06-06
 ---
 
 # SPEC-006 Studio Runtime and UI
@@ -919,14 +919,79 @@ Schema` as the privileged remediation action.
 
 Fixed MDCMS branding. No white-labeling in MVP. Configurable accent color may be considered.
 
-### Bulk Operations (Post-MVP)
+### Content List Bulk Operations
 
-Bulk operations are Post-MVP. When implemented, the content list view supports multi-select with bulk actions:
+The content list view supports page-local multi-select and bulk operations
+against the active `/admin/content/:type` result set. Bulk actions use `POST
+/api/v1/content/bulk` and inherit the same active `(project, environment)`
+target routing, auth mode, CSRF behavior, and capability model as row-level
+actions.
 
-- **Publish** — Publish all selected drafts
-- **Unpublish** — Revert selected documents to draft
-- **Delete** — Soft-delete all selected documents
-- **Move** — Move selected documents to a different path/folder
+Selection behavior:
+
+- Each ready-state row exposes a checkbox before the title column.
+- The table header exposes a page-level select-all checkbox. It selects or
+  clears only the rows currently rendered on the active page.
+- Selection is keyed by `documentId` and is cleared when the user changes the
+  type route, active project, active environment, filter set, search query, sort
+  order, page offset, or when a bulk operation completes.
+- Row click and `Edit` continue to navigate to the representative document
+  editor. Checkbox clicks and bulk toolbar clicks must not trigger row
+  navigation.
+- For localized grouped rows, selection targets the representative locale
+  variant's `documentId`. Bulk operations do not implicitly mutate every locale
+  variant in the translation group.
+
+Toolbar behavior:
+
+- When no rows are selected, the bulk toolbar is not shown.
+- When one or more rows are selected, the toolbar shows the selected count and
+  available actions:
+  - **Publish** when `capabilities.content.publish` is true and at least one
+    selected row is `Draft` or `Changed`.
+  - **Unpublish** when `capabilities.content.unpublish` is true and at least one
+    selected row is `Published`.
+  - **Move** when `capabilities.content.write` is true.
+  - **Delete** when `capabilities.content.delete` is true.
+- Disabled or hidden actions must not be invokable from keyboard, pointer, or
+  programmatic event handlers.
+- While a bulk operation is pending, row actions, selection changes, pagination,
+  and filter changes are disabled for the list surface.
+
+Confirmation behavior:
+
+- Every bulk action requires confirmation before the API request is sent.
+- Publish confirmation lists the number of selected rows that are eligible for
+  publish and states that rows already published without changes are skipped by
+  the user interface.
+- Unpublish confirmation lists the number of selected published rows.
+- Delete confirmation uses destructive styling, states that documents move to
+  Trash, and does not promise permanent deletion.
+- Move confirmation requires a target folder input. The input accepts an empty
+  value for the content root. Non-empty values must not start or end with `/`
+  and must not contain `..` path segments.
+- Move sends the current schema hash for the selected type when the schema route
+  provided one.
+
+Result handling:
+
+- The request payload includes only selected rows eligible for the chosen
+  operation. Publish excludes already-published rows with no unpublished
+  changes. Unpublish excludes draft and changed rows.
+- A successful bulk request invalidates the content list query and translation
+  coverage query for the active type.
+- When every item succeeds, Studio shows a success toast summarizing the action
+  and count.
+- When one or more items fail, Studio keeps the route in ready state, shows a
+  dismissible error banner with succeeded/failed counts, and exposes the first
+  failure message. The list is refreshed so successful items disappear or update
+  according to the active filters.
+- Whole-request `401` or `403` failures render the same permission treatment as
+  row-level action failures: the route remains mounted and surfaces the error
+  inline unless the next list refresh itself becomes forbidden.
+- Whole-request schema mismatch failures for move surface the existing guarded
+  schema mismatch copy for write operations where available; otherwise they use
+  the same inline error banner as other bulk failures.
 
 ### Extensibility Surfaces (Backend-First + Runtime Bundle)
 

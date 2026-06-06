@@ -54,6 +54,45 @@ export type ContentDocumentResponse = {
   updatedAt: string;
 };
 
+export type ContentBulkAction = "publish" | "unpublish" | "delete" | "move";
+
+export type ContentBulkOperationInput = {
+  action: ContentBulkAction;
+  documentIds: string[];
+  changeSummary?: string;
+  actorId?: string;
+  move?: {
+    targetDirectory: string;
+  };
+};
+
+export type ContentBulkOperationItemError = {
+  code: string;
+  message: string;
+  statusCode: number;
+  details?: unknown;
+};
+
+export type ContentBulkOperationResult =
+  | {
+      documentId: string;
+      status: "succeeded";
+      document: ContentDocumentResponse;
+    }
+  | {
+      documentId: string;
+      status: "failed";
+      error: ContentBulkOperationItemError;
+    };
+
+export type ContentBulkOperationResponse = {
+  action: ContentBulkAction;
+  requested: number;
+  succeeded: number;
+  failed: number;
+  results: ContentBulkOperationResult[];
+};
+
 export type ContentVersionSummaryResponse = {
   documentId: string;
   translationGroupId: string;

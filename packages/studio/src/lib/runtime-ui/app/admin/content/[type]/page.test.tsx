@@ -8,6 +8,7 @@ import {
   getContentTypeTableColumns,
   TranslationCoverageSummary,
 } from "./page.js";
+import * as pageModule from "./page.js";
 
 test("TranslationCoverageSummary renders nothing for the idle state", () => {
   const markup = renderToStaticMarkup(
@@ -59,16 +60,51 @@ test("TranslationCoverageSummary renders an error fallback when coverage is unav
   assert.match(markup, /Translation status unavailable/i);
 });
 
+test("content type table starts with selection and ends with actions for non-localized lists", () => {
+  const columns = getContentTypeTableColumns(false);
+
+  assert.equal(columns[0]?.key, "selection");
+  assert.equal(columns.at(-1)?.key, "actions");
+});
+
+test("content type table includes selection, translations, and actions for localized lists", () => {
+  const columns = getContentTypeTableColumns(true).map((column) => column.key);
+
+  assert.equal(columns[0], "selection");
+  assert.ok(columns.includes("translations"));
+  assert.equal(columns.at(-1), "actions");
+});
+
+test("bulk delete confirmation mentions Trash and selected count", () => {
+  const helper = pageModule.getBulkConfirmationText as (input: {
+    action: "delete";
+    selectedCount: number;
+    targetCount: number;
+  }) => { title: string; description: string; confirmLabel: string };
+
+  assert.equal(typeof helper, "function");
+
+  const text = helper({
+    action: "delete",
+    selectedCount: 3,
+    targetCount: 3,
+  });
+  const copy = `${text.title} ${text.description} ${text.confirmLabel}`;
+
+  assert.match(copy, /Trash/);
+  assert.match(copy, /3/);
+});
+
 test("content type table adds a dedicated Translations column for localized lists", () => {
   assert.deepEqual(
     getContentTypeTableColumns(true).map((column) => column.label),
-    ["Title / Path", "Translations", "Status", "Updated", "Author", ""],
+    ["", "Title / Path", "Translations", "Status", "Updated", "Author", ""],
   );
 });
 
 test("content type table keeps the original columns for non-localized lists", () => {
   assert.deepEqual(
     getContentTypeTableColumns(false).map((column) => column.label),
-    ["Title / Path", "Status", "Updated", "Author", ""],
+    ["", "Title / Path", "Status", "Updated", "Author", ""],
   );
 });
