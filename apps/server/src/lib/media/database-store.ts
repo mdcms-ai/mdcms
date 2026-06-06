@@ -1,10 +1,25 @@
 import {
+  MEDIA_ARCHIVE_MIME_TYPES,
+  MEDIA_DOCUMENT_APPLICATION_MIME_TYPES,
   RuntimeError,
   createDefaultMediaSettings,
+  type MediaAssetCategory,
   type MediaAsset,
   type MediaSettings,
 } from "@mdcms/shared";
-import { and, eq } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gte,
+  inArray,
+  lt,
+  not,
+  or,
+  sql,
+  type SQL,
+} from "drizzle-orm";
 
 import type { DrizzleDatabase } from "../db.js";
 import { media, projectMediaSettings } from "../db/schema.js";
@@ -13,6 +28,7 @@ import { resolveProjectEnvironmentScope } from "../project-provisioning.js";
 import { parseMediaId } from "./ids.js";
 import type {
   MediaAssetRecord,
+  MediaAssetListQuery,
   MediaMetadataStore,
   MediaScope,
 } from "./types.js";
@@ -109,6 +125,116 @@ function toMediaAssetRecord(
   };
 }
 
+function normalizedMimeType(): SQL<string> {
+  return sql`lower(trim(split_part(${media.mimeType}, ';', 1)))`;
+}
+
+function mimeTypeStartsWith(prefix: string): SQL {
+  return sql`${normalizedMimeType()} like ${`${prefix}%`}`;
+}
+
+function documentCategoryPredicate(): SQL {
+  const mimeType = normalizedMimeType();
+
+  return or(
+    mimeTypeStartsWith("text/"),
+    inArray(mimeType, [...MEDIA_DOCUMENT_APPLICATION_MIME_TYPES]),
+    sql`${mimeType} like ${"application/%+json"}`,
+    sql`${mimeType} like ${"application/%+xml"}`,
+    mimeTypeStartsWith("application/vnd.openxmlformats-officedocument."),
+    mimeTypeStartsWith("application/vnd.oasis.opendocument."),
+  ) as SQL;
+}
+
+function archiveCategoryPredicate(): SQL {
+  return inArray(normalizedMimeType(), [...MEDIA_ARCHIVE_MIME_TYPES]);
+}
+
+function nonOtherCategoryPredicate(
+  category: Exclude<MediaAssetCategory, "other">,
+): SQL {
+  switch (category) {
+    case "image":
+      return mimeTypeStartsWith("image/");
+    case "video":
+      return mimeTypeStartsWith("video/");
+    case "audio":
+      return mimeTypeStartsWith("audio/");
+    case "document":
+      return documentCategoryPredicate();
+    case "archive":
+      return archiveCategoryPredicate();
+  }
+}
+
+function categoryPredicate(category: MediaAssetCategory): SQL {
+  if (category !== "other") {
+    return nonOtherCategoryPredicate(category);
+  }
+
+  return and(
+    not(nonOtherCategoryPredicate("image")),
+    not(nonOtherCategoryPredicate("video")),
+    not(nonOtherCategoryPredicate("audio")),
+    not(nonOtherCategoryPredicate("document")),
+    not(nonOtherCategoryPredicate("archive")),
+  ) as SQL;
+}
+
+function escapeLikePattern(value: string): string {
+  return value.replace(/[\\%_]/g, "\\$&");
+}
+
+function addUtcDays(value: Date, days: number): Date {
+  const result = new Date(value);
+  result.setUTCDate(result.getUTCDate() + days);
+  return result;
+}
+
+function listWhereConditions(
+  scopeIds: MediaScopeIds,
+  query: MediaAssetListQuery,
+): SQL {
+  const conditions: SQL[] = [eq(media.projectId, scopeIds.projectId)];
+
+  if (query.q !== undefined) {
+    conditions.push(
+      sql`${media.filename} ilike ${`%${escapeLikePattern(query.q)}%`} escape '\\'`,
+    );
+  }
+
+  if (query.category !== undefined) {
+    conditions.push(categoryPredicate(query.category));
+  }
+
+  if (query.uploadedBy !== undefined) {
+    conditions.push(eq(media.uploadedBy, query.uploadedBy));
+  }
+
+  if (query.uploadedFrom !== undefined) {
+    conditions.push(gte(media.uploadedAt, query.uploadedFrom));
+  }
+
+  if (query.uploadedTo !== undefined) {
+    conditions.push(lt(media.uploadedAt, addUtcDays(query.uploadedTo, 1)));
+  }
+
+  return and(...conditions) as SQL;
+}
+
+function listOrderBy(query: MediaAssetListQuery): SQL[] {
+  const direction = query.order === "asc" ? asc : desc;
+
+  switch (query.sort) {
+    case "uploadedAt":
+      return [direction(media.uploadedAt), direction(media.id)];
+    case "filename":
+      return [direction(media.filename), direction(media.id)];
+    case "sizeBytes":
+      return [direction(media.sizeBytes), direction(media.id)];
+  }
+}
+
 export function createDatabaseMediaStore(
   options: CreateDatabaseMediaStoreOptions,
 ): MediaMetadataStore {
@@ -190,6 +316,33 @@ export function createDatabaseMediaStore(
       }
 
       return toMediaAsset(scopeIds.projectSlug, created);
+    },
+
+    async listAssets(scope, query) {
+      const scopeIds = await requireMediaScopeIds(db, scope);
+      const where = listWhereConditions(scopeIds, query);
+      const [countRow] = await db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(media)
+        .where(where);
+      const total = Number(countRow?.count ?? 0);
+      const rows = await db
+        .select()
+        .from(media)
+        .where(where)
+        .orderBy(...listOrderBy(query))
+        .limit(query.limit)
+        .offset(query.offset);
+
+      return {
+        assets: rows.map((row) => toMediaAsset(scopeIds.projectSlug, row)),
+        pagination: {
+          total,
+          limit: query.limit,
+          offset: query.offset,
+          hasMore: query.offset + query.limit < total,
+        },
+      };
     },
 
     async getAsset(scope, id) {

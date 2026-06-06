@@ -208,7 +208,7 @@ Internal Studio routes (examples):
 - `/admin/content/:type` — List documents of a specific type
 - `/admin/content/:type/:documentId` — Document editor
 - `/admin/environments` — Environment management, lineage, clone, and promote
-- `/admin/media` — Media library shell surface
+- `/admin/media` — Media library
 - `/admin/schema` — Read-only schema explorer
 - `/admin/users` — User management (admin only)
 - `/admin/settings` — CMS settings (admin only)
@@ -216,10 +216,72 @@ Internal Studio routes (examples):
 - `/admin/api` — API playground shell surface
 - `/admin/trash` — Deleted content recovery
 
-For `/admin/media`, `/admin/workflows`, and `/admin/api`, the current phase
-permits Studio-runtime-owned shell rendering backed by local mock state or
-placeholder content while their future live data and mutation contracts remain
-deferred to the owning work for those domains.
+For `/admin/workflows` and `/admin/api`, the current phase permits
+Studio-runtime-owned shell rendering backed by local mock state or placeholder
+content while their future live data and mutation contracts remain deferred to
+the owning work for those domains. `/admin/media` is a live media library backed
+by the media metadata contract owned by SPEC-010.
+
+### Media Library (`/admin/media`)
+
+The `/admin/media` route is the Studio surface for browsing project-scoped media
+assets in the active mounted target. It is backed by:
+
+- `GET /api/v1/me/capabilities` for target-scoped capability gating
+- `GET /api/v1/media` for media metadata list/search/filter/sort/pagination
+
+Normative behavior:
+
+- The route lists real media metadata from `GET /api/v1/media`; it must not use
+  placeholder or mock media assets.
+- The route is readable only when `capabilities.media.read` is true. If that
+  capability is false, Studio renders a forbidden state and must not issue a
+  media list request.
+- Studio sends the active `(project, environment)` target routing with every
+  media list request. The environment participates in routing and authorization
+  only; media assets remain project-scoped and reusable across environments.
+- The search input maps to the `q` query parameter and searches filenames only.
+  Studio debounces search changes before issuing list requests and resets
+  pagination offset when search changes.
+- Filters map directly to the media list contract:
+  - MIME category select: `category=image|video|audio|document|archive|other`
+  - Uploader text input: exact `uploadedBy` actor id
+  - Upload date range date inputs: `uploadedFrom` and `uploadedTo`
+- Sort controls map to the media list contract and expose uploaded date, name,
+  and size in both directions. The default view is uploaded date descending.
+- Pagination is server-side with `limit` and `offset`. The Studio page size is
+  fixed at 30.
+- Changing search, filters, sort, project, or environment resets the offset to
+  zero and refetches the current media list.
+- Each media row or card shows filename, MIME type, coarse category, formatted
+  size, uploaded actor id, upload date, and a safe action cluster.
+- Safe actions are client-only inspection actions: open the returned `url` in a
+  new tab and copy the returned `url` to the clipboard when the browser permits
+  it. These actions do not mutate backend media metadata or documents.
+- The route does not introduce tags, folders, collections, usage references,
+  duplicate detection, image transformations, CDN controls, advanced asset
+  governance, full-text file-content search, or bulk media editing.
+- Upload and deletion controls are not required on this route. If a future
+  iteration adds them, they must be gated by `capabilities.media.upload` and
+  `capabilities.media.delete` respectively and must use the media mutation
+  contracts in SPEC-010.
+- Point-of-use copy must identify the basic library limits: filename search
+  only, simple metadata filters only, and no advanced organization features.
+
+Deterministic states:
+
+- If Studio lacks a mounted project, environment, or server URL, the route
+  renders an unavailable state and does not call media endpoints.
+- If `capabilities.media.read` is false, or `GET /api/v1/media` returns `401`
+  or `403`, the route renders a forbidden state.
+- The loading state uses the same flat Studio treatment as other admin list
+  routes.
+- If the media list returns zero assets and no filters are active, the route
+  renders an empty state explaining that uploaded assets will appear here.
+- If the media list returns zero assets with active search or filters, the route
+  renders a no-match state that preserves the controls.
+- Non-auth, non-forbidden media list failures render an error state with a retry
+  action and do not fall back to placeholder assets.
 
 ### Settings Media Panel
 

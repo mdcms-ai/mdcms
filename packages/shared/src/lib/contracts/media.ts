@@ -21,12 +21,30 @@ export type MediaAsset = {
   uploadedAt: string;
 };
 
+export type MediaAssetCategory =
+  | "image"
+  | "video"
+  | "audio"
+  | "document"
+  | "archive"
+  | "other";
+
 export type MediaSettingsResponse = {
   data: MediaSettings;
 };
 
 export type MediaAssetResponse = {
   data: MediaAsset;
+};
+
+export type MediaAssetListResponse = {
+  data: MediaAsset[];
+  pagination: {
+    total: number;
+    limit: number;
+    offset: number;
+    hasMore: boolean;
+  };
 };
 
 export type MediaDeleteResponse = {
@@ -40,6 +58,11 @@ const PositiveSafeIntegerSchema = z
   .number()
   .int()
   .positive()
+  .max(Number.MAX_SAFE_INTEGER);
+const NonNegativeSafeIntegerSchema = z
+  .number()
+  .int()
+  .min(0)
   .max(Number.MAX_SAFE_INTEGER);
 
 const NonEmptyStringSchema = z.string().trim().min(1);
@@ -97,6 +120,20 @@ const MediaSettingsResponseSchema = z
 const MediaAssetResponseSchema = z
   .object({
     data: MediaAssetSchema,
+  })
+  .strict();
+
+const MediaAssetListResponseSchema = z
+  .object({
+    data: z.array(MediaAssetSchema),
+    pagination: z
+      .object({
+        total: NonNegativeSafeIntegerSchema,
+        limit: PositiveSafeIntegerSchema,
+        offset: NonNegativeSafeIntegerSchema,
+        hasMore: z.boolean(),
+      })
+      .strict(),
   })
   .strict();
 
@@ -172,6 +209,44 @@ export function createDefaultMediaSettings(): MediaSettings {
   };
 }
 
+export function deriveMediaAssetCategory(mimeType: string): MediaAssetCategory {
+  const normalizedMimeType = (mimeType.split(";")[0] ?? "")
+    .trim()
+    .toLowerCase();
+  const isApplicationMimeType = normalizedMimeType.startsWith("application/");
+
+  if (normalizedMimeType.startsWith("image/")) {
+    return "image";
+  }
+
+  if (normalizedMimeType.startsWith("video/")) {
+    return "video";
+  }
+
+  if (normalizedMimeType.startsWith("audio/")) {
+    return "audio";
+  }
+
+  if (
+    normalizedMimeType.startsWith("text/") ||
+    DOCUMENT_APPLICATION_MIME_TYPES.has(normalizedMimeType) ||
+    (isApplicationMimeType && normalizedMimeType.endsWith("+json")) ||
+    (isApplicationMimeType && normalizedMimeType.endsWith("+xml")) ||
+    normalizedMimeType.startsWith(
+      "application/vnd.openxmlformats-officedocument.",
+    ) ||
+    normalizedMimeType.startsWith("application/vnd.oasis.opendocument.")
+  ) {
+    return "document";
+  }
+
+  if (ARCHIVE_MIME_TYPES.has(normalizedMimeType)) {
+    return "archive";
+  }
+
+  return "other";
+}
+
 export function parseMediaSettingsInput(value: unknown): MediaSettings {
   const record = assertRecord(value);
   rejectUnknownFields(record, ["media"]);
@@ -214,6 +289,18 @@ export function assertMediaAssetResponse(
   );
 }
 
+export function assertMediaAssetListResponse(
+  value: unknown,
+  path = "value",
+): asserts value is MediaAssetListResponse {
+  assertWithSchema(
+    MediaAssetListResponseSchema,
+    value,
+    `${path} must be a media asset list response.`,
+    { path },
+  );
+}
+
 export function assertMediaDeleteResponse(
   value: unknown,
   path = "value",
@@ -225,3 +312,38 @@ export function assertMediaDeleteResponse(
     { path },
   );
 }
+
+export const MEDIA_DOCUMENT_APPLICATION_MIME_TYPES = [
+  "application/json",
+  "application/msword",
+  "application/pdf",
+  "application/rtf",
+  "application/vnd.ms-excel",
+  "application/vnd.ms-powerpoint",
+  "application/vnd.oasis.opendocument.presentation",
+  "application/vnd.oasis.opendocument.spreadsheet",
+  "application/vnd.oasis.opendocument.text",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/xml",
+] as const;
+
+export const MEDIA_ARCHIVE_MIME_TYPES = [
+  "application/gzip",
+  "application/vnd.rar",
+  "application/x-7z-compressed",
+  "application/x-bzip2",
+  "application/x-gtar",
+  "application/x-gzip",
+  "application/x-rar-compressed",
+  "application/x-tar",
+  "application/x-zip-compressed",
+  "application/zip",
+] as const;
+
+const DOCUMENT_APPLICATION_MIME_TYPES = new Set<string>(
+  MEDIA_DOCUMENT_APPLICATION_MIME_TYPES,
+);
+
+const ARCHIVE_MIME_TYPES = new Set<string>(MEDIA_ARCHIVE_MIME_TYPES);

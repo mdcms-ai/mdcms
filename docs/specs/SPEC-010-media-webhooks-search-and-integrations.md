@@ -2,7 +2,7 @@
 status: live
 canonical: true
 created: 2026-03-11
-last_updated: 2026-06-05
+last_updated: 2026-06-06
 ---
 
 # SPEC-010 Media, Webhooks, Search, and Integrations
@@ -138,11 +138,12 @@ rewrite existing documents that may contain the deleted asset URL.
 ### Scope Status
 
 Media upload is **Post-MVP** in the reduced scope plan. The first shipped media
-API phase includes upload, metadata read, deletion, and project media settings.
-The initial Studio editor flow inserts uploaded URLs into Markdown. Advanced
-media organization features such as tags, folders, collections, usage
-references, duplicate detection, image transformations, CDN controls, and asset
-governance remain outside this phase.
+API phase includes upload, list/search, metadata read, deletion, and project
+media settings. The initial Studio editor flow inserts uploaded URLs into
+Markdown, and the Studio media library browses the same project-scoped metadata
+rows. Advanced media organization features such as tags, folders, collections,
+usage references, duplicate detection, image transformations, CDN controls, and
+asset governance remain outside this phase.
 
 ---
 
@@ -490,6 +491,70 @@ type MediaAsset = {
 };
 ```
 
+`MediaAssetCategory` is a coarse server-defined filter category derived from
+`mimeType`; it is not persisted in media metadata and is not returned as a
+separate field:
+
+```ts
+type MediaAssetCategory =
+  | "image"
+  | "video"
+  | "audio"
+  | "document"
+  | "archive"
+  | "other";
+```
+
+Category derivation:
+
+- `image`, `video`, and `audio` match MIME types starting with `image/`,
+  `video/`, and `audio/`.
+- `document` matches `text/*` and common document-like `application/*` MIME
+  types such as PDF, JSON, XML, RTF, Microsoft Office, and OpenDocument files.
+- `archive` matches common archive MIME types such as ZIP, gzip, tar, 7z, and
+  RAR.
+- `other` is the fallback for every MIME type that does not match the categories
+  above.
+
+`GET /api/v1/media` lists project-scoped media metadata for the routed target.
+It never reads the object body from storage and does not require the object-store
+adapter to be configured.
+
+Query parameters:
+
+- `q` — optional filename search. The server trims the value, treats an empty
+  value as omitted, limits it to 200 characters, and performs a
+  case-insensitive substring match against `filename` only.
+- `category` — optional `MediaAssetCategory` filter.
+- `uploadedBy` — optional exact actor id filter against `uploadedBy`.
+- `uploadedFrom` — optional `YYYY-MM-DD` UTC calendar date. Results include
+  assets with `uploadedAt` greater than or equal to the start of that date.
+- `uploadedTo` — optional `YYYY-MM-DD` UTC calendar date. Results include assets
+  with `uploadedAt` less than the start of the following UTC date.
+- `sort` — optional field: `uploadedAt`, `filename`, or `sizeBytes`. Default:
+  `uploadedAt`.
+- `order` — optional `asc` or `desc`. When omitted, `filename` sorts ascending;
+  `uploadedAt` and `sizeBytes` sort descending.
+- `limit` — optional integer from 1 through 100. Default: 30.
+- `offset` — optional non-negative integer. Default: 0.
+
+The date range is inclusive from the user's perspective. If both date filters
+are provided, `uploadedFrom` must be less than or equal to `uploadedTo`.
+
+Success response:
+
+```ts
+type MediaAssetListResponse = {
+  data: MediaAsset[];
+  pagination: {
+    total: number;
+    limit: number;
+    offset: number;
+    hasMore: boolean;
+  };
+};
+```
+
 `POST /api/v1/media/upload` accepts `multipart/form-data` with one required
 `file` field. Additional fields are ignored only if they are browser-generated
 multipart metadata; explicit application fields such as `project`,
@@ -510,13 +575,14 @@ Upload size enforcement:
 - Non-image uploads are not subject to `media.image.maxUploadSizeBytes`.
 - Omitted or `null` `maxUploadSizeBytes` means unlimited at the MDCMS layer.
 
-| Method | Path                     | Auth Mode             | Required Scope | Target Routing                  | Request                                  | Success                                 | Deterministic Errors                                                                                                                                                                                                                                                                         |
-| ------ | ------------------------ | --------------------- | -------------- | ------------------------------- | ---------------------------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| GET    | `/api/v1/media/settings` | session (admin/owner) | none           | required: `project_environment` | explicit routing only                    | `200` `{ data: MediaSettings }`         | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`)                                                                                                                                                                             |
-| PUT    | `/api/v1/media/settings` | session (admin/owner) | none           | required: `project_environment` | JSON: `MediaSettings`                    | `200` `{ data: MediaSettings }`         | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_INPUT` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`)                                                                                                                                                    |
-| POST   | `/api/v1/media/upload`   | session_or_api_key    | `media:upload` | required: `project_environment` | multipart form data with required `file` | `200` `{ data: MediaAsset }`            | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_INPUT` (`400`), `MEDIA_UPLOAD_TOO_LARGE` (`413`), `MEDIA_STORAGE_UNAVAILABLE` (`503`), `MEDIA_OBJECT_WRITE_FAILED` (`502`), `MEDIA_METADATA_WRITE_FAILED` (`500`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`) |
-| GET    | `/api/v1/media/:id`      | session_or_api_key    | `media:read`   | required: `project_environment` | path `id`; explicit routing only         | `200` `{ data: MediaAsset }`            | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_INPUT` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`)                                                                                                                               |
-| DELETE | `/api/v1/media/:id`      | session_or_api_key    | `media:delete` | required: `project_environment` | path `id`                                | `200` `{ data: { deleted: true, id } }` | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_INPUT` (`400`), `MEDIA_STORAGE_UNAVAILABLE` (`503`), `MEDIA_OBJECT_DELETE_FAILED` (`502`), `MEDIA_METADATA_DELETE_FAILED` (`500`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`)            |
+| Method | Path                     | Auth Mode             | Required Scope | Target Routing                  | Request                                               | Success                                    | Deterministic Errors                                                                                                                                                                                                                                                                         |
+| ------ | ------------------------ | --------------------- | -------------- | ------------------------------- | ----------------------------------------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/api/v1/media/settings` | session (admin/owner) | none           | required: `project_environment` | explicit routing only                                 | `200` `{ data: MediaSettings }`            | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`)                                                                                                                                                                             |
+| PUT    | `/api/v1/media/settings` | session (admin/owner) | none           | required: `project_environment` | JSON: `MediaSettings`                                 | `200` `{ data: MediaSettings }`            | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_INPUT` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`)                                                                                                                                                    |
+| GET    | `/api/v1/media`          | session_or_api_key    | `media:read`   | required: `project_environment` | explicit routing plus list/search/filter query params | `200` `{ data: MediaAsset[], pagination }` | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_QUERY_PARAM` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`)                                                                                                                         |
+| POST   | `/api/v1/media/upload`   | session_or_api_key    | `media:upload` | required: `project_environment` | multipart form data with required `file`              | `200` `{ data: MediaAsset }`               | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_INPUT` (`400`), `MEDIA_UPLOAD_TOO_LARGE` (`413`), `MEDIA_STORAGE_UNAVAILABLE` (`503`), `MEDIA_OBJECT_WRITE_FAILED` (`502`), `MEDIA_METADATA_WRITE_FAILED` (`500`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`) |
+| GET    | `/api/v1/media/:id`      | session_or_api_key    | `media:read`   | required: `project_environment` | path `id`; explicit routing only                      | `200` `{ data: MediaAsset }`               | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_INPUT` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`)                                                                                                                               |
+| DELETE | `/api/v1/media/:id`      | session_or_api_key    | `media:delete` | required: `project_environment` | path `id`                                             | `200` `{ data: { deleted: true, id } }`    | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_INPUT` (`400`), `MEDIA_STORAGE_UNAVAILABLE` (`503`), `MEDIA_OBJECT_DELETE_FAILED` (`502`), `MEDIA_METADATA_DELETE_FAILED` (`500`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`)            |
 
 Error split:
 
@@ -525,6 +591,8 @@ Error split:
   `file` field is missing, the uploaded part is not a file, a client-supplied
   reserved media field was provided, or `maxUploadSizeBytes` is not `null` or a
   positive safe integer.
+- `INVALID_QUERY_PARAM` (`400`) means a media list query parameter is malformed,
+  unsupported, outside its allowed range, or the uploaded date range is inverted.
 - `MEDIA_UPLOAD_TOO_LARGE` (`413`) means an image upload exceeds the configured
   `media.image.maxUploadSizeBytes` value. Implementations must include
   `details.limitBytes` and `details.sizeBytes`.

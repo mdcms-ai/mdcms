@@ -18,6 +18,9 @@ import { parseMediaId } from "./ids.js";
 import { createMediaObjectKey } from "./object-store.js";
 import type {
   MediaActorContext,
+  MediaAssetListOrder,
+  MediaAssetListQuery,
+  MediaAssetListSort,
   MediaMetadataStore,
   MediaObjectStore,
   MediaScope,
@@ -59,6 +62,34 @@ type UploadParts = {
   file: UploadedFile;
 };
 
+const MEDIA_ASSET_CATEGORIES = [
+  "image",
+  "video",
+  "audio",
+  "document",
+  "archive",
+  "other",
+] as const;
+const MEDIA_ASSET_LIST_QUERY_FIELDS = [
+  "q",
+  "category",
+  "uploadedBy",
+  "uploadedFrom",
+  "uploadedTo",
+  "sort",
+  "order",
+  "limit",
+  "offset",
+] as const;
+const MEDIA_ASSET_LIST_SORTS = ["uploadedAt", "filename", "sizeBytes"] as const;
+const MEDIA_ASSET_LIST_ORDERS = ["asc", "desc"] as const;
+const DEFAULT_MEDIA_LIST_LIMIT = 30;
+const MAX_MEDIA_LIST_LIMIT = 100;
+const MAX_MEDIA_SEARCH_LENGTH = 200;
+const MEDIA_ASSET_LIST_QUERY_FIELD_SET = new Set<string>(
+  MEDIA_ASSET_LIST_QUERY_FIELDS,
+);
+
 function createInvalidInputError(
   message: string,
   details?: Record<string, unknown>,
@@ -68,6 +99,19 @@ function createInvalidInputError(
     message,
     statusCode: 400,
     ...(details ? { details } : {}),
+  });
+}
+
+function createInvalidQueryParamError(
+  field: string,
+  value: unknown,
+  message: string,
+): RuntimeError {
+  return new RuntimeError({
+    code: "INVALID_QUERY_PARAM",
+    message,
+    statusCode: 400,
+    details: { field, value },
   });
 }
 
@@ -277,6 +321,283 @@ async function readUploadFile(file: UploadedFile): Promise<{
   };
 }
 
+function optionalQueryValue(
+  searchParams: URLSearchParams,
+  field: string,
+): string | undefined {
+  return searchParams.get(field) ?? undefined;
+}
+
+function readMediaListQueryValue(
+  searchParams: URLSearchParams,
+  field: string,
+): string | undefined {
+  const values = searchParams.getAll(field);
+
+  if (values.length === 0) {
+    return undefined;
+  }
+
+  if (values.length > 1) {
+    throw createInvalidQueryParamError(
+      field,
+      values,
+      `Query parameter "${field}" must be provided at most once.`,
+    );
+  }
+
+  return values[0];
+}
+
+function assertSupportedMediaListQueryFields(
+  searchParams: URLSearchParams,
+): void {
+  for (const field of searchParams.keys()) {
+    if (!MEDIA_ASSET_LIST_QUERY_FIELD_SET.has(field)) {
+      throw createInvalidQueryParamError(
+        field,
+        optionalQueryValue(searchParams, field),
+        `Query parameter "${field}" is not supported.`,
+      );
+    }
+  }
+}
+
+function parseOptionalTrimmedString(
+  searchParams: URLSearchParams,
+  field: string,
+  options: { maxLength?: number; empty?: "omit" | "reject" } = {},
+): string | undefined {
+  const value = readMediaListQueryValue(searchParams, field);
+
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    if (options.empty === "omit") {
+      return undefined;
+    }
+
+    throw createInvalidQueryParamError(
+      field,
+      value,
+      `Query parameter "${field}" must not be empty.`,
+    );
+  }
+
+  if (options.maxLength !== undefined && trimmed.length > options.maxLength) {
+    throw createInvalidQueryParamError(
+      field,
+      value,
+      `Query parameter "${field}" must be at most ${options.maxLength} characters.`,
+    );
+  }
+
+  return trimmed;
+}
+
+function parseMediaAssetCategory(
+  searchParams: URLSearchParams,
+): MediaAssetListQuery["category"] {
+  const value = parseOptionalTrimmedString(searchParams, "category");
+
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!(MEDIA_ASSET_CATEGORIES as readonly string[]).includes(value)) {
+    throw createInvalidQueryParamError(
+      "category",
+      value,
+      'Query parameter "category" is not supported.',
+    );
+  }
+
+  return value as MediaAssetListQuery["category"];
+}
+
+function parseMediaListSort(searchParams: URLSearchParams): MediaAssetListSort {
+  const value = parseOptionalTrimmedString(searchParams, "sort");
+
+  if (value === undefined) {
+    return "uploadedAt";
+  }
+
+  if (!(MEDIA_ASSET_LIST_SORTS as readonly string[]).includes(value)) {
+    throw createInvalidQueryParamError(
+      "sort",
+      value,
+      'Query parameter "sort" is not supported.',
+    );
+  }
+
+  return value as MediaAssetListSort;
+}
+
+function parseMediaListOrder(
+  searchParams: URLSearchParams,
+  sort: MediaAssetListSort,
+): MediaAssetListOrder {
+  const value = parseOptionalTrimmedString(searchParams, "order");
+
+  if (value === undefined) {
+    return sort === "filename" ? "asc" : "desc";
+  }
+
+  if (!(MEDIA_ASSET_LIST_ORDERS as readonly string[]).includes(value)) {
+    throw createInvalidQueryParamError(
+      "order",
+      value,
+      'Query parameter "order" is not supported.',
+    );
+  }
+
+  return value as MediaAssetListOrder;
+}
+
+function parseMediaListInteger(
+  searchParams: URLSearchParams,
+  field: string,
+  options: { defaultValue: number; min: number; max?: number },
+): number {
+  const value = parseOptionalTrimmedString(searchParams, field);
+
+  if (value === undefined) {
+    return options.defaultValue;
+  }
+
+  if (!/^\d+$/.test(value)) {
+    throw createInvalidQueryParamError(
+      field,
+      value,
+      `Query parameter "${field}" must be an integer.`,
+    );
+  }
+
+  const parsed = Number(value);
+  if (
+    !Number.isSafeInteger(parsed) ||
+    parsed < options.min ||
+    (options.max !== undefined && parsed > options.max)
+  ) {
+    const range =
+      options.max === undefined
+        ? `at least ${options.min}`
+        : `from ${options.min} through ${options.max}`;
+    throw createInvalidQueryParamError(
+      field,
+      value,
+      `Query parameter "${field}" must be ${range}.`,
+    );
+  }
+
+  return parsed;
+}
+
+function parseUtcCalendarDate(
+  searchParams: URLSearchParams,
+  field: string,
+): Date | undefined {
+  const value = parseOptionalTrimmedString(searchParams, field);
+
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) {
+    throw createInvalidQueryParamError(
+      field,
+      value,
+      `Query parameter "${field}" must be a YYYY-MM-DD date.`,
+    );
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    throw createInvalidQueryParamError(
+      field,
+      value,
+      `Query parameter "${field}" must be a valid calendar date.`,
+    );
+  }
+
+  return date;
+}
+
+function parseMediaListQuery(request: Request): MediaAssetListQuery {
+  const searchParams = new URL(request.url).searchParams;
+  assertSupportedMediaListQueryFields(searchParams);
+
+  const sort = parseMediaListSort(searchParams);
+  const uploadedFrom = parseUtcCalendarDate(searchParams, "uploadedFrom");
+  const uploadedTo = parseUtcCalendarDate(searchParams, "uploadedTo");
+
+  if (
+    uploadedFrom !== undefined &&
+    uploadedTo !== undefined &&
+    uploadedFrom.getTime() > uploadedTo.getTime()
+  ) {
+    throw createInvalidQueryParamError(
+      "uploadedFrom",
+      optionalQueryValue(searchParams, "uploadedFrom"),
+      'Query parameter "uploadedFrom" must be less than or equal to "uploadedTo".',
+    );
+  }
+
+  const query: MediaAssetListQuery = {
+    sort,
+    order: parseMediaListOrder(searchParams, sort),
+    limit: parseMediaListInteger(searchParams, "limit", {
+      defaultValue: DEFAULT_MEDIA_LIST_LIMIT,
+      min: 1,
+      max: MAX_MEDIA_LIST_LIMIT,
+    }),
+    offset: parseMediaListInteger(searchParams, "offset", {
+      defaultValue: 0,
+      min: 0,
+    }),
+  };
+  const q = parseOptionalTrimmedString(searchParams, "q", {
+    maxLength: MAX_MEDIA_SEARCH_LENGTH,
+    empty: "omit",
+  });
+  const category = parseMediaAssetCategory(searchParams);
+  const uploadedBy = parseOptionalTrimmedString(searchParams, "uploadedBy");
+
+  if (q !== undefined) {
+    query.q = q;
+  }
+
+  if (category !== undefined) {
+    query.category = category;
+  }
+
+  if (uploadedBy !== undefined) {
+    query.uploadedBy = uploadedBy;
+  }
+
+  if (uploadedFrom !== undefined) {
+    query.uploadedFrom = uploadedFrom;
+  }
+
+  if (uploadedTo !== undefined) {
+    query.uploadedTo = uploadedTo;
+  }
+
+  return query;
+}
+
 export function mountMediaApiRoutes(
   app: unknown,
   options: MountMediaApiRoutesOptions,
@@ -303,6 +624,26 @@ export function mountMediaApiRoutes(
         data: await options.store.updateSettings(scope, input, {
           actorId: actor.actorId,
         }),
+      };
+    });
+  });
+
+  mediaApp.get?.("/api/v1/media", ({ request }: any) => {
+    return executeWithRuntimeErrorsHandled(request, async () => {
+      const scope = pickMediaScope(request);
+      await options.authorize(request, {
+        requiredScope: "media:read",
+        project: scope.project,
+        environment: scope.environment,
+      });
+      const result = await options.store.listAssets(
+        scope,
+        parseMediaListQuery(request),
+      );
+
+      return {
+        data: result.assets,
+        pagination: result.pagination,
       };
     });
   });

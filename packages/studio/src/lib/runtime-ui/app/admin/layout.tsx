@@ -650,6 +650,9 @@ function useAdminLayoutRoutedElement({
   const canDeleteContent = capabilities?.content.delete ?? false;
   const canManageUsers = capabilities?.users.manage ?? false;
   const canManageSettings = capabilities?.settings.manage ?? false;
+  const canReadMedia = capabilities?.media.read ?? false;
+  const canUploadMedia = capabilities?.media.upload ?? false;
+  const canDeleteMedia = capabilities?.media.delete ?? false;
 
   const environments = environmentsQuery.data?.data ?? [];
 
@@ -784,6 +787,9 @@ function useAdminLayoutRoutedElement({
     canDeleteContent,
     canManageUsers,
     canManageSettings,
+    canReadMedia,
+    canUploadMedia,
+    canDeleteMedia,
   };
 
   return (
@@ -835,6 +841,9 @@ function AdminLayoutShell({
     canDeleteContent: boolean;
     canManageUsers: boolean;
     canManageSettings: boolean;
+    canReadMedia: boolean;
+    canUploadMedia: boolean;
+    canDeleteMedia: boolean;
   };
   schemaHashFetcher: (() => Promise<string | null>) | undefined;
   sessionState: StudioSessionState;

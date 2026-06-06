@@ -53,6 +53,7 @@ After creation, the full key is displayed **once**. Copy it immediately -- it ca
 | `content:delete`       | Delete documents                     |
 | `schema:read`          | Read schema definitions              |
 | `schema:write`         | Sync schema to the server            |
+| `media:read`           | Read media metadata                  |
 | `media:upload`         | Upload media files                   |
 | `media:delete`         | Delete media files                   |
 | `webhooks:read`        | Read webhook configurations          |
@@ -171,10 +172,12 @@ Planned configuration per webhook:
 
 </Accordion>
 
-## Media Library (post-MVP)
+## Media Library
 
-<Accordion title="Media management (planned)">
-  The Media page at `/admin/media` will provide a library for managing uploaded
-  files (images, documents, etc.) used in your content. This feature is under
-  development.
+<Accordion title="Media management">
+  The Media page at `/admin/media` lists uploaded files for the current project
+  and environment. Operators can search by filename, filter by media category,
+  uploader, and upload date, sort by filename, size, or upload time, page
+  through results, open assets, and copy asset URLs. Uploads, deletion, folders,
+  tags, CDN transforms, and usage tracking remain outside this library view.
 </Accordion>

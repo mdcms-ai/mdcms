@@ -19,6 +19,7 @@ import { DEFAULT_PROVISION_ACTOR } from "../project-provisioning.js";
 
 import { createDatabaseMediaStore } from "./database-store.js";
 import { parseMediaId } from "./ids.js";
+import type { MediaAssetListQuery } from "./types.js";
 
 const env = {
   NODE_ENV: "test",
@@ -145,6 +146,49 @@ async function countMediaSettingsRows(
     .where(eq(projectMediaSettings.projectId, projectId));
 
   return Number(row?.count ?? 0);
+}
+
+type SeedMediaAssetInput = {
+  projectId: string;
+  id?: string;
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
+  uploadedBy?: string;
+  uploadedAt?: Date;
+};
+
+async function seedMediaAsset(
+  db: Database,
+  input: SeedMediaAssetInput,
+): Promise<string> {
+  const id = input.id ?? randomUUID();
+
+  await db.insert(media).values({
+    id,
+    projectId: input.projectId,
+    filename: input.filename,
+    mimeType: input.mimeType,
+    sizeBytes: input.sizeBytes,
+    s3Key: `projects/test/media/${id}/${input.filename}`,
+    url: `https://cdn.example.com/projects/test/media/${id}/${input.filename}`,
+    uploadedBy: input.uploadedBy ?? "user_123",
+    uploadedAt: input.uploadedAt ?? fixedNow,
+  });
+
+  return id;
+}
+
+function mediaListQuery(
+  overrides: Partial<MediaAssetListQuery> = {},
+): MediaAssetListQuery {
+  return {
+    sort: "uploadedAt",
+    order: "desc",
+    limit: 30,
+    offset: 0,
+    ...overrides,
+  };
 }
 
 function assertRuntimeNotFound(
@@ -478,6 +522,406 @@ testWithDatabase(
     }
   },
 );
+
+testWithDatabase(
+  "listAssets returns only media for the routed project",
+  async () => {
+    const connection = createDatabaseConnection({ env });
+    const store = createDatabaseMediaStore({
+      db: connection.db,
+      now: () => fixedNow,
+    });
+    const scope = {
+      project: uniqueProject("media-list-isolation"),
+      environment: "production",
+    };
+    const foreignScope = {
+      project: uniqueProject("media-list-isolation-foreign"),
+      environment: "production",
+    };
+    const projectIds: string[] = [];
+
+    try {
+      const seeded = await seedScope(connection.db, scope);
+      const foreignSeeded = await seedScope(connection.db, foreignScope);
+      projectIds.push(seeded.project.id, foreignSeeded.project.id);
+      await seedMediaAsset(connection.db, {
+        projectId: seeded.project.id,
+        filename: "local-hero.png",
+        mimeType: "image/png",
+        sizeBytes: 100,
+      });
+      await seedMediaAsset(connection.db, {
+        projectId: foreignSeeded.project.id,
+        filename: "foreign-hero.png",
+        mimeType: "image/png",
+        sizeBytes: 100,
+      });
+
+      const result = await store.listAssets(scope, mediaListQuery());
+
+      assert.deepEqual(
+        result.assets.map((asset) => asset.filename),
+        ["local-hero.png"],
+      );
+      assert.deepEqual(result.pagination, {
+        total: 1,
+        limit: 30,
+        offset: 0,
+        hasMore: false,
+      });
+    } finally {
+      for (const projectId of projectIds) {
+        await cleanupProject(connection.db, projectId);
+      }
+      await connection.close();
+    }
+  },
+);
+
+testWithDatabase(
+  "listAssets searches filenames case-insensitively",
+  async () => {
+    const connection = createDatabaseConnection({ env });
+    const store = createDatabaseMediaStore({
+      db: connection.db,
+      now: () => fixedNow,
+    });
+    const scope = {
+      project: uniqueProject("media-list-search"),
+      environment: "production",
+    };
+    let projectId: string | undefined;
+
+    try {
+      const seeded = await seedScope(connection.db, scope);
+      projectId = seeded.project.id;
+      await seedMediaAsset(connection.db, {
+        projectId,
+        filename: "Hero-Banner.PNG",
+        mimeType: "image/png",
+        sizeBytes: 100,
+      });
+      await seedMediaAsset(connection.db, {
+        projectId,
+        filename: "logo.svg",
+        mimeType: "image/svg+xml",
+        sizeBytes: 50,
+      });
+
+      const result = await store.listAssets(
+        scope,
+        mediaListQuery({ q: "hero" }),
+      );
+
+      assert.deepEqual(
+        result.assets.map((asset) => asset.filename),
+        ["Hero-Banner.PNG"],
+      );
+      assert.equal(result.pagination.total, 1);
+    } finally {
+      if (projectId) {
+        await cleanupProject(connection.db, projectId);
+      }
+      await connection.close();
+    }
+  },
+);
+
+testWithDatabase("listAssets filters by derived media category", async () => {
+  const connection = createDatabaseConnection({ env });
+  const store = createDatabaseMediaStore({
+    db: connection.db,
+    now: () => fixedNow,
+  });
+  const scope = {
+    project: uniqueProject("media-list-category"),
+    environment: "production",
+  };
+  let projectId: string | undefined;
+
+  try {
+    const seeded = await seedScope(connection.db, scope);
+    projectId = seeded.project.id;
+    await seedMediaAsset(connection.db, {
+      projectId,
+      filename: "hero.png",
+      mimeType: "image/png",
+      sizeBytes: 100,
+    });
+    await seedMediaAsset(connection.db, {
+      projectId,
+      filename: "brief.pdf",
+      mimeType: "application/pdf ; charset=utf-8",
+      sizeBytes: 200,
+    });
+    await seedMediaAsset(connection.db, {
+      projectId,
+      filename: "bundle.zip",
+      mimeType: "application/zip",
+      sizeBytes: 300,
+    });
+    await seedMediaAsset(connection.db, {
+      projectId,
+      filename: "font.woff2",
+      mimeType: "font/woff2",
+      sizeBytes: 400,
+    });
+
+    const image = await store.listAssets(
+      scope,
+      mediaListQuery({ category: "image", sort: "filename", order: "asc" }),
+    );
+    const document = await store.listAssets(
+      scope,
+      mediaListQuery({
+        category: "document",
+        sort: "filename",
+        order: "asc",
+      }),
+    );
+    const archive = await store.listAssets(
+      scope,
+      mediaListQuery({ category: "archive", sort: "filename", order: "asc" }),
+    );
+    const other = await store.listAssets(
+      scope,
+      mediaListQuery({ category: "other", sort: "filename", order: "asc" }),
+    );
+
+    assert.deepEqual(
+      image.assets.map((asset) => asset.filename),
+      ["hero.png"],
+    );
+    assert.deepEqual(
+      document.assets.map((asset) => asset.filename),
+      ["brief.pdf"],
+    );
+    assert.deepEqual(
+      archive.assets.map((asset) => asset.filename),
+      ["bundle.zip"],
+    );
+    assert.deepEqual(
+      other.assets.map((asset) => asset.filename),
+      ["font.woff2"],
+    );
+  } finally {
+    if (projectId) {
+      await cleanupProject(connection.db, projectId);
+    }
+    await connection.close();
+  }
+});
+
+testWithDatabase(
+  "listAssets filters by uploader and upload date range",
+  async () => {
+    const connection = createDatabaseConnection({ env });
+    const store = createDatabaseMediaStore({
+      db: connection.db,
+      now: () => fixedNow,
+    });
+    const scope = {
+      project: uniqueProject("media-list-uploader-date"),
+      environment: "production",
+    };
+    let projectId: string | undefined;
+
+    try {
+      const seeded = await seedScope(connection.db, scope);
+      projectId = seeded.project.id;
+      await seedMediaAsset(connection.db, {
+        projectId,
+        filename: "before.png",
+        mimeType: "image/png",
+        sizeBytes: 100,
+        uploadedBy: "user_123",
+        uploadedAt: new Date("2026-05-31T23:59:59.000Z"),
+      });
+      await seedMediaAsset(connection.db, {
+        projectId,
+        filename: "inside-start.png",
+        mimeType: "image/png",
+        sizeBytes: 100,
+        uploadedBy: "user_456",
+        uploadedAt: new Date("2026-06-01T00:00:00.000Z"),
+      });
+      await seedMediaAsset(connection.db, {
+        projectId,
+        filename: "inside-end.png",
+        mimeType: "image/png",
+        sizeBytes: 100,
+        uploadedBy: "user_456",
+        uploadedAt: new Date("2026-06-05T23:59:59.000Z"),
+      });
+      await seedMediaAsset(connection.db, {
+        projectId,
+        filename: "after.png",
+        mimeType: "image/png",
+        sizeBytes: 100,
+        uploadedBy: "user_456",
+        uploadedAt: new Date("2026-06-06T00:00:00.000Z"),
+      });
+
+      const result = await store.listAssets(
+        scope,
+        mediaListQuery({
+          uploadedBy: "user_456",
+          uploadedFrom: new Date("2026-06-01T00:00:00.000Z"),
+          uploadedTo: new Date("2026-06-05T00:00:00.000Z"),
+          sort: "filename",
+          order: "asc",
+        }),
+      );
+
+      assert.deepEqual(
+        result.assets.map((asset) => asset.filename),
+        ["inside-end.png", "inside-start.png"],
+      );
+      assert.equal(result.pagination.total, 2);
+    } finally {
+      if (projectId) {
+        await cleanupProject(connection.db, projectId);
+      }
+      await connection.close();
+    }
+  },
+);
+
+testWithDatabase(
+  "listAssets sorts by uploadedAt, filename, and sizeBytes with explicit order",
+  async () => {
+    const connection = createDatabaseConnection({ env });
+    const store = createDatabaseMediaStore({
+      db: connection.db,
+      now: () => fixedNow,
+    });
+    const scope = {
+      project: uniqueProject("media-list-sort"),
+      environment: "production",
+    };
+    let projectId: string | undefined;
+
+    try {
+      const seeded = await seedScope(connection.db, scope);
+      projectId = seeded.project.id;
+      await seedMediaAsset(connection.db, {
+        projectId,
+        filename: "b-file.png",
+        mimeType: "image/png",
+        sizeBytes: 200,
+        uploadedAt: new Date("2026-06-02T00:00:00.000Z"),
+      });
+      await seedMediaAsset(connection.db, {
+        projectId,
+        filename: "a-file.png",
+        mimeType: "image/png",
+        sizeBytes: 300,
+        uploadedAt: new Date("2026-06-03T00:00:00.000Z"),
+      });
+      await seedMediaAsset(connection.db, {
+        projectId,
+        filename: "c-file.png",
+        mimeType: "image/png",
+        sizeBytes: 100,
+        uploadedAt: new Date("2026-06-01T00:00:00.000Z"),
+      });
+
+      const byUploadedAt = await store.listAssets(
+        scope,
+        mediaListQuery({ sort: "uploadedAt", order: "asc" }),
+      );
+      const byFilename = await store.listAssets(
+        scope,
+        mediaListQuery({ sort: "filename", order: "asc" }),
+      );
+      const bySizeBytes = await store.listAssets(
+        scope,
+        mediaListQuery({ sort: "sizeBytes", order: "desc" }),
+      );
+
+      assert.deepEqual(
+        byUploadedAt.assets.map((asset) => asset.filename),
+        ["c-file.png", "b-file.png", "a-file.png"],
+      );
+      assert.deepEqual(
+        byFilename.assets.map((asset) => asset.filename),
+        ["a-file.png", "b-file.png", "c-file.png"],
+      );
+      assert.deepEqual(
+        bySizeBytes.assets.map((asset) => asset.filename),
+        ["a-file.png", "b-file.png", "c-file.png"],
+      );
+    } finally {
+      if (projectId) {
+        await cleanupProject(connection.db, projectId);
+      }
+      await connection.close();
+    }
+  },
+);
+
+testWithDatabase("listAssets returns pagination metadata", async () => {
+  const connection = createDatabaseConnection({ env });
+  const store = createDatabaseMediaStore({
+    db: connection.db,
+    now: () => fixedNow,
+  });
+  const scope = {
+    project: uniqueProject("media-list-pagination"),
+    environment: "production",
+  };
+  let projectId: string | undefined;
+
+  try {
+    const seeded = await seedScope(connection.db, scope);
+    projectId = seeded.project.id;
+    await seedMediaAsset(connection.db, {
+      projectId,
+      filename: "a-file.png",
+      mimeType: "image/png",
+      sizeBytes: 100,
+    });
+    await seedMediaAsset(connection.db, {
+      projectId,
+      filename: "b-file.png",
+      mimeType: "image/png",
+      sizeBytes: 100,
+    });
+    await seedMediaAsset(connection.db, {
+      projectId,
+      filename: "c-file.png",
+      mimeType: "image/png",
+      sizeBytes: 100,
+    });
+
+    const result = await store.listAssets(
+      scope,
+      mediaListQuery({
+        sort: "filename",
+        order: "asc",
+        limit: 1,
+        offset: 1,
+      }),
+    );
+
+    assert.deepEqual(
+      result.assets.map((asset) => asset.filename),
+      ["b-file.png"],
+    );
+    assert.deepEqual(result.pagination, {
+      total: 3,
+      limit: 1,
+      offset: 1,
+      hasMore: true,
+    });
+  } finally {
+    if (projectId) {
+      await cleanupProject(connection.db, projectId);
+    }
+    await connection.close();
+  }
+});
 
 testWithDatabase(
   "deleteAssetMetadata throws not found for missing media rows",

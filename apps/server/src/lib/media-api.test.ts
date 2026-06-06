@@ -17,6 +17,8 @@ import type {
   CreateMediaAssetInput,
   MediaActorContext,
   MediaAssetRecord,
+  MediaAssetListQuery,
+  MediaAssetListResult,
   MediaMetadataStore,
   MediaObjectStore,
 } from "./media/types.js";
@@ -88,6 +90,21 @@ function createSettings(
   };
 }
 
+function createListResult(
+  assets: MediaAsset[] = [createAsset()],
+  pagination: MediaAssetListResult["pagination"] = {
+    total: assets.length,
+    limit: 30,
+    offset: 0,
+    hasMore: false,
+  },
+): MediaAssetListResult {
+  return {
+    assets,
+    pagination,
+  };
+}
+
 function createAuthorizedRequest(): AuthorizedRequest {
   return {
     mode: "session",
@@ -121,6 +138,9 @@ function createStubStore(
     createAsset:
       overrides.createAsset ??
       (fail("createAsset") as MediaMetadataStore["createAsset"]),
+    listAssets:
+      overrides.listAssets ??
+      (fail("listAssets") as MediaMetadataStore["listAssets"]),
     getAsset:
       overrides.getAsset ??
       (fail("getAsset") as MediaMetadataStore["getAsset"]),
@@ -626,6 +646,168 @@ test("media upload rejects extra application form fields", async () => {
   assert.equal(body.code, "INVALID_INPUT");
   assert.equal(putObjectCalls, 0);
   assert.equal(createAssetCalls, 0);
+});
+
+test("media list returns asset metadata, requires media read authorization, and does not require object storage", async () => {
+  let authorization: AuthorizationRequirement | undefined;
+  let listScope: { project: string; environment: string } | undefined;
+  let listQuery: MediaAssetListQuery | undefined;
+  const listedAsset = createAsset({ filename: "library-hero.png" });
+  const handler = createTestRoutes({
+    objectStore: null,
+    authorize: async (_request, requirement) => {
+      authorization = requirement;
+      return createAuthorizedRequest();
+    },
+    store: createStubStore({
+      async listAssets(scope, query) {
+        listScope = scope;
+        listQuery = query;
+        return createListResult([listedAsset]);
+      },
+    }),
+  });
+
+  const response = await handler(
+    new Request("http://localhost/api/v1/media", {
+      headers: scopeHeaders,
+    }),
+  );
+  const body = (await response.json()) as {
+    data: MediaAsset[];
+    pagination: MediaAssetListResult["pagination"];
+  };
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(authorization, {
+    requiredScope: "media:read",
+    project: "marketing-site",
+    environment: "production",
+  });
+  assert.deepEqual(listScope, {
+    project: "marketing-site",
+    environment: "production",
+  });
+  assert.deepEqual(listQuery, {
+    sort: "uploadedAt",
+    order: "desc",
+    limit: 30,
+    offset: 0,
+  });
+  assert.deepEqual(body, {
+    data: [listedAsset],
+    pagination: {
+      total: 1,
+      limit: 30,
+      offset: 0,
+      hasMore: false,
+    },
+  });
+});
+
+test("media list trims filename search and forwards parsed filters, sort, order, and pagination", async () => {
+  let listQuery: MediaAssetListQuery | undefined;
+  const handler = createTestRoutes({
+    store: createStubStore({
+      async listAssets(_scope, query) {
+        listQuery = query;
+        return createListResult([], {
+          total: 0,
+          limit: query.limit,
+          offset: query.offset,
+          hasMore: false,
+        });
+      },
+    }),
+  });
+
+  const response = await handler(
+    new Request(
+      "http://localhost/api/v1/media?q=%20Hero%20&category=document&uploadedBy=user_2&uploadedFrom=2026-06-01&uploadedTo=2026-06-05&sort=filename&order=asc&limit=25&offset=50",
+      {
+        headers: scopeHeaders,
+      },
+    ),
+  );
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(listQuery, {
+    q: "Hero",
+    category: "document",
+    uploadedBy: "user_2",
+    uploadedFrom: new Date("2026-06-01T00:00:00.000Z"),
+    uploadedTo: new Date("2026-06-05T00:00:00.000Z"),
+    sort: "filename",
+    order: "asc",
+    limit: 25,
+    offset: 50,
+  });
+});
+
+test("media list rejects malformed query parameters with INVALID_QUERY_PARAM", async () => {
+  const cases = [
+    "category=font",
+    "category=",
+    "uploadedFrom=not-a-date",
+    "uploadedFrom=",
+    "uploadedTo=2026-02-30",
+    "uploadedFrom=2026-06-10&uploadedTo=2026-06-05",
+    "sort=createdAt",
+    "sort=",
+    "order=newest",
+    "limit=0",
+    "limit=101",
+    "limit=10.5",
+    "limit=",
+    "offset=-1",
+    "offset=1.5",
+    "uploadedBy=",
+    "foo=bar",
+    "limit=30&limit=0",
+    "category=image&category=font",
+  ];
+
+  for (const query of cases) {
+    let listCalls = 0;
+    const handler = createTestRoutes({
+      store: createStubStore({
+        async listAssets() {
+          listCalls += 1;
+          return createListResult();
+        },
+      }),
+    });
+
+    const response = await handler(
+      new Request(`http://localhost/api/v1/media?${query}`, {
+        headers: scopeHeaders,
+      }),
+    );
+    const body = await readJson(response);
+
+    assert.equal(response.status, 400, query);
+    assert.equal(body.code, "INVALID_QUERY_PARAM", query);
+    assert.equal(listCalls, 0, query);
+  }
+});
+
+test("media list requires explicit target routing", async () => {
+  let listCalls = 0;
+  const handler = createTestRoutes({
+    store: createStubStore({
+      async listAssets() {
+        listCalls += 1;
+        return createListResult();
+      },
+    }),
+  });
+
+  const response = await handler(new Request("http://localhost/api/v1/media"));
+  const body = await readJson(response);
+
+  assert.equal(response.status, 400);
+  assert.equal(body.code, "MISSING_TARGET_ROUTING");
+  assert.equal(listCalls, 0);
 });
 
 test("media get returns asset metadata and requires media read authorization", async () => {
