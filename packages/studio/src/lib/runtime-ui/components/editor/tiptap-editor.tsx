@@ -14,6 +14,7 @@ import {
   Fragment as ReactFragment,
   use,
   useCallback,
+  type ChangeEvent as ReactChangeEvent,
   useEffect,
   useImperativeHandle,
   useMemo,
@@ -27,7 +28,11 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 
-import type { StudioMountContext } from "@mdcms/shared";
+import {
+  isRuntimeErrorLike,
+  type MediaAsset,
+  type StudioMountContext,
+} from "@mdcms/shared";
 import {
   EditorContent,
   ReactNodeViewRenderer,
@@ -36,6 +41,8 @@ import {
   type ReactNodeViewProps,
 } from "@tiptap/react";
 import { Fragment, Slice } from "@tiptap/pm/model";
+import type { SelectionBookmark } from "@tiptap/pm/state";
+import type { Mappable } from "@tiptap/pm/transform";
 
 import {
   Bold,
@@ -83,6 +90,7 @@ import {
   createMdxComponentInsertContent,
   isMdxComponentVisibleInInsertUi,
 } from "./mdx-component-catalog.js";
+import { createMediaAssetsInsertContent } from "./media-markdown-insertion.js";
 import { MdxComponentPicker } from "./mdx-component-picker.js";
 import { type MdxPropsPanelSelection } from "./mdx-props-panel.js";
 import {
@@ -235,6 +243,14 @@ export type TipTapEditorSelectionInfo = {
   anchorRect: TipTapEditorAnchorRect;
 };
 
+export type TipTapEditorMediaUploadState = {
+  canUpload: boolean;
+  isUploading: boolean;
+  errorMessage?: string;
+  unavailableMessage?: string;
+  uploadFiles: (files: File[]) => Promise<MediaAsset[]>;
+};
+
 interface TipTapEditorProps {
   ref?: Ref<TipTapEditorHandle>;
   initialContent?: string;
@@ -243,6 +259,7 @@ interface TipTapEditorProps {
   context?: StudioMountContext;
   readOnly?: boolean;
   forbidden?: boolean;
+  mediaUpload?: TipTapEditorMediaUploadState;
   onActiveMdxComponentChange?: (
     selection: MdxPropsPanelSelection | null,
   ) => void;
@@ -439,6 +456,84 @@ type ToolbarButtonProps = {
 
 type TipTapEditorInstance = NonNullable<ReturnType<typeof useEditor>>;
 
+type MediaUploadInsertEditor = {
+  commands: Pick<
+    TipTapEditorInstance["commands"],
+    "insertContent" | "insertContentAt"
+  >;
+};
+
+type MediaUploadResolvedInsertion = {
+  position?: number;
+  selection?: { from: number; to: number };
+};
+
+type ActiveMediaUploadInsertionTarget =
+  | {
+      kind: "position";
+      position: number;
+    }
+  | {
+      kind: "selection";
+      bookmark: SelectionBookmark;
+    };
+
+export async function insertUploadedMediaFiles<
+  TEditor extends MediaUploadInsertEditor,
+>(input: {
+  editor: TEditor;
+  mediaUpload: TipTapEditorMediaUploadState;
+  files: File[];
+  position?: number;
+  selection?: { from: number; to: number };
+  canInsert?: () => boolean;
+  resolveInsertion?: () => MediaUploadResolvedInsertion | null;
+  onInserted: (editor: TEditor) => void;
+}): Promise<boolean> {
+  if (
+    input.files.length === 0 ||
+    !input.mediaUpload.canUpload ||
+    input.mediaUpload.isUploading
+  ) {
+    return false;
+  }
+
+  const assets = await input.mediaUpload.uploadFiles(input.files);
+
+  if (input.canInsert && !input.canInsert()) {
+    return false;
+  }
+
+  const content = createMediaAssetsInsertContent(assets);
+
+  if (content.length === 0) {
+    return false;
+  }
+
+  const insertion = input.resolveInsertion?.() ?? {
+    ...(typeof input.position === "number" ? { position: input.position } : {}),
+    ...(input.selection ? { selection: input.selection } : {}),
+  };
+
+  if (insertion === null) {
+    return false;
+  }
+
+  const didInsert =
+    typeof insertion.position === "number"
+      ? input.editor.commands.insertContentAt(insertion.position, content)
+      : insertion.selection
+        ? input.editor.commands.insertContentAt(insertion.selection, content)
+        : input.editor.commands.insertContent(content);
+
+  if (!didInsert) {
+    return false;
+  }
+
+  input.onInserted(input.editor);
+  return true;
+}
+
 type SlashPickerState = {
   source: "slash" | null;
   trigger: MdxComponentSlashTrigger | null;
@@ -502,6 +597,66 @@ const ZERO_ANCHOR_RECT: TipTapEditorAnchorRect = {
   width: 0,
   height: 0,
 };
+
+const MEDIA_UPLOAD_UNAVAILABLE_MESSAGE =
+  "Upload media unavailable in this target.";
+const MEDIA_UPLOAD_HELP_TEXT =
+  "No file-type allowlist is enforced. Image upload limits apply only when the uploaded MIME type starts with image/.";
+
+function collectMediaUploadFiles(
+  files: FileList | readonly File[] | null | undefined,
+): File[] {
+  return files ? Array.from(files) : [];
+}
+
+export function resolveMediaUploadFileEvent(input: {
+  canUpload: boolean;
+  files: FileList | readonly File[] | null | undefined;
+  types?: readonly string[] | null;
+}): {
+  files: File[];
+  shouldPreventDefault: boolean;
+  shouldUpload: boolean;
+} {
+  const files = collectMediaUploadFiles(input.files);
+  const hasFilesPayload =
+    files.length > 0 || Boolean(input.types?.includes("Files"));
+
+  return {
+    files,
+    shouldPreventDefault: hasFilesPayload,
+    shouldUpload: input.canUpload && files.length > 0,
+  };
+}
+
+function mapMediaUploadInsertionTarget(
+  target: ActiveMediaUploadInsertionTarget,
+  transaction: { mapping: Mappable },
+) {
+  if (target.kind === "position") {
+    target.position = transaction.mapping.map(target.position, 1);
+    return;
+  }
+
+  target.bookmark = target.bookmark.map(transaction.mapping);
+}
+
+function resolveMediaUploadInsertionTarget(
+  target: ActiveMediaUploadInsertionTarget,
+  editor: TipTapEditorInstance,
+): MediaUploadResolvedInsertion {
+  if (target.kind === "position") {
+    return { position: target.position };
+  }
+
+  const selection = target.bookmark.resolve(editor.state.doc);
+  return {
+    selection: {
+      from: selection.from,
+      to: selection.to,
+    },
+  };
+}
 
 function rectForRange(
   editor: TipTapEditorInstance,
@@ -642,6 +797,7 @@ function useTipTapEditorElement({
   context,
   readOnly = false,
   forbidden = false,
+  mediaUpload,
   onActiveMdxComponentChange,
   onSelectionTextChange,
   canvasHeader,
@@ -665,6 +821,12 @@ function useTipTapEditorElement({
     [catalogComponents],
   );
   const isEditorReadOnly = readOnly || forbidden;
+  const mediaUploadUnavailableMessage =
+    mediaUpload?.unavailableMessage?.trim() || MEDIA_UPLOAD_UNAVAILABLE_MESSAGE;
+  const isMediaUploadEnabled =
+    Boolean(mediaUpload?.canUpload) &&
+    !mediaUpload?.isUploading &&
+    !isEditorReadOnly;
   const collapseController = useMdxComponentCollapseController();
   const [visualPaletteOpen, setVisualPaletteOpen] = useState(false);
   const [visualPaletteQuery, setVisualPaletteQuery] = useState("");
@@ -692,6 +854,22 @@ function useTipTapEditorElement({
   // auto-scroll loop while the canvas pane is the scrollable ancestor.
   const [isMdxDragging, setIsMdxDragging] = useState(false);
   const editorWrapperRef = useRef<HTMLDivElement | null>(null);
+  const mediaUploadInputRef = useRef<HTMLInputElement | null>(null);
+  const mediaUploadInFlightRef = useRef(false);
+  const mediaUploadInsertionTargetsRef = useRef<
+    Set<ActiveMediaUploadInsertionTarget>
+  >(new Set());
+  const activeEditorRef = useRef<TipTapEditorInstance | null>(null);
+  const isEditorReadOnlyRef = useRef(isEditorReadOnly);
+  const mediaPasteHandlerRef = useRef<
+    ((event: ClipboardEvent) => boolean) | null
+  >(null);
+  const mediaDropHandlerRef = useRef<((event: DragEvent) => boolean) | null>(
+    null,
+  );
+  const mediaDragOverHandlerRef = useRef<
+    ((event: DragEvent) => boolean) | null
+  >(null);
   const pickerSourceRef = useRef(pickerSource);
   pickerSourceRef.current = pickerSource;
   const slashPickerOpen =
@@ -1104,8 +1282,22 @@ function useTipTapEditorElement({
           }
           return false;
         },
+        handlePaste: (_view, event) =>
+          mediaPasteHandlerRef.current?.(event) ?? false,
+        handleDrop: (_view, event) =>
+          mediaDropHandlerRef.current?.(event) ?? false,
+        handleDOMEvents: {
+          dragover: (_view, event) =>
+            mediaDragOverHandlerRef.current?.(event) ?? false,
+        },
       },
-      onUpdate({ editor }) {
+      onUpdate({ editor, transaction, appendedTransactions }) {
+        for (const target of mediaUploadInsertionTargetsRef.current) {
+          mapMediaUploadInsertionTarget(target, transaction);
+          for (const appendedTransaction of appendedTransactions) {
+            mapMediaUploadInsertionTarget(target, appendedTransaction);
+          }
+        }
         // Typing/deleting always moves the caret, so `onSelectionUpdate`
         // already fires for the same transaction. Running the aux updates
         // here too just doubles the per-keystroke sync work. Markdown
@@ -1130,6 +1322,8 @@ function useTipTapEditorElement({
       forbidden,
     }),
   );
+  activeEditorRef.current = editor;
+  isEditorReadOnlyRef.current = isEditorReadOnly;
 
   // Seed the emitted markdown ref once the editor initializes so the
   // first focus/click does not produce a spurious onChange.
@@ -1172,6 +1366,7 @@ function useTipTapEditorElement({
         // Suppress onUpdate so programmatic syncs (version preview,
         // back-to-draft, post-save rehydration) don't trigger onChange
         // and accidentally mark the draft as unsaved / arm autosave.
+        mediaUploadInsertionTargetsRef.current.clear();
         editor.commands.setContent(parseMarkdownToDocument(markdown), {
           contentType: "json",
           emitUpdate: false,
@@ -1771,13 +1966,169 @@ function useTipTapEditorElement({
     setPendingVisualProps({});
   };
 
+  const startMediaUploadInsertion = useCallback(
+    (files: File[], position?: number) => {
+      if (
+        !editor ||
+        !mediaUpload ||
+        !isMediaUploadEnabled ||
+        mediaUploadInFlightRef.current ||
+        files.length === 0
+      ) {
+        return;
+      }
+
+      const insertionTarget: ActiveMediaUploadInsertionTarget =
+        typeof position === "number"
+          ? {
+              kind: "position",
+              position,
+            }
+          : {
+              kind: "selection",
+              bookmark: editor.state.selection.getBookmark(),
+            };
+      mediaUploadInsertionTargetsRef.current.add(insertionTarget);
+      mediaUploadInFlightRef.current = true;
+
+      void insertUploadedMediaFiles({
+        editor,
+        mediaUpload,
+        files,
+        canInsert: () =>
+          activeEditorRef.current === editor &&
+          !editor.isDestroyed &&
+          !isEditorReadOnlyRef.current &&
+          mediaUploadInsertionTargetsRef.current.has(insertionTarget),
+        resolveInsertion: () =>
+          mediaUploadInsertionTargetsRef.current.has(insertionTarget)
+            ? resolveMediaUploadInsertionTarget(insertionTarget, editor)
+            : null,
+        onInserted: handleEditorUpdate,
+      })
+        .catch((error: unknown) => {
+          if (!isRuntimeErrorLike(error)) {
+            reportStudioEditorError(error);
+          }
+        })
+        .finally(() => {
+          mediaUploadInsertionTargetsRef.current.delete(insertionTarget);
+          if (activeEditorRef.current === editor) {
+            mediaUploadInFlightRef.current = false;
+          }
+        });
+    },
+    [editor, handleEditorUpdate, isMediaUploadEnabled, mediaUpload],
+  );
+
+  const handleMediaUploadInputChange = (
+    event: ReactChangeEvent<HTMLInputElement>,
+  ) => {
+    const files = collectMediaUploadFiles(event.currentTarget.files);
+    event.currentTarget.value = "";
+
+    if (files.length === 0) {
+      return;
+    }
+
+    startMediaUploadInsertion(files);
+  };
+
+  const handleMediaPaste = useCallback(
+    (event: ClipboardEvent) => {
+      const fileEvent = resolveMediaUploadFileEvent({
+        canUpload: isMediaUploadEnabled,
+        files: event.clipboardData?.files,
+      });
+
+      if (!fileEvent.shouldPreventDefault) {
+        return false;
+      }
+
+      event.preventDefault();
+
+      if (fileEvent.shouldUpload) {
+        startMediaUploadInsertion(fileEvent.files);
+      }
+
+      return true;
+    },
+    [isMediaUploadEnabled, startMediaUploadInsertion],
+  );
+
+  const handleMediaDragOver = useCallback(
+    (event: DragEvent) => {
+      const fileEvent = resolveMediaUploadFileEvent({
+        canUpload: isMediaUploadEnabled,
+        files: event.dataTransfer?.files,
+        types: event.dataTransfer
+          ? Array.from(event.dataTransfer.types)
+          : undefined,
+      });
+
+      if (!fileEvent.shouldPreventDefault) {
+        return false;
+      }
+
+      event.preventDefault();
+      if (event.dataTransfer) {
+        event.dataTransfer.dropEffect = fileEvent.shouldUpload
+          ? "copy"
+          : "none";
+      }
+      return true;
+    },
+    [isMediaUploadEnabled],
+  );
+
+  const handleMediaDrop = useCallback(
+    (event: DragEvent) => {
+      const fileEvent = resolveMediaUploadFileEvent({
+        canUpload: isMediaUploadEnabled,
+        files: event.dataTransfer?.files,
+      });
+
+      if (!fileEvent.shouldPreventDefault) {
+        return false;
+      }
+
+      event.preventDefault();
+
+      if (editor && fileEvent.shouldUpload) {
+        startMediaUploadInsertion(
+          fileEvent.files,
+          resolveVisualDropPosition(editor, event),
+        );
+      }
+
+      return true;
+    },
+    [editor, isMediaUploadEnabled, startMediaUploadInsertion],
+  );
+
+  mediaPasteHandlerRef.current = handleMediaPaste;
+  mediaDragOverHandlerRef.current = handleMediaDragOver;
+  mediaDropHandlerRef.current = handleMediaDrop;
+
   const handleVisualDragOver = (event: ReactDragEvent<HTMLDivElement>) => {
-    if (isEditorReadOnly || !hasVisualCompositionDragPayload(event)) {
+    if (!isEditorReadOnly && hasVisualCompositionDragPayload(event)) {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
+      return;
+    }
+
+    const fileEvent = resolveMediaUploadFileEvent({
+      canUpload: isMediaUploadEnabled,
+      files: event.dataTransfer.files,
+      types: Array.from(event.dataTransfer.types),
+    });
+
+    if (!fileEvent.shouldPreventDefault) {
       return;
     }
 
     event.preventDefault();
-    event.dataTransfer.dropEffect = "copy";
+    event.dataTransfer.dropEffect = fileEvent.shouldUpload ? "copy" : "none";
   };
 
   const handleVisualDrop = (event: ReactDragEvent<HTMLDivElement>) => {
@@ -1794,6 +2145,20 @@ function useTipTapEditorElement({
     event.preventDefault();
     const position = resolveVisualDropPosition(editor, event);
     requestVisualInsertion(block, position);
+    return;
+  };
+
+  const handleCanvasDrop = (event: ReactDragEvent<HTMLDivElement>) => {
+    if (event.defaultPrevented) {
+      return;
+    }
+
+    if (readVisualCompositionDragPayload(event)) {
+      handleVisualDrop(event);
+      return;
+    }
+
+    handleMediaDrop(event.nativeEvent);
   };
 
   const insertSelectedComponent = (
@@ -1870,6 +2235,18 @@ function useTipTapEditorElement({
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
         <div className="shrink-0 border-b border-border bg-card">
           <div className="flex flex-wrap items-center gap-x-1 gap-y-1 px-6 py-2">
+            {mediaUpload ? (
+              <input
+                ref={mediaUploadInputRef}
+                aria-label="Upload media"
+                type="file"
+                multiple
+                disabled={!isMediaUploadEnabled}
+                tabIndex={-1}
+                onChange={handleMediaUploadInputChange}
+                className="sr-only"
+              />
+            ) : null}
             {toolbar.secondaryItems.map((item) =>
               item.id === "insertComponent" ? (
                 <ReactFragment key={item.id}>
@@ -1917,23 +2294,40 @@ function useTipTapEditorElement({
                   <Separator orientation="vertical" className="mr-1 h-6" />
                 ) : null}
                 {group.items.map((item) => {
+                  const isMediaUploadItem = item.id === "image";
+                  const itemDisabled =
+                    item.availability !== "enabled" ||
+                    isEditorReadOnly ||
+                    (isMediaUploadItem ? !isMediaUploadEnabled : false);
+                  const itemLabel = isMediaUploadItem
+                    ? isMediaUploadEnabled
+                      ? "Upload media"
+                      : mediaUpload?.isUploading
+                        ? "Uploading media..."
+                        : mediaUploadUnavailableMessage
+                    : item.availability === "visual-only"
+                      ? `${item.label} (planned)`
+                      : isEditorReadOnly
+                        ? `${item.label} (unavailable in read-only mode)`
+                        : item.label;
                   const handleItemClick = () => {
-                    if (item.availability === "enabled" && !isEditorReadOnly) {
+                    if (itemDisabled) {
+                      return;
+                    }
+
+                    if (isMediaUploadItem) {
+                      mediaUploadInputRef.current?.click();
+                      return;
+                    }
+
+                    if (item.availability === "enabled") {
                       triggerToolbarItem(item.id);
                     }
                   };
                   const toolbarButton = (
                     <ToolbarButton
-                      disabled={
-                        item.availability !== "enabled" || isEditorReadOnly
-                      }
-                      label={
-                        item.availability === "visual-only"
-                          ? `${item.label} (planned)`
-                          : isEditorReadOnly
-                            ? `${item.label} (unavailable in read-only mode)`
-                            : item.label
-                      }
+                      disabled={itemDisabled}
+                      label={itemLabel}
                       active={isToolbarItemActive(item.id)}
                       onClick={handleItemClick}
                       className={cn(
@@ -2043,16 +2437,8 @@ function useTipTapEditorElement({
                   return (
                     <ToolbarButton
                       key={item.id}
-                      disabled={
-                        item.availability !== "enabled" || isEditorReadOnly
-                      }
-                      label={
-                        item.availability === "visual-only"
-                          ? `${item.label} (planned)`
-                          : isEditorReadOnly
-                            ? `${item.label} (unavailable in read-only mode)`
-                            : item.label
-                      }
+                      disabled={itemDisabled}
+                      label={itemLabel}
                       active={isToolbarItemActive(item.id)}
                       onClick={handleItemClick}
                       className={cn(
@@ -2124,10 +2510,33 @@ function useTipTapEditorElement({
           <div
             className="min-w-0 flex-1 overflow-y-auto"
             onDragOver={handleVisualDragOver}
-            onDrop={handleVisualDrop}
+            onDrop={handleCanvasDrop}
           >
             <div className="mx-auto max-w-[880px] px-6 pb-24 pt-4 lg:px-10 lg:pt-5">
               {canvasHeader}
+              {mediaUpload ? (
+                <p className="mb-3 text-xs text-foreground-muted">
+                  {MEDIA_UPLOAD_HELP_TEXT}
+                </p>
+              ) : null}
+              {mediaUpload?.isUploading ? (
+                <div
+                  role="status"
+                  aria-live="polite"
+                  className="mb-3 rounded-md border border-border bg-muted px-4 py-2 text-sm text-foreground-muted"
+                >
+                  Uploading media...
+                </div>
+              ) : null}
+              {mediaUpload?.errorMessage ? (
+                <div
+                  role="alert"
+                  aria-live="assertive"
+                  className="mb-3 rounded-md border border-destructive/20 bg-destructive/5 px-4 py-2 text-sm text-destructive"
+                >
+                  {mediaUpload.errorMessage}
+                </div>
+              ) : null}
               <TipTapNodeViewContext.Provider value={nodeViewContext}>
                 <MdxComponentCollapseProvider
                   snapshot={collapseController.snapshot}

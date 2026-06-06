@@ -2,7 +2,7 @@
 status: live
 canonical: true
 created: 2026-03-11
-last_updated: 2026-06-02
+last_updated: 2026-06-05
 ---
 
 # SPEC-006 Studio Runtime and UI
@@ -491,6 +491,41 @@ Normative behavior:
   to that mutable head snapshot.
 - The primary canvas edits the document `body` through the editor engine owned
   by SPEC-007.
+- The editor supports media insertion from three equivalent inputs: the toolbar
+  media upload control, files dropped onto the editable body, and files present
+  in a clipboard paste event. These inputs are available only when the active
+  document is writable and the target capability snapshot exposes
+  `capabilities.media.upload`. If either condition is false, the toolbar control
+  is disabled or hidden consistently with other read-only editor actions, and
+  drag/drop or paste events must not start media uploads or mutate the body.
+- Media insertion uses `POST /api/v1/media/upload` with one multipart `file`
+  field and the active Studio `(project, environment)` target routing. The
+  upload request uses the same auth mode as the Studio runtime and includes the
+  session CSRF header for cookie-authenticated mutations. Studio must not add
+  application multipart fields such as `project`, `environment`, `s3Key`, or
+  `url`; the media endpoint derives metadata as defined by SPEC-010.
+- When an upload succeeds, Studio inserts the returned media URL into the
+  Markdown body at the drop position when one is available, otherwise at the
+  current selection/caret. A non-empty selection is replaced. Returned assets
+  whose `mimeType` starts with `image/` insert Markdown image syntax
+  `![filename](url)` using the returned filename as the alt text. Other assets
+  insert link syntax `[filename](url)`. Multiple files from one drag/paste/file
+  selection are uploaded sequentially and inserted in user-provided order, with
+  each generated Markdown reference separated from the next by a blank line when
+  they land in the same insertion transaction.
+- A successful media insertion marks the body draft unsaved and relies on the
+  existing draft persistence path; it must not introduce a separate content save
+  endpoint or bypass draft-save guards.
+- During upload, the editor shows an inline upload state near the canvas and
+  disables additional media upload starts while the current batch is in flight.
+  Upload failures keep the current document body unchanged for the failed file
+  and render an assertive inline error with a deterministic message. Route
+  errors use the backend error message when available; `MEDIA_UPLOAD_TOO_LARGE`
+  should mention the image size limit when `details.limitBytes` and
+  `details.sizeBytes` are present.
+- User-facing media upload copy must state that MDCMS does not enforce a
+  file-type allowlist and that the configured byte limit applies only to
+  uploads whose MIME type starts with `image/`.
 - On desktop, the document editor may expose the visual composition palette to
   the left of the canvas. The palette is part of the body editor surface and
   follows the MDX visual composition behavior owned by SPEC-007. It is
