@@ -2,7 +2,7 @@
 status: live
 canonical: true
 created: 2026-03-11
-last_updated: 2026-06-06
+last_updated: 2026-06-09
 ---
 
 # SPEC-003 Content Storage, Versioning, and Migrations
@@ -272,11 +272,20 @@ Content endpoints that return documents expand schema file fields by default. `f
 - `raw`: the persisted raw `MediaAsset.id` string.
 - `expanded` or omitted: a resolved `MediaAsset`, or `null` when expansion fails.
 
-Missing, `null`, and empty string values are treated as unset for optional file
-fields. In `raw` mode, responses preserve the persisted unset representation,
-including absence, so authoring clients can round-trip frontmatter. In
-`expanded` mode or when `fileFields` is omitted, unset optional file fields
-return `null`. Unset optional file fields do not add `resolveErrors` entries.
+In this contract, an unset optional file field means a file helper configured
+with `required: false`. `fieldTypes.*({ required: false })` resolves to
+`required: false` and `nullable: true`; missing, `null`, and empty string values
+are unset for that helper-level optional file field. In `raw` mode, responses
+preserve the persisted unset representation, including absence, so authoring
+clients can round-trip frontmatter. In `expanded` mode or when `fileFields` is
+omitted, unset optional file fields return `null`. Unset optional file fields do
+not add `resolveErrors` entries.
+
+A file helper wrapped only in `.optional()` without helper `required: false`
+allows missing values but does not treat empty strings as unset and does not
+accept `null` unless `.nullable()` is also present. `.nullable()` accepts `null`
+according to snapshot nullability; non-empty strings still validate and expand
+as media asset ids.
 
 File-field expansion failures add a top-level `resolveErrors` entry keyed by the full field path, such as `frontmatter.heroImage`. Each entry has this shape:
 
@@ -483,8 +492,11 @@ Validation rules:
 - `move.targetDirectory` is required for `move`, must not start or end with `/`,
   must not contain path traversal segments (`..`), and may be an empty string
   for the content root.
-- `move` requests require the same schema hash validation as `PUT
-/api/v1/content/:documentId` because moving changes the mutable head row.
+- `move` requests require `x-mdcms-schema-hash` and follow the same schema hash
+  gate as `PUT /api/v1/content/:documentId` because moving changes the mutable
+  head row: missing or blank values fail with `SCHEMA_HASH_REQUIRED` (`400`), a
+  missing target sync record fails with `SCHEMA_NOT_SYNCED` (`409`), and a
+  non-matching client/server hash fails with `SCHEMA_HASH_MISMATCH` (`409`).
 - `changeSummary` is accepted only for `publish`; `actorId` is accepted for
   `publish` and `unpublish`.
 
@@ -725,6 +737,6 @@ parameter as authorization.
 | POST   | `/api/v1/content/:documentId/publish`                   | session_or_api_key | `content:publish`                                                                                          | required: `project_environment` | path `documentId`, JSON optional `{ changeSummary?, actorId? }`, optional query `fileFields`                                                                                                                        | `200` `{ data: ContentDocumentResponse }`                                                                                                      | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_QUERY_PARAM` (`400`), `INVALID_INPUT` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`)                                                                                                                                                                                                                                         |
 | POST   | `/api/v1/content/:documentId/unpublish`                 | session_or_api_key | `content:publish`                                                                                          | required: `project_environment` | path `documentId`, JSON optional `{ actorId? }`, optional query `fileFields`                                                                                                                                        | `200` `{ data: ContentDocumentResponse }`                                                                                                      | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_QUERY_PARAM` (`400`), `INVALID_INPUT` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`)                                                                                                                                                                                                                                         |
 | DELETE | `/api/v1/content/:documentId`                           | session_or_api_key | `content:delete`                                                                                           | required: `project_environment` | path `documentId`, optional query `fileFields`                                                                                                                                                                      | `200` `{ data: ContentDocumentResponse }` (soft-deleted)                                                                                       | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_QUERY_PARAM` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`)                                                                                                                                                                                                                                                                  |
-| POST   | `/api/v1/content/bulk`                                  | session_or_api_key | `content:publish` for `publish` and `unpublish`; `content:delete` for `delete`; `content:write` for `move` | required: `project_environment` | JSON: `ContentBulkOperationInput`; `move` requires `x-mdcms-schema-hash` when the target has a synced schema; optional query `fileFields`                                                                           | `200` `{ data: ContentBulkOperationResponse }`                                                                                                 | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_QUERY_PARAM` (`400`), `SCHEMA_HASH_REQUIRED` (`400`) for `move`, `SCHEMA_NOT_SYNCED` (`409`) for `move`, `SCHEMA_HASH_MISMATCH` (`409`) for `move`, `INVALID_INPUT` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`). Per-document `NOT_FOUND`, `FORBIDDEN`, `CONTENT_PATH_CONFLICT`, and other mutation failures are reported in `data.results[]`. |
+| POST   | `/api/v1/content/bulk`                                  | session_or_api_key | `content:publish` for `publish` and `unpublish`; `content:delete` for `delete`; `content:write` for `move` | required: `project_environment` | JSON: `ContentBulkOperationInput`; `move` requires `x-mdcms-schema-hash`; optional query `fileFields`                                                                                                               | `200` `{ data: ContentBulkOperationResponse }`                                                                                                 | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_QUERY_PARAM` (`400`), `SCHEMA_HASH_REQUIRED` (`400`) for `move`, `SCHEMA_NOT_SYNCED` (`409`) for `move`, `SCHEMA_HASH_MISMATCH` (`409`) for `move`, `INVALID_INPUT` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`). Per-document `NOT_FOUND`, `FORBIDDEN`, `CONTENT_PATH_CONFLICT`, and other mutation failures are reported in `data.results[]`. |
 | POST   | `/api/v1/content/:documentId/restore`                   | session_or_api_key | `content:write` for `targetStatus=draft`, `content:publish` for `targetStatus=published`                   | required: `project_environment` | path `documentId`, optional `targetStatus` enum (`draft` or `published`), optional query `fileFields`                                                                                                               | `200` `{ data: ContentDocumentResponse }`                                                                                                      | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_QUERY_PARAM` (`400`), `INVALID_INPUT` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`), `CONTENT_PATH_CONFLICT` (`409`)                                                                                                                                                                                                        |
 | POST   | `/api/v1/content/:documentId/versions/:version/restore` | session_or_api_key | `content:write` for `targetStatus=draft`, `content:publish` for `targetStatus=published`                   | required: `project_environment` | path `documentId`, `version`, optional `targetStatus` enum (`draft` or `published`), optional query `fileFields`                                                                                                    | `200` `{ data: ContentDocumentResponse }`                                                                                                      | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_QUERY_PARAM` (`400`), `INVALID_INPUT` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`), `CONTENT_PATH_CONFLICT` (`409`)                                                                                                                                                                                                        |

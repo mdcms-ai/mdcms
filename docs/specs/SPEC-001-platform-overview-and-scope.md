@@ -2,7 +2,7 @@
 status: live
 canonical: true
 created: 2026-03-11
-last_updated: 2026-03-11
+last_updated: 2026-06-09
 ---
 
 # SPEC-001 Platform Overview and Scope
@@ -33,12 +33,13 @@ This section keeps only the product-scope split for the live product definition.
 - SDK, CLI, and Studio as the primary operator surfaces.
 - Draft/publish workflow, version history, permissions, and authentication.
 - Internationalization, content environments, multi-project support, and reference fields.
+- Baseline media upload, media library browsing, and project-scoped media metadata.
 - MDX component system and first-party extensibility foundation.
 
 ### Post-MVP
 
 - AI integration (`High`) and AI-assisted CMS migration (`High`).
 - SEO analysis (`Medium`), scheduled publishing (`Medium`), and comprehensive audit log (`Medium`).
-- Media library (`Medium`), media upload (`Medium`), real-time collaboration (`Medium`), presence awareness (`Medium`), webhooks (`Medium`), full-text search (`Medium`), and bulk operations (`Medium`).
+- Advanced media organization, image transformations, CDN controls, asset governance, real-time collaboration (`Medium`), presence awareness (`Medium`), webhooks (`Medium`), full-text search (`Medium`), and bulk operations (`Medium`).
 - Schema-aware API filtering (`Low`), third-party plugin sandboxing (`Low`), cursor-based pagination (`Low`), and side-by-side translation view (`Low`).
 - Organizations (`Deferred`), multi-tenant SaaS (`Deferred`), and white-label branding (`Deferred`).

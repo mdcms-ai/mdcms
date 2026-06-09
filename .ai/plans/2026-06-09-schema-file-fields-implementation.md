@@ -32,20 +32,15 @@ Do not stage or modify unrelated existing untracked files.
 
 Add a `fieldTypes` section near the schema authoring examples.
 
-Required content:
+Required contract points:
 
-```md
-Schema built-ins are imported through `fieldTypes`:
-
-- `fieldTypes.reference(targetType)` stores an environment-local document id string.
-- `fieldTypes.image(options?)` stores a media asset id string and requires `mimeType` to start with `image/`.
-- `fieldTypes.video(options?)` stores a media asset id string and requires `mimeType` to start with `video/`.
-- `fieldTypes.file(options?)` stores a media asset id string and accepts any media asset unless narrowed by `options.accept`.
-
-`options.accept` is an array of MIME values or MIME wildcards such as `image/png`, `video/*`, or `application/pdf`. It never accepts category labels. File helper options also include `required?: boolean` and `default?: string`; helper defaults are raw `MediaAsset.id` strings, and helper `required/default` must resolve consistently with Zod `.optional()`, `.nullable()`, and `.default()` wrappers.
-
-Serialized file field snapshots are `kind: "string"` field snapshots with `file: { preset: "image" | "video" | "file", accept: string[] }`. Existing snapshot metadata such as `required`, `nullable`, and `default` stays outside `file`.
-```
+- Schema built-ins are imported through `fieldTypes`; `fieldTypes.reference()` is canonical and the previous top-level `reference()` helper is removed from the beta contract.
+- `fieldTypes.image(options?)`, `fieldTypes.video(options?)`, and `fieldTypes.file(options?)` persist raw project-scoped `MediaAsset.id` strings.
+- `FileFieldOptions` includes `accept?: string[]`, `required?: boolean`, and `default?: string`. `accept` values are MIME values or MIME wildcards only; image/video helpers set the broad preset family and custom `accept` narrows within that family.
+- `fieldTypes.*({ required: false })` resolves to `required: false` and `nullable: true`; missing, `null`, and empty string are unset. `.optional()` without helper `required: false` makes missing values optional only, and `.nullable()` accepts `null` according to snapshot nullability.
+- Helper defaults and Zod `.default()` values are raw `MediaAsset.id` strings and must agree when both are present. Applied defaults are validated for asset existence and MIME compatibility during content write validation.
+- Serialized file field snapshots are `kind: "string"` snapshots with `file: { preset: "image" | "video" | "file", accept: string[] }`; `required`, `nullable`, and `default` stay on the field snapshot outside `file`.
+- File-field write validation failures use `INVALID_INPUT` (`400`) with machine-readable details such as `{ field, mediaAssetId?, reason: "MEDIA_REQUIRED" | "MEDIA_NOT_FOUND" | "MEDIA_TYPE_MISMATCH", expectedMime?, actualMimeType? }`.
 
 Replace all examples importing or calling top-level `reference` with `fieldTypes.reference`.
 
@@ -55,25 +50,17 @@ Replace the `Reference Field Identity` section opening sentence with:
 `fieldTypes.reference('Type')` fields store the target document's environment-local `document_id` string.
 ```
 
-Add a new `File Field Identity` subsection:
-
-```md
-`fieldTypes.image()`, `fieldTypes.video()`, and `fieldTypes.file()` fields store a project-scoped media asset id string. The persisted value is never a URL and never a full media object. Write-time validation verifies that the media asset exists in the routed project and that its MIME type satisfies the field preset and `accept` narrowing. Validation failures use `INVALID_INPUT` (`400`) with `details.field` pointing at the frontmatter path.
-```
+Add a new `File Field Identity` subsection covering raw id persistence, preset and `accept` validation, helper defaults, optional unset semantics, and the machine-readable `details.reason` values above.
 
 **Step 2: Update SPEC-003**
 
-Find the content API read/write contract section. Add the `fileFields` query/input behavior:
+Find the content API read/write contract section. Add the `fileFields` response-shape contract:
 
-```md
-Content endpoints that return documents expand schema file fields by default. `fileFields=raw` returns persisted media asset id strings instead and is required for authoring clients that round-trip frontmatter, including Studio editing and CLI pull/push. Omitted or `fileFields=expanded` returns `MediaAsset` objects for resolved file fields and `null` with `resolveErrors["frontmatter.<field>"]` when resolution fails.
-```
-
-Add deterministic error codes to the content resolve error description:
-
-```md
-Media file field expansion may report `MEDIA_NOT_FOUND` or `MEDIA_TYPE_MISMATCH`.
-```
+- `fileFields` accepts only `raw` or `expanded`; unsupported values fail with `INVALID_QUERY_PARAM` (`400`).
+- Content endpoints that return documents expand schema file fields by default. `fileFields=raw` returns persisted media asset id strings and is required for authoring clients that round-trip frontmatter, including Studio editing and CLI pull/push.
+- Raw mode preserves persisted unset representations. Expanded/default mode returns `MediaAsset | null`; optional unset file fields return `null` and do not add `resolveErrors` entries.
+- File-field expansion failures put `null` in the field and a `FileFieldResolveError` at `resolveErrors["frontmatter.<field>"]` with `code` `MEDIA_NOT_FOUND` or `MEDIA_TYPE_MISMATCH`, `media.assetId`, `expectedMime`, and `actualMimeType` where available.
+- `ContentDocumentResponse` and `ContentVersionDocumentResponse` carry the shaped frontmatter plus the unified `resolveErrors` union. Bulk response shaping applies only to succeeded `results[].document` values, with omitted `fileFields` using expanded mode.
 
 **Step 3: Update SPEC-006**
 
@@ -82,6 +69,8 @@ Under the document editor/property behavior, add:
 ```md
 Schema file fields render in the Properties panel as media picker controls. The control stores the selected media asset id in frontmatter, never a URL or Markdown string. It uses media read capability for browsing/replacing and media upload capability for upload-new. Images render thumbnails, videos render inline playback, and other files render a compact file placeholder.
 ```
+
+Also specify that Studio document editing requests `fileFields=raw`, optional fields expose remove/clear behavior, required fields cannot be left unset, and file-specific validation messages are driven by machine-readable missing-asset and MIME-mismatch details.
 
 Remove the media settings requirement:
 
@@ -187,7 +176,7 @@ Add preset compatibility tests:
 Add helper option precedence/config tests:
 
 - `fieldTypes.file({ required: false })` resolves to an optional nullable snapshot and write validation treats missing, `null`, and empty string as unset.
-- `.optional()` around a file helper without `required: false` resolves to an optional snapshot.
+- `.optional()` around a file helper without `required: false` resolves to an optional snapshot, treats missing as optional, does not treat empty string as unset, and does not accept `null` unless `.nullable()` is also present.
 - `.nullable()` around a file helper resolves to `nullable: true`.
 - helper `default` and Zod `.default()` must agree when both are present.
 - helper or Zod defaults on file helpers must be raw media asset id strings.
@@ -331,7 +320,7 @@ const MIME_ACCEPT_PATTERN =
   /^[a-z0-9][a-z0-9!#$&^_.+-]*\/(\*|[a-z0-9][a-z0-9!#$&^_.+-]*)$/i;
 ```
 
-Trim, lowercase, de-duplicate, sort, and reject invalid entries with `invalidConfig("accept", "...")`. Validate helper `default` as a raw media asset id string. Add wrapper precedence validation so helper `required: false` serializes to an optional nullable snapshot, `.optional()` can make helpers optional, `.nullable()` sets snapshot nullability, Zod `.default()` yields `required: false`, and helper/Zod defaults must agree when both are present.
+Trim, lowercase, de-duplicate, sort, and reject invalid entries with `invalidConfig("accept", "...")`. For image/video helpers, reject custom `accept` entries outside the preset family as invalid schema config; valid entries narrow within the preset. Validate helper `default` as a raw media asset id string. Add wrapper precedence validation so helper `required: false` serializes to an optional nullable snapshot, `.optional()` can make helpers optional, `.nullable()` sets snapshot nullability, Zod `.default()` yields `required: false`, and helper/Zod defaults must agree when both are present.
 
 **Step 2: Extend parsed metadata helpers**
 
@@ -687,6 +676,7 @@ git commit -m "feat(server): validate schema file field assets"
 - Create: `apps/server/src/lib/content-api/media-field-expansion.test.ts`
 - Modify: `apps/server/src/lib/content-api.test.ts`
 - Modify: `packages/shared/src/lib/contracts/content-api.ts`
+- Modify: `packages/shared/src/lib/contracts/content-api.test.ts`
 
 **Step 1: Extend content resolve error test expectations**
 
@@ -737,12 +727,15 @@ In `content-api.test.ts`, add route tests:
 - `GET /api/v1/content?type=Article` expands by default.
 - Studio-style `draft=true&fileFields=raw` returns raw id.
 - Invalid `fileFields=banana` returns `INVALID_QUERY_PARAM`.
+- `POST /api/v1/content?fileFields=raw` returns raw file ids in the created document, and omitted `fileFields` expands by default.
+- `PUT /api/v1/content/:id?fileFields=raw` returns raw file ids in the updated document, and omitted `fileFields` expands by default.
 - `POST /api/v1/content/:id/duplicate` applies `fileFields` to the returned document.
 - `POST /api/v1/content/:id/duplicate` requires `x-mdcms-schema-hash` and returns `SCHEMA_HASH_REQUIRED` when missing.
 - `POST /api/v1/content/:id/duplicate` returns `SCHEMA_NOT_SYNCED` when the target scope has no synced schema.
 - `POST /api/v1/content/:id/duplicate` returns `SCHEMA_HASH_MISMATCH` when the supplied hash does not match.
 - `POST /api/v1/content/bulk` applies `fileFields` only to succeeded `results[].document` values.
 - `POST /api/v1/content/bulk` with omitted `fileFields` expands succeeded `results[].document` values by default.
+- At least one lifecycle or restore route that returns a document, such as publish or restore, applies `fileFields` to the returned document.
 
 **Step 4: Run failing tests**
 
@@ -844,7 +837,7 @@ Expected: pass.
 **Step 6: Commit**
 
 ```bash
-git add apps/server/src/lib/content-api/media-field-expansion.ts apps/server/src/lib/content-api/media-field-expansion.test.ts apps/server/src/lib/content-api/routes.ts apps/server/src/lib/content-api/types.ts apps/server/src/lib/runtime-with-modules.ts apps/server/src/lib/content-api-test-support.ts apps/server/src/lib/content-api.test.ts packages/shared/src/lib/contracts/content-api.ts
+git add apps/server/src/lib/content-api/media-field-expansion.ts apps/server/src/lib/content-api/media-field-expansion.test.ts apps/server/src/lib/content-api/routes.ts apps/server/src/lib/content-api/types.ts apps/server/src/lib/runtime-with-modules.ts apps/server/src/lib/content-api-test-support.ts apps/server/src/lib/content-api.test.ts packages/shared/src/lib/contracts/content-api.ts packages/shared/src/lib/contracts/content-api.test.ts
 git commit -m "feat(server): expand schema file fields on reads"
 ```
 
