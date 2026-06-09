@@ -7,9 +7,15 @@ import {
   useRef,
   useState,
   type DragEvent as ReactDragEvent,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
 } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { RuntimeError, type MediaAsset } from "@mdcms/shared";
+import {
+  RuntimeError,
+  type MediaAsset,
+  type MediaAssetCategory,
+} from "@mdcms/shared";
 import {
   AlertCircle,
   Check,
@@ -17,19 +23,20 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Download,
   ExternalLink,
   File,
   FileSearch,
-  Image,
   Loader2,
   Music,
   Play,
   Search,
   ShieldAlert,
+  Trash2,
   Upload,
+  X,
 } from "lucide-react";
 
-import { Badge } from "../../components/ui/badge.js";
 import { Button } from "../../components/ui/button.js";
 import { Input } from "../../components/ui/input.js";
 import {
@@ -56,6 +63,7 @@ import {
 import { createStudioMediaUploadApi } from "../../lib/media-upload-api.js";
 import type { StudioRuntimeAuth } from "../../../request-auth.js";
 import {
+  useCanDeleteMedia,
   useCanManageUsers,
   useCanReadMedia,
   useCanUploadMedia,
@@ -138,9 +146,20 @@ export type MediaLibraryPageState =
   | MediaLibraryReadyPageState
   | { status: "error"; message: string };
 
+export type MediaLibraryUploadFileProgress = {
+  name: string;
+  status: "pending" | "uploading" | "done" | "error";
+  percent: number;
+};
+
 export type MediaLibraryUploadState =
   | { status: "idle" }
-  | { status: "uploading"; completedFiles: number; totalFiles: number }
+  | {
+      status: "uploading";
+      completedFiles: number;
+      totalFiles: number;
+      files?: MediaLibraryUploadFileProgress[];
+    }
   | { status: "error"; message: string };
 
 const defaultFilters: MediaLibraryFilters = {
@@ -378,6 +397,54 @@ function resolveMediaLibraryUploadProgress(
   };
 }
 
+function clickDownloadAnchor(href: string, filename: string): void {
+  const anchor = document.createElement("a");
+  anchor.href = href;
+  anchor.download = filename;
+  anchor.rel = "noopener";
+  anchor.style.display = "none";
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+}
+
+/**
+ * Downloads a media asset. Media URLs are cross-origin (CDN / object store), so
+ * the `download` attribute is ignored and a bare anchor would navigate the
+ * Studio document away. We fetch the asset into a same-origin blob URL so the
+ * filename is honored; if the cross-origin fetch is blocked (CORS) we open the
+ * asset in a new tab instead, which never destroys the Studio session.
+ */
+export async function triggerMediaAssetDownload(asset: {
+  url: string;
+  filename: string;
+}): Promise<void> {
+  if (typeof document === "undefined") {
+    return;
+  }
+
+  try {
+    const response = await fetch(asset.url);
+
+    if (!response.ok) {
+      throw new Error(`Download failed with status ${response.status}.`);
+    }
+
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+
+    try {
+      clickDownloadAnchor(objectUrl, asset.filename);
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
+  } catch {
+    if (typeof window !== "undefined") {
+      window.open(asset.url, "_blank", "noopener,noreferrer");
+    }
+  }
+}
+
 export async function copyMediaAssetUrlToClipboard(url: string): Promise<void> {
   if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(url);
@@ -426,20 +493,9 @@ function MediaLibraryTopbar({
   onUploadFiles: (files: File[]) => void;
   onSearchInputChange: (value: string) => void;
 }) {
-  const mountInfo = useStudioMountInfo();
-
   return (
-    <div className="flex flex-wrap items-center gap-4 border-b border-border bg-card px-6 py-4 lg:px-8">
-      <div className="min-w-0 flex-1 font-mono text-xs text-foreground-muted">
-        <span className="truncate">{mountInfo.project ?? "project"}</span>
-        <span className="mx-2 opacity-50">/</span>
-        <span className="truncate">
-          {mountInfo.environment ?? "environment"}
-        </span>
-        <span className="mx-2 opacity-50">/</span>
-        <span className="font-medium text-foreground">Media</span>
-      </div>
-      <div className="relative w-full sm:w-72">
+    <div className="flex flex-wrap items-center gap-3 border-b border-border bg-card px-6 py-3 lg:px-8">
+      <div className="relative w-full sm:max-w-xs">
         <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-foreground-muted" />
         <Input
           aria-label="Search media"
@@ -449,11 +505,13 @@ function MediaLibraryTopbar({
           onChange={(event) => onSearchInputChange(event.target.value)}
         />
       </div>
-      <MediaLibraryUploadControl
-        canUploadMedia={canUploadMedia}
-        uploadState={uploadState}
-        onUploadFiles={onUploadFiles}
-      />
+      <div className="ml-auto flex items-center">
+        <MediaLibraryUploadControl
+          canUploadMedia={canUploadMedia}
+          uploadState={uploadState}
+          onUploadFiles={onUploadFiles}
+        />
+      </div>
     </div>
   );
 }
@@ -611,6 +669,63 @@ function MediaLibraryControlsBar({
   );
 }
 
+function MediaUploadFileRow({
+  file,
+}: {
+  file: MediaLibraryUploadFileProgress;
+}) {
+  const extension = getMediaAssetExtension(file.name);
+  const failed = file.status === "error";
+  const done = file.status === "done";
+  const statusLabel = failed
+    ? "Failed"
+    : done
+      ? "Done"
+      : file.status === "pending"
+        ? "Queued"
+        : `${Math.max(0, Math.min(100, Math.round(file.percent)))}%`;
+  const barWidth = failed
+    ? 100
+    : done
+      ? 100
+      : Math.max(0, Math.min(100, file.percent));
+
+  return (
+    <li className="flex items-center gap-2.5">
+      <span
+        aria-hidden="true"
+        className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted font-mono text-[9px] font-semibold uppercase text-foreground-muted"
+      >
+        {extension}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="flex items-center gap-2">
+          <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">
+            {file.name}
+          </span>
+          <span
+            className={[
+              "shrink-0 font-mono text-[10px]",
+              failed ? "text-destructive" : "text-foreground-muted",
+            ].join(" ")}
+          >
+            {statusLabel}
+          </span>
+        </span>
+        <span className="mt-1.5 block h-1 overflow-hidden rounded-full bg-border">
+          <span
+            className={[
+              "block h-full rounded-full transition-[width]",
+              failed ? "bg-destructive" : "bg-primary",
+            ].join(" ")}
+            style={{ width: `${barWidth}%` }}
+          />
+        </span>
+      </span>
+    </li>
+  );
+}
+
 function MediaLibraryUploadControl({
   canUploadMedia,
   uploadState,
@@ -623,6 +738,8 @@ function MediaLibraryUploadControl({
   const inputRef = useRef<HTMLInputElement | null>(null);
   const isUploading = uploadState.status === "uploading";
   const progress = resolveMediaLibraryUploadProgress(uploadState);
+  const fileProgress =
+    uploadState.status === "uploading" ? uploadState.files : undefined;
   const statusText = progress
     ? `Uploading media ${progress.completedFiles} of ${progress.totalFiles}`
     : "Uploading media...";
@@ -698,6 +815,13 @@ function MediaLibraryUploadControl({
                 style={{ width: `${progress.percent}%` }}
               />
             </div>
+          ) : null}
+          {fileProgress && fileProgress.length > 0 ? (
+            <ul className="mt-3 space-y-2.5">
+              {fileProgress.map((file, index) => (
+                <MediaUploadFileRow key={`${file.name}-${index}`} file={file} />
+              ))}
+            </ul>
           ) : null}
         </div>
       ) : null}
@@ -795,70 +919,163 @@ function MediaLibraryStatePanel({
 function MediaLibraryEmptyPanel({
   state,
   isDragActive = false,
+  canUploadMedia = false,
+  onUploadFiles,
 }: {
   state: MediaLibraryEmptyPageState;
   isDragActive?: boolean;
+  canUploadMedia?: boolean;
+  onUploadFiles?: (files: File[]) => void;
 }) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
   const emptyState = deriveMediaLibraryEmptyState(state.status === "no-match");
-  const Icon = state.status === "no-match" ? FileSearch : Image;
+
+  if (state.status === "no-match") {
+    return (
+      <section
+        data-mdcms-media-library-state="no-match"
+        className="flex min-h-[24rem] flex-col items-center justify-center rounded-lg border border-dashed border-border bg-muted/40 px-6 py-16 text-center"
+      >
+        <div className="mb-4 rounded-full border border-border bg-card p-4 shadow-sm">
+          <FileSearch className="size-7 text-foreground-muted" />
+        </div>
+        <h3 className="mb-1.5 font-heading text-xl font-bold text-foreground">
+          {emptyState.title}
+        </h3>
+        <p className="max-w-sm text-sm text-foreground-muted">
+          {emptyState.description}
+        </p>
+      </section>
+    );
+  }
+
   const panelClassName = [
-    "relative isolate flex min-h-[26rem] overflow-hidden rounded-lg border border-dashed bg-background-subtle text-center transition-colors",
-    isDragActive ? "border-primary bg-accent-subtle" : "border-border",
+    "relative isolate flex min-h-[26rem] flex-1 overflow-hidden rounded-2xl border-2 border-dashed bg-card transition-colors",
+    isDragActive ? "border-primary bg-accent-subtle" : "border-border/70",
   ].join(" ");
 
   return (
-    <section
-      data-mdcms-media-library-state={state.status}
-      className={panelClassName}
-    >
-      {state.status === "empty" ? (
-        <div
-          aria-hidden="true"
-          className="absolute inset-0 grid grid-cols-2 gap-3 p-6 opacity-35 sm:grid-cols-4"
-        >
-          {Array.from({ length: 8 }).map((_, index) => (
-            <div
-              key={index}
-              className="rounded-lg border border-border bg-background"
-            >
-              <div className="h-28 rounded-t-lg bg-muted" />
-              <div className="space-y-2 p-3">
-                <div className="h-2 rounded-full bg-border" />
-                <div className="h-2 w-2/3 rounded-full bg-border" />
-              </div>
-            </div>
-          ))}
+    <section data-mdcms-media-library-state="empty" className={panelClassName}>
+      <div
+        aria-hidden="true"
+        className="absolute inset-0 grid grid-cols-2 gap-4 p-6 opacity-50 sm:grid-cols-4 lg:grid-cols-5"
+      >
+        {Array.from({ length: 15 }).map((_, index) => (
+          <div
+            key={index}
+            className="rounded-lg border border-dashed border-border/50"
+            style={{
+              backgroundImage:
+                "repeating-linear-gradient(135deg, transparent 0 11px, rgba(120,120,135,0.06) 11px 12px)",
+            }}
+          />
+        ))}
+      </div>
+      <div
+        aria-hidden="true"
+        className="absolute inset-0"
+        style={{
+          background:
+            "radial-gradient(ellipse 60% 55% at 50% 46%, var(--card) 42%, transparent 78%)",
+        }}
+      />
+      <div className="relative m-auto flex max-w-md flex-col items-center px-6 py-16 text-center">
+        <div className="mb-5 flex size-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-lg">
+          <Upload className="size-6" />
         </div>
-      ) : null}
-      <div className="relative m-auto flex max-w-sm flex-col items-center px-6 py-16">
-        <div className="mb-4 rounded-full border border-border bg-background p-4 shadow-sm">
-          <Icon className="size-8 text-foreground-muted" />
-        </div>
-        <h3 className="mb-2 text-lg font-semibold">{emptyState.title}</h3>
-        <p className="text-sm text-foreground-muted">
+        <p className="mb-3 font-mono text-[11px] uppercase tracking-[0.12em] text-primary">
+          Media library
+        </p>
+        <h3 className="font-heading text-[28px] font-bold leading-tight tracking-tight text-foreground">
+          {emptyState.title}
+        </h3>
+        <p className="mt-3 max-w-sm text-sm leading-relaxed text-foreground-muted">
           {emptyState.description}
+        </p>
+        {canUploadMedia && onUploadFiles ? (
+          <>
+            <input
+              ref={inputRef}
+              aria-label="Upload media files"
+              type="file"
+              multiple
+              tabIndex={-1}
+              className="sr-only"
+              onChange={(event) => {
+                const files = collectMediaLibraryUploadFiles(
+                  event.currentTarget.files,
+                );
+                event.currentTarget.value = "";
+                onUploadFiles(files);
+              }}
+            />
+            <Button
+              type="button"
+              className="mt-6 gap-2"
+              onClick={() => inputRef.current?.click()}
+            >
+              <Upload className="size-4" />
+              Upload files
+            </Button>
+          </>
+        ) : null}
+        <p className="mt-5 font-mono text-[11px] text-foreground-muted">
+          PNG · JPG · SVG · MP4 · PDF
         </p>
       </div>
     </section>
   );
 }
 
+const MEDIA_KIND_CHIP_STYLES: Record<MediaAssetCategory, string> = {
+  image: "bg-accent-subtle text-primary",
+  video: "bg-muted text-foreground",
+  audio: "bg-muted text-foreground-muted",
+  document: "bg-destructive/10 text-destructive",
+  archive: "bg-muted text-foreground-muted",
+  other: "bg-muted text-foreground-muted",
+};
+
+function MediaKindChip({ category }: { category: MediaAssetCategory }) {
+  return (
+    <span
+      className={[
+        "inline-flex items-center rounded-sm px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide",
+        MEDIA_KIND_CHIP_STYLES[category],
+      ].join(" ")}
+    >
+      {getMediaAssetCategoryLabel(category)}
+    </span>
+  );
+}
+
 function MediaAssetActions({
   asset,
   onCopyUrl,
+  overlay = false,
 }: {
   asset: MediaAsset;
   onCopyUrl: (url: string) => void;
+  overlay?: boolean;
 }) {
+  const buttonClassName = overlay
+    ? "size-7 bg-card/90 text-foreground-muted shadow-sm hover:text-primary"
+    : "size-8";
+  const stop = (event: ReactMouseEvent<HTMLButtonElement>) =>
+    event.stopPropagation();
+
   return (
-    <div className="flex items-center justify-end gap-1">
+    <div className="flex items-center gap-1">
       <Button
         type="button"
         variant="ghost"
         size="icon"
-        className="size-8"
+        className={buttonClassName}
         aria-label={`Open asset ${asset.filename}`}
-        onClick={() => window.open(asset.url, "_blank", "noopener,noreferrer")}
+        onClick={(event) => {
+          stop(event);
+          window.open(asset.url, "_blank", "noopener,noreferrer");
+        }}
       >
         <ExternalLink className="size-4" />
       </Button>
@@ -866,11 +1083,27 @@ function MediaAssetActions({
         type="button"
         variant="ghost"
         size="icon"
-        className="size-8"
+        className={buttonClassName}
         aria-label={`Copy asset URL for ${asset.filename}`}
-        onClick={() => onCopyUrl(asset.url)}
+        onClick={(event) => {
+          stop(event);
+          onCopyUrl(asset.url);
+        }}
       >
         <Clipboard className="size-4" />
+      </Button>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className={buttonClassName}
+        aria-label={`Download asset ${asset.filename}`}
+        onClick={(event) => {
+          stop(event);
+          void triggerMediaAssetDownload(asset);
+        }}
+      >
+        <Download className="size-4" />
       </Button>
     </div>
   );
@@ -888,7 +1121,7 @@ function MediaAssetPreview({
   const previewFrameClassName =
     variant === "drawer"
       ? "flex aspect-video w-full items-center justify-center overflow-hidden rounded-lg border border-border bg-muted"
-      : "flex aspect-[4/3] w-full items-center justify-center overflow-hidden rounded-md bg-muted";
+      : "flex h-[132px] w-full items-center justify-center overflow-hidden rounded-md bg-muted";
 
   if (category === "image") {
     return (
@@ -911,6 +1144,7 @@ function MediaAssetPreview({
           preload="metadata"
           aria-label={`Preview video ${asset.filename}`}
           className="h-full w-full bg-black object-contain"
+          onClick={(event) => event.stopPropagation()}
         >
           <source src={asset.url} type={asset.mimeType} />
         </video>
@@ -927,6 +1161,7 @@ function MediaAssetPreview({
           preload="metadata"
           aria-label={`Preview audio ${asset.filename}`}
           className="min-w-0 flex-1"
+          onClick={(event) => event.stopPropagation()}
         >
           <source src={asset.url} type={asset.mimeType} />
         </audio>
@@ -951,18 +1186,18 @@ function MediaAssetPreview({
   );
 }
 
-function MediaAssetMetadataRow({
+function MediaPropertyRow({
   label,
-  value,
+  children,
 }: {
   label: string;
-  value: string;
+  children: ReactNode;
 }) {
   return (
-    <div className="flex items-start justify-between gap-4 border-b border-border py-3 last:border-b-0">
-      <dt className="text-xs uppercase text-foreground-muted">{label}</dt>
-      <dd className="max-w-48 truncate text-right text-sm text-foreground">
-        {value}
+    <div className="flex items-center justify-between gap-4 py-1.5">
+      <dt className="font-mono text-[11px] text-foreground-muted">{label}</dt>
+      <dd className="flex min-w-0 items-center justify-end font-mono text-[11px] text-foreground">
+        {children}
       </dd>
     </div>
   );
@@ -971,14 +1206,20 @@ function MediaAssetMetadataRow({
 function MediaAssetCard({
   asset,
   selected,
+  selectable = false,
+  checked = false,
   userMap,
   onSelect,
+  onToggleCheck,
   onCopyUrl,
 }: {
   asset: MediaAsset;
   selected: boolean;
+  selectable?: boolean;
+  checked?: boolean;
   userMap: ReadonlyMap<string, MediaLibraryUserSummary>;
   onSelect: (asset: MediaAsset) => void;
+  onToggleCheck?: (asset: MediaAsset) => void;
   onCopyUrl: (url: string) => void;
 }) {
   const category = getMediaAssetCategory(asset);
@@ -987,54 +1228,74 @@ function MediaAssetCard({
     userMap,
   );
   const cardClassName = [
-    "group overflow-hidden rounded-lg border bg-background transition-colors",
-    selected
-      ? "border-primary shadow-sm ring-1 ring-primary/30"
-      : "border-border hover:border-primary/40",
+    "group cursor-pointer select-none overflow-hidden rounded-[10px] border bg-card p-2 transition-colors",
+    checked
+      ? "border-primary shadow-sm ring-1 ring-primary"
+      : selected
+        ? "border-primary shadow-sm ring-1 ring-primary/30"
+        : "border-border/60 hover:border-border hover:shadow-sm",
   ].join(" ");
 
   return (
-    <article className={cardClassName}>
-      <div className="relative p-2">
+    <article className={cardClassName} onClick={() => onSelect(asset)}>
+      <div className="relative">
         <MediaAssetPreview asset={asset} category={category} />
-        <Badge
-          variant="outline"
-          className="absolute left-4 top-4 bg-background/90 text-[11px] shadow-sm"
-        >
-          {getMediaAssetCategoryLabel(category)}
-        </Badge>
+        <span className="absolute left-2 top-2 rounded-sm border border-border/50 bg-card/90 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-foreground-muted shadow-sm">
+          {getMediaAssetExtension(asset.filename)}
+        </span>
+        {selectable ? (
+          <button
+            type="button"
+            role="checkbox"
+            aria-checked={checked}
+            aria-label={`Select ${asset.filename} for bulk actions`}
+            onClick={(event) => {
+              event.stopPropagation();
+              onToggleCheck?.(asset);
+            }}
+            className={[
+              "absolute right-2 top-2 flex size-5 items-center justify-center rounded border bg-card/90 shadow-sm transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+              checked
+                ? "border-primary bg-primary text-primary-foreground opacity-100"
+                : "border-border text-transparent opacity-0 group-hover:opacity-100",
+            ].join(" ")}
+          >
+            <Check className="size-3.5" />
+          </button>
+        ) : null}
+        <div className="absolute bottom-2 right-2 opacity-0 transition-opacity group-hover:opacity-100">
+          <MediaAssetActions asset={asset} onCopyUrl={onCopyUrl} overlay />
+        </div>
       </div>
-      <div className="space-y-3 p-3 pt-1">
+      <div className="px-0.5 pb-0.5 pt-2.5">
         <button
           type="button"
           aria-pressed={selected}
           aria-label={`Select asset ${asset.filename}`}
           className="block w-full min-w-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
-          onClick={() => onSelect(asset)}
+          onClick={(event) => {
+            event.stopPropagation();
+            onSelect(asset);
+          }}
         >
-          <span className="block truncate text-sm font-medium text-foreground">
+          <span className="block truncate text-[13px] font-semibold text-foreground">
             {asset.filename}
           </span>
-          <span className="mt-1 block truncate text-xs text-foreground-muted">
-            {formatMediaAssetBytes(asset.sizeBytes)} /{" "}
-            {getMediaAssetExtension(asset.filename)}
-          </span>
         </button>
-        <div className="flex items-center justify-between gap-3">
-          <div
-            className="flex min-w-0 items-center gap-1.5"
+        <div className="mt-1.5 flex items-center gap-2 font-mono text-[10px] text-foreground-muted">
+          <MediaKindChip category={category} />
+          <span>{formatMediaAssetBytes(asset.sizeBytes)}</span>
+          <span
+            className="ml-auto flex min-w-0 items-center gap-1"
             title={uploader.secondaryLabel ?? uploader.label}
           >
-            <Avatar className="size-5">
-              <AvatarFallback className="font-mono text-[9px]">
+            <Avatar className="size-4">
+              <AvatarFallback className="font-mono text-[8px]">
                 {uploader.initials}
               </AvatarFallback>
             </Avatar>
-            <span className="truncate font-mono text-[11px] text-foreground-muted">
-              {uploader.label}
-            </span>
-          </div>
-          <MediaAssetActions asset={asset} onCopyUrl={onCopyUrl} />
+            <span className="truncate">{uploader.label}</span>
+          </span>
         </div>
       </div>
     </article>
@@ -1045,10 +1306,12 @@ function MediaAssetDetailDrawer({
   asset,
   userMap,
   onCopyUrl,
+  onClose,
 }: {
   asset: MediaAsset | null;
   userMap: ReadonlyMap<string, MediaLibraryUserSummary>;
   onCopyUrl: (url: string) => void;
+  onClose?: () => void;
 }) {
   if (!asset) {
     return (
@@ -1074,44 +1337,74 @@ function MediaAssetDetailDrawer({
       aria-label="Asset details"
       className="flex min-h-0 w-full shrink-0 flex-col overflow-y-auto border-t border-border bg-card lg:w-[340px] lg:border-l lg:border-t-0"
     >
-      <div className="sticky top-0 z-10 border-b border-border bg-card px-5 py-4">
+      <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-border bg-card px-5 py-4">
         <p className="font-mono text-[10px] uppercase tracking-wide text-foreground-muted">
           Asset details
         </p>
+        {onClose ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="-mr-1.5 size-7"
+            aria-label="Close asset details"
+            onClick={onClose}
+          >
+            <X className="size-4" />
+          </Button>
+        ) : null}
       </div>
 
       <div className="border-b border-border p-5">
         <MediaAssetPreview asset={asset} category={category} variant="drawer" />
-        <h2 className="mt-4 break-words text-base font-semibold text-foreground">
+        <h2 className="mt-4 break-words text-[15px] font-semibold text-foreground">
           {asset.filename}
         </h2>
       </div>
 
-      <div className="flex-1 space-y-5 p-5">
-        <div className="flex items-center justify-between gap-3">
-          <Badge variant="outline" className="text-xs">
-            {getMediaAssetCategoryLabel(category)}
-          </Badge>
-          <MediaAssetActions asset={asset} onCopyUrl={onCopyUrl} />
-        </div>
-
-        <dl className="rounded-md border border-border bg-background px-3">
-          <MediaAssetMetadataRow
-            label="Kind"
-            value={getMediaAssetCategoryLabel(category)}
-          />
-          <MediaAssetMetadataRow label="MIME type" value={asset.mimeType} />
-          <MediaAssetMetadataRow
-            label="Size"
-            value={formatMediaAssetBytes(asset.sizeBytes)}
-          />
-          <MediaAssetMetadataRow
-            label="Uploaded"
-            value={formatMediaAssetDate(asset.uploadedAt, "en-US")}
-          />
-          <MediaAssetMetadataRow label="Uploader" value={uploader.label} />
-          <MediaAssetMetadataRow label="Asset ID" value={asset.id} />
+      <div className="flex-1 p-5">
+        <p className="mb-3 font-mono text-[10px] uppercase tracking-wide text-foreground-muted">
+          Properties
+        </p>
+        <dl>
+          <MediaPropertyRow label="kind">
+            <MediaKindChip category={category} />
+          </MediaPropertyRow>
+          <MediaPropertyRow label="size">
+            {formatMediaAssetBytes(asset.sizeBytes)}
+          </MediaPropertyRow>
+          <MediaPropertyRow label="type">
+            <span className="truncate">{asset.mimeType}</span>
+          </MediaPropertyRow>
+          <MediaPropertyRow label="uploaded">
+            {formatMediaAssetDate(asset.uploadedAt, "en-US")}
+          </MediaPropertyRow>
+          <MediaPropertyRow label="by">
+            <span className="flex min-w-0 items-center gap-1.5">
+              <Avatar className="size-4">
+                <AvatarFallback className="font-mono text-[8px]">
+                  {uploader.initials}
+                </AvatarFallback>
+              </Avatar>
+              <span
+                className="truncate"
+                title={uploader.secondaryLabel ?? uploader.label}
+              >
+                {uploader.label}
+              </span>
+            </span>
+          </MediaPropertyRow>
+          <MediaPropertyRow label="asset id">
+            <span className="truncate">{asset.id}</span>
+          </MediaPropertyRow>
         </dl>
+      </div>
+
+      <div className="mt-auto flex items-center justify-between gap-2 border-t border-border p-4">
+        <span className="font-mono text-[10px] uppercase tracking-wide text-foreground-muted">
+          Actions
+        </span>
+        <MediaAssetActions asset={asset} onCopyUrl={onCopyUrl} />
       </div>
     </aside>
   );
@@ -1120,14 +1413,20 @@ function MediaAssetDetailDrawer({
 function MediaLibraryGallery({
   assets,
   selectedAsset,
+  selectable = false,
+  checkedIds,
   userMap,
   onSelectAsset,
+  onToggleCheck,
   onCopyUrl,
 }: {
   assets: MediaAsset[];
   selectedAsset: MediaAsset | null;
+  selectable?: boolean;
+  checkedIds?: ReadonlySet<string>;
   userMap: ReadonlyMap<string, MediaLibraryUserSummary>;
   onSelectAsset: (asset: MediaAsset) => void;
+  onToggleCheck?: (asset: MediaAsset) => void;
   onCopyUrl: (url: string) => void;
 }) {
   return (
@@ -1140,8 +1439,11 @@ function MediaLibraryGallery({
           key={asset.id}
           asset={asset}
           selected={selectedAsset?.id === asset.id}
+          selectable={selectable}
+          checked={checkedIds?.has(asset.id) ?? false}
           userMap={userMap}
           onSelect={onSelectAsset}
+          onToggleCheck={onToggleCheck}
           onCopyUrl={onCopyUrl}
         />
       ))}
@@ -1168,12 +1470,7 @@ function MediaLibraryPagination({
   );
 
   if (totalPages <= 1) {
-    return (
-      <p className="text-sm text-foreground-muted">
-        Showing {pagination.total} media asset
-        {pagination.total === 1 ? "" : "s"}
-      </p>
-    );
+    return null;
   }
 
   return (
@@ -1246,9 +1543,108 @@ function MediaLibraryPagination({
   );
 }
 
+function MediaLibraryBulkBar({
+  selectedCount,
+  isDeleting,
+  errorMessage,
+  onDownload,
+  onConfirmDelete,
+  onClear,
+}: {
+  selectedCount: number;
+  isDeleting: boolean;
+  errorMessage: string | null;
+  onDownload: () => void;
+  onConfirmDelete: () => void;
+  onClear: () => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+
+  return (
+    <div
+      data-mdcms-media-bulk-bar=""
+      role="region"
+      aria-label="Bulk media actions"
+      className="fixed bottom-6 left-1/2 z-40 flex max-w-[calc(100vw-3rem)] -translate-x-1/2 flex-wrap items-center gap-3 rounded-lg border border-border bg-card px-4 py-2.5 shadow-xl"
+    >
+      <span className="font-mono text-xs font-semibold text-foreground">
+        {selectedCount} selected
+      </span>
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="h-8 gap-1.5"
+        disabled={isDeleting}
+        onClick={onDownload}
+      >
+        <Download className="size-4" />
+        Download
+      </Button>
+      {confirming ? (
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-foreground-muted">
+            Delete {selectedCount} asset{selectedCount === 1 ? "" : "s"}?
+          </span>
+          <Button
+            type="button"
+            variant="destructive"
+            size="sm"
+            className="h-8 gap-1.5"
+            disabled={isDeleting}
+            onClick={onConfirmDelete}
+          >
+            {isDeleting ? <Loader2 className="size-4 animate-spin" /> : null}
+            Confirm delete
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-8"
+            disabled={isDeleting}
+            onClick={() => setConfirming(false)}
+          >
+            Cancel
+          </Button>
+        </div>
+      ) : (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-8 gap-1.5 text-destructive hover:text-destructive"
+          disabled={isDeleting}
+          onClick={() => setConfirming(true)}
+        >
+          <Trash2 className="size-4" />
+          Delete
+        </Button>
+      )}
+      {errorMessage ? (
+        <span role="alert" className="text-xs text-destructive">
+          {errorMessage}
+        </span>
+      ) : null}
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className="ml-auto size-8"
+        aria-label="Clear media selection"
+        disabled={isDeleting}
+        onClick={onClear}
+      >
+        <X className="size-4" />
+      </Button>
+    </div>
+  );
+}
+
 export function MediaLibraryPageView({
   state,
   canUploadMedia,
+  canDeleteMedia = false,
   uploadState,
   filters,
   searchInput,
@@ -1261,9 +1657,11 @@ export function MediaLibraryPageView({
   onPageChange,
   onRetry,
   onCopyUrl,
+  onDeleteAssets,
 }: {
   state: MediaLibraryPageState;
   canUploadMedia: boolean;
+  canDeleteMedia?: boolean;
   uploadState: MediaLibraryUploadState;
   filters: MediaLibraryFilters;
   searchInput: string;
@@ -1276,6 +1674,7 @@ export function MediaLibraryPageView({
   onPageChange: (offset: number) => void;
   onRetry: () => void;
   onCopyUrl: (url: string) => void;
+  onDeleteAssets?: (assets: MediaAsset[]) => void | Promise<void>;
 }) {
   const readyAssets = state.status === "ready" ? state.assets : [];
   const userMap = useMemo(
@@ -1283,10 +1682,90 @@ export function MediaLibraryPageView({
     [userSummaries],
   );
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
+  const [isDrawerOpen, setIsDrawerOpen] = useState(true);
   const selectedAsset =
     readyAssets.find((asset) => asset.id === selectedAssetId) ??
     readyAssets[0] ??
     null;
+  const isSelectable = canDeleteMedia;
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const readyAssetIdsKey = readyAssets.map((asset) => asset.id).join("\u0000");
+  const bulkSelectedAssets = readyAssets.filter((asset) =>
+    selectedIds.has(asset.id),
+  );
+
+  useEffect(() => {
+    setSelectedIds((previous) => {
+      if (previous.size === 0) {
+        return previous;
+      }
+
+      const visible = new Set(readyAssetIdsKey.split("\u0000"));
+      const next = new Set<string>();
+      let changed = false;
+
+      for (const id of previous) {
+        if (visible.has(id)) {
+          next.add(id);
+        } else {
+          changed = true;
+        }
+      }
+
+      return changed ? next : previous;
+    });
+  }, [readyAssetIdsKey]);
+
+  const handleToggleCheck = useCallback((asset: MediaAsset) => {
+    setDeleteError(null);
+    setSelectedIds((previous) => {
+      const next = new Set(previous);
+      if (next.has(asset.id)) {
+        next.delete(asset.id);
+      } else {
+        next.add(asset.id);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleClearSelection = useCallback(() => {
+    setSelectedIds(new Set());
+    setDeleteError(null);
+  }, []);
+
+  const handleBulkDownload = useCallback(() => {
+    void (async () => {
+      // Sequence downloads so each blob fetch / new-tab fallback completes
+      // before the next, avoiding the prior synchronous loop that clobbered
+      // all but the first asset.
+      for (const asset of bulkSelectedAssets) {
+        await triggerMediaAssetDownload(asset);
+      }
+    })();
+  }, [bulkSelectedAssets]);
+
+  const handleConfirmDelete = useCallback(() => {
+    if (!onDeleteAssets || bulkSelectedAssets.length === 0) {
+      return;
+    }
+
+    setIsDeleting(true);
+    setDeleteError(null);
+    void Promise.resolve(onDeleteAssets(bulkSelectedAssets))
+      .then(() => {
+        setSelectedIds(new Set());
+      })
+      .catch((error: unknown) => {
+        setDeleteError(readErrorMessage(error, "Failed to delete media."));
+      })
+      .finally(() => {
+        setIsDeleting(false);
+      });
+  }, [onDeleteAssets, bulkSelectedAssets]);
+
   const [isDragActive, setIsDragActive] = useState(false);
   const canDropUpload = canUploadMedia && uploadState.status !== "uploading";
   const handleDragOver = useCallback(
@@ -1380,6 +1859,8 @@ export function MediaLibraryPageView({
               <MediaLibraryEmptyPanel
                 state={state}
                 isDragActive={isDragActive}
+                canUploadMedia={canUploadMedia}
+                onUploadFiles={onUploadFiles}
               />
             </div>
           </section>
@@ -1403,27 +1884,63 @@ export function MediaLibraryPageView({
                 onFilterChange={onFilterChange}
                 onSortChange={onSortChange}
               />
-              <div className="min-h-0 flex-1 overflow-auto px-6 pb-8 pt-1 lg:px-8">
+              {isSelectable && selectedIds.size > 0 ? (
+                <MediaLibraryBulkBar
+                  selectedCount={selectedIds.size}
+                  isDeleting={isDeleting}
+                  errorMessage={deleteError}
+                  onDownload={handleBulkDownload}
+                  onConfirmDelete={handleConfirmDelete}
+                  onClear={handleClearSelection}
+                />
+              ) : null}
+              <div className="relative min-h-0 flex-1 overflow-auto px-6 pb-8 pt-1 lg:px-8">
                 <MediaLibraryGallery
                   assets={state.assets}
-                  selectedAsset={selectedAsset}
+                  selectedAsset={isDrawerOpen ? selectedAsset : null}
+                  selectable={isSelectable}
+                  checkedIds={selectedIds}
                   userMap={userMap}
-                  onSelectAsset={(asset) => setSelectedAssetId(asset.id)}
+                  onSelectAsset={(asset) => {
+                    setSelectedAssetId(asset.id);
+                    setIsDrawerOpen(true);
+                  }}
+                  onToggleCheck={handleToggleCheck}
                   onCopyUrl={onCopyUrl}
                 />
+                {isDragActive && canDropUpload ? (
+                  <div
+                    data-mdcms-media-drop-overlay=""
+                    aria-hidden="true"
+                    className="pointer-events-none absolute inset-3 z-10 flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-primary bg-accent-subtle/80 text-center backdrop-blur-[1px]"
+                  >
+                    <Upload className="size-7 text-primary" />
+                    <p className="text-base font-semibold text-foreground">
+                      Drop to upload
+                    </p>
+                    <p className="font-mono text-xs text-foreground-muted">
+                      Files are added to this library
+                    </p>
+                  </div>
+                ) : null}
               </div>
-              <div className="border-t border-border px-6 py-3 lg:px-8">
-                <MediaLibraryPagination
-                  pagination={state.pagination}
-                  onPageChange={onPageChange}
-                />
-              </div>
+              {state.pagination.total > MEDIA_LIBRARY_PAGE_SIZE ? (
+                <div className="border-t border-border px-6 py-3 lg:px-8">
+                  <MediaLibraryPagination
+                    pagination={state.pagination}
+                    onPageChange={onPageChange}
+                  />
+                </div>
+              ) : null}
             </div>
-            <MediaAssetDetailDrawer
-              asset={selectedAsset}
-              userMap={userMap}
-              onCopyUrl={onCopyUrl}
-            />
+            {isDrawerOpen && selectedAsset ? (
+              <MediaAssetDetailDrawer
+                asset={selectedAsset}
+                userMap={userMap}
+                onCopyUrl={onCopyUrl}
+                onClose={() => setIsDrawerOpen(false)}
+              />
+            ) : null}
           </section>
         )}
       </div>
@@ -1434,6 +1951,7 @@ export function MediaLibraryPageView({
 export default function MediaPage() {
   const canReadMedia = useCanReadMedia();
   const canUploadMedia = useCanUploadMedia();
+  const canDeleteMedia = useCanDeleteMedia();
   const canManageUsers = useCanManageUsers();
   const mountInfo = useStudioMountInfo();
   const sessionState = useStudioSession();
@@ -1533,6 +2051,38 @@ export default function MediaPage() {
     }
 
     return createStudioMediaUploadApi(
+      {
+        project: mountInfo.project,
+        environment: mountInfo.environment,
+        serverUrl: mountInfo.apiBaseUrl,
+      },
+      {
+        auth: mountInfo.auth,
+        csrfToken:
+          sessionState.status === "authenticated"
+            ? sessionState.csrfToken
+            : null,
+      },
+    );
+  }, [
+    mountInfo.project,
+    mountInfo.environment,
+    mountInfo.apiBaseUrl,
+    mountInfo.auth,
+    isMediaUploadAuthUsable,
+    sessionState,
+  ]);
+  const mediaDeleteApi = useMemo(() => {
+    if (
+      !mountInfo.project ||
+      !mountInfo.environment ||
+      !mountInfo.apiBaseUrl ||
+      !isMediaUploadAuthUsable
+    ) {
+      return null;
+    }
+
+    return createStudioMediaLibraryApi(
       {
         project: mountInfo.project,
         environment: mountInfo.environment,
@@ -1673,39 +2223,106 @@ export default function MediaPage() {
       }
 
       const totalFiles = files.length;
-      setUploadState({ status: "uploading", completedFiles: 0, totalFiles });
+      const fileProgress: MediaLibraryUploadFileProgress[] = files.map(
+        (file) => ({ name: file.name, status: "pending", percent: 0 }),
+      );
+      const publish = (completedFiles: number) => {
+        setUploadState({
+          status: "uploading",
+          completedFiles,
+          totalFiles,
+          files: fileProgress.map((entry) => ({ ...entry })),
+        });
+      };
+
+      publish(0);
 
       void (async () => {
-        try {
-          let completedFiles = 0;
+        let completedFiles = 0;
+        let firstError: unknown = null;
 
-          for (const file of files) {
-            await mediaUploadApi.upload(file);
-            completedFiles += 1;
-            setUploadState({
-              status: "uploading",
-              completedFiles,
-              totalFiles,
+        for (let index = 0; index < files.length; index += 1) {
+          const entry = fileProgress[index]!;
+          entry.status = "uploading";
+          publish(completedFiles);
+
+          try {
+            await mediaUploadApi.upload(files[index]!, {
+              onProgress: ({ loaded, total }) => {
+                entry.percent =
+                  total > 0 ? Math.round((loaded / total) * 100) : 0;
+                publish(completedFiles);
+              },
             });
+            entry.status = "done";
+            entry.percent = 100;
+            completedFiles += 1;
+          } catch (error) {
+            entry.status = "error";
+            firstError ??= error;
           }
 
-          setUploadState({ status: "idle" });
-          await query.refetch();
-        } catch (error) {
+          publish(completedFiles);
+        }
+
+        if (firstError !== null) {
           setUploadState({
             status: "error",
-            message: readErrorMessage(error, "Media upload failed."),
+            message: readErrorMessage(firstError, "Media upload failed."),
           });
+        } else {
+          setUploadState({ status: "idle" });
         }
+
+        await query.refetch();
       })();
     },
     [canUploadMedia, mediaUploadApi, query],
+  );
+  const handleDeleteAssets = useCallback(
+    async (assets: MediaAsset[]) => {
+      if (assets.length === 0) {
+        return;
+      }
+
+      if (!canDeleteMedia || mediaDeleteApi === null) {
+        throw new Error("You do not have permission to delete media assets.");
+      }
+
+      let failureCount = 0;
+      let firstError: unknown = null;
+
+      for (const asset of assets) {
+        try {
+          await mediaDeleteApi.delete(asset.id);
+        } catch (error) {
+          failureCount += 1;
+          firstError ??= error;
+        }
+      }
+
+      await query.refetch();
+
+      if (failureCount > 0) {
+        throw new RuntimeError({
+          code: "MEDIA_BULK_DELETE_FAILED",
+          message:
+            failureCount === assets.length
+              ? readErrorMessage(firstError, "Failed to delete media.")
+              : `Failed to delete ${failureCount} of ${assets.length} assets.`,
+          statusCode:
+            firstError instanceof RuntimeError ? firstError.statusCode : 500,
+        });
+      }
+    },
+    [canDeleteMedia, mediaDeleteApi, query],
   );
 
   return (
     <MediaLibraryPageView
       state={pageState}
       canUploadMedia={canUploadMedia && mediaUploadApi !== null}
+      canDeleteMedia={canDeleteMedia && mediaDeleteApi !== null}
       uploadState={uploadState}
       filters={filters}
       searchInput={searchInput}
@@ -1720,6 +2337,7 @@ export default function MediaPage() {
         void query.refetch();
       }}
       onCopyUrl={handleCopyUrl}
+      onDeleteAssets={handleDeleteAssets}
     />
   );
 }

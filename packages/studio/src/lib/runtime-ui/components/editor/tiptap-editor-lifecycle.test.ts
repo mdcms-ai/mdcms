@@ -134,7 +134,6 @@ test("MediaImagePickerView renders a library-first single-select image flow", ()
   );
 
   assert.match(markup, /Insert image/);
-  assert.match(markup, /Choose one image from the library/);
   assert.match(markup, /Search image library/);
   assert.match(markup, /aria-label="Select hero\.png"/);
   assert.match(markup, /Select one image/);

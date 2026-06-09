@@ -262,9 +262,12 @@ Normative behavior:
   zero and refetches the current media list.
 - When `capabilities.media.upload` is true, the route exposes a page-level
   upload control using the same auth and target routing contract as document
-  editor media uploads. While a batch is in flight, the route shows file-count
-  progress and disables additional upload starts. Successful uploads refresh the
-  current media list.
+  editor media uploads. Files dropped anywhere on the media surface also upload;
+  an active file drag shows a drop-to-upload affordance over the library. While
+  a batch is in flight, the route shows a docked upload panel that reports
+  per-file progress — each file's name, live completion percentage, and final
+  done or failed status — alongside the batch summary, and disables additional
+  upload starts. Successful uploads refresh the current media list.
 - Each media row or card shows an inline preview/playback region, filename, MIME
   type, coarse category, formatted size, uploader display name when resolvable
   otherwise uploaded actor id, upload date, and a safe action cluster.
@@ -276,14 +279,25 @@ Normative behavior:
   assets render inline browser playback controls with `preload="metadata"`.
   Other asset categories render a compact file/MIME placeholder.
 - Safe actions are client-only inspection actions: open the returned `url` in a
-  new tab and copy the returned `url` to the clipboard when the browser permits
-  it. These actions do not mutate backend media metadata or documents.
+  new tab, copy the returned `url` to the clipboard when the browser permits it,
+  and download the asset by its returned `url`. These actions do not mutate
+  backend media metadata or documents.
+- Selecting an asset opens a dismissible detail panel that shows the asset
+  preview and read-only metadata (filename, MIME type, coarse category, size,
+  uploader, upload date, asset id). The panel can be closed to return the grid
+  to full width; it never edits backend media metadata.
+- When `capabilities.media.delete` is true, the route supports page-local
+  multi-select: a per-asset selection control and a bulk action bar over the
+  selection. The bar can download the selected assets (the client-only download
+  action applied to each) or delete them. Bulk delete requires explicit
+  confirmation and issues one `DELETE /api/v1/media/:id` request per selected
+  asset using the media mutation contract in SPEC-010; it surfaces partial
+  failures, clears the selection on success, and refreshes the media list.
+  Selection and bulk controls are hidden when `capabilities.media.delete` is
+  false.
 - The route does not introduce tags, folders, collections, usage references,
   duplicate detection, image transformations, CDN controls, advanced asset
-  governance, full-text file-content search, or bulk media editing.
-- Deletion controls are not required on this route. If a future iteration adds
-  them, they must be gated by `capabilities.media.delete` and must use the media
-  mutation contracts in SPEC-010.
+  governance, full-text file-content search, or bulk media metadata editing.
 - Point-of-use copy must identify the basic library limits: filename search
   only, simple metadata filters only, and no advanced organization features.
 

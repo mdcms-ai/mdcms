@@ -244,3 +244,114 @@ test("list rejects invalid success responses", async () => {
       error.code === "MEDIA_LIBRARY_RESPONSE_INVALID",
   );
 });
+
+test("delete sends a routed DELETE with csrf for cookie auth", async () => {
+  const calls: Array<{ input: string | URL | Request; init?: RequestInit }> =
+    [];
+  const api = createApi({
+    auth: { mode: "cookie" },
+    csrfToken: "csrf-token",
+    fetcher: async (input, init) => {
+      calls.push({ input, init });
+      return new Response(
+        JSON.stringify({ data: { deleted: true, id: "asset 123/raw" } }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    },
+  });
+
+  const result = await api.delete("asset 123/raw");
+
+  assert.deepEqual(result, { deleted: true, id: "asset 123/raw" });
+  assert.equal(
+    String(calls[0]?.input),
+    "http://localhost:4000/api/v1/media/asset%20123%2Fraw",
+  );
+  assert.equal(calls[0]?.init?.method, "DELETE");
+  assert.equal(calls[0]?.init?.credentials, "include");
+  assert.equal(readHeader(calls[0]?.init, "x-mdcms-project"), "marketing-site");
+  assert.equal(readHeader(calls[0]?.init, "x-mdcms-environment"), "production");
+  assert.equal(readHeader(calls[0]?.init, "x-mdcms-csrf-token"), "csrf-token");
+});
+
+test("delete omits csrf and sends authorization for token auth", async () => {
+  const calls: Array<{ input: string | URL | Request; init?: RequestInit }> =
+    [];
+  const api = createApi({
+    auth: { mode: "token", token: "mdcms_key_test" },
+    fetcher: async (input, init) => {
+      calls.push({ input, init });
+      return new Response(
+        JSON.stringify({ data: { deleted: true, id: "asset_123" } }),
+      );
+    },
+  });
+
+  await api.delete("asset_123");
+
+  assert.equal(calls[0]?.init?.credentials, undefined);
+  assert.equal(
+    readHeader(calls[0]?.init, "authorization"),
+    "Bearer mdcms_key_test",
+  );
+  assert.equal(readHeader(calls[0]?.init, "x-mdcms-csrf-token"), null);
+});
+
+test("delete rejects missing csrf before issuing the request", async () => {
+  const api = createApi({
+    auth: { mode: "cookie" },
+    fetcher: async () => {
+      throw new Error("request should not be sent without csrf");
+    },
+  });
+
+  await assert.rejects(
+    () => api.delete("asset_123"),
+    (error: unknown) =>
+      error instanceof RuntimeError && error.code === "CSRF_TOKEN_MISSING",
+  );
+});
+
+test("delete surfaces route error code, status, and payload details", async () => {
+  const payload = {
+    code: "NOT_FOUND",
+    message: "Media asset not found.",
+    details: { id: "asset_missing" },
+  };
+  const api = createApi({
+    auth: { mode: "token", token: "mdcms_key_test" },
+    fetcher: async () =>
+      new Response(JSON.stringify(payload), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      }),
+  });
+
+  await assert.rejects(
+    () => api.delete("asset_missing"),
+    (error: unknown) => {
+      const details = error instanceof RuntimeError ? error.details : undefined;
+      return (
+        error instanceof RuntimeError &&
+        error.code === "NOT_FOUND" &&
+        error.statusCode === 404 &&
+        details?.operation === "DELETE /api/v1/media/asset_missing" &&
+        details.status === 404
+      );
+    },
+  );
+});
+
+test("delete rejects invalid success responses", async () => {
+  const api = createApi({
+    auth: { mode: "token", token: "mdcms_key_test" },
+    fetcher: async () => new Response(JSON.stringify({ data: { deleted: 1 } })),
+  });
+
+  await assert.rejects(
+    () => api.delete("asset_123"),
+    (error: unknown) =>
+      error instanceof RuntimeError &&
+      error.code === "MEDIA_LIBRARY_RESPONSE_INVALID",
+  );
+});

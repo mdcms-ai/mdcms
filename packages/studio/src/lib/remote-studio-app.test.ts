@@ -331,7 +331,7 @@ test("RemoteStudioApp renders the expanded admin route surfaces", () => {
   );
 
   assert.match(apiMarkup, /API Playground/);
-  assert.match(mediaMarkup, /Media Library/);
+  assert.match(mediaMarkup, /data-mdcms-media-library-state=/);
   assert.match(schemaMarkup, /data-mdcms-schema-page-state="loading"/);
   assert.match(schemaMarkup, /Schema/);
   assert.doesNotMatch(schemaMarkup, /Schema Builder/);

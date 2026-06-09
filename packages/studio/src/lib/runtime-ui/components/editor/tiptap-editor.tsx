@@ -47,6 +47,7 @@ import type { Mappable } from "@tiptap/pm/transform";
 
 import {
   Bold,
+  Check,
   ChevronsDownUp,
   ChevronsUpDown,
   Code,
@@ -139,7 +140,12 @@ import {
   stripBlockMarkers,
 } from "./tiptap-editor-utils.js";
 import { Button } from "../ui/button.js";
-import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover.js";
+import {
+  Popover,
+  PopoverAnchor,
+  PopoverContent,
+  PopoverTrigger,
+} from "../ui/popover.js";
 import { Separator } from "../ui/separator.js";
 import { cn } from "../../lib/utils.js";
 
@@ -728,9 +734,6 @@ export function MediaImagePickerView({
           <p className="truncate text-sm font-medium text-foreground">
             Insert image
           </p>
-          <p className="truncate text-xs text-foreground-muted">
-            Choose one image from the library.
-          </p>
         </div>
         <Button
           type="button"
@@ -820,9 +823,9 @@ export function MediaImagePickerView({
                       {selected ? (
                         <span
                           aria-hidden="true"
-                          className="absolute right-2 top-2 flex size-5 items-center justify-center rounded-full bg-primary text-[11px] font-semibold text-primary-foreground"
+                          className="absolute right-2 top-2 flex size-5 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm"
                         >
-                          1
+                          <Check className="size-3" />
                         </span>
                       ) : null}
                     </span>
@@ -1141,6 +1144,14 @@ function useTipTapEditorElement({
   const [linkPopoverOpen, setLinkPopoverOpen] = useState(false);
   const [linkInputValue, setLinkInputValue] = useState("");
   const [mediaPickerOpen, setMediaPickerOpen] = useState(false);
+  // When the picker is opened to change an existing image, anchor it to that
+  // image's on-screen rect instead of the toolbar button so it opens inline.
+  const [mediaPickerAnchorRect, setMediaPickerAnchorRect] = useState<{
+    top: number;
+    left: number;
+    width: number;
+    height: number;
+  } | null>(null);
   const [mediaPickerState, setMediaPickerState] =
     useState<MediaImagePickerState>(INITIAL_MEDIA_IMAGE_PICKER_STATE);
   // While the user drags an MDX component handle, the browser's default
@@ -1653,6 +1664,7 @@ function useTipTapEditorElement({
 
   const closeMediaPicker = useCallback(() => {
     mediaPickerInsertionTargetRef.current = null;
+    setMediaPickerAnchorRect(null);
     setMediaPickerOpen(false);
   }, []);
 
@@ -1750,6 +1762,7 @@ function useTipTapEditorElement({
 
       mediaPickerInsertionTargetRef.current =
         createCurrentMediaInsertionTarget();
+      setMediaPickerAnchorRect(null);
       setMediaPickerOpen(true);
     },
     [closeMediaPicker, createCurrentMediaInsertionTarget, isMediaPickerEnabled],
@@ -1804,6 +1817,20 @@ function useTipTapEditorElement({
         kind: "selection",
         bookmark: editor.state.selection.getBookmark(),
       };
+
+      const nodeDom = editor.view.nodeDOM(position);
+      if (nodeDom instanceof HTMLElement) {
+        const rect = nodeDom.getBoundingClientRect();
+        setMediaPickerAnchorRect({
+          top: rect.top,
+          left: rect.left,
+          width: rect.width,
+          height: rect.height,
+        });
+      } else {
+        setMediaPickerAnchorRect(null);
+      }
+
       setMediaPickerOpen(true);
     },
     [editor, isMediaPickerEnabled],
@@ -2951,6 +2978,21 @@ function useTipTapEditorElement({
                         <PopoverTrigger asChild>
                           <div>{imageToolbarButton}</div>
                         </PopoverTrigger>
+                        {mediaPickerAnchorRect ? (
+                          <PopoverAnchor asChild>
+                            <div
+                              aria-hidden="true"
+                              style={{
+                                position: "fixed",
+                                top: mediaPickerAnchorRect.top,
+                                left: mediaPickerAnchorRect.left,
+                                width: mediaPickerAnchorRect.width,
+                                height: mediaPickerAnchorRect.height,
+                                pointerEvents: "none",
+                              }}
+                            />
+                          </PopoverAnchor>
+                        ) : null}
                         <PopoverContent
                           className="w-80 p-3"
                           side="bottom"
