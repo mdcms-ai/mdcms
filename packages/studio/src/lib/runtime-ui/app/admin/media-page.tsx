@@ -55,7 +55,15 @@ import {
 } from "../../lib/media-library-api.js";
 import { createStudioMediaUploadApi } from "../../lib/media-upload-api.js";
 import type { StudioRuntimeAuth } from "../../../request-auth.js";
-import { useCanReadMedia, useCanUploadMedia } from "./capabilities-context.js";
+import {
+  useCanManageUsers,
+  useCanReadMedia,
+  useCanUploadMedia,
+} from "./capabilities-context.js";
+import {
+  createStudioUsersApi,
+  type UserWithGrants,
+} from "../../../users-api.js";
 import {
   deriveMediaLibraryEmptyState,
   formatMediaAssetBytes,
@@ -99,6 +107,15 @@ type MediaLibraryPaginationData = {
   limit: number;
   offset: number;
   hasMore: boolean;
+};
+
+type MediaLibraryUserSummary = Pick<UserWithGrants, "id" | "name" | "email">;
+
+type MediaLibraryUploaderDisplay = {
+  id: string;
+  label: string;
+  secondaryLabel: string | null;
+  initials: string;
 };
 
 export type MediaLibraryEmptyPageState = {
@@ -259,10 +276,43 @@ function getMediaLibraryFilterCount(filters: MediaLibraryFilters): number {
   ].filter(Boolean).length;
 }
 
+function createMediaLibraryUserMap(
+  users: readonly MediaLibraryUserSummary[],
+): Map<string, MediaLibraryUserSummary> {
+  const userMap = new Map<string, MediaLibraryUserSummary>();
+
+  for (const user of users) {
+    if (user.id.trim().length > 0) {
+      userMap.set(user.id, user);
+    }
+  }
+
+  return userMap;
+}
+
+function resolveMediaLibraryUploaderDisplay(
+  uploadedBy: string,
+  userMap: ReadonlyMap<string, MediaLibraryUserSummary>,
+): MediaLibraryUploaderDisplay {
+  const id = uploadedBy.trim();
+  const user = userMap.get(id);
+  const name = user?.name.trim() ?? "";
+  const email = user?.email.trim() ?? "";
+  const label = name || email || id || "Unknown";
+
+  return {
+    id,
+    label,
+    secondaryLabel: email && email !== label ? email : null,
+    initials: getUploaderInitials(label),
+  };
+}
+
 function createMediaUploaderOptions(
   assets: readonly MediaAsset[],
   selectedUploadedBy: string,
-): string[] {
+  userMap: ReadonlyMap<string, MediaLibraryUserSummary>,
+): MediaLibraryUploaderDisplay[] {
   const uploaders = new Set<string>();
 
   for (const asset of assets) {
@@ -275,7 +325,9 @@ function createMediaUploaderOptions(
     uploaders.add(selectedUploadedBy.trim());
   }
 
-  return Array.from(uploaders).sort((a, b) => a.localeCompare(b));
+  return Array.from(uploaders)
+    .map((uploader) => resolveMediaLibraryUploaderDisplay(uploader, userMap))
+    .sort((a, b) => a.label.localeCompare(b.label) || a.id.localeCompare(b.id));
 }
 
 function getUploaderInitials(value: string): string {
@@ -411,6 +463,7 @@ function MediaLibraryControlsBar({
   filters,
   sort,
   assets,
+  userMap,
   onFilterChange,
   onSortChange,
 }: {
@@ -418,6 +471,7 @@ function MediaLibraryControlsBar({
   filters: MediaLibraryFilters;
   sort: MediaLibrarySortOption;
   assets: readonly MediaAsset[];
+  userMap: ReadonlyMap<string, MediaLibraryUserSummary>;
   onFilterChange: (patch: Partial<MediaLibraryFilters>) => void;
   onSortChange: (value: MediaLibrarySortOption) => void;
 }) {
@@ -425,6 +479,7 @@ function MediaLibraryControlsBar({
   const uploaderOptions = createMediaUploaderOptions(
     assets,
     filters.uploadedBy,
+    userMap,
   );
   const selectedUploader = filters.uploadedBy.trim() || "__anyone";
   const countLabel = `${state.pagination.total} asset${
@@ -498,13 +553,13 @@ function MediaLibraryControlsBar({
                 Anyone
               </DropdownMenuRadioItem>
               {uploaderOptions.map((uploader) => (
-                <DropdownMenuRadioItem key={uploader} value={uploader}>
+                <DropdownMenuRadioItem key={uploader.id} value={uploader.id}>
                   <Avatar className="size-5">
                     <AvatarFallback className="font-mono text-[10px]">
-                      {getUploaderInitials(uploader)}
+                      {uploader.initials}
                     </AvatarFallback>
                   </Avatar>
-                  <span className="truncate">{uploader}</span>
+                  <span className="truncate">{uploader.label}</span>
                 </DropdownMenuRadioItem>
               ))}
             </DropdownMenuRadioGroup>
@@ -916,15 +971,21 @@ function MediaAssetMetadataRow({
 function MediaAssetCard({
   asset,
   selected,
+  userMap,
   onSelect,
   onCopyUrl,
 }: {
   asset: MediaAsset;
   selected: boolean;
+  userMap: ReadonlyMap<string, MediaLibraryUserSummary>;
   onSelect: (asset: MediaAsset) => void;
   onCopyUrl: (url: string) => void;
 }) {
   const category = getMediaAssetCategory(asset);
+  const uploader = resolveMediaLibraryUploaderDisplay(
+    asset.uploadedBy,
+    userMap,
+  );
   const cardClassName = [
     "group overflow-hidden rounded-lg border bg-background transition-colors",
     selected
@@ -960,9 +1021,19 @@ function MediaAssetCard({
           </span>
         </button>
         <div className="flex items-center justify-between gap-3">
-          <span className="truncate font-mono text-[11px] text-foreground-muted">
-            {asset.uploadedBy}
-          </span>
+          <div
+            className="flex min-w-0 items-center gap-1.5"
+            title={uploader.secondaryLabel ?? uploader.label}
+          >
+            <Avatar className="size-5">
+              <AvatarFallback className="font-mono text-[9px]">
+                {uploader.initials}
+              </AvatarFallback>
+            </Avatar>
+            <span className="truncate font-mono text-[11px] text-foreground-muted">
+              {uploader.label}
+            </span>
+          </div>
           <MediaAssetActions asset={asset} onCopyUrl={onCopyUrl} />
         </div>
       </div>
@@ -972,9 +1043,11 @@ function MediaAssetCard({
 
 function MediaAssetDetailDrawer({
   asset,
+  userMap,
   onCopyUrl,
 }: {
   asset: MediaAsset | null;
+  userMap: ReadonlyMap<string, MediaLibraryUserSummary>;
   onCopyUrl: (url: string) => void;
 }) {
   if (!asset) {
@@ -991,6 +1064,10 @@ function MediaAssetDetailDrawer({
   }
 
   const category = getMediaAssetCategory(asset);
+  const uploader = resolveMediaLibraryUploaderDisplay(
+    asset.uploadedBy,
+    userMap,
+  );
 
   return (
     <aside
@@ -1032,7 +1109,7 @@ function MediaAssetDetailDrawer({
             label="Uploaded"
             value={formatMediaAssetDate(asset.uploadedAt, "en-US")}
           />
-          <MediaAssetMetadataRow label="Uploader" value={asset.uploadedBy} />
+          <MediaAssetMetadataRow label="Uploader" value={uploader.label} />
           <MediaAssetMetadataRow label="Asset ID" value={asset.id} />
         </dl>
       </div>
@@ -1043,11 +1120,13 @@ function MediaAssetDetailDrawer({
 function MediaLibraryGallery({
   assets,
   selectedAsset,
+  userMap,
   onSelectAsset,
   onCopyUrl,
 }: {
   assets: MediaAsset[];
   selectedAsset: MediaAsset | null;
+  userMap: ReadonlyMap<string, MediaLibraryUserSummary>;
   onSelectAsset: (asset: MediaAsset) => void;
   onCopyUrl: (url: string) => void;
 }) {
@@ -1061,6 +1140,7 @@ function MediaLibraryGallery({
           key={asset.id}
           asset={asset}
           selected={selectedAsset?.id === asset.id}
+          userMap={userMap}
           onSelect={onSelectAsset}
           onCopyUrl={onCopyUrl}
         />
@@ -1173,6 +1253,7 @@ export function MediaLibraryPageView({
   filters,
   searchInput,
   sort,
+  userSummaries = [],
   onUploadFiles,
   onSearchInputChange,
   onFilterChange,
@@ -1187,6 +1268,7 @@ export function MediaLibraryPageView({
   filters: MediaLibraryFilters;
   searchInput: string;
   sort: MediaLibrarySortOption;
+  userSummaries?: readonly MediaLibraryUserSummary[];
   onUploadFiles: (files: File[]) => void;
   onSearchInputChange: (value: string) => void;
   onFilterChange: (patch: Partial<MediaLibraryFilters>) => void;
@@ -1196,6 +1278,10 @@ export function MediaLibraryPageView({
   onCopyUrl: (url: string) => void;
 }) {
   const readyAssets = state.status === "ready" ? state.assets : [];
+  const userMap = useMemo(
+    () => createMediaLibraryUserMap(userSummaries),
+    [userSummaries],
+  );
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
   const selectedAsset =
     readyAssets.find((asset) => asset.id === selectedAssetId) ??
@@ -1285,6 +1371,7 @@ export function MediaLibraryPageView({
                 filters={filters}
                 sort={sort}
                 assets={state.assets}
+                userMap={userMap}
                 onFilterChange={onFilterChange}
                 onSortChange={onSortChange}
               />
@@ -1312,6 +1399,7 @@ export function MediaLibraryPageView({
                 filters={filters}
                 sort={sort}
                 assets={state.assets}
+                userMap={userMap}
                 onFilterChange={onFilterChange}
                 onSortChange={onSortChange}
               />
@@ -1319,6 +1407,7 @@ export function MediaLibraryPageView({
                 <MediaLibraryGallery
                   assets={state.assets}
                   selectedAsset={selectedAsset}
+                  userMap={userMap}
                   onSelectAsset={(asset) => setSelectedAssetId(asset.id)}
                   onCopyUrl={onCopyUrl}
                 />
@@ -1332,6 +1421,7 @@ export function MediaLibraryPageView({
             </div>
             <MediaAssetDetailDrawer
               asset={selectedAsset}
+              userMap={userMap}
               onCopyUrl={onCopyUrl}
             />
           </section>
@@ -1344,6 +1434,7 @@ export function MediaLibraryPageView({
 export default function MediaPage() {
   const canReadMedia = useCanReadMedia();
   const canUploadMedia = useCanUploadMedia();
+  const canManageUsers = useCanManageUsers();
   const mountInfo = useStudioMountInfo();
   const sessionState = useStudioSession();
   const [filters, setFilters] = useState<MediaLibraryFilters>(defaultFilters);
@@ -1419,6 +1510,16 @@ export default function MediaPage() {
     mountInfo.apiBaseUrl,
     mountInfo.auth,
   ]);
+  const usersApi = useMemo(() => {
+    if (!mountInfo.apiBaseUrl) {
+      return null;
+    }
+
+    return createStudioUsersApi(
+      { serverUrl: mountInfo.apiBaseUrl },
+      { auth: mountInfo.auth },
+    );
+  }, [mountInfo.apiBaseUrl, mountInfo.auth]);
   const isMediaUploadAuthUsable =
     mountInfo.auth.mode === "token" || sessionState.status === "authenticated";
   const mediaUploadApi = useMemo(() => {
@@ -1460,6 +1561,12 @@ export default function MediaPage() {
       api!.list(createMediaLibraryListQuery({ filters, sort, offset })),
     enabled: canReadMedia && hasApiConfig && api !== null && queryKey !== null,
     retryOnMount: false,
+  });
+  const usersQuery = useQuery({
+    queryKey: ["users", mountInfo.apiBaseUrl],
+    queryFn: () => usersApi!.list(),
+    enabled: canReadMedia && canManageUsers && usersApi !== null,
+    retry: false,
   });
 
   useEffect(() => {
@@ -1603,6 +1710,7 @@ export default function MediaPage() {
       filters={filters}
       searchInput={searchInput}
       sort={sort}
+      userSummaries={usersQuery.data ?? []}
       onUploadFiles={handleUploadFiles}
       onSearchInputChange={setSearchInput}
       onFilterChange={handleFilterChange}

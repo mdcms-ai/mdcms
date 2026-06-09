@@ -231,6 +231,8 @@ assets in the active mounted target. It is backed by:
 - `GET /api/v1/media` for media metadata list/search/filter/sort/pagination
 - `POST /api/v1/media/upload` for page-level uploads when media upload
   capability is available
+- `GET /api/v1/auth/users` for display-only uploader name resolution when the
+  current principal is allowed to manage users
 
 Normative behavior:
 
@@ -246,9 +248,12 @@ Normative behavior:
   Studio debounces search changes before issuing list requests and resets
   pagination offset when search changes.
 - Filters map directly to the media list contract:
-  - MIME category select: `category=image|video|audio|document|archive|other`
-  - Uploader text input: exact `uploadedBy` actor id
-  - Upload date range date inputs: `uploadedFrom` and `uploadedTo`
+  - Type choices: `category=image|video|audio|document|archive|other`
+  - Uploaded-by choices submit the exact `uploadedBy` actor id, but Studio shows
+    a resolved user name and initials when that actor id matches a known user.
+    Unresolved actor ids fall back to the raw id.
+  - Upload date range query parameters remain `uploadedFrom` and `uploadedTo`;
+    the gallery surface does not expose date controls.
 - Sort controls map to the media list contract and expose uploaded date, name,
   and size in both directions. The default view is uploaded date descending.
 - Pagination is server-side with `limit` and `offset`. The Studio page size is
@@ -261,8 +266,11 @@ Normative behavior:
   progress and disables additional upload starts. Successful uploads refresh the
   current media list.
 - Each media row or card shows an inline preview/playback region, filename, MIME
-  type, coarse category, formatted size, uploaded actor id, upload date, and a
-  safe action cluster.
+  type, coarse category, formatted size, uploader display name when resolvable
+  otherwise uploaded actor id, upload date, and a safe action cluster.
+- Uploader resolution is presentation-only. Failure or denial from the users
+  endpoint must not block the media list; Studio must continue rendering media
+  assets with raw actor-id fallbacks.
 - Image assets render an inline thumbnail from the returned `url`; video assets
   render inline browser playback controls with `preload="metadata"`; audio
   assets render inline browser playback controls with `preload="metadata"`.

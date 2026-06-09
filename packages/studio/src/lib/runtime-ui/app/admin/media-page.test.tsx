@@ -30,6 +30,7 @@ import type {
   MediaLibraryFilters,
   MediaLibrarySortOption,
 } from "./media-library-model.js";
+import type { UserWithGrants } from "../../../users-api.js";
 
 const API_BASE_URL = "https://api.example.com";
 
@@ -73,6 +74,25 @@ const audioAsset: MediaAsset = {
   uploadedBy: "user_456",
   uploadedAt: "2026-06-05T12:10:00.000Z",
 };
+
+const mediaUsers: UserWithGrants[] = [
+  {
+    id: "user_123",
+    name: "Maciej K.",
+    email: "maciej@example.com",
+    image: null,
+    createdAt: "2026-06-01T12:00:00.000Z",
+    grants: [],
+  },
+  {
+    id: "user_456",
+    name: "Ada P.",
+    email: "ada@example.com",
+    image: null,
+    createdAt: "2026-06-01T12:00:00.000Z",
+    grants: [],
+  },
+];
 
 type FetchSpy = typeof fetch & {
   calls: Array<{ input: Parameters<typeof fetch>[0]; init?: RequestInit }>;
@@ -289,6 +309,44 @@ test("MediaPage renders empty state without active filters from a cached list re
   assert.match(markup, /data-mdcms-media-library-state="empty"/);
   assert.match(markup, /No media yet/);
   assert.match(markup, /Drop files here or use Upload media to add assets/);
+});
+
+test("MediaPage renders known media uploaders with user display names", () => {
+  const queryClient = createQueryClient();
+  queryClient.setQueryData(
+    createMediaLibraryQueryKey({
+      project: "marketing-site",
+      environment: "production",
+      serverUrl: API_BASE_URL,
+      authMode: "cookie",
+      authCacheKey: null,
+      filters: defaultFilters,
+      sort: "newest",
+      offset: 0,
+    }),
+    {
+      data: [heroAsset, audioAsset],
+      pagination: {
+        total: 2,
+        limit: MEDIA_LIBRARY_PAGE_SIZE,
+        offset: 0,
+        hasMore: false,
+      },
+    },
+  );
+  queryClient.setQueryData(["users", API_BASE_URL], mediaUsers);
+
+  const markup = renderWithProviders({
+    queryClient,
+    capabilities: { canManageUsers: true },
+  });
+
+  assert.match(markup, /Maciej K\./);
+  assert.match(markup, /Ada P\./);
+  assert.match(markup, /MK/);
+  assert.match(markup, /AP/);
+  assert.doesNotMatch(markup, />user_123</);
+  assert.doesNotMatch(markup, />user_456</);
 });
 
 test("media library query helpers scope token auth and reset stale target offsets", () => {
