@@ -7,6 +7,7 @@ export * from "./lib/contracts/current-principal-capabilities.js";
 export * from "./lib/contracts/content-scope.js";
 export * from "./lib/contracts/environments.js";
 export * from "./lib/contracts/extensibility.js";
+export * from "./lib/contracts/media.js";
 export * from "./lib/contracts/preview-token.js";
 export * from "./lib/contracts/schema.js";
 export * from "./lib/contracts/target-routing.js";

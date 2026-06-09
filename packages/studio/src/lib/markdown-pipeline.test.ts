@@ -46,6 +46,52 @@ test("markdown pipeline can serialize parsed document back to markdown", () => {
   assert.equal(serialized.length > 0, true);
 });
 
+test("markdown pipeline preserves native image nodes as markdown image syntax", () => {
+  const source = "![Hero image](https://cdn.example.com/hero.png)";
+  const parsed = parseMarkdownToDocument(source);
+
+  assert.deepEqual(parsed.content?.[0], {
+    type: "image",
+    attrs: {
+      src: "https://cdn.example.com/hero.png",
+      alt: "Hero image",
+      title: null,
+    },
+  });
+  assert.equal(serializeDocumentToMarkdown(parsed), source);
+});
+
+test("markdown pipeline preserves images between blocks as selectable block nodes", () => {
+  const source = [
+    "Before",
+    "",
+    "![Hero image](https://cdn.example.com/hero.png)",
+    "",
+    "After",
+  ].join("\n");
+  const parsed = parseMarkdownToDocument(source);
+
+  assert.deepEqual(parsed.content, [
+    {
+      type: "paragraph",
+      content: [{ type: "text", text: "Before" }],
+    },
+    {
+      type: "image",
+      attrs: {
+        src: "https://cdn.example.com/hero.png",
+        alt: "Hero image",
+        title: null,
+      },
+    },
+    {
+      type: "paragraph",
+      content: [{ type: "text", text: "After" }],
+    },
+  ]);
+  assert.equal(serializeDocumentToMarkdown(parsed), source);
+});
+
 test("markdown pipeline preserves wrapper MDX blocks with nested markdown children", () => {
   const source = [
     '<Callout type="warning">',

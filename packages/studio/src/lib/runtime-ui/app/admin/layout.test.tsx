@@ -6,6 +6,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { StudioMountContext } from "@mdcms/shared";
 
 import {
+  AdminCapabilitiesProvider,
+  useAdminCapabilities,
+  useCanReadMedia,
+} from "./capabilities-context.js";
+import {
   AdminTokenErrorStateView,
   createAdminLayoutCapabilitiesLoadInput,
   createAdminLayoutSessionLoadInput,
@@ -18,6 +23,26 @@ import {
   resolveAdminLayoutLoginRedirectPath,
   shouldRefetchAdminLayoutSessionOnResume,
 } from "./layout.js";
+
+function CapabilitiesProbe() {
+  const capabilities = useAdminCapabilities();
+  const canReadMedia = useCanReadMedia();
+
+  return createElement(
+    "pre",
+    null,
+    JSON.stringify({ ...capabilities, hookCanReadMedia: canReadMedia }),
+  );
+}
+
+function parseProbeMarkup(markup: string): Record<string, unknown> {
+  const json = markup
+    .replace(/^<pre>/, "")
+    .replace(/<\/pre>$/, "")
+    .replace(/&quot;/g, '"');
+
+  return JSON.parse(json) as Record<string, unknown>;
+}
 
 function createContext(): StudioMountContext {
   return {
@@ -49,6 +74,65 @@ test("createAdminLayoutCapabilitiesLoadInput maps the mounted project and enviro
     },
     auth: { mode: "cookie" },
   });
+});
+
+test("AdminCapabilitiesProvider exposes media capability defaults and mapped values", () => {
+  const defaultValues = parseProbeMarkup(
+    renderToStaticMarkup(createElement(CapabilitiesProbe)),
+  );
+  assert.equal(defaultValues.canReadMedia, false);
+  assert.equal(defaultValues.canUploadMedia, false);
+  assert.equal(defaultValues.canDeleteMedia, false);
+  assert.equal(defaultValues.hookCanReadMedia, false);
+
+  const mappedValues = parseProbeMarkup(
+    renderToStaticMarkup(
+      createElement(
+        AdminCapabilitiesProvider,
+        {
+          value: {
+            canReadSchema: true,
+            canCreateContent: true,
+            canPublishContent: false,
+            canUnpublishContent: false,
+            canDeleteContent: false,
+            canManageUsers: false,
+            canManageSettings: false,
+            canReadMedia: true,
+            canUploadMedia: true,
+            canDeleteMedia: false,
+          },
+        },
+        createElement(CapabilitiesProbe),
+      ),
+    ),
+  );
+
+  assert.equal(mappedValues.canReadMedia, true);
+  assert.equal(mappedValues.canUploadMedia, true);
+  assert.equal(mappedValues.canDeleteMedia, false);
+  assert.equal(mappedValues.hookCanReadMedia, true);
+
+  const undefinedValues = parseProbeMarkup(
+    renderToStaticMarkup(
+      createElement(
+        AdminCapabilitiesProvider,
+        {
+          value: {
+            canReadMedia: undefined,
+            canUploadMedia: undefined,
+            canDeleteMedia: undefined,
+          },
+        },
+        createElement(CapabilitiesProbe),
+      ),
+    ),
+  );
+
+  assert.equal(undefinedValues.canReadMedia, false);
+  assert.equal(undefinedValues.canUploadMedia, false);
+  assert.equal(undefinedValues.canDeleteMedia, false);
+  assert.equal(undefinedValues.hookCanReadMedia, false);
 });
 
 test("createAdminLayoutCapabilitiesLoadInput returns null without an active document route", () => {

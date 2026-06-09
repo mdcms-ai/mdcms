@@ -113,6 +113,8 @@ export type ContentDocumentPageReadyState = {
    * not requestable.
    */
   canAi?: boolean;
+  canReadMedia: boolean;
+  canUploadMedia: boolean;
   publishDialogOpen: boolean;
   publishChangeSummary: string;
   publishState: "idle" | "publishing";
@@ -625,6 +627,30 @@ function resolveContentDocumentAiCapability(input: {
   return schemaState.capabilities.ai.use === true;
 }
 
+function resolveContentDocumentMediaUploadCapability(input: {
+  schemaState?: StudioSchemaState;
+}): boolean {
+  const schemaState = input.schemaState;
+
+  if (!schemaState || schemaState.status !== "ready") {
+    return false;
+  }
+
+  return schemaState.capabilities.media.upload === true;
+}
+
+function resolveContentDocumentMediaReadCapability(input: {
+  schemaState?: StudioSchemaState;
+}): boolean {
+  const schemaState = input.schemaState;
+
+  if (!schemaState || schemaState.status !== "ready") {
+    return false;
+  }
+
+  return schemaState.capabilities.media.read === true;
+}
+
 export function resolveSchemaHashForAi(
   schemaState?: StudioSchemaState,
 ): string {
@@ -721,6 +747,12 @@ function createReadyState(input: {
   const canAi = resolveContentDocumentAiCapability({
     schemaState: input.schemaState,
   });
+  const canReadMedia = resolveContentDocumentMediaReadCapability({
+    schemaState: input.schemaState,
+  });
+  const canUploadMedia = resolveContentDocumentMediaUploadCapability({
+    schemaState: input.schemaState,
+  });
 
   return {
     status: "ready",
@@ -736,6 +768,8 @@ function createReadyState(input: {
     saveState: "saved",
     canWrite: writeAccess.canWrite,
     canAi,
+    canReadMedia,
+    canUploadMedia,
     publishDialogOpen: false,
     publishChangeSummary: "",
     publishState: "idle",
@@ -911,12 +945,20 @@ export function applySchemaStateToReadyState(input: {
   const canAi = resolveContentDocumentAiCapability({
     schemaState: input.schemaState,
   });
+  const canReadMedia = resolveContentDocumentMediaReadCapability({
+    schemaState: input.schemaState,
+  });
+  const canUploadMedia = resolveContentDocumentMediaUploadCapability({
+    schemaState: input.schemaState,
+  });
 
   return {
     ...input.state,
     schemaState: input.schemaState,
     canWrite: writeAccess.canWrite,
     canAi,
+    canReadMedia,
+    canUploadMedia,
     writeMessage: writeAccess.writeMessage,
   };
 }

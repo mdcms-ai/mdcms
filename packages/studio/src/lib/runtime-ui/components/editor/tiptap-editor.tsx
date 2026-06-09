@@ -14,6 +14,7 @@ import {
   Fragment as ReactFragment,
   use,
   useCallback,
+  type ChangeEvent as ReactChangeEvent,
   useEffect,
   useImperativeHandle,
   useMemo,
@@ -23,11 +24,16 @@ import {
   type DragEvent as ReactDragEvent,
   type ErrorInfo,
   type Ref,
+  type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
 
-import type { StudioMountContext } from "@mdcms/shared";
+import {
+  isRuntimeErrorLike,
+  type MediaAsset,
+  type StudioMountContext,
+} from "@mdcms/shared";
 import {
   EditorContent,
   ReactNodeViewRenderer,
@@ -36,6 +42,8 @@ import {
   type ReactNodeViewProps,
 } from "@tiptap/react";
 import { Fragment, Slice } from "@tiptap/pm/model";
+import type { SelectionBookmark } from "@tiptap/pm/state";
+import type { Mappable } from "@tiptap/pm/transform";
 
 import {
   Bold,
@@ -56,11 +64,13 @@ import {
   Plus,
   Quote,
   Redo,
+  RefreshCw,
   Strikethrough,
   Table2,
   Trash2,
   Underline as UnderlineIcon,
   Undo,
+  Upload,
 } from "lucide-react";
 import { createEditorExtensions } from "../../../editor-extensions.js";
 import {
@@ -70,6 +80,7 @@ import {
 import { MdxComponentExtension } from "../../../mdx-component-extension.js";
 import { MdxIntrinsicElementExtension } from "../../../mdx-intrinsic-element-extension.js";
 import { MdxRawJsxExtension } from "../../../mdx-raw-jsx-extension.js";
+import { StudioImageExtension } from "../../../studio-image-extension.js";
 import { CodeBlockWithNodeView } from "./code-block-with-node-view.js";
 import {
   MdxComponentCollapseProvider,
@@ -83,6 +94,8 @@ import {
   createMdxComponentInsertContent,
   isMdxComponentVisibleInInsertUi,
 } from "./mdx-component-catalog.js";
+import { createMediaAssetsInsertContent } from "./media-markdown-insertion.js";
+import { ImageNodeView } from "./image-node-view.js";
 import { MdxComponentPicker } from "./mdx-component-picker.js";
 import { type MdxPropsPanelSelection } from "./mdx-props-panel.js";
 import {
@@ -235,6 +248,22 @@ export type TipTapEditorSelectionInfo = {
   anchorRect: TipTapEditorAnchorRect;
 };
 
+export type TipTapEditorMediaUploadState = {
+  canUpload: boolean;
+  isUploading: boolean;
+  completedFiles?: number;
+  totalFiles?: number;
+  errorMessage?: string;
+  unavailableMessage?: string;
+  uploadFiles: (files: File[]) => Promise<MediaAsset[]>;
+};
+
+export type TipTapEditorMediaLibraryState = {
+  canBrowse: boolean;
+  unavailableMessage?: string;
+  listImages: () => Promise<MediaAsset[]>;
+};
+
 interface TipTapEditorProps {
   ref?: Ref<TipTapEditorHandle>;
   initialContent?: string;
@@ -243,6 +272,8 @@ interface TipTapEditorProps {
   context?: StudioMountContext;
   readOnly?: boolean;
   forbidden?: boolean;
+  mediaUpload?: TipTapEditorMediaUploadState;
+  mediaLibrary?: TipTapEditorMediaLibraryState;
   onActiveMdxComponentChange?: (
     selection: MdxPropsPanelSelection | null,
   ) => void;
@@ -392,6 +423,8 @@ type TipTapNodeViewContextValue = {
   context?: StudioMountContext;
   readOnly: boolean;
   forbidden: boolean;
+  onChangeImageSource?: (position: number) => void;
+  onDeleteImage?: (position: number) => void;
 };
 
 const TipTapNodeViewContext = createContext<TipTapNodeViewContextValue>({
@@ -407,6 +440,18 @@ function TipTapMdxComponentNodeView(props: ReactNodeViewProps) {
       context={nodeViewContext.context}
       readOnly={nodeViewContext.readOnly}
       forbidden={nodeViewContext.forbidden}
+    />
+  );
+}
+
+function TipTapImageNodeView(props: ReactNodeViewProps) {
+  const nodeViewContext = use(TipTapNodeViewContext);
+  return (
+    <ImageNodeView
+      {...props}
+      readOnly={nodeViewContext.readOnly || nodeViewContext.forbidden}
+      onChangeImage={nodeViewContext.onChangeImageSource}
+      onDeleteImage={nodeViewContext.onDeleteImage}
     />
   );
 }
@@ -435,9 +480,90 @@ type ToolbarButtonProps = {
   disabled?: boolean;
   className?: string;
   onClick?: () => void;
+  ariaControls?: string;
+  ariaExpanded?: boolean;
+  dataMdcmsMediaPickerToggle?: boolean;
 };
 
 type TipTapEditorInstance = NonNullable<ReturnType<typeof useEditor>>;
+
+type MediaUploadInsertEditor = {
+  commands: Pick<
+    TipTapEditorInstance["commands"],
+    "insertContent" | "insertContentAt"
+  >;
+};
+
+type MediaUploadResolvedInsertion = {
+  position?: number;
+  selection?: { from: number; to: number };
+};
+
+type ActiveMediaUploadInsertionTarget =
+  | {
+      kind: "position";
+      position: number;
+    }
+  | {
+      kind: "selection";
+      bookmark: SelectionBookmark;
+    };
+
+export async function insertUploadedMediaFiles<
+  TEditor extends MediaUploadInsertEditor,
+>(input: {
+  editor: TEditor;
+  mediaUpload: TipTapEditorMediaUploadState;
+  files: File[];
+  position?: number;
+  selection?: { from: number; to: number };
+  canInsert?: () => boolean;
+  resolveInsertion?: () => MediaUploadResolvedInsertion | null;
+  onInserted: (editor: TEditor) => void;
+}): Promise<boolean> {
+  if (
+    input.files.length === 0 ||
+    !input.mediaUpload.canUpload ||
+    input.mediaUpload.isUploading
+  ) {
+    return false;
+  }
+
+  const assets = await input.mediaUpload.uploadFiles(input.files);
+
+  if (input.canInsert && !input.canInsert()) {
+    return false;
+  }
+
+  const content = createMediaAssetsInsertContent(assets);
+
+  if (content.length === 0) {
+    return false;
+  }
+
+  const insertion = input.resolveInsertion?.() ?? {
+    ...(typeof input.position === "number" ? { position: input.position } : {}),
+    ...(input.selection ? { selection: input.selection } : {}),
+  };
+
+  if (insertion === null) {
+    return false;
+  }
+
+  const didInsert =
+    typeof insertion.position === "number"
+      ? input.editor.commands.insertContentAt(insertion.position, content)
+      : insertion.selection
+        ? input.editor.commands.insertContentAt(insertion.selection, content)
+        : input.editor.commands.insertContent(content);
+
+  if (!didInsert) {
+    return false;
+  }
+
+  input.onInserted(input.editor);
+  return true;
+}
 
 type SlashPickerState = {
   source: "slash" | null;
@@ -503,6 +629,232 @@ const ZERO_ANCHOR_RECT: TipTapEditorAnchorRect = {
   height: 0,
 };
 
+const MEDIA_UPLOAD_UNAVAILABLE_MESSAGE =
+  "Upload media unavailable in this target.";
+const MEDIA_LIBRARY_UNAVAILABLE_MESSAGE =
+  "Image library unavailable in this target.";
+const MEDIA_PICKER_ID = "mdcms-editor-media-picker";
+
+type MediaImagePickerState =
+  | {
+      status: "idle";
+      assets: MediaAsset[];
+    }
+  | {
+      status: "loading";
+      assets: MediaAsset[];
+    }
+  | {
+      status: "ready";
+      assets: MediaAsset[];
+    }
+  | {
+      status: "error";
+      assets: MediaAsset[];
+      errorMessage: string;
+    };
+
+const INITIAL_MEDIA_IMAGE_PICKER_STATE: MediaImagePickerState = {
+  status: "idle",
+  assets: [],
+};
+
+function formatMediaLibraryError(error: unknown): string {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message;
+  }
+
+  return "Image library could not be loaded.";
+}
+
+function preventMediaPickerButtonMouseDown(
+  event: ReactMouseEvent<HTMLButtonElement>,
+) {
+  event.preventDefault();
+}
+
+function MediaImagePickerView({
+  id,
+  state,
+  canBrowse,
+  canUpload,
+  isUploading,
+  unavailableMessage,
+  onSelect,
+  onUpload,
+  onRetry,
+}: {
+  id: string;
+  state: MediaImagePickerState;
+  canBrowse: boolean;
+  canUpload: boolean;
+  isUploading: boolean;
+  unavailableMessage: string;
+  onSelect: (asset: MediaAsset) => void;
+  onUpload: () => void;
+  onRetry: () => void;
+}) {
+  const showAssets = canBrowse && state.assets.length > 0;
+
+  return (
+    <div id={id} className="space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-medium text-foreground">
+            Image library
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          disabled={!canUpload || isUploading}
+          onMouseDown={preventMediaPickerButtonMouseDown}
+          onClick={onUpload}
+          className="shrink-0 gap-1.5"
+        >
+          <Upload className="size-3.5" />
+          <span>Upload new</span>
+        </Button>
+      </div>
+
+      {!canBrowse ? (
+        <p className="rounded-md border border-border bg-muted px-3 py-2 text-xs text-foreground-muted">
+          {unavailableMessage}
+        </p>
+      ) : state.status === "loading" && state.assets.length === 0 ? (
+        <p className="rounded-md border border-border bg-muted px-3 py-2 text-xs text-foreground-muted">
+          Loading images...
+        </p>
+      ) : state.status === "error" && state.assets.length === 0 ? (
+        <div className="space-y-2 rounded-md border border-destructive/20 bg-destructive/5 px-3 py-2">
+          <p className="text-xs text-destructive">{state.errorMessage}</p>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onMouseDown={preventMediaPickerButtonMouseDown}
+            onClick={onRetry}
+            className="h-7 gap-1.5 px-2 text-xs"
+          >
+            <RefreshCw className="size-3" />
+            <span>Retry</span>
+          </Button>
+        </div>
+      ) : !showAssets ? (
+        <p className="rounded-md border border-border bg-muted px-3 py-2 text-xs text-foreground-muted">
+          No images in the library yet.
+        </p>
+      ) : (
+        <div className="grid max-h-72 grid-cols-2 gap-2 overflow-y-auto pr-1">
+          {state.assets.map((asset) => (
+            <button
+              key={asset.id}
+              type="button"
+              aria-label={`Insert ${asset.filename}`}
+              title={asset.filename}
+              onMouseDown={preventMediaPickerButtonMouseDown}
+              onClick={() => onSelect(asset)}
+              className="group min-w-0 rounded-md border border-border bg-background p-1 text-left transition-colors hover:border-primary/40 hover:bg-accent-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+            >
+              <span className="block aspect-[4/3] overflow-hidden rounded-sm bg-muted">
+                <img
+                  src={asset.url}
+                  alt=""
+                  className="h-full w-full object-cover transition-transform group-hover:scale-[1.02]"
+                />
+              </span>
+              <span className="mt-1 block truncate px-0.5 text-xs text-foreground-muted">
+                {asset.filename}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function resolveMediaUploadProgress(
+  mediaUpload: TipTapEditorMediaUploadState | undefined,
+): { completedFiles: number; totalFiles: number; percent: number } | null {
+  if (!mediaUpload?.isUploading || !mediaUpload.totalFiles) {
+    return null;
+  }
+
+  const totalFiles = Math.max(0, Math.floor(mediaUpload.totalFiles));
+
+  if (totalFiles === 0) {
+    return null;
+  }
+
+  const completedFiles = Math.min(
+    totalFiles,
+    Math.max(0, Math.floor(mediaUpload.completedFiles ?? 0)),
+  );
+
+  return {
+    completedFiles,
+    totalFiles,
+    percent: Math.round((completedFiles / totalFiles) * 100),
+  };
+}
+
+function collectMediaUploadFiles(
+  files: FileList | readonly File[] | null | undefined,
+): File[] {
+  return files ? Array.from(files) : [];
+}
+
+export function resolveMediaUploadFileEvent(input: {
+  canUpload: boolean;
+  files: FileList | readonly File[] | null | undefined;
+  types?: readonly string[] | null;
+}): {
+  files: File[];
+  shouldPreventDefault: boolean;
+  shouldUpload: boolean;
+} {
+  const files = collectMediaUploadFiles(input.files);
+  const hasFilesPayload =
+    files.length > 0 || Boolean(input.types?.includes("Files"));
+
+  return {
+    files,
+    shouldPreventDefault: hasFilesPayload,
+    shouldUpload: input.canUpload && files.length > 0,
+  };
+}
+
+function mapMediaUploadInsertionTarget(
+  target: ActiveMediaUploadInsertionTarget,
+  transaction: { mapping: Mappable },
+) {
+  if (target.kind === "position") {
+    target.position = transaction.mapping.map(target.position, 1);
+    return;
+  }
+
+  target.bookmark = target.bookmark.map(transaction.mapping);
+}
+
+function resolveMediaUploadInsertionTarget(
+  target: ActiveMediaUploadInsertionTarget,
+  editor: TipTapEditorInstance,
+): MediaUploadResolvedInsertion {
+  if (target.kind === "position") {
+    return { position: target.position };
+  }
+
+  const selection = target.bookmark.resolve(editor.state.doc);
+  return {
+    selection: {
+      from: selection.from,
+      to: selection.to,
+    },
+  };
+}
+
 function rectForRange(
   editor: TipTapEditorInstance,
   from: number,
@@ -535,6 +887,9 @@ function ToolbarButton({
   disabled = false,
   className,
   onClick,
+  ariaControls,
+  ariaExpanded,
+  dataMdcmsMediaPickerToggle = false,
 }: ToolbarButtonProps) {
   return (
     <Button
@@ -543,7 +898,12 @@ function ToolbarButton({
       size="sm"
       disabled={disabled}
       aria-label={label}
+      aria-controls={ariaControls}
+      aria-expanded={ariaExpanded}
       title={label}
+      data-mdcms-media-picker-toggle={
+        dataMdcmsMediaPickerToggle ? "true" : undefined
+      }
       onClick={onClick}
       className={cn(
         "h-[30px] w-[30px] rounded-sm border-0 px-0 font-mono text-[13px] text-foreground-muted hover:bg-accent-subtle hover:text-foreground",
@@ -642,6 +1002,8 @@ function useTipTapEditorElement({
   context,
   readOnly = false,
   forbidden = false,
+  mediaUpload,
+  mediaLibrary,
   onActiveMdxComponentChange,
   onSelectionTextChange,
   canvasHeader,
@@ -656,15 +1018,24 @@ function useTipTapEditorElement({
     () => catalogComponents.filter(isMdxComponentVisibleInInsertUi),
     [catalogComponents],
   );
-  const nodeViewContext = useMemo(
-    () => ({ context, readOnly, forbidden }),
-    [context, forbidden, readOnly],
-  );
   const visualCompositionPaletteGroups = useMemo(
     () => createVisualCompositionPaletteGroups(catalogComponents),
     [catalogComponents],
   );
   const isEditorReadOnly = readOnly || forbidden;
+  const mediaUploadUnavailableMessage =
+    mediaUpload?.unavailableMessage?.trim() || MEDIA_UPLOAD_UNAVAILABLE_MESSAGE;
+  const mediaLibraryUnavailableMessage =
+    mediaLibrary?.unavailableMessage?.trim() ||
+    MEDIA_LIBRARY_UNAVAILABLE_MESSAGE;
+  const isMediaUploadEnabled =
+    Boolean(mediaUpload?.canUpload) &&
+    !mediaUpload?.isUploading &&
+    !isEditorReadOnly;
+  const isMediaLibraryBrowseEnabled =
+    Boolean(mediaLibrary?.canBrowse) && !isEditorReadOnly;
+  const isMediaPickerEnabled =
+    isMediaUploadEnabled || isMediaLibraryBrowseEnabled;
   const collapseController = useMdxComponentCollapseController();
   const [visualPaletteOpen, setVisualPaletteOpen] = useState(false);
   const [visualPaletteQuery, setVisualPaletteQuery] = useState("");
@@ -685,6 +1056,9 @@ function useTipTapEditorElement({
   } = slashPickerState;
   const [linkPopoverOpen, setLinkPopoverOpen] = useState(false);
   const [linkInputValue, setLinkInputValue] = useState("");
+  const [mediaPickerOpen, setMediaPickerOpen] = useState(false);
+  const [mediaPickerState, setMediaPickerState] =
+    useState<MediaImagePickerState>(INITIAL_MEDIA_IMAGE_PICKER_STATE);
   // While the user drags an MDX component handle, the browser's default
   // pointer behavior would let the cursor paint a text selection over
   // sibling block content as it sweeps across the editor. Track the drag
@@ -692,6 +1066,25 @@ function useTipTapEditorElement({
   // auto-scroll loop while the canvas pane is the scrollable ancestor.
   const [isMdxDragging, setIsMdxDragging] = useState(false);
   const editorWrapperRef = useRef<HTMLDivElement | null>(null);
+  const mediaUploadInputRef = useRef<HTMLInputElement | null>(null);
+  const mediaUploadInFlightRef = useRef(false);
+  const mediaUploadInsertionTargetsRef = useRef<
+    Set<ActiveMediaUploadInsertionTarget>
+  >(new Set());
+  const mediaPickerInsertionTargetRef =
+    useRef<ActiveMediaUploadInsertionTarget | null>(null);
+  const mediaPickerLoadRequestRef = useRef(0);
+  const activeEditorRef = useRef<TipTapEditorInstance | null>(null);
+  const isEditorReadOnlyRef = useRef(isEditorReadOnly);
+  const mediaPasteHandlerRef = useRef<
+    ((event: ClipboardEvent) => boolean) | null
+  >(null);
+  const mediaDropHandlerRef = useRef<((event: DragEvent) => boolean) | null>(
+    null,
+  );
+  const mediaDragOverHandlerRef = useRef<
+    ((event: DragEvent) => boolean) | null
+  >(null);
   const pickerSourceRef = useRef(pickerSource);
   pickerSourceRef.current = pickerSource;
   const slashPickerOpen =
@@ -1025,6 +1418,11 @@ function useTipTapEditorElement({
       // only to the handful of mark/node-active flags it actually reads.
       extensions: createEditorExtensions({
         codeBlock: CodeBlockWithNodeView,
+        image: StudioImageExtension.extend({
+          addNodeView() {
+            return ReactNodeViewRenderer(TipTapImageNodeView);
+          },
+        }),
         mdxRawJsx: MdxRawJsxExtension.extend({
           addNodeView() {
             return ReactNodeViewRenderer(MdxRawJsxNodeView);
@@ -1104,8 +1502,32 @@ function useTipTapEditorElement({
           }
           return false;
         },
+        handlePaste: (_view, event) =>
+          mediaPasteHandlerRef.current?.(event) ?? false,
+        handleDrop: (_view, event) =>
+          mediaDropHandlerRef.current?.(event) ?? false,
+        handleDOMEvents: {
+          dragover: (_view, event) =>
+            mediaDragOverHandlerRef.current?.(event) ?? false,
+        },
       },
-      onUpdate({ editor }) {
+      onUpdate({ editor, transaction, appendedTransactions }) {
+        for (const target of mediaUploadInsertionTargetsRef.current) {
+          mapMediaUploadInsertionTarget(target, transaction);
+          for (const appendedTransaction of appendedTransactions) {
+            mapMediaUploadInsertionTarget(target, appendedTransaction);
+          }
+        }
+        const mediaPickerTarget = mediaPickerInsertionTargetRef.current;
+        if (mediaPickerTarget) {
+          mapMediaUploadInsertionTarget(mediaPickerTarget, transaction);
+          for (const appendedTransaction of appendedTransactions) {
+            mapMediaUploadInsertionTarget(
+              mediaPickerTarget,
+              appendedTransaction,
+            );
+          }
+        }
         // Typing/deleting always moves the caret, so `onSelectionUpdate`
         // already fires for the same transaction. Running the aux updates
         // here too just doubles the per-keystroke sync work. Markdown
@@ -1130,6 +1552,244 @@ function useTipTapEditorElement({
       forbidden,
     }),
   );
+  activeEditorRef.current = editor;
+  isEditorReadOnlyRef.current = isEditorReadOnly;
+
+  const createCurrentMediaInsertionTarget =
+    useCallback((): ActiveMediaUploadInsertionTarget | null => {
+      if (!editor || editor.isDestroyed) {
+        return null;
+      }
+
+      return {
+        kind: "selection",
+        bookmark: editor.state.selection.getBookmark(),
+      };
+    }, [editor]);
+
+  const closeMediaPicker = useCallback(() => {
+    mediaPickerInsertionTargetRef.current = null;
+    setMediaPickerOpen(false);
+  }, []);
+
+  const insertMediaAssetsAtTarget = useCallback(
+    (
+      assets: readonly MediaAsset[],
+      insertionTarget?: ActiveMediaUploadInsertionTarget | null,
+    ): boolean => {
+      if (
+        !editor ||
+        editor.isDestroyed ||
+        isEditorReadOnlyRef.current ||
+        assets.length === 0
+      ) {
+        return false;
+      }
+
+      const content = createMediaAssetsInsertContent(assets);
+
+      if (content.length === 0) {
+        return false;
+      }
+
+      const target =
+        insertionTarget ??
+        mediaPickerInsertionTargetRef.current ??
+        createCurrentMediaInsertionTarget();
+      const insertion = target
+        ? resolveMediaUploadInsertionTarget(target, editor)
+        : {};
+
+      const didInsert =
+        typeof insertion.position === "number"
+          ? editor.commands.insertContentAt(insertion.position, content)
+          : insertion.selection
+            ? editor.commands.insertContentAt(insertion.selection, content)
+            : editor.commands.insertContent(content);
+
+      if (didInsert) {
+        handleEditorUpdate(editor);
+      }
+
+      return didInsert;
+    },
+    [createCurrentMediaInsertionTarget, editor, handleEditorUpdate],
+  );
+
+  const loadMediaPickerImages = useCallback(async () => {
+    if (!mediaLibrary?.canBrowse) {
+      setMediaPickerState(INITIAL_MEDIA_IMAGE_PICKER_STATE);
+      return;
+    }
+
+    const requestId = mediaPickerLoadRequestRef.current + 1;
+    mediaPickerLoadRequestRef.current = requestId;
+    setMediaPickerState((current) => ({
+      status: "loading",
+      assets: current.assets,
+    }));
+
+    try {
+      const assets = await mediaLibrary.listImages();
+
+      if (mediaPickerLoadRequestRef.current !== requestId) {
+        return;
+      }
+
+      setMediaPickerState({
+        status: "ready",
+        assets,
+      });
+    } catch (error) {
+      if (mediaPickerLoadRequestRef.current !== requestId) {
+        return;
+      }
+
+      setMediaPickerState((current) => ({
+        status: "error",
+        assets: current.assets,
+        errorMessage: formatMediaLibraryError(error),
+      }));
+    }
+  }, [mediaLibrary]);
+
+  const handleMediaPickerOpenChange = useCallback(
+    (open: boolean) => {
+      if (!open) {
+        closeMediaPicker();
+        return;
+      }
+
+      if (!isMediaPickerEnabled) {
+        return;
+      }
+
+      mediaPickerInsertionTargetRef.current =
+        createCurrentMediaInsertionTarget();
+      setMediaPickerOpen(true);
+    },
+    [closeMediaPicker, createCurrentMediaInsertionTarget, isMediaPickerEnabled],
+  );
+
+  const handleMediaPickerAssetSelect = useCallback(
+    (asset: MediaAsset) => {
+      const inserted = insertMediaAssetsAtTarget(
+        [asset],
+        mediaPickerInsertionTargetRef.current,
+      );
+
+      if (inserted) {
+        closeMediaPicker();
+      }
+    },
+    [closeMediaPicker, insertMediaAssetsAtTarget],
+  );
+
+  const handleMediaPickerUploadClick = useCallback(() => {
+    if (!isMediaUploadEnabled) {
+      return;
+    }
+
+    mediaPickerInsertionTargetRef.current ??=
+      createCurrentMediaInsertionTarget();
+    mediaUploadInputRef.current?.click();
+  }, [createCurrentMediaInsertionTarget, isMediaUploadEnabled]);
+
+  const requestSelectedImageSourceChange = useCallback(
+    (position: number) => {
+      if (
+        !editor ||
+        editor.isDestroyed ||
+        isEditorReadOnlyRef.current ||
+        !isMediaPickerEnabled
+      ) {
+        return;
+      }
+
+      const node = editor.state.doc.nodeAt(position);
+
+      if (node?.type.name !== "image") {
+        return;
+      }
+
+      if (!editor.commands.setNodeSelection(position)) {
+        return;
+      }
+
+      mediaPickerInsertionTargetRef.current = {
+        kind: "selection",
+        bookmark: editor.state.selection.getBookmark(),
+      };
+      setMediaPickerOpen(true);
+    },
+    [editor, isMediaPickerEnabled],
+  );
+
+  const deleteSelectedImageNode = useCallback(
+    (position: number) => {
+      if (!editor || editor.isDestroyed || isEditorReadOnlyRef.current) {
+        return;
+      }
+
+      const node = editor.state.doc.nodeAt(position);
+
+      if (node?.type.name !== "image") {
+        return;
+      }
+
+      const transaction = editor.state.tr.delete(
+        position,
+        position + node.nodeSize,
+      );
+      editor.view.dispatch(transaction);
+      editor.commands.focus();
+      handleEditorUpdate(editor);
+    },
+    [editor, handleEditorUpdate],
+  );
+
+  const nodeViewContext = useMemo(
+    () => ({
+      context,
+      readOnly,
+      forbidden,
+      onChangeImageSource: requestSelectedImageSourceChange,
+      onDeleteImage: deleteSelectedImageNode,
+    }),
+    [
+      context,
+      deleteSelectedImageNode,
+      forbidden,
+      readOnly,
+      requestSelectedImageSourceChange,
+    ],
+  );
+
+  useEffect(() => {
+    if (!mediaPickerOpen || !isMediaLibraryBrowseEnabled) {
+      return;
+    }
+
+    if (mediaPickerState.status === "idle") {
+      void loadMediaPickerImages();
+    }
+  }, [
+    isMediaLibraryBrowseEnabled,
+    loadMediaPickerImages,
+    mediaPickerOpen,
+    mediaPickerState.status,
+  ]);
+
+  useEffect(() => {
+    mediaPickerLoadRequestRef.current += 1;
+    setMediaPickerState(INITIAL_MEDIA_IMAGE_PICKER_STATE);
+  }, [mediaLibrary]);
+
+  useEffect(() => {
+    if (!isMediaPickerEnabled && mediaPickerOpen) {
+      closeMediaPicker();
+    }
+  }, [closeMediaPicker, isMediaPickerEnabled, mediaPickerOpen]);
 
   // Seed the emitted markdown ref once the editor initializes so the
   // first focus/click does not produce a spurious onChange.
@@ -1172,6 +1832,7 @@ function useTipTapEditorElement({
         // Suppress onUpdate so programmatic syncs (version preview,
         // back-to-draft, post-save rehydration) don't trigger onChange
         // and accidentally mark the draft as unsaved / arm autosave.
+        mediaUploadInsertionTargetsRef.current.clear();
         editor.commands.setContent(parseMarkdownToDocument(markdown), {
           contentType: "json",
           emitUpdate: false,
@@ -1771,13 +2432,205 @@ function useTipTapEditorElement({
     setPendingVisualProps({});
   };
 
+  const startMediaUploadInsertion = useCallback(
+    (
+      files: File[],
+      options?:
+        | number
+        | {
+            position?: number;
+            target?: ActiveMediaUploadInsertionTarget | null;
+            afterInsert?: () => void;
+          },
+    ) => {
+      if (
+        !editor ||
+        !mediaUpload ||
+        !isMediaUploadEnabled ||
+        mediaUploadInFlightRef.current ||
+        files.length === 0
+      ) {
+        return;
+      }
+
+      const position =
+        typeof options === "number" ? options : options?.position;
+      const insertionTarget: ActiveMediaUploadInsertionTarget =
+        typeof options === "object" && options.target
+          ? options.target
+          : typeof position === "number"
+            ? {
+                kind: "position",
+                position,
+              }
+            : {
+                kind: "selection",
+                bookmark: editor.state.selection.getBookmark(),
+              };
+      const afterInsert =
+        typeof options === "object" ? options.afterInsert : undefined;
+      mediaUploadInsertionTargetsRef.current.add(insertionTarget);
+      mediaUploadInFlightRef.current = true;
+
+      void insertUploadedMediaFiles({
+        editor,
+        mediaUpload,
+        files,
+        canInsert: () =>
+          activeEditorRef.current === editor &&
+          !editor.isDestroyed &&
+          !isEditorReadOnlyRef.current &&
+          mediaUploadInsertionTargetsRef.current.has(insertionTarget),
+        resolveInsertion: () =>
+          mediaUploadInsertionTargetsRef.current.has(insertionTarget)
+            ? resolveMediaUploadInsertionTarget(insertionTarget, editor)
+            : null,
+        onInserted: (nextEditor) => {
+          handleEditorUpdate(nextEditor);
+          afterInsert?.();
+        },
+      })
+        .catch((error: unknown) => {
+          if (!isRuntimeErrorLike(error)) {
+            reportStudioEditorError(error);
+          }
+        })
+        .finally(() => {
+          mediaUploadInsertionTargetsRef.current.delete(insertionTarget);
+          if (activeEditorRef.current === editor) {
+            mediaUploadInFlightRef.current = false;
+          }
+        });
+    },
+    [editor, handleEditorUpdate, isMediaUploadEnabled, mediaUpload],
+  );
+
+  const handleMediaUploadInputChange = (
+    event: ReactChangeEvent<HTMLInputElement>,
+  ) => {
+    const files = collectMediaUploadFiles(event.currentTarget.files);
+    event.currentTarget.value = "";
+
+    if (files.length === 0) {
+      return;
+    }
+
+    const pickerWasOpen = mediaPickerOpen;
+    const pickerTarget = pickerWasOpen
+      ? mediaPickerInsertionTargetRef.current
+      : null;
+
+    startMediaUploadInsertion(files, {
+      target: pickerTarget,
+      afterInsert: () => {
+        if (!pickerWasOpen) {
+          return;
+        }
+
+        closeMediaPicker();
+        setMediaPickerState(INITIAL_MEDIA_IMAGE_PICKER_STATE);
+        if (isMediaLibraryBrowseEnabled) {
+          void loadMediaPickerImages();
+        }
+      },
+    });
+  };
+
+  const handleMediaPaste = useCallback(
+    (event: ClipboardEvent) => {
+      const fileEvent = resolveMediaUploadFileEvent({
+        canUpload: isMediaUploadEnabled,
+        files: event.clipboardData?.files,
+      });
+
+      if (!fileEvent.shouldPreventDefault) {
+        return false;
+      }
+
+      event.preventDefault();
+
+      if (fileEvent.shouldUpload) {
+        startMediaUploadInsertion(fileEvent.files);
+      }
+
+      return true;
+    },
+    [isMediaUploadEnabled, startMediaUploadInsertion],
+  );
+
+  const handleMediaDragOver = useCallback(
+    (event: DragEvent) => {
+      const fileEvent = resolveMediaUploadFileEvent({
+        canUpload: isMediaUploadEnabled,
+        files: event.dataTransfer?.files,
+        types: event.dataTransfer
+          ? Array.from(event.dataTransfer.types)
+          : undefined,
+      });
+
+      if (!fileEvent.shouldPreventDefault) {
+        return false;
+      }
+
+      event.preventDefault();
+      if (event.dataTransfer) {
+        event.dataTransfer.dropEffect = fileEvent.shouldUpload
+          ? "copy"
+          : "none";
+      }
+      return true;
+    },
+    [isMediaUploadEnabled],
+  );
+
+  const handleMediaDrop = useCallback(
+    (event: DragEvent) => {
+      const fileEvent = resolveMediaUploadFileEvent({
+        canUpload: isMediaUploadEnabled,
+        files: event.dataTransfer?.files,
+      });
+
+      if (!fileEvent.shouldPreventDefault) {
+        return false;
+      }
+
+      event.preventDefault();
+
+      if (editor && fileEvent.shouldUpload) {
+        startMediaUploadInsertion(
+          fileEvent.files,
+          resolveVisualDropPosition(editor, event),
+        );
+      }
+
+      return true;
+    },
+    [editor, isMediaUploadEnabled, startMediaUploadInsertion],
+  );
+
+  mediaPasteHandlerRef.current = handleMediaPaste;
+  mediaDragOverHandlerRef.current = handleMediaDragOver;
+  mediaDropHandlerRef.current = handleMediaDrop;
+
   const handleVisualDragOver = (event: ReactDragEvent<HTMLDivElement>) => {
-    if (isEditorReadOnly || !hasVisualCompositionDragPayload(event)) {
+    if (!isEditorReadOnly && hasVisualCompositionDragPayload(event)) {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
+      return;
+    }
+
+    const fileEvent = resolveMediaUploadFileEvent({
+      canUpload: isMediaUploadEnabled,
+      files: event.dataTransfer.files,
+      types: Array.from(event.dataTransfer.types),
+    });
+
+    if (!fileEvent.shouldPreventDefault) {
       return;
     }
 
     event.preventDefault();
-    event.dataTransfer.dropEffect = "copy";
+    event.dataTransfer.dropEffect = fileEvent.shouldUpload ? "copy" : "none";
   };
 
   const handleVisualDrop = (event: ReactDragEvent<HTMLDivElement>) => {
@@ -1794,6 +2647,20 @@ function useTipTapEditorElement({
     event.preventDefault();
     const position = resolveVisualDropPosition(editor, event);
     requestVisualInsertion(block, position);
+    return;
+  };
+
+  const handleCanvasDrop = (event: ReactDragEvent<HTMLDivElement>) => {
+    if (event.defaultPrevented) {
+      return;
+    }
+
+    if (readVisualCompositionDragPayload(event)) {
+      handleVisualDrop(event);
+      return;
+    }
+
+    handleMediaDrop(event.nativeEvent);
   };
 
   const insertSelectedComponent = (
@@ -1851,6 +2718,10 @@ function useTipTapEditorElement({
       />
     </div>
   ) : null;
+  const mediaUploadProgress = resolveMediaUploadProgress(mediaUpload);
+  const mediaUploadStatusText = mediaUploadProgress
+    ? `Uploading media ${mediaUploadProgress.completedFiles} of ${mediaUploadProgress.totalFiles}`
+    : "Uploading media...";
 
   return (
     <div
@@ -1870,6 +2741,18 @@ function useTipTapEditorElement({
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
         <div className="shrink-0 border-b border-border bg-card">
           <div className="flex flex-wrap items-center gap-x-1 gap-y-1 px-6 py-2">
+            {mediaUpload ? (
+              <input
+                ref={mediaUploadInputRef}
+                aria-label="Upload media"
+                type="file"
+                multiple
+                disabled={!isMediaUploadEnabled}
+                tabIndex={-1}
+                onChange={handleMediaUploadInputChange}
+                className="sr-only"
+              />
+            ) : null}
             {toolbar.secondaryItems.map((item) =>
               item.id === "insertComponent" ? (
                 <ReactFragment key={item.id}>
@@ -1917,23 +2800,35 @@ function useTipTapEditorElement({
                   <Separator orientation="vertical" className="mr-1 h-6" />
                 ) : null}
                 {group.items.map((item) => {
+                  const isImageItem = item.id === "image";
+                  const itemDisabled =
+                    item.availability !== "enabled" ||
+                    isEditorReadOnly ||
+                    (isImageItem ? !isMediaPickerEnabled : false);
+                  const itemLabel = isImageItem
+                    ? isMediaPickerEnabled
+                      ? item.label
+                      : mediaUpload?.isUploading
+                        ? "Uploading media..."
+                        : mediaUploadUnavailableMessage
+                    : item.availability === "visual-only"
+                      ? `${item.label} (planned)`
+                      : isEditorReadOnly
+                        ? `${item.label} (unavailable in read-only mode)`
+                        : item.label;
                   const handleItemClick = () => {
-                    if (item.availability === "enabled" && !isEditorReadOnly) {
+                    if (itemDisabled) {
+                      return;
+                    }
+
+                    if (item.availability === "enabled") {
                       triggerToolbarItem(item.id);
                     }
                   };
                   const toolbarButton = (
                     <ToolbarButton
-                      disabled={
-                        item.availability !== "enabled" || isEditorReadOnly
-                      }
-                      label={
-                        item.availability === "visual-only"
-                          ? `${item.label} (planned)`
-                          : isEditorReadOnly
-                            ? `${item.label} (unavailable in read-only mode)`
-                            : item.label
-                      }
+                      disabled={itemDisabled}
+                      label={itemLabel}
                       active={isToolbarItemActive(item.id)}
                       onClick={handleItemClick}
                       className={cn(
@@ -1947,6 +2842,53 @@ function useTipTapEditorElement({
                       {resolveToolbarIcon(item.id)}
                     </ToolbarButton>
                   );
+
+                  if (item.id === "image") {
+                    const imageToolbarButton = (
+                      <ToolbarButton
+                        disabled={itemDisabled}
+                        label={itemLabel}
+                        active={false}
+                        ariaControls={MEDIA_PICKER_ID}
+                        ariaExpanded={mediaPickerOpen}
+                        dataMdcmsMediaPickerToggle
+                        className="w-8 px-0"
+                      >
+                        {resolveToolbarIcon(item.id)}
+                      </ToolbarButton>
+                    );
+
+                    return (
+                      <Popover
+                        key={item.id}
+                        open={mediaPickerOpen}
+                        onOpenChange={handleMediaPickerOpenChange}
+                      >
+                        <PopoverTrigger asChild>
+                          <div>{imageToolbarButton}</div>
+                        </PopoverTrigger>
+                        <PopoverContent
+                          className="w-80 p-3"
+                          side="bottom"
+                          align="start"
+                          onOpenAutoFocus={(e) => e.preventDefault()}
+                          onCloseAutoFocus={(e) => e.preventDefault()}
+                        >
+                          <MediaImagePickerView
+                            id={MEDIA_PICKER_ID}
+                            state={mediaPickerState}
+                            canBrowse={isMediaLibraryBrowseEnabled}
+                            canUpload={isMediaUploadEnabled}
+                            isUploading={mediaUpload?.isUploading ?? false}
+                            unavailableMessage={mediaLibraryUnavailableMessage}
+                            onSelect={handleMediaPickerAssetSelect}
+                            onUpload={handleMediaPickerUploadClick}
+                            onRetry={loadMediaPickerImages}
+                          />
+                        </PopoverContent>
+                      </Popover>
+                    );
+                  }
 
                   if (item.id === "link") {
                     return (
@@ -2043,16 +2985,8 @@ function useTipTapEditorElement({
                   return (
                     <ToolbarButton
                       key={item.id}
-                      disabled={
-                        item.availability !== "enabled" || isEditorReadOnly
-                      }
-                      label={
-                        item.availability === "visual-only"
-                          ? `${item.label} (planned)`
-                          : isEditorReadOnly
-                            ? `${item.label} (unavailable in read-only mode)`
-                            : item.label
-                      }
+                      disabled={itemDisabled}
+                      label={itemLabel}
                       active={isToolbarItemActive(item.id)}
                       onClick={handleItemClick}
                       className={cn(
@@ -2124,10 +3058,50 @@ function useTipTapEditorElement({
           <div
             className="min-w-0 flex-1 overflow-y-auto"
             onDragOver={handleVisualDragOver}
-            onDrop={handleVisualDrop}
+            onDrop={handleCanvasDrop}
           >
             <div className="mx-auto max-w-[880px] px-6 pb-24 pt-4 lg:px-10 lg:pt-5">
               {canvasHeader}
+              {mediaUpload?.isUploading ? (
+                <div
+                  role="status"
+                  aria-live="polite"
+                  className="mb-3 rounded-md border border-border bg-muted px-4 py-3 text-sm text-foreground-muted"
+                >
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <span>{mediaUploadStatusText}</span>
+                    {mediaUploadProgress ? (
+                      <span className="font-mono text-xs">
+                        {mediaUploadProgress.percent}%
+                      </span>
+                    ) : null}
+                  </div>
+                  {mediaUploadProgress ? (
+                    <div
+                      role="progressbar"
+                      aria-label="Media upload progress"
+                      aria-valuemin={0}
+                      aria-valuemax={mediaUploadProgress.totalFiles}
+                      aria-valuenow={mediaUploadProgress.completedFiles}
+                      className="h-1.5 overflow-hidden rounded-full bg-border"
+                    >
+                      <div
+                        className="h-full rounded-full bg-primary transition-[width]"
+                        style={{ width: `${mediaUploadProgress.percent}%` }}
+                      />
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+              {mediaUpload?.errorMessage ? (
+                <div
+                  role="alert"
+                  aria-live="assertive"
+                  className="mb-3 rounded-md border border-destructive/20 bg-destructive/5 px-4 py-2 text-sm text-destructive"
+                >
+                  {mediaUpload.errorMessage}
+                </div>
+              ) : null}
               <TipTapNodeViewContext.Provider value={nodeViewContext}>
                 <MdxComponentCollapseProvider
                   snapshot={collapseController.snapshot}

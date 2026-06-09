@@ -59,6 +59,7 @@ export const API_KEY_OPERATION_SCOPES = [
   "content:delete",
   "schema:read",
   "schema:write",
+  "media:read",
   "media:upload",
   "media:delete",
   "webhooks:read",
@@ -2034,6 +2035,14 @@ function toRbacAction(requiredScope: ApiKeyOperationScope): RbacAction | null {
     return "schema:write";
   }
 
+  if (
+    requiredScope === "media:read" ||
+    requiredScope === "media:upload" ||
+    requiredScope === "media:delete"
+  ) {
+    return requiredScope;
+  }
+
   if (requiredScope === "webhooks:read" || requiredScope === "webhooks:write") {
     return "settings:manage";
   }
@@ -2121,6 +2130,9 @@ function buildCapabilitiesFromSessionGrants(input: {
   capabilities.content.publish = evaluate("content:publish");
   capabilities.content.unpublish = evaluate("content:unpublish");
   capabilities.content.delete = evaluate("content:delete");
+  capabilities.media.read = evaluate("media:read");
+  capabilities.media.upload = evaluate("media:upload");
+  capabilities.media.delete = evaluate("media:delete");
   capabilities.users.manage = evaluate("user:manage");
   capabilities.settings.manage = evaluate("settings:manage");
   capabilities.ai.use = evaluate("ai:use");
@@ -2161,6 +2173,18 @@ function buildCapabilitiesFromApiKeyScopes(
   capabilities.content.delete = apiKeyScopesSatisfyRequirement(
     scopes,
     "content:delete",
+  );
+  capabilities.media.read = apiKeyScopesSatisfyRequirement(
+    scopes,
+    "media:read",
+  );
+  capabilities.media.upload = apiKeyScopesSatisfyRequirement(
+    scopes,
+    "media:upload",
+  );
+  capabilities.media.delete = apiKeyScopesSatisfyRequirement(
+    scopes,
+    "media:delete",
   );
   capabilities.settings.manage = scopes.some(
     (scope) => toRbacAction(scope) === "settings:manage",
@@ -3837,10 +3861,10 @@ export function createAuthService(
 
         if (!isContextAllowed) {
           throw new RuntimeError({
-            code: "FORBIDDEN",
+            code: "TARGET_ROUTING_MISMATCH",
             message:
-              "API key is not allowed for the requested project/environment context.",
-            statusCode: 403,
+              "Explicit target routing does not match the API key allowlist.",
+            statusCode: 400,
             details: {
               project: requirement.project,
               environment: requirement.environment,

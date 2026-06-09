@@ -170,14 +170,27 @@ export function createCsrfHeaders(
 
 export const inMemorySchemaHash = "cms29-in-memory-schema-hash";
 
-function isContentWriteRoute(request: Request): boolean {
+async function isContentWriteRoute(request: Request): Promise<boolean> {
   const url = new URL(request.url);
 
-  return (
+  if (
     (request.method === "POST" && url.pathname === "/api/v1/content") ||
     (request.method === "PUT" &&
       /^\/api\/v1\/content\/[^/]+$/.test(url.pathname))
-  );
+  ) {
+    return true;
+  }
+
+  if (request.method !== "POST" || url.pathname !== "/api/v1/content/bulk") {
+    return false;
+  }
+
+  try {
+    const body = (await request.clone().json()) as { action?: unknown };
+    return body.action === "move";
+  } catch {
+    return false;
+  }
 }
 
 async function withSchemaHashHeader(
@@ -203,7 +216,7 @@ function wrapHandlerWithAutoSchemaHash(
 ): ReturnType<typeof createServerRequestHandler> {
   return async (request: Request): Promise<Response> => {
     if (
-      !isContentWriteRoute(request) ||
+      !(await isContentWriteRoute(request)) ||
       request.headers.has(CONTENT_SCHEMA_HASH_HEADER)
     ) {
       return rawHandler(request);

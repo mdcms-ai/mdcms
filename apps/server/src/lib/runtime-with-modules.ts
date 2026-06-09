@@ -11,7 +11,7 @@ import {
   type Logger,
 } from "@mdcms/shared";
 import { and, eq, inArray } from "drizzle-orm";
-import { parseServerEnv } from "./env.js";
+import { parseServerEnv, type ServerEnv } from "./env.js";
 import { createDatabaseConnection, type DatabaseConnection } from "./db.js";
 import { createContentDAL } from "./dal/index.js";
 import type { ContentDAL } from "./dal/types.js";
@@ -38,6 +38,9 @@ import {
   createDatabaseProjectStore,
   mountProjectApiRoutes,
 } from "./projects-api.js";
+import { mountMediaApiRoutes, type MediaObjectStore } from "./media-api.js";
+import { createDatabaseMediaStore } from "./media/database-store.js";
+import { createS3CompatibleMediaObjectStore } from "./media/object-store.js";
 import { mountWebhookApiRoutes } from "./webhooks-api.js";
 import { createRuntimeWebhookRuntime } from "./webhooks/runtime.js";
 import type { ParsedMdcmsConfig } from "@mdcms/shared";
@@ -89,6 +92,38 @@ export type ServerRequestHandlerWithModulesResult = {
   dal: ContentDAL;
 };
 
+type RuntimeMediaObjectStoreEnv = Partial<
+  Pick<
+    ServerEnv,
+    | "S3_ENDPOINT"
+    | "S3_ACCESS_KEY"
+    | "S3_SECRET_KEY"
+    | "S3_BUCKET"
+    | "S3_PUBLIC_BASE_URL"
+  >
+>;
+
+export function createRuntimeMediaObjectStore(
+  env: RuntimeMediaObjectStoreEnv,
+): MediaObjectStore | undefined {
+  if (
+    !env.S3_ENDPOINT ||
+    !env.S3_ACCESS_KEY ||
+    !env.S3_SECRET_KEY ||
+    !env.S3_BUCKET
+  ) {
+    return undefined;
+  }
+
+  return createS3CompatibleMediaObjectStore({
+    endpoint: env.S3_ENDPOINT,
+    accessKey: env.S3_ACCESS_KEY,
+    secretKey: env.S3_SECRET_KEY,
+    bucket: env.S3_BUCKET,
+    publicBaseUrl: env.S3_PUBLIC_BASE_URL,
+  });
+}
+
 /**
  * createServerRequestHandlerWithModules composes the server runtime with
  * compile-time local module loading from @mdcms/modules.
@@ -128,6 +163,8 @@ export function createServerRequestHandlerWithModules(
     db: dbConnection.db,
   });
   const projectStore = createDatabaseProjectStore({ db: dbConnection.db });
+  const mediaStore = createDatabaseMediaStore({ db: dbConnection.db });
+  const mediaObjectStore = createRuntimeMediaObjectStore(env);
   const webhookRuntime = createRuntimeWebhookRuntime({
     db: dbConnection.db,
     logger,
@@ -576,6 +613,19 @@ export function createServerRequestHandlerWithModules(
             path: document.path,
           };
         },
+      });
+      mountMediaApiRoutes(app, {
+        store: mediaStore,
+        objectStore: mediaObjectStore,
+        authorize: (request, requirement) =>
+          authService.authorizeRequest(request, requirement),
+        authorizeSettings: async (request) => {
+          const session = await authService.requireAdminSession(request);
+
+          return { actorId: session.userId };
+        },
+        requireCsrf: (request) => authService.requireCsrfProtection(request),
+        lifecycleEvents: webhookRuntime.dispatcher,
       });
       mountLoadedServerModules(app, moduleDeps, moduleLoadReport);
     },

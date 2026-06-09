@@ -640,6 +640,220 @@ test("loadContentDocumentPageState applies the schema mismatch guard before retu
   assert.equal(next.versionHistory.status, "ready");
 });
 
+test("createContentDocumentPageState defaults media uploads to disabled without schema capabilities", () => {
+  const state = createContentDocumentPageState({
+    shell: createReadyShell(),
+    typeId: "BlogPost",
+    typeLabel: "Blog post",
+    documentRoute: createRouteContext(),
+  });
+
+  assert.equal(state.status, "ready");
+  if (state.status !== "ready") {
+    throw new Error("expected ready state");
+  }
+
+  assert.equal(state.canReadMedia, false);
+  assert.equal(state.canUploadMedia, false);
+});
+
+test("loadContentDocumentPageState enables media library reads and uploads from ready schema capabilities", async () => {
+  const next = await loadContentDocumentPageState({
+    context: createMountContext(),
+    typeId: "BlogPost",
+    typeLabel: "Blog post",
+    documentId: "11111111-1111-4111-8111-111111111111",
+    loadDocumentShell: async () => createReadyShell(),
+    loadSchemaState: async () =>
+      createReadySchemaState({
+        capabilities: {
+          ...createEmptyCurrentPrincipalCapabilities(),
+          schema: {
+            read: true,
+            write: true,
+          },
+          media: {
+            read: true,
+            upload: true,
+            delete: false,
+          },
+        },
+      }),
+    createRouteApi: () => ({
+      listVersions: async () => ({
+        data: [],
+        pagination: {
+          total: 0,
+          limit: 20,
+          offset: 0,
+          hasMore: false,
+        },
+      }),
+      listVariants: async () => ({ data: [] }),
+    }),
+  } as any);
+
+  assert.equal(next.status, "ready");
+  if (next.status !== "ready") {
+    throw new Error("expected ready state");
+  }
+
+  assert.equal(next.canReadMedia, true);
+  assert.equal(next.canUploadMedia, true);
+});
+
+test("applySchemaStateToReadyState updates media capabilities from schema state", () => {
+  const initial = createReadyState({
+    schemaState: createReadySchemaState({
+      capabilities: {
+        ...createEmptyCurrentPrincipalCapabilities(),
+        schema: {
+          read: true,
+          write: true,
+        },
+        media: {
+          read: true,
+          upload: true,
+          delete: false,
+        },
+      },
+    }),
+    canReadMedia: true,
+    canUploadMedia: true,
+  });
+
+  const next = applySchemaStateToReadyState({
+    state: initial,
+    schemaState: createReadySchemaState({
+      capabilities: {
+        ...createEmptyCurrentPrincipalCapabilities(),
+        schema: {
+          read: true,
+          write: true,
+        },
+        media: {
+          read: false,
+          upload: false,
+          delete: false,
+        },
+      },
+    }),
+  });
+
+  assert.equal(next.canReadMedia, false);
+  assert.equal(next.canUploadMedia, false);
+  assert.equal(next.canWrite, true);
+  assert.equal(next.canAi, false);
+});
+
+test("ContentDocumentPageView renders available media upload controls without persistent policy copy", () => {
+  const html = renderPageMarkup(
+    createReadyState({
+      canWrite: true,
+      canUploadMedia: true,
+    }),
+    {
+      mediaUpload: {
+        canUpload: true,
+        isUploading: false,
+        uploadFiles: async () => [],
+      },
+    },
+  );
+
+  assert.match(html, /Upload media/);
+  assert.doesNotMatch(
+    html,
+    /No file-type allowlist is enforced\. Image upload limits apply only when the uploaded MIME type starts with image\/\./,
+  );
+});
+
+test("ContentDocumentPageView renders unavailable media upload shell without media capability", () => {
+  const html = renderPageMarkup(
+    createReadyState({
+      canWrite: true,
+      canUploadMedia: false,
+    }),
+    {
+      mediaUpload: {
+        canUpload: true,
+        isUploading: false,
+        uploadFiles: async () => [],
+      },
+    },
+  );
+
+  assert.match(html, /Upload media unavailable in this target/);
+});
+
+test("ContentDocumentPageView gates media upload shell for historical and read-only views", () => {
+  const historical = renderPageMarkup(
+    createReadyState({
+      canWrite: true,
+      canUploadMedia: true,
+      viewingVersion: {
+        version: 2,
+        body: "# Earlier",
+        status: "ready",
+      },
+    }),
+    {
+      mediaUpload: {
+        canUpload: true,
+        isUploading: false,
+        uploadFiles: async () => [],
+      },
+    },
+  );
+  const readOnly = renderPageMarkup(
+    createReadyState({
+      canWrite: false,
+      canUploadMedia: true,
+    }),
+    {
+      mediaUpload: {
+        canUpload: true,
+        isUploading: false,
+        uploadFiles: async () => [],
+      },
+    },
+  );
+
+  assert.match(historical, /Upload media unavailable in this target/);
+  assert.match(readOnly, /Upload media unavailable in this target/);
+});
+
+test("ContentDocumentPageView renders media upload status and error messages", () => {
+  const uploading = renderPageMarkup(createReadyState(), {
+    mediaUpload: {
+      canUpload: true,
+      isUploading: true,
+      completedFiles: 1,
+      totalFiles: 3,
+      uploadFiles: async () => [],
+    },
+  });
+  const failed = renderPageMarkup(createReadyState(), {
+    mediaUpload: {
+      canUpload: true,
+      isUploading: false,
+      errorMessage: "Image upload failed.",
+      uploadFiles: async () => [],
+    },
+  });
+
+  assert.match(uploading, /role="status"/);
+  assert.match(uploading, /aria-live="polite"/);
+  assert.match(uploading, /Uploading media 1 of 3/);
+  assert.match(uploading, /role="progressbar"/);
+  assert.match(uploading, /aria-valuemin="0"/);
+  assert.match(uploading, /aria-valuemax="3"/);
+  assert.match(uploading, /aria-valuenow="1"/);
+  assert.match(failed, /role="alert"/);
+  assert.match(failed, /aria-live="assertive"/);
+  assert.match(failed, /Image upload failed\./);
+});
+
 test("reloadSchemaStateForGuard logs and returns undefined when schema reload fails", async () => {
   const logged: unknown[] = [];
   const next = await reloadSchemaStateForGuard(

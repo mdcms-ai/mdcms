@@ -213,6 +213,105 @@ test("RBAC permission evaluation keeps schema write restricted to admin and owne
   assert.equal(adminSchemaWrite.effectiveRole, "admin");
 });
 
+test("RBAC permission evaluation maps media actions to viewer editor and admin roles", () => {
+  const target = {
+    project: "marketing-site",
+    environment: "production",
+  };
+  const viewerGrants: RbacGrant[] = [
+    grant({
+      role: "viewer",
+      scope: { kind: "project", project: target.project },
+    }),
+  ];
+  const editorGrants: RbacGrant[] = [
+    grant({
+      role: "editor",
+      scope: { kind: "project", project: target.project },
+    }),
+  ];
+  const adminGrants: RbacGrant[] = [
+    grant({
+      role: "admin",
+      scope: { kind: "global" },
+    }),
+  ];
+
+  const viewerRead = evaluatePermission({
+    grants: viewerGrants,
+    target,
+    action: "media:read",
+  });
+  const viewerUpload = evaluatePermission({
+    grants: viewerGrants,
+    target,
+    action: "media:upload",
+  });
+  const editorUpload = evaluatePermission({
+    grants: editorGrants,
+    target,
+    action: "media:upload",
+  });
+  const editorDelete = evaluatePermission({
+    grants: editorGrants,
+    target,
+    action: "media:delete",
+  });
+  const adminDelete = evaluatePermission({
+    grants: adminGrants,
+    target,
+    action: "media:delete",
+  });
+
+  assert.equal(viewerRead.allowed, true);
+  assert.equal(viewerRead.effectiveRole, "viewer");
+  assert.equal(viewerUpload.allowed, false);
+  assert.equal(viewerUpload.effectiveRole, "viewer");
+  assert.equal(editorUpload.allowed, true);
+  assert.equal(editorUpload.effectiveRole, "editor");
+  assert.equal(editorDelete.allowed, false);
+  assert.equal(editorDelete.effectiveRole, "editor");
+  assert.equal(adminDelete.allowed, true);
+  assert.equal(adminDelete.effectiveRole, "admin");
+});
+
+test("RBAC folder prefix grants do not authorize project-wide media operations", () => {
+  const grants: RbacGrant[] = [
+    grant({
+      role: "editor",
+      scope: {
+        kind: "folder_prefix",
+        project: "marketing-site",
+        environment: "staging",
+        pathPrefix: "blog/",
+      },
+    }),
+  ];
+
+  const contentWrite = evaluatePermission({
+    grants,
+    target: {
+      project: "marketing-site",
+      environment: "staging",
+      path: "blog/posts/launch-notes",
+    },
+    action: "content:write",
+  });
+  const mediaUpload = evaluatePermission({
+    grants,
+    target: {
+      project: "marketing-site",
+      environment: "staging",
+    },
+    action: "media:upload",
+  });
+
+  assert.equal(contentWrite.allowed, true);
+  assert.equal(contentWrite.effectiveRole, "editor");
+  assert.equal(mediaUpload.allowed, false);
+  assert.equal(mediaUpload.effectiveRole, undefined);
+});
+
 test("RBAC rejects non-global Owner/Admin grants", () => {
   assert.throws(() =>
     evaluateEffectiveRole(

@@ -221,6 +221,11 @@ export type SamlProviderConfig = {
 export type ServerEnv = CoreEnv & {
   PORT: number;
   SERVICE_NAME: string;
+  S3_ENDPOINT?: string;
+  S3_ACCESS_KEY?: string;
+  S3_SECRET_KEY?: string;
+  S3_BUCKET?: string;
+  S3_PUBLIC_BASE_URL?: string;
   SMTP_HOST?: string;
   SMTP_PORT: number;
   SMTP_FROM?: string;
@@ -257,6 +262,52 @@ function normalizeAbsoluteUrl(raw: string): string {
   return url.toString();
 }
 
+function normalizeS3EndpointUrl(raw: string): string {
+  const url = new URL(raw);
+
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("S3_ENDPOINT must use http or https.");
+  }
+
+  if (
+    url.search.length > 0 ||
+    url.hash.length > 0 ||
+    raw.includes("?") ||
+    raw.includes("#")
+  ) {
+    throw new Error("S3_ENDPOINT must not include query or hash.");
+  }
+
+  if (url.pathname === "/") {
+    return url.origin;
+  }
+
+  return url.toString().replace(/\/+$/, "");
+}
+
+function normalizeS3PublicBaseUrl(raw: string): string {
+  const url = new URL(raw);
+
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("S3_PUBLIC_BASE_URL must use http or https.");
+  }
+
+  if (
+    url.search.length > 0 ||
+    url.hash.length > 0 ||
+    raw.includes("?") ||
+    raw.includes("#")
+  ) {
+    throw new Error("S3_PUBLIC_BASE_URL must not include query or hash.");
+  }
+
+  if (url.pathname === "/") {
+    return url.toString();
+  }
+
+  return url.toString().replace(/\/+$/, "");
+}
+
 function createInvalidEnvError(
   value: unknown,
   message: string,
@@ -269,6 +320,21 @@ function createInvalidEnvError(
       key: "MDCMS_AUTH_OIDC_PROVIDERS",
       value,
       ...details,
+    },
+  });
+}
+
+function createS3InvalidEnvError(
+  key: string,
+  value: unknown,
+  message: string,
+): RuntimeError {
+  return new RuntimeError({
+    code: "INVALID_ENV",
+    message,
+    details: {
+      key,
+      value,
     },
   });
 }
@@ -365,6 +431,56 @@ function parseStudioAllowedOrigins(rawValue: string | undefined): string[] {
 
       return parsed.data;
     });
+}
+
+function parseOptionalTrimmedEnvString(
+  rawValue: string | undefined,
+): string | undefined {
+  const value = rawValue?.trim();
+
+  if (!value) {
+    return undefined;
+  }
+
+  return value;
+}
+
+function parseS3Endpoint(rawValue: string | undefined): string | undefined {
+  const value = parseOptionalTrimmedEnvString(rawValue);
+
+  if (!value) {
+    return undefined;
+  }
+
+  try {
+    return normalizeS3EndpointUrl(value);
+  } catch {
+    throw createS3InvalidEnvError(
+      "S3_ENDPOINT",
+      rawValue,
+      "S3_ENDPOINT must be an absolute URL without query or hash.",
+    );
+  }
+}
+
+function parseS3PublicBaseUrl(
+  rawValue: string | undefined,
+): string | undefined {
+  const value = parseOptionalTrimmedEnvString(rawValue);
+
+  if (!value) {
+    return undefined;
+  }
+
+  try {
+    return normalizeS3PublicBaseUrl(value);
+  } catch {
+    throw createS3InvalidEnvError(
+      "S3_PUBLIC_BASE_URL",
+      rawValue,
+      "S3_PUBLIC_BASE_URL must be an absolute http(s) URL without query or hash.",
+    );
+  }
 }
 
 function readIssueValue(
@@ -835,10 +951,20 @@ export function parseServerEnv(rawEnv: NodeJS.ProcessEnv): ServerEnv {
   const studioRuntimeDisabled = parseStudioRuntimeDisabledFlag(
     rawEnv.MDCMS_STUDIO_RUNTIME_DISABLED,
   );
+  const s3Endpoint = parseS3Endpoint(rawEnv.S3_ENDPOINT);
+  const s3AccessKey = parseOptionalTrimmedEnvString(rawEnv.S3_ACCESS_KEY);
+  const s3SecretKey = parseOptionalTrimmedEnvString(rawEnv.S3_SECRET_KEY);
+  const s3Bucket = parseOptionalTrimmedEnvString(rawEnv.S3_BUCKET);
+  const s3PublicBaseUrl = parseS3PublicBaseUrl(rawEnv.S3_PUBLIC_BASE_URL);
   assertUniqueSsoProviderIds(oidcProviders, samlProviders);
 
   return extendEnv(core, () => ({
     ...parsedExtension.data,
+    S3_ENDPOINT: s3Endpoint,
+    S3_ACCESS_KEY: s3AccessKey,
+    S3_SECRET_KEY: s3SecretKey,
+    S3_BUCKET: s3Bucket,
+    S3_PUBLIC_BASE_URL: s3PublicBaseUrl,
     MDCMS_STUDIO_RUNTIME_DISABLED: studioRuntimeDisabled,
     MDCMS_AUTH_OIDC_PROVIDERS: oidcProviders,
     MDCMS_AUTH_SAML_PROVIDERS: samlProviders,

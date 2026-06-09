@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 export type ApiDataEnvelope<T> = {
   data: T;
 };
@@ -52,6 +54,58 @@ export type ContentDocumentResponse = {
   createdAt: string;
   updatedBy: string;
   updatedAt: string;
+};
+
+export const ContentBulkActionSchema = z.enum([
+  "publish",
+  "unpublish",
+  "delete",
+  "move",
+]);
+
+export type ContentBulkAction = z.infer<typeof ContentBulkActionSchema>;
+
+export const ContentBulkOperationInputSchema = z.object({
+  action: ContentBulkActionSchema,
+  documentIds: z.array(z.string()),
+  changeSummary: z.string().optional(),
+  actorId: z.string().optional(),
+  move: z
+    .object({
+      targetDirectory: z.string(),
+    })
+    .optional(),
+});
+
+export type ContentBulkOperationInput = z.infer<
+  typeof ContentBulkOperationInputSchema
+>;
+
+export type ContentBulkOperationItemError = {
+  code: string;
+  message: string;
+  statusCode: number;
+  details?: unknown;
+};
+
+export type ContentBulkOperationResult =
+  | {
+      documentId: string;
+      status: "succeeded";
+      document: ContentDocumentResponse;
+    }
+  | {
+      documentId: string;
+      status: "failed";
+      error: ContentBulkOperationItemError;
+    };
+
+export type ContentBulkOperationResponse = {
+  action: ContentBulkAction;
+  requested: number;
+  succeeded: number;
+  failed: number;
+  results: ContentBulkOperationResult[];
 };
 
 export type ContentVersionSummaryResponse = {

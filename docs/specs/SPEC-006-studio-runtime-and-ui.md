@@ -2,7 +2,7 @@
 status: live
 canonical: true
 created: 2026-03-11
-last_updated: 2026-06-02
+last_updated: 2026-06-06
 ---
 
 # SPEC-006 Studio Runtime and UI
@@ -208,7 +208,7 @@ Internal Studio routes (examples):
 - `/admin/content/:type` — List documents of a specific type
 - `/admin/content/:type/:documentId` — Document editor
 - `/admin/environments` — Environment management, lineage, clone, and promote
-- `/admin/media` — Media library shell surface
+- `/admin/media` — Media library
 - `/admin/schema` — Read-only schema explorer
 - `/admin/users` — User management (admin only)
 - `/admin/settings` — CMS settings (admin only)
@@ -216,10 +216,116 @@ Internal Studio routes (examples):
 - `/admin/api` — API playground shell surface
 - `/admin/trash` — Deleted content recovery
 
-For `/admin/media`, `/admin/workflows`, and `/admin/api`, the current phase
-permits Studio-runtime-owned shell rendering backed by local mock state or
-placeholder content while their future live data and mutation contracts remain
-deferred to the owning work for those domains.
+For `/admin/workflows` and `/admin/api`, the current phase permits
+Studio-runtime-owned shell rendering backed by local mock state or placeholder
+content while their future live data and mutation contracts remain deferred to
+the owning work for those domains. `/admin/media` is a live media library backed
+by the media metadata contract owned by SPEC-010.
+
+### Media Library (`/admin/media`)
+
+The `/admin/media` route is the Studio surface for managing project-scoped media
+assets in the active mounted target. It is backed by:
+
+- `GET /api/v1/me/capabilities` for target-scoped capability gating
+- `GET /api/v1/media` for media metadata list/search/filter/sort/pagination
+- `POST /api/v1/media/upload` for page-level uploads when media upload
+  capability is available
+
+Normative behavior:
+
+- The route lists real media metadata from `GET /api/v1/media`; it must not use
+  placeholder or mock media assets.
+- The route is readable only when `capabilities.media.read` is true. If that
+  capability is false, Studio renders a forbidden state and must not issue a
+  media list request.
+- Studio sends the active `(project, environment)` target routing with every
+  media list request. The environment participates in routing and authorization
+  only; media assets remain project-scoped and reusable across environments.
+- The search input maps to the `q` query parameter and searches filenames only.
+  Studio debounces search changes before issuing list requests and resets
+  pagination offset when search changes.
+- Filters map directly to the media list contract:
+  - MIME category select: `category=image|video|audio|document|archive|other`
+  - Uploader text input: exact `uploadedBy` actor id
+  - Upload date range date inputs: `uploadedFrom` and `uploadedTo`
+- Sort controls map to the media list contract and expose uploaded date, name,
+  and size in both directions. The default view is uploaded date descending.
+- Pagination is server-side with `limit` and `offset`. The Studio page size is
+  fixed at 30.
+- Changing search, filters, sort, project, or environment resets the offset to
+  zero and refetches the current media list.
+- When `capabilities.media.upload` is true, the route exposes a page-level
+  upload control using the same auth and target routing contract as document
+  editor media uploads. While a batch is in flight, the route shows file-count
+  progress and disables additional upload starts. Successful uploads refresh the
+  current media list.
+- Each media row or card shows an inline preview/playback region, filename, MIME
+  type, coarse category, formatted size, uploaded actor id, upload date, and a
+  safe action cluster.
+- Image assets render an inline thumbnail from the returned `url`; video assets
+  render inline browser playback controls with `preload="metadata"`; audio
+  assets render inline browser playback controls with `preload="metadata"`.
+  Other asset categories render a compact file/MIME placeholder.
+- Safe actions are client-only inspection actions: open the returned `url` in a
+  new tab and copy the returned `url` to the clipboard when the browser permits
+  it. These actions do not mutate backend media metadata or documents.
+- The route does not introduce tags, folders, collections, usage references,
+  duplicate detection, image transformations, CDN controls, advanced asset
+  governance, full-text file-content search, or bulk media editing.
+- Deletion controls are not required on this route. If a future iteration adds
+  them, they must be gated by `capabilities.media.delete` and must use the media
+  mutation contracts in SPEC-010.
+- Point-of-use copy must identify the basic library limits: filename search
+  only, simple metadata filters only, and no advanced organization features.
+
+Deterministic states:
+
+- If Studio lacks a mounted project, environment, or server URL, the route
+  renders an unavailable state and does not call media endpoints.
+- If `capabilities.media.read` is false, or `GET /api/v1/media` returns `401`
+  or `403`, the route renders a forbidden state.
+- The loading state uses the same flat Studio treatment as other admin list
+  routes.
+- If the media list returns zero assets and no filters are active, the route
+  renders an empty state explaining that uploaded assets will appear here.
+- If the media list returns zero assets with active search or filters, the route
+  renders a no-match state that preserves the controls.
+- Non-auth, non-forbidden media list failures render an error state with a retry
+  action and do not fall back to placeholder assets.
+
+### Settings Media Panel
+
+The `/admin/settings/media` route is the Studio surface for project-level
+media settings. It is visible from the Settings subnavigation when the caller
+can manage settings for the mounted target. Direct navigation remains
+supported, but the route renders the same forbidden state as other Settings
+surfaces when the caller lacks `capabilities.settings.manage`.
+
+Normative behavior:
+
+- The panel reads `GET /api/v1/media/settings` for the active
+  `(project, environment)` target and writes `PUT /api/v1/media/settings`
+  using the same mounted target headers. The environment participates in
+  routing and authorization only; the setting itself remains project-scoped.
+- The panel edits only `media.image.maxUploadSizeBytes`.
+- The ready state offers an unlimited mode and an explicit byte-limit mode.
+  Unlimited mode persists `maxUploadSizeBytes: null`. Explicit mode persists a
+  positive safe integer byte value.
+- Client-side validation rejects blank, zero, negative, fractional, unsafe, or
+  non-numeric explicit values before submitting. The inline validation message
+  must identify that the value must be a positive whole number of bytes.
+- User-facing copy must state that MDCMS does not enforce a file-type allowlist
+  and that the configured limit applies only to uploads whose MIME type starts
+  with `image/`.
+- Save controls are disabled while loading, while the current form is invalid,
+  while the form is unchanged, and while a save request is in flight.
+- A failed load renders a deterministic error state with a retry affordance. A
+  failed save keeps the current draft values visible and shows the failure
+  inline. A successful save updates the clean baseline to the returned settings
+  and shows a saved state without leaving the panel.
+- If Studio lacks a mounted project, environment, or server URL, the panel
+  renders an unavailable state and does not call the media settings endpoints.
 
 ### User Management Route
 
@@ -458,6 +564,52 @@ Normative behavior:
   to that mutable head snapshot.
 - The primary canvas edits the document `body` through the editor engine owned
   by SPEC-007.
+- The editor supports media insertion from four inputs: the toolbar image
+  library picker, the picker's upload-new action, files dropped onto the
+  editable body, and files present in a clipboard paste event. Upload inputs are
+  available only when the active document is writable and the target capability
+  snapshot exposes `capabilities.media.upload`. Browsing existing images in the
+  toolbar picker also requires `capabilities.media.read`. If required
+  capabilities are false, unavailable picker actions are disabled or hidden
+  consistently with other read-only editor actions, and drag/drop or paste
+  events must not start media uploads or mutate the body.
+- The toolbar image control opens a compact picker anchored to the toolbar. It
+  lists recent image media assets from `GET /api/v1/media?category=image`, shows
+  loading, empty, and error states, and provides an upload-new action when media
+  upload is allowed. Selecting a listed image inserts that asset without
+  uploading a duplicate file. Successful picker uploads refresh the picker list.
+- Media upload uses `POST /api/v1/media/upload` with one multipart `file` field
+  and the active Studio `(project, environment)` target routing. The upload
+  request uses the same auth mode as the Studio runtime and includes the session
+  CSRF header for cookie-authenticated mutations. Studio must not add
+  application multipart fields such as `project`, `environment`, `s3Key`, or
+  `url`; the media endpoint derives metadata as defined by SPEC-010.
+- When a media asset is chosen or uploaded, Studio inserts it into the Markdown
+  body at the drop position when one is available, otherwise at the current
+  selection/caret. A non-empty selection is replaced. Returned or selected assets
+  whose `mimeType` starts with `image/` insert a native image node that renders
+  as an `<img>` element in the editor and serializes to Markdown image syntax
+  `![filename](url)` using the returned filename as the alt text. Other assets
+  insert link syntax `[filename](url)`. Multiple files from one drag/paste/file
+  selection are uploaded sequentially and inserted in user-provided order, with
+  each generated reference separated from the next by a blank line when they
+  land in the same insertion transaction.
+- Native image nodes are selectable block atoms in the editor. A selected image
+  must show a visible selected state and contextual controls for changing or
+  deleting that image. The contextual change action opens the same image library
+  picker as the toolbar image control and replaces the selected image node when
+  the user chooses or uploads another image. Delete/Backspace and the contextual
+  delete action must remove the selected image node.
+- A successful media insertion marks the body draft unsaved and relies on the
+  existing draft persistence path; it must not introduce a separate content save
+  endpoint or bypass draft-save guards.
+- During upload, the editor shows an inline upload state near the canvas with
+  file-count progress for the active batch and disables additional media upload
+  starts while the current batch is in flight. Upload failures keep the current
+  document body unchanged for the failed file and render an assertive inline
+  error with a deterministic message. Route errors use the backend error message
+  when available; `MEDIA_UPLOAD_TOO_LARGE` should mention the image size limit
+  when `details.limitBytes` and `details.sizeBytes` are present.
 - On desktop, the document editor may expose the visual composition palette to
   the left of the canvas. The palette is part of the body editor surface and
   follows the MDX visual composition behavior owned by SPEC-007. It is
@@ -851,14 +1003,79 @@ Schema` as the privileged remediation action.
 
 Fixed MDCMS branding. No white-labeling in MVP. Configurable accent color may be considered.
 
-### Bulk Operations (Post-MVP)
+### Content List Bulk Operations
 
-Bulk operations are Post-MVP. When implemented, the content list view supports multi-select with bulk actions:
+The content list view supports page-local multi-select and bulk operations
+against the active `/admin/content/:type` result set. Bulk actions use `POST
+/api/v1/content/bulk` and inherit the same active `(project, environment)`
+target routing, auth mode, CSRF behavior, and capability model as row-level
+actions.
 
-- **Publish** — Publish all selected drafts
-- **Unpublish** — Revert selected documents to draft
-- **Delete** — Soft-delete all selected documents
-- **Move** — Move selected documents to a different path/folder
+Selection behavior:
+
+- Each ready-state row exposes a checkbox before the title column.
+- The table header exposes a page-level select-all checkbox. It selects or
+  clears only the rows currently rendered on the active page.
+- Selection is keyed by `documentId` and is cleared when the user changes the
+  type route, active project, active environment, filter set, search query, sort
+  order, page offset, or when a bulk operation completes.
+- Row click and `Edit` continue to navigate to the representative document
+  editor. Checkbox clicks and bulk toolbar clicks must not trigger row
+  navigation.
+- For localized grouped rows, selection targets the representative locale
+  variant's `documentId`. Bulk operations do not implicitly mutate every locale
+  variant in the translation group.
+
+Toolbar behavior:
+
+- When no rows are selected, the bulk toolbar is not shown.
+- When one or more rows are selected, the toolbar shows the selected count and
+  available actions:
+  - **Publish** when `capabilities.content.publish` is true and at least one
+    selected row is `Draft` or `Changed`.
+  - **Unpublish** when `capabilities.content.unpublish` is true and at least one
+    selected row is `Published`.
+  - **Move** when `capabilities.content.write` is true.
+  - **Delete** when `capabilities.content.delete` is true.
+- Disabled or hidden actions must not be invokable from keyboard, pointer, or
+  programmatic event handlers.
+- While a bulk operation is pending, row actions, selection changes, pagination,
+  and filter changes are disabled for the list surface.
+
+Confirmation behavior:
+
+- Every bulk action requires confirmation before the API request is sent.
+- Publish confirmation lists the number of selected rows that are eligible for
+  publish and states that rows already published without changes are skipped by
+  the user interface.
+- Unpublish confirmation lists the number of selected published rows.
+- Delete confirmation uses destructive styling, states that documents move to
+  Trash, and does not promise permanent deletion.
+- Move confirmation requires a target folder input. The input accepts an empty
+  value for the content root. Non-empty values must not start or end with `/`
+  and must not contain `..` path segments.
+- Move sends the current schema hash for the selected type when the schema route
+  provided one.
+
+Result handling:
+
+- The request payload includes only selected rows eligible for the chosen
+  operation. Publish excludes already-published rows with no unpublished
+  changes. Unpublish excludes draft and changed rows.
+- A successful bulk request invalidates the content list query and translation
+  coverage query for the active type.
+- When every item succeeds, Studio shows a success toast summarizing the action
+  and count.
+- When one or more items fail, Studio keeps the route in ready state, shows a
+  dismissible error banner with succeeded/failed counts, and exposes the first
+  failure message. The list is refreshed so successful items disappear or update
+  according to the active filters.
+- Whole-request `401` or `403` failures render the same permission treatment as
+  row-level action failures: the route remains mounted and surfaces the error
+  inline unless the next list refresh itself becomes forbidden.
+- Whole-request schema mismatch failures for move surface the existing guarded
+  schema mismatch copy for write operations where available; otherwise they use
+  the same inline error banner as other bulk failures.
 
 ### Extensibility Surfaces (Backend-First + Runtime Bundle)
 

@@ -16,6 +16,7 @@ import { MdxComponentExtension } from "./mdx-component-extension.js";
 import { MdxIntrinsicElementExtension } from "./mdx-intrinsic-element-extension.js";
 import { MdxIntrinsicInlineExtension } from "./mdx-intrinsic-inline-extension.js";
 import { MdxRawJsxExtension } from "./mdx-raw-jsx-extension.js";
+import { StudioImageExtension } from "./studio-image-extension.js";
 
 // Returns a lowlight instance seeded with the common language set and with
 // `highlightAuto` replaced by a plain-text no-op. CodeBlockLowlight falls
@@ -176,6 +177,7 @@ export function createEditorExtensions(options?: {
   mdxRawJsx?: Extensions[number];
   mdxComponent?: Extensions[number];
   mdxIntrinsicElement?: Extensions[number];
+  image?: Extensions[number];
   codeBlock?: Extensions[number];
 }): Extensions {
   return [
@@ -206,6 +208,7 @@ export function createEditorExtensions(options?: {
       nested: true,
     }),
     options?.codeBlock ?? HeadlessCodeBlock,
+    options?.image ?? StudioImageExtension,
     MdxIntrinsicInlineExtension,
     options?.mdxComponent ?? MdxComponentExtension,
     options?.mdxIntrinsicElement ?? MdxIntrinsicElementExtension,

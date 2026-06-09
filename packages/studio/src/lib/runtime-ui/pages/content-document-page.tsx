@@ -12,14 +12,21 @@ import {
 
 import {
   appendMdcmsPreviewTokenToUrl,
+  isRuntimeErrorLike,
   type MdcmsPreviewDocument,
+  RuntimeError,
+  type MediaAsset,
   type StudioDocumentRouteMountContext,
   type StudioMountContext,
 } from "@mdcms/shared";
 
 import type { StudioDocumentRouteApi } from "../../document-route-api.js";
 import type { StudioSchemaState } from "../../schema-state.js";
-import { useStudioMountInfo } from "../app/admin/mount-info-context.js";
+import {
+  useStudioApiConfig,
+  useStudioMountInfo,
+} from "../app/admin/mount-info-context.js";
+import { useStudioSession } from "../app/admin/session-context.js";
 import { useParams, useRouter } from "../adapters/next-navigation.js";
 import {
   MdxPropsPanel,
@@ -28,6 +35,8 @@ import {
 import {
   TipTapEditor,
   type TipTapEditorHandle,
+  type TipTapEditorMediaLibraryState,
+  type TipTapEditorMediaUploadState,
   type TipTapEditorSelectionInfo,
 } from "../components/editor/tiptap-editor.js";
 import { InlineAiBubble } from "../components/editor/inline-ai-bubble.js";
@@ -76,6 +85,8 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "../lib/utils.js";
+import { createStudioMediaUploadApi } from "../lib/media-upload-api.js";
+import { createStudioMediaLibraryApi } from "../lib/media-library-api.js";
 import {
   Select,
   SelectContent,
@@ -127,6 +138,10 @@ import {
 } from "./document-preview-route.js";
 
 const DOCUMENT_SAVE_DEBOUNCE_MS = 5000;
+const MEDIA_UPLOAD_UNAVAILABLE_MESSAGE =
+  "Media upload unavailable in this target.";
+const MEDIA_LIBRARY_UNAVAILABLE_MESSAGE =
+  "Image library unavailable in this target.";
 
 type ContentDocumentPreviewMode = "edit" | "split" | "preview";
 
@@ -207,6 +222,80 @@ function useLatestCallback<Args extends unknown[], Return>(
   return useCallback((...args: Args) => callbackRef.current(...args), []);
 }
 
+type MediaUploadControllerState =
+  | { status: "idle" }
+  | { status: "uploading"; completedFiles: number; totalFiles: number }
+  | { status: "error"; errorMessage: string };
+
+function createUnavailableMediaUploadError(): RuntimeError {
+  return new RuntimeError({
+    code: "MEDIA_UPLOAD_UNAVAILABLE",
+    message: MEDIA_UPLOAD_UNAVAILABLE_MESSAGE,
+    statusCode: 0,
+  });
+}
+
+function createStaleMediaUploadTargetError(): RuntimeError {
+  return new RuntimeError({
+    code: "MEDIA_UPLOAD_TARGET_CHANGED",
+    message: "Media upload target changed.",
+    statusCode: 0,
+  });
+}
+
+function createUnavailableMediaLibraryError(): RuntimeError {
+  return new RuntimeError({
+    code: "MEDIA_LIBRARY_UNAVAILABLE",
+    message: MEDIA_LIBRARY_UNAVAILABLE_MESSAGE,
+    statusCode: 0,
+  });
+}
+
+function createStaleMediaLibraryTargetError(): RuntimeError {
+  return new RuntimeError({
+    code: "MEDIA_LIBRARY_TARGET_CHANGED",
+    message: "Image library target changed.",
+    statusCode: 0,
+  });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function readMediaUploadTooLargeDetails(
+  error: Pick<RuntimeError, "details">,
+): { limitBytes: number; sizeBytes: number } | null {
+  const directDetails = error.details;
+  const payload = isRecord(directDetails?.payload)
+    ? directDetails.payload
+    : null;
+  const payloadDetails = isRecord(payload?.details) ? payload.details : null;
+  const details = payloadDetails ?? directDetails;
+  const limitBytes = details?.limitBytes;
+  const sizeBytes = details?.sizeBytes;
+
+  return typeof limitBytes === "number" && typeof sizeBytes === "number"
+    ? { limitBytes, sizeBytes }
+    : null;
+}
+
+function formatMediaUploadError(error: unknown): string {
+  if (isRuntimeErrorLike(error) && error.code === "MEDIA_UPLOAD_TOO_LARGE") {
+    const details = readMediaUploadTooLargeDetails(error);
+
+    if (details) {
+      return `Image upload exceeds the configured limit (${details.sizeBytes} bytes uploaded; limit ${details.limitBytes} bytes).`;
+    }
+  }
+
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message;
+  }
+
+  return "Media upload failed.";
+}
+
 type ContentDocumentPageViewProps = {
   state: ContentDocumentPageState;
   context?: StudioMountContext;
@@ -236,6 +325,8 @@ type ContentDocumentPageViewProps = {
   onLocaleSwitch?: (locale: string) => void;
   onCreateVariant?: (prefill: boolean) => void;
   onCancelVariantCreation?: () => void;
+  mediaUpload?: TipTapEditorMediaUploadState;
+  mediaLibrary?: TipTapEditorMediaLibraryState;
   aiSelection?: TipTapEditorSelectionInfo | null;
   onAiSelectionChange?: (selection: TipTapEditorSelectionInfo | null) => void;
   aiApi?: StudioAiRouteApi;
@@ -1742,6 +1833,8 @@ function useContentDocumentPageViewElement({
   onLocaleSwitch,
   onCreateVariant,
   onCancelVariantCreation,
+  mediaUpload,
+  mediaLibrary,
   aiSelection,
   onAiSelectionChange,
   aiApi,
@@ -1757,6 +1850,38 @@ function useContentDocumentPageViewElement({
     );
   const [previewRefreshToken, setPreviewRefreshToken] = useState(0);
   const activePreviewMode = previewMode ?? internalPreviewMode;
+  const editorMediaUpload =
+    state.status === "ready" && mediaUpload
+      ? {
+          ...mediaUpload,
+          canUpload:
+            mediaUpload.canUpload &&
+            state.canWrite &&
+            !state.viewingVersion &&
+            state.canUploadMedia,
+          unavailableMessage:
+            state.canWrite && !state.viewingVersion && state.canUploadMedia
+              ? mediaUpload.unavailableMessage
+              : (mediaUpload.unavailableMessage ??
+                "Upload media unavailable in this target."),
+        }
+      : mediaUpload;
+  const editorMediaLibrary =
+    state.status === "ready" && mediaLibrary
+      ? {
+          ...mediaLibrary,
+          canBrowse:
+            mediaLibrary.canBrowse &&
+            state.canWrite &&
+            !state.viewingVersion &&
+            state.canReadMedia,
+          unavailableMessage:
+            state.canWrite && !state.viewingVersion && state.canReadMedia
+              ? mediaLibrary.unavailableMessage
+              : (mediaLibrary.unavailableMessage ??
+                "Image library unavailable in this target."),
+        }
+      : mediaLibrary;
   const setPreviewMode = useCallback(
     (mode: ContentDocumentPreviewMode) => {
       if (previewMode === undefined) {
@@ -2087,6 +2212,8 @@ function useContentDocumentPageViewElement({
                         onSelectionTextChange={onAiSelectionChange}
                         readOnly={!state.canWrite || !!state.viewingVersion}
                         forbidden={false}
+                        mediaUpload={editorMediaUpload}
+                        mediaLibrary={editorMediaLibrary}
                         canvasHeader={
                           <div className="space-y-3 pb-1">
                             {/* Path chip + dashed-border frontmatter mono row */}
@@ -2386,6 +2513,8 @@ function useContentDocumentPageController({
   context?: StudioMountContext;
 }): ContentDocumentPageViewProps {
   const mountInfo = useStudioMountInfo();
+  const apiConfig = useStudioApiConfig();
+  const session = useStudioSession();
   const params = useParams();
   const { back, push } = useRouter();
   const typeId = (params.type as string) || "content";
@@ -2461,6 +2590,39 @@ function useContentDocumentPageController({
     useState<MdxPropsPanelSelection | null>(null);
   const [aiSelection, setAiSelection] =
     useState<TipTapEditorSelectionInfo | null>(null);
+  const [mediaUploadState, setMediaUploadState] =
+    useState<MediaUploadControllerState>({ status: "idle" });
+  const mediaUploadStateRef = useRef(mediaUploadState);
+  const mediaUploadGenerationRef = useRef(0);
+  const updateMediaUploadState = useCallback(
+    (nextState: MediaUploadControllerState) => {
+      mediaUploadStateRef.current = nextState;
+      setMediaUploadState(nextState);
+    },
+    [],
+  );
+  const csrfToken =
+    session.status === "authenticated" ? session.csrfToken : null;
+  const isMediaUploadAuthUsable =
+    apiConfig?.authOptions.auth.mode === "token" ||
+    session.status === "authenticated";
+  const mediaUploadApi = useMemo(() => {
+    if (!apiConfig || !isMediaUploadAuthUsable) {
+      return null;
+    }
+
+    return createStudioMediaUploadApi(apiConfig.config, {
+      ...apiConfig.authOptions,
+      csrfToken,
+    });
+  }, [apiConfig, csrfToken, isMediaUploadAuthUsable]);
+  const mediaLibraryApi = useMemo(() => {
+    if (!apiConfig) {
+      return null;
+    }
+
+    return createStudioMediaLibraryApi(apiConfig.config, apiConfig.authOptions);
+  }, [apiConfig]);
   const aiApi = useMemo<StudioAiRouteApi | undefined>(() => {
     if (!activeContext || !route) {
       return undefined;
@@ -2488,6 +2650,57 @@ function useContentDocumentPageController({
   }, [activeContext, route]);
   const stateRef = useRef(state);
   const loadRequestIdRef = useRef(0);
+  const canBrowseMediaLibrary =
+    state.status === "ready" &&
+    state.canWrite &&
+    !state.viewingVersion &&
+    state.canReadMedia &&
+    mediaLibraryApi !== null;
+
+  const mediaLibrary = useMemo<TipTapEditorMediaLibraryState>(() => {
+    return {
+      canBrowse: canBrowseMediaLibrary,
+      unavailableMessage: MEDIA_LIBRARY_UNAVAILABLE_MESSAGE,
+      listImages: async (): Promise<MediaAsset[]> => {
+        const currentState = stateRef.current;
+        const api = mediaLibraryApi;
+
+        if (
+          currentState.status !== "ready" ||
+          !currentState.canWrite ||
+          currentState.viewingVersion ||
+          !currentState.canReadMedia ||
+          api === null
+        ) {
+          throw createUnavailableMediaLibraryError();
+        }
+
+        const requestToken = createContentDocumentRouteRequestToken({
+          documentId: currentState.documentId,
+          route: currentState.route,
+        });
+        const response = await api.list({
+          category: "image",
+          sort: "uploadedAt",
+          order: "desc",
+          limit: 12,
+        });
+        const latestState = stateRef.current;
+
+        if (
+          latestState.status !== "ready" ||
+          !matchesContentDocumentRouteRequestToken(requestToken, latestState) ||
+          !latestState.canWrite ||
+          latestState.viewingVersion ||
+          !latestState.canReadMedia
+        ) {
+          throw createStaleMediaLibraryTargetError();
+        }
+
+        return response.data;
+      },
+    };
+  }, [canBrowseMediaLibrary, mediaLibraryApi]);
 
   // Sync ref after commit so event handlers and async callbacks always
   // see the latest committed state. useLayoutEffect runs synchronously
@@ -2496,6 +2709,161 @@ function useContentDocumentPageController({
   useLayoutEffect(() => {
     stateRef.current = state;
   }, [state]);
+
+  useLayoutEffect(() => {
+    mediaUploadStateRef.current = mediaUploadState;
+  }, [mediaUploadState]);
+
+  useEffect(() => {
+    mediaUploadGenerationRef.current += 1;
+    updateMediaUploadState({ status: "idle" });
+  }, [
+    documentId,
+    route?.initialEnvironment,
+    route?.project,
+    updateMediaUploadState,
+  ]);
+
+  const mediaUpload = useMemo<TipTapEditorMediaUploadState>(() => {
+    const canUpload =
+      state.status === "ready" &&
+      state.canWrite &&
+      !state.viewingVersion &&
+      state.canUploadMedia &&
+      mediaUploadApi !== null &&
+      mediaUploadState.status !== "uploading" &&
+      isMediaUploadAuthUsable;
+
+    return {
+      canUpload,
+      isUploading: mediaUploadState.status === "uploading",
+      completedFiles:
+        mediaUploadState.status === "uploading"
+          ? mediaUploadState.completedFiles
+          : undefined,
+      totalFiles:
+        mediaUploadState.status === "uploading"
+          ? mediaUploadState.totalFiles
+          : undefined,
+      errorMessage:
+        mediaUploadState.status === "error"
+          ? mediaUploadState.errorMessage
+          : undefined,
+      unavailableMessage: "Upload media unavailable in this target.",
+      uploadFiles: async (files: File[]): Promise<MediaAsset[]> => {
+        if (files.length === 0) {
+          return [];
+        }
+
+        const currentState = stateRef.current;
+        const api = mediaUploadApi;
+
+        if (
+          currentState.status !== "ready" ||
+          !currentState.canWrite ||
+          currentState.viewingVersion ||
+          !currentState.canUploadMedia ||
+          api === null ||
+          mediaUploadStateRef.current.status === "uploading" ||
+          !isMediaUploadAuthUsable
+        ) {
+          const error = createUnavailableMediaUploadError();
+
+          if (mediaUploadStateRef.current.status !== "uploading") {
+            updateMediaUploadState({
+              status: "error",
+              errorMessage: formatMediaUploadError(error),
+            });
+          }
+
+          throw error;
+        }
+
+        const requestToken = createContentDocumentRouteRequestToken({
+          documentId: currentState.documentId,
+          route: currentState.route,
+        });
+        const uploadGeneration = mediaUploadGenerationRef.current + 1;
+        mediaUploadGenerationRef.current = uploadGeneration;
+        const isActiveUploadGeneration = () =>
+          mediaUploadGenerationRef.current === uploadGeneration;
+        const isCurrentUploadTarget = () => {
+          const latestState = stateRef.current;
+
+          return (
+            latestState.status === "ready" &&
+            matchesContentDocumentRouteRequestToken(
+              requestToken,
+              latestState,
+            ) &&
+            latestState.canWrite &&
+            !latestState.viewingVersion &&
+            latestState.canUploadMedia
+          );
+        };
+
+        const totalFiles = files.length;
+        updateMediaUploadState({
+          status: "uploading",
+          completedFiles: 0,
+          totalFiles,
+        });
+
+        try {
+          const assets: MediaAsset[] = [];
+          let completedFiles = 0;
+
+          for (const file of files) {
+            if (!isActiveUploadGeneration() || !isCurrentUploadTarget()) {
+              throw createStaleMediaUploadTargetError();
+            }
+
+            const asset = await api.upload(file);
+
+            if (!isActiveUploadGeneration() || !isCurrentUploadTarget()) {
+              throw createStaleMediaUploadTargetError();
+            }
+
+            assets.push(asset);
+            completedFiles += 1;
+
+            if (isActiveUploadGeneration()) {
+              updateMediaUploadState({
+                status: "uploading",
+                completedFiles,
+                totalFiles,
+              });
+            }
+          }
+
+          if (isActiveUploadGeneration()) {
+            updateMediaUploadState({ status: "idle" });
+          }
+
+          return assets;
+        } catch (error) {
+          if (isActiveUploadGeneration()) {
+            updateMediaUploadState(
+              isCurrentUploadTarget()
+                ? {
+                    status: "error",
+                    errorMessage: formatMediaUploadError(error),
+                  }
+                : { status: "idle" },
+            );
+          }
+
+          throw error;
+        }
+      },
+    };
+  }, [
+    isMediaUploadAuthUsable,
+    mediaUploadApi,
+    mediaUploadState,
+    state,
+    updateMediaUploadState,
+  ]);
 
   function createRouteApi(input?: {
     context?: StudioMountContext;
@@ -3529,6 +3897,8 @@ function useContentDocumentPageController({
       void handleCreateVariant(prefill);
     },
     onCancelVariantCreation: handleCancelVariantCreation,
+    mediaUpload,
+    mediaLibrary,
     editorRef,
     onViewVersion: (version) => {
       void handleViewVersion(version);

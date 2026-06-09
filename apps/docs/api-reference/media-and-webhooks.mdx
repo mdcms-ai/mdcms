@@ -5,16 +5,99 @@ description: "File upload, media management, and webhook configuration endpoints
 
 ## Media API
 
-The Media API handles file uploads and media asset management. Media files are stored in S3-compatible object storage and are reusable across all environments within a project.
+The Media API uploads, lists, reads, and deletes project-scoped media assets.
+Media files are stored in S3-compatible object storage, and each request is
+routed to an explicit project and environment target.
 
-<Note>
-  The Media API is a post-MVP feature. The endpoints are defined and will be
-  available in an upcoming release.
-</Note>
+All `/api/v1/media*` endpoints require `X-MDCMS-Project` and
+`X-MDCMS-Environment` headers.
+
+### List Media
+
+<ParamField method="GET" path="/api/v1/media">
+  List media metadata for the routed project and environment.
+</ParamField>
+
+**Scope required:** `media:read`
+
+<ParamField query="q" type="string">
+  Case-insensitive filename search. Blank strings are ignored.
+</ParamField>
+
+<ParamField query="category" type="string">
+  Filter by derived category: `image`, `video`, `audio`, `document`, `archive`,
+  or `other`.
+</ParamField>
+
+<ParamField query="uploadedBy" type="string">
+  Filter by the uploading user ID.
+</ParamField>
+
+<ParamField query="uploadedFrom" type="string">
+  Include assets uploaded on or after this `YYYY-MM-DD` date.
+</ParamField>
+
+<ParamField query="uploadedTo" type="string">
+  Include assets uploaded through this `YYYY-MM-DD` date.
+</ParamField>
+
+<ParamField query="sort" type="string">
+  Sort by `uploadedAt`, `filename`, or `sizeBytes`. Defaults to `uploadedAt`.
+</ParamField>
+
+<ParamField query="order" type="string">
+  Sort direction: `asc` or `desc`. Defaults to `desc` for `uploadedAt` and
+  `sizeBytes`, and `asc` for `filename`.
+</ParamField>
+
+<ParamField query="limit" type="number">
+  Page size from `1` to `100`. Defaults to `30`.
+</ParamField>
+
+<ParamField query="offset" type="number">
+  Zero-based page offset. Defaults to `0`.
+</ParamField>
+
+Duplicate query parameters, unknown query parameters, invalid dates, and
+inverted date ranges return `INVALID_QUERY_PARAM`.
+
+**Example request:**
+
+```bash
+curl "https://cms.example.com/api/v1/media?category=image&q=hero&sort=uploadedAt&order=desc&limit=30&offset=0" \
+  -H "X-MDCMS-Project: marketing-site" \
+  -H "X-MDCMS-Environment: production" \
+  -H "Authorization: Bearer mdcms_key_live_abc123"
+```
+
+**Response:**
+
+```json
+{
+  "data": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "project": "marketing-site",
+      "filename": "hero.png",
+      "mimeType": "image/png",
+      "sizeBytes": 245760,
+      "url": "https://cdn.example.com/marketing-site/media/550e8400-e29b-41d4-a716-446655440000/hero.png",
+      "uploadedBy": "880e8400-e29b-41d4-a716-446655440002",
+      "uploadedAt": "2026-01-20T10:00:00.000Z"
+    }
+  ],
+  "pagination": {
+    "limit": 30,
+    "offset": 0,
+    "total": 1,
+    "hasMore": false
+  }
+}
+```
 
 ### Upload Media
 
-<ParamField method="POST" path="/api/v1/media">
+<ParamField method="POST" path="/api/v1/media/upload">
   Upload a file. The request must use `multipart/form-data` encoding.
 </ParamField>
 
@@ -23,13 +106,15 @@ The Media API handles file uploads and media asset management. Media files are s
 **Content-Type:** `multipart/form-data`
 
 <ParamField body="file" type="file" required>
-  The file to upload. Maximum size is determined by server configuration.
+  The file to upload. Image uploads are limited by the routed project's media
+  image upload setting when configured. Non-image uploads are not subject to
+  that image limit.
 </ParamField>
 
 **Example request:**
 
 ```bash
-curl -X POST "https://cms.example.com/api/v1/media" \
+curl -X POST "https://cms.example.com/api/v1/media/upload" \
   -H "X-MDCMS-Project: marketing-site" \
   -H "X-MDCMS-Environment: production" \
   -H "Authorization: Bearer mdcms_key_live_abc123" \
@@ -41,7 +126,48 @@ curl -X POST "https://cms.example.com/api/v1/media" \
 ```json
 {
   "data": {
-    "id": "med_550e8400-e29b-41d4-a716-446655440000",
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "project": "marketing-site",
+    "filename": "image.png",
+    "mimeType": "image/png",
+    "sizeBytes": 245760,
+    "url": "https://cdn.example.com/marketing-site/media/550e8400-e29b-41d4-a716-446655440000/image.png",
+    "uploadedBy": "880e8400-e29b-41d4-a716-446655440002",
+    "uploadedAt": "2026-01-20T10:00:00.000Z"
+  }
+}
+```
+
+### Get Media
+
+<ParamField method="GET" path="/api/v1/media/{id}">
+  Read metadata for one media asset in the routed project and environment.
+</ParamField>
+
+**Scope required:** `media:read`
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  The media asset ID.
+</ParamField>
+
+**Example request:**
+
+```bash
+curl "https://cms.example.com/api/v1/media/550e8400-e29b-41d4-a716-446655440000" \
+  -H "X-MDCMS-Project: marketing-site" \
+  -H "X-MDCMS-Environment: production" \
+  -H "Authorization: Bearer mdcms_key_live_abc123"
+```
+
+**Response:**
+
+```json
+{
+  "data": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "project": "marketing-site",
     "filename": "image.png",
     "mimeType": "image/png",
     "sizeBytes": 245760,
@@ -70,7 +196,7 @@ curl -X POST "https://cms.example.com/api/v1/media" \
 **Example request:**
 
 ```bash
-curl -X DELETE "https://cms.example.com/api/v1/media/med_550e8400-e29b-41d4-a716-446655440000" \
+curl -X DELETE "https://cms.example.com/api/v1/media/550e8400-e29b-41d4-a716-446655440000" \
   -H "X-MDCMS-Project: marketing-site" \
   -H "X-MDCMS-Environment: production" \
   -H "X-MDCMS-CSRF-Token: csrf_token_value" \
@@ -82,16 +208,16 @@ curl -X DELETE "https://cms.example.com/api/v1/media/med_550e8400-e29b-41d4-a716
 ```json
 {
   "data": {
-    "success": true,
-    "id": "med_550e8400-e29b-41d4-a716-446655440000",
-    "deletedAt": "2026-01-21T10:00:00.000Z"
+    "deleted": true,
+    "id": "550e8400-e29b-41d4-a716-446655440000"
   }
 }
 ```
 
 <Warning>
   Media deletion is permanent and cannot be undone. Ensure no documents
-  reference the file before deleting.
+  reference the file before deleting. The API does not scan or rewrite content
+  references.
 </Warning>
 
 ---

@@ -176,6 +176,48 @@ test("get preserves a path-prefixed studio serverUrl", async () => {
   );
 });
 
+test("get defaults optional media and AI capabilities when omitted", async () => {
+  const api = createCapabilitiesApi({
+    fetcher: async () =>
+      new Response(
+        JSON.stringify({
+          data: {
+            project: "marketing-site",
+            environment: "staging",
+            capabilities: {
+              schema: { read: true, write: false },
+              content: {
+                read: true,
+                readDraft: true,
+                write: false,
+                publish: false,
+                unpublish: false,
+                delete: false,
+              },
+              users: { manage: false },
+              settings: { manage: false },
+            },
+          },
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        },
+      ),
+  });
+
+  const result = await api.get();
+
+  assert.deepEqual(result.capabilities.media, {
+    read: false,
+    upload: false,
+    delete: false,
+  });
+  assert.deepEqual(result.capabilities.ai, { use: false });
+});
+
 test("get surfaces invalid responses as runtime errors", async () => {
   const api = createCapabilitiesApi({
     fetcher: async () =>

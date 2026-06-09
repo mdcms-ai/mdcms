@@ -88,6 +88,17 @@ function createText(text: string, marks?: JSONContent["marks"]): JSONContent[] {
   ];
 }
 
+function createImageNode(node: MdxAstNode): JSONContent {
+  return {
+    type: "image",
+    attrs: {
+      src: node.url ?? "",
+      alt: node.alt ?? "",
+      title: node.title ?? null,
+    },
+  };
+}
+
 function withMark(
   marks: JSONContent["marks"] | undefined,
   mark: NonNullable<JSONContent["marks"]>[number],
@@ -196,6 +207,11 @@ function convertInlineNode(
           },
         }),
       );
+    case "image":
+      return createText(
+        getSourceSlice(source, node) ?? node.value ?? "",
+        marks,
+      );
     case "mdxJsxTextElement":
       if (
         isLowercaseIntrinsicName(node.name) &&
@@ -222,7 +238,6 @@ function convertInlineNode(
         marks,
       );
     case "html":
-    case "image":
       return createText(
         getSourceSlice(source, node) ?? node.value ?? "",
         marks,
@@ -244,6 +259,19 @@ function convertInlineNodesToParagraph(nodes: MdxAstNode[], source: string) {
 
 function convertParagraphNode(node: MdxAstNode, source: string): JSONContent[] {
   const children = node.children ?? [];
+  const nonWhitespaceChildren = children.filter(
+    (child) =>
+      child.type !== "text" ||
+      (typeof child.value === "string" && child.value.trim().length > 0),
+  );
+
+  if (
+    nonWhitespaceChildren.length > 0 &&
+    nonWhitespaceChildren.every((child) => child.type === "image")
+  ) {
+    return nonWhitespaceChildren.map(createImageNode);
+  }
+
   const hasBlockMdxTextElement = children.some(isBlockMdxTextElement);
 
   if (!hasBlockMdxTextElement) {

@@ -3,13 +3,20 @@ import type {
   ContentPreviewTokenRequest,
   PaginationMetadata,
 } from "@mdcms/shared";
-import { RuntimeError, signMdcmsPreviewToken } from "@mdcms/shared";
+import {
+  ContentBulkOperationInputSchema,
+  RuntimeError,
+  isRuntimeErrorLike,
+  signMdcmsPreviewToken,
+} from "@mdcms/shared";
+import { z } from "zod";
 
 import type { ApiKeyOperationScope } from "../auth.js";
 import { executeWithRuntimeErrorsHandled } from "../http-utils.js";
 
 import {
   assertRequiredString,
+  isRecord,
   parseBoolean,
   parseContentListGroupBy,
   parseOptionalString,
@@ -31,6 +38,13 @@ import {
   toVersionSummaryResponse,
 } from "./responses.js";
 import type {
+  ContentBulkAction,
+  ContentBulkOperationInput,
+  ContentBulkOperationItemError,
+  ContentBulkOperationResponse,
+  ContentBulkOperationResult,
+  ContentDocument,
+  ContentLifecycleEvent,
   ContentListResult,
   ContentListQuery,
   ContentPublishPayload,
@@ -141,6 +155,356 @@ function parsePreviewTokenRequestBody(
   }
 
   return { previewUrl: previewUrl.trim() };
+}
+
+function createInvalidBulkInputError(
+  message: string,
+  details: Record<string, unknown>,
+): RuntimeError {
+  return new RuntimeError({
+    code: "INVALID_INPUT",
+    message,
+    statusCode: 400,
+    details,
+  });
+}
+
+function hasInputField(input: Record<string, unknown>, field: string): boolean {
+  return Object.prototype.hasOwnProperty.call(input, field);
+}
+
+const BulkActionInputSchema = z.preprocess(
+  (value) => (typeof value === "string" ? value.trim() : value),
+  ContentBulkOperationInputSchema.shape.action,
+);
+
+const BulkOptionalStringInputSchema = z.preprocess((value) => {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (typeof value !== "string") {
+    return value;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}, z.string().optional());
+
+const BulkDocumentIdsInputSchema = z
+  .array(z.string())
+  .min(1, {
+    message: 'Field "documentIds" must contain between 1 and 100 document IDs.',
+  })
+  .max(100, {
+    message: 'Field "documentIds" must contain between 1 and 100 document IDs.',
+  })
+  .transform((documentIds) =>
+    documentIds.map((documentId) => documentId.trim()),
+  )
+  .superRefine((documentIds, ctx) => {
+    for (const [index, documentId] of documentIds.entries()) {
+      if (documentId.length === 0) {
+        ctx.addIssue({
+          code: "custom",
+          message: 'Field "documentIds" must contain only non-empty strings.',
+          path: [index],
+        });
+      }
+    }
+
+    if (new Set(documentIds).size !== documentIds.length) {
+      ctx.addIssue({
+        code: "custom",
+        message: 'Field "documentIds" must contain unique document IDs.',
+      });
+    }
+  });
+
+const BulkMoveTargetDirectoryInputSchema = z
+  .preprocess(
+    (value) => (typeof value === "string" ? value.trim() : value),
+    z.string(),
+  )
+  .superRefine((targetDirectory, ctx) => {
+    if (targetDirectory.length === 0) {
+      return;
+    }
+
+    if (targetDirectory.startsWith("/")) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          'Field "move.targetDirectory" must not start with a leading slash.',
+      });
+    }
+
+    if (targetDirectory.endsWith("/")) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          'Field "move.targetDirectory" must not end with a trailing slash.',
+      });
+    }
+
+    if (/(^|\/)\.\.(\/|$)/.test(targetDirectory)) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          'Field "move.targetDirectory" must not contain path traversal segments ("..").',
+      });
+    }
+  });
+
+const BulkMoveInputSchema = z.object({
+  targetDirectory: BulkMoveTargetDirectoryInputSchema,
+});
+
+const ContentBulkOperationRouteInputSchema = z
+  .object({
+    action: BulkActionInputSchema,
+    documentIds: BulkDocumentIdsInputSchema,
+    changeSummary: z.unknown().optional(),
+    actorId: z.unknown().optional(),
+    move: z.unknown().optional(),
+  })
+  .superRefine((input, ctx) => {
+    if (hasInputField(input, "changeSummary") && input.action !== "publish") {
+      ctx.addIssue({
+        code: "custom",
+        message: `Field "changeSummary" is not accepted for "${input.action}" bulk operations.`,
+        path: ["changeSummary"],
+      });
+    }
+
+    if (
+      hasInputField(input, "actorId") &&
+      input.action !== "publish" &&
+      input.action !== "unpublish"
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: `Field "actorId" is not accepted for "${input.action}" bulk operations.`,
+        path: ["actorId"],
+      });
+    }
+
+    if (hasInputField(input, "move") && input.action !== "move") {
+      ctx.addIssue({
+        code: "custom",
+        message: `Field "move" is not accepted for "${input.action}" bulk operations.`,
+        path: ["move"],
+      });
+    }
+
+    if (input.action === "publish") {
+      addNestedBulkIssues(
+        ctx,
+        BulkOptionalStringInputSchema.safeParse(input.changeSummary),
+        ["changeSummary"],
+      );
+    }
+
+    if (input.action === "publish" || input.action === "unpublish") {
+      addNestedBulkIssues(
+        ctx,
+        BulkOptionalStringInputSchema.safeParse(input.actorId),
+        ["actorId"],
+      );
+    }
+
+    if (input.action === "move") {
+      const move = BulkMoveInputSchema.safeParse(input.move);
+      if (!move.success && input.move === undefined) {
+        ctx.addIssue({
+          code: "custom",
+          message: 'Field "move.targetDirectory" is required for move.',
+          path: ["move", "targetDirectory"],
+        });
+        return;
+      }
+
+      addNestedBulkIssues(ctx, move, ["move"]);
+    }
+  })
+  .transform((input): ContentBulkOperationInput => {
+    const changeSummary =
+      input.action === "publish"
+        ? BulkOptionalStringInputSchema.parse(input.changeSummary)
+        : undefined;
+    const actorId =
+      input.action === "publish" || input.action === "unpublish"
+        ? BulkOptionalStringInputSchema.parse(input.actorId)
+        : undefined;
+
+    return {
+      action: input.action,
+      documentIds: input.documentIds,
+      ...(changeSummary ? { changeSummary } : undefined),
+      ...(actorId ? { actorId } : undefined),
+      ...(input.action === "move"
+        ? { move: BulkMoveInputSchema.parse(input.move) }
+        : undefined),
+    };
+  });
+
+type BulkSafeParseResult =
+  | { success: true }
+  | { success: false; error: z.ZodError };
+
+function addNestedBulkIssues(
+  ctx: z.RefinementCtx,
+  result: BulkSafeParseResult,
+  path: Array<string | number>,
+): void {
+  if (result.success) {
+    return;
+  }
+
+  for (const issue of result.error.issues) {
+    ctx.addIssue({
+      code: "custom",
+      message: issue.message,
+      path:
+        path[0] === "move" && issue.path.length === 0
+          ? ["move", "targetDirectory"]
+          : [...path, ...issue.path],
+    });
+  }
+}
+
+function bulkInputIssueField(issue: z.ZodIssue | undefined): string {
+  const path = issue?.path ?? [];
+  const first = path[0];
+
+  if (first === "move" && path[1] === "targetDirectory") {
+    return "move.targetDirectory";
+  }
+
+  if (first === "documentIds") {
+    return "documentIds";
+  }
+
+  return typeof first === "string" ? first : "body";
+}
+
+function bulkInputAction(body: unknown): string | undefined {
+  if (!isRecord(body) || typeof body.action !== "string") {
+    return undefined;
+  }
+
+  return body.action.trim();
+}
+
+function createBulkInputParseError(
+  body: unknown,
+  error: z.ZodError,
+): RuntimeError {
+  const issue = error.issues[0];
+  const field = bulkInputIssueField(issue);
+  const action = bulkInputAction(body);
+
+  return createInvalidBulkInputError(
+    issue?.message ?? "Bulk content request body is invalid.",
+    {
+      field,
+      ...(action !== undefined &&
+      (field === "changeSummary" || field === "actorId" || field === "move")
+        ? { action }
+        : undefined),
+    },
+  );
+}
+
+function parseContentBulkOperationInput(
+  body: unknown,
+): ContentBulkOperationInput {
+  const parsed = ContentBulkOperationRouteInputSchema.safeParse(body);
+  if (!parsed.success) {
+    throw createBulkInputParseError(body, parsed.error);
+  }
+
+  return parsed.data;
+}
+
+function getBulkRequiredScope(action: ContentBulkAction): ApiKeyOperationScope {
+  switch (action) {
+    case "publish":
+    case "unpublish":
+      return "content:publish";
+    case "delete":
+      return "content:delete";
+    case "move":
+      return "content:write";
+  }
+}
+
+function getBulkLifecycleEvent(
+  action: ContentBulkAction,
+): ContentLifecycleEvent {
+  switch (action) {
+    case "publish":
+      return "content.published";
+    case "unpublish":
+      return "content.unpublished";
+    case "delete":
+      return "content.deleted";
+    case "move":
+      return "content.updated";
+  }
+}
+
+function getDocumentSlug(path: string): string {
+  return path.split("/").at(-1) ?? path;
+}
+
+function buildBulkMovePath(
+  document: Pick<ContentDocument, "path">,
+  targetDirectory: string,
+): string {
+  const slug = getDocumentSlug(document.path);
+  return targetDirectory.length === 0 ? slug : `${targetDirectory}/${slug}`;
+}
+
+function createDocumentNotFoundError(documentId: string): RuntimeError {
+  return new RuntimeError({
+    code: "NOT_FOUND",
+    message: "Document not found.",
+    statusCode: 404,
+    details: {
+      documentId,
+    },
+  });
+}
+
+const BULK_REQUEST_LEVEL_ERROR_CODES = new Set([
+  "UNAUTHORIZED",
+  "MISSING_TARGET_ROUTING",
+  "TARGET_ROUTING_MISMATCH",
+  "SCHEMA_HASH_REQUIRED",
+  "SCHEMA_NOT_SYNCED",
+  "SCHEMA_HASH_MISMATCH",
+]);
+
+function isBulkRequestLevelError(error: unknown): boolean {
+  return (
+    isRuntimeErrorLike(error) && BULK_REQUEST_LEVEL_ERROR_CODES.has(error.code)
+  );
+}
+
+function toContentBulkOperationItemError(
+  error: unknown,
+): ContentBulkOperationItemError | undefined {
+  if (!isRuntimeErrorLike(error)) {
+    return undefined;
+  }
+
+  return {
+    code: error.code,
+    message: error.message,
+    statusCode: error.statusCode,
+    ...(error.details !== undefined ? { details: error.details } : undefined),
+  };
 }
 
 export function mountContentApiRoutes(
@@ -650,6 +1014,144 @@ export function mountContentApiRoutes(
 
       return {
         data: toDocumentResponse(document),
+      };
+    });
+  });
+
+  contentApp.post?.("/api/v1/content/bulk", ({ request, body }: any) => {
+    return executeWithRuntimeErrorsHandled(request, async () => {
+      const scope = pickScope(request);
+      await options.requireCsrf(request);
+      const payload = parseContentBulkOperationInput(body);
+      const requiredScope = getBulkRequiredScope(payload.action);
+      const authorization = await options.authorize(request, {
+        requiredScope,
+        project: scope.project,
+        environment: scope.environment,
+      });
+      const schemaHash =
+        payload.action === "move"
+          ? await requireMatchingWriteSchemaHash(
+              request,
+              scope,
+              options.getWriteSchemaSyncState,
+            )
+          : undefined;
+      const results: ContentBulkOperationResult[] = [];
+
+      for (const documentId of payload.documentIds) {
+        try {
+          const existing = await options.store.getById(scope, documentId, {
+            draft: true,
+          });
+
+          if (!existing || existing.isDeleted) {
+            throw createDocumentNotFoundError(documentId);
+          }
+
+          await options.authorize(request, {
+            requiredScope,
+            project: scope.project,
+            environment: scope.environment,
+            documentPath: existing.path,
+          });
+
+          let document: ContentDocument;
+
+          if (payload.action === "publish") {
+            document = await commitMutation(
+              getBulkLifecycleEvent(payload.action),
+              scope,
+              authorization,
+              () =>
+                options.store.publish(scope, documentId, {
+                  changeSummary: payload.changeSummary,
+                  actorId: payload.actorId,
+                }),
+            );
+          } else if (payload.action === "unpublish") {
+            document = await commitMutation(
+              getBulkLifecycleEvent(payload.action),
+              scope,
+              authorization,
+              () =>
+                options.store.unpublish(scope, documentId, {
+                  actorId: payload.actorId,
+                }),
+            );
+          } else if (payload.action === "delete") {
+            document = await commitMutation(
+              getBulkLifecycleEvent(payload.action),
+              scope,
+              authorization,
+              () => options.store.softDelete(scope, documentId),
+            );
+          } else {
+            const targetDirectory = payload.move?.targetDirectory ?? "";
+            const nextPath = buildBulkMovePath(existing, targetDirectory);
+
+            await options.authorize(request, {
+              requiredScope: "content:write",
+              project: scope.project,
+              environment: scope.environment,
+              documentPath: nextPath,
+            });
+
+            document = await commitMutation(
+              getBulkLifecycleEvent(payload.action),
+              scope,
+              authorization,
+              () =>
+                options.store.update(
+                  scope,
+                  documentId,
+                  {
+                    path: nextPath,
+                  },
+                  {
+                    expectedSchemaHash: schemaHash,
+                  },
+                ),
+            );
+          }
+
+          results.push({
+            documentId,
+            status: "succeeded",
+            document: toDocumentResponse(document),
+          });
+        } catch (error) {
+          if (isBulkRequestLevelError(error)) {
+            throw error;
+          }
+
+          const itemError = toContentBulkOperationItemError(error);
+
+          if (!itemError) {
+            throw error;
+          }
+
+          results.push({
+            documentId,
+            status: "failed",
+            error: itemError,
+          });
+        }
+      }
+
+      const succeeded = results.filter(
+        (result) => result.status === "succeeded",
+      ).length;
+      const response: ContentBulkOperationResponse = {
+        action: payload.action,
+        requested: payload.documentIds.length,
+        succeeded,
+        failed: results.length - succeeded,
+        results,
+      };
+
+      return {
+        data: response,
       };
     });
   });

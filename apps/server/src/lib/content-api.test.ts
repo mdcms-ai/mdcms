@@ -529,6 +529,1267 @@ test("content API emits webhook events for duplicate and version restore mutatio
   ]);
 });
 
+test("content API bulk publish returns per-document partial results", async () => {
+  const handler = createHandler();
+  const first = await createContentDocument(
+    handler,
+    (headers = {}) => headers,
+    scopeHeaders,
+    {
+      path: "blog/bulk-publish-one",
+      type: "BlogPost",
+      locale: "en",
+      format: "md",
+      frontmatter: { slug: "bulk-publish-one" },
+      body: "one",
+    },
+  );
+
+  const response = await handler(
+    new Request("http://localhost/api/v1/content/bulk", {
+      method: "POST",
+      headers: { ...scopeHeaders, "content-type": "application/json" },
+      body: JSON.stringify({
+        action: "publish",
+        documentIds: [first.documentId, "missing-document"],
+        changeSummary: "Bulk publish",
+      }),
+    }),
+  );
+  const body = (await response.json()) as {
+    data: {
+      action: "publish";
+      requested: number;
+      succeeded: number;
+      failed: number;
+      results: Array<{
+        documentId: string;
+        status: string;
+        document?: { publishedVersion: number | null };
+        error?: { code: string };
+      }>;
+    };
+  };
+
+  assert.equal(response.status, 200);
+  assert.equal(body.data.action, "publish");
+  assert.equal(body.data.requested, 2);
+  assert.equal(body.data.succeeded, 1);
+  assert.equal(body.data.failed, 1);
+  assert.equal(body.data.results[0]?.documentId, first.documentId);
+  assert.equal(body.data.results[0]?.status, "succeeded");
+  assert.equal(body.data.results[0]?.document?.publishedVersion, 1);
+  assert.equal(body.data.results[1]?.documentId, "missing-document");
+  assert.equal(body.data.results[1]?.status, "failed");
+  assert.equal(body.data.results[1]?.error?.code, "NOT_FOUND");
+});
+
+test("content API bulk rejects duplicate document IDs", async () => {
+  const handler = createHandler();
+
+  const response = await handler(
+    new Request("http://localhost/api/v1/content/bulk", {
+      method: "POST",
+      headers: { ...scopeHeaders, "content-type": "application/json" },
+      body: JSON.stringify({
+        action: "delete",
+        documentIds: ["duplicate-document", "duplicate-document"],
+      }),
+    }),
+  );
+  const body = (await response.json()) as {
+    code: string;
+    details?: { field?: string };
+  };
+
+  assert.equal(response.status, 400);
+  assert.equal(body.code, "INVALID_INPUT");
+  assert.equal(body.details?.field, "documentIds");
+});
+
+test("content API bulk trims document IDs before uniqueness validation", async () => {
+  const handler = createHandler();
+
+  const response = await handler(
+    new Request("http://localhost/api/v1/content/bulk", {
+      method: "POST",
+      headers: { ...scopeHeaders, "content-type": "application/json" },
+      body: JSON.stringify({
+        action: "delete",
+        documentIds: [" duplicate-document ", "duplicate-document"],
+      }),
+    }),
+  );
+  const body = (await response.json()) as {
+    code: string;
+    details?: { field?: string };
+  };
+
+  assert.equal(response.status, 400);
+  assert.equal(body.code, "INVALID_INPUT");
+  assert.equal(body.details?.field, "documentIds");
+});
+
+test("content API bulk move constructs archive slug paths and updates drafts", async () => {
+  const handler = createHandler();
+  const document = await createContentDocument(
+    handler,
+    (headers = {}) => headers,
+    scopeHeaders,
+    {
+      path: "blog/bulk-move-slug",
+      type: "BlogPost",
+      locale: "en",
+      format: "md",
+      frontmatter: { slug: "bulk-move-slug" },
+      body: "move me",
+    },
+  );
+
+  const response = await handler(
+    new Request("http://localhost/api/v1/content/bulk", {
+      method: "POST",
+      headers: { ...scopeHeaders, "content-type": "application/json" },
+      body: JSON.stringify({
+        action: "move",
+        documentIds: [document.documentId],
+        move: {
+          targetDirectory: "archive",
+        },
+      }),
+    }),
+  );
+  const body = (await response.json()) as {
+    data: {
+      requested: number;
+      succeeded: number;
+      failed: number;
+      results: Array<{
+        status: string;
+        document?: { documentId: string; path: string; draftRevision: number };
+      }>;
+    };
+  };
+
+  assert.equal(response.status, 200);
+  assert.equal(body.data.requested, 1);
+  assert.equal(body.data.succeeded, 1);
+  assert.equal(body.data.failed, 0);
+  assert.equal(body.data.results[0]?.status, "succeeded");
+  assert.equal(body.data.results[0]?.document?.path, "archive/bulk-move-slug");
+
+  const draftResponse = await handler(
+    new Request(
+      `http://localhost/api/v1/content/${document.documentId}?draft=true`,
+      {
+        headers: scopeHeaders,
+      },
+    ),
+  );
+  const draft = (await draftResponse.json()) as {
+    data: { path: string; draftRevision: number };
+  };
+
+  assert.equal(draftResponse.status, 200);
+  assert.equal(draft.data.path, "archive/bulk-move-slug");
+  assert.equal(draft.data.draftRevision, 2);
+});
+
+test("content API bulk move requires schema hash when write schema state exists", async () => {
+  const scope = {
+    project: scopeHeaders["x-mdcms-project"],
+    environment: scopeHeaders["x-mdcms-environment"],
+  };
+  const store = createInMemoryContentStore({
+    schemaScopes: [
+      {
+        project: scope.project,
+        environment: scope.environment,
+        schemas: createCms26ResolvedSchemas(),
+      },
+    ],
+  });
+  const document = await store.create(scope, {
+    path: "blog/bulk-move-needs-hash",
+    type: "BlogPost",
+    locale: "en",
+    format: "md",
+    frontmatter: { slug: "bulk-move-needs-hash" },
+    body: "move me",
+  });
+  const handler = createServerRequestHandler({
+    env: baseEnv,
+    configureApp: (app) => {
+      mountContentApiRoutes(app, {
+        store,
+        authorize: authorizeTestRequest,
+        requireCsrf: async () => undefined,
+        getWriteSchemaSyncState: async () => ({
+          schemaHash: inMemorySchemaHash,
+        }),
+      });
+    },
+    now: () => new Date("2026-03-02T10:00:00.000Z"),
+  });
+
+  const response = await handler(
+    new Request("http://localhost/api/v1/content/bulk", {
+      method: "POST",
+      headers: { ...scopeHeaders, "content-type": "application/json" },
+      body: JSON.stringify({
+        action: "move",
+        documentIds: [document.documentId],
+        move: {
+          targetDirectory: "archive",
+        },
+      }),
+    }),
+  );
+  const body = (await response.json()) as { code: string };
+
+  assert.equal(response.status, 400);
+  assert.equal(body.code, "SCHEMA_HASH_REQUIRED");
+});
+
+test("content API bulk rejects changeSummary for actions other than publish", async () => {
+  const handler = createHandler();
+
+  for (const action of ["unpublish", "delete", "move"] as const) {
+    const response = await handler(
+      new Request("http://localhost/api/v1/content/bulk", {
+        method: "POST",
+        headers: { ...scopeHeaders, "content-type": "application/json" },
+        body: JSON.stringify({
+          action,
+          documentIds: [`bulk-${action}-change-summary`],
+          changeSummary: "not allowed",
+          ...(action === "move"
+            ? { move: { targetDirectory: "archive" } }
+            : undefined),
+        }),
+      }),
+    );
+    const body = (await response.json()) as {
+      code: string;
+      details?: { field?: string; action?: string };
+    };
+
+    assert.equal(response.status, 400);
+    assert.equal(body.code, "INVALID_INPUT");
+    assert.equal(body.details?.field, "changeSummary");
+    assert.equal(body.details?.action, action);
+  }
+});
+
+test("content API bulk rejects actorId for delete and move", async () => {
+  const handler = createHandler();
+
+  for (const action of ["delete", "move"] as const) {
+    const response = await handler(
+      new Request("http://localhost/api/v1/content/bulk", {
+        method: "POST",
+        headers: { ...scopeHeaders, "content-type": "application/json" },
+        body: JSON.stringify({
+          action,
+          documentIds: [`bulk-${action}-actor`],
+          actorId: "user-2",
+          ...(action === "move"
+            ? { move: { targetDirectory: "archive" } }
+            : undefined),
+        }),
+      }),
+    );
+    const body = (await response.json()) as {
+      code: string;
+      details?: { field?: string; action?: string };
+    };
+
+    assert.equal(response.status, 400);
+    assert.equal(body.code, "INVALID_INPUT");
+    assert.equal(body.details?.field, "actorId");
+    assert.equal(body.details?.action, action);
+  }
+});
+
+test("content API bulk rejects move payloads for non-move actions", async () => {
+  const handler = createHandler();
+
+  for (const action of ["publish", "unpublish", "delete"] as const) {
+    const response = await handler(
+      new Request("http://localhost/api/v1/content/bulk", {
+        method: "POST",
+        headers: { ...scopeHeaders, "content-type": "application/json" },
+        body: JSON.stringify({
+          action,
+          documentIds: [`bulk-${action}-move-payload`],
+          move: {
+            targetDirectory: "archive",
+          },
+        }),
+      }),
+    );
+    const body = (await response.json()) as {
+      code: string;
+      details?: { field?: string; action?: string };
+    };
+
+    assert.equal(response.status, 400);
+    assert.equal(body.code, "INVALID_INPUT");
+    assert.equal(body.details?.field, "move");
+    assert.equal(body.details?.action, action);
+  }
+});
+
+test("content API bulk validates documentIds shape", async () => {
+  const handler = createHandler();
+
+  for (const [label, documentIds] of [
+    ["empty", []],
+    ["too-many", Array.from({ length: 101 }, (_, index) => `doc-${index}`)],
+    ["empty-string", [""]],
+    ["whitespace-string", ["   "]],
+    ["non-string", [123]],
+  ] as const) {
+    const response = await handler(
+      new Request("http://localhost/api/v1/content/bulk", {
+        method: "POST",
+        headers: { ...scopeHeaders, "content-type": "application/json" },
+        body: JSON.stringify({
+          action: "publish",
+          documentIds,
+        }),
+      }),
+    );
+    const body = (await response.json()) as {
+      code: string;
+      details?: { field?: string };
+    };
+
+    assert.equal(response.status, 400, label);
+    assert.equal(body.code, "INVALID_INPUT", label);
+    assert.equal(body.details?.field, "documentIds", label);
+  }
+});
+
+test("content API bulk rejects invalid move target directories", async () => {
+  const handler = createHandler();
+
+  for (const [label, input] of [
+    [
+      "missing move object",
+      {
+        action: "move",
+        documentIds: ["bulk-missing-move-object"],
+      },
+    ],
+    [
+      "missing targetDirectory",
+      {
+        action: "move",
+        documentIds: ["bulk-missing-target-directory"],
+        move: {},
+      },
+    ],
+    [
+      "non-string targetDirectory",
+      {
+        action: "move",
+        documentIds: ["bulk-non-string-target-directory"],
+        move: { targetDirectory: 123 },
+      },
+    ],
+    [
+      "leading slash",
+      {
+        action: "move",
+        documentIds: ["bulk-leading-slash-target-directory"],
+        move: { targetDirectory: "/archive" },
+      },
+    ],
+    [
+      "trailing slash",
+      {
+        action: "move",
+        documentIds: ["bulk-trailing-slash-target-directory"],
+        move: { targetDirectory: "archive/" },
+      },
+    ],
+    [
+      "path traversal",
+      {
+        action: "move",
+        documentIds: ["bulk-path-traversal-target-directory"],
+        move: { targetDirectory: "archive/../drafts" },
+      },
+    ],
+  ] as const) {
+    const response = await handler(
+      new Request("http://localhost/api/v1/content/bulk", {
+        method: "POST",
+        headers: { ...scopeHeaders, "content-type": "application/json" },
+        body: JSON.stringify(input),
+      }),
+    );
+    const body = (await response.json()) as {
+      code: string;
+      details?: { field?: string };
+    };
+
+    assert.equal(response.status, 400, label);
+    assert.equal(body.code, "INVALID_INPUT", label);
+    assert.equal(body.details?.field, "move.targetDirectory", label);
+  }
+});
+
+test("content API bulk move accepts an empty target directory for root moves", async () => {
+  const handler = createHandler();
+  const document = await createContentDocument(
+    handler,
+    (headers = {}) => headers,
+    scopeHeaders,
+    {
+      path: "blog/bulk-move-to-root",
+      type: "BlogPost",
+      locale: "en",
+      format: "md",
+      frontmatter: { slug: "bulk-move-to-root" },
+      body: "move me to root",
+    },
+  );
+
+  const response = await handler(
+    new Request("http://localhost/api/v1/content/bulk", {
+      method: "POST",
+      headers: { ...scopeHeaders, "content-type": "application/json" },
+      body: JSON.stringify({
+        action: "move",
+        documentIds: [document.documentId],
+        move: {
+          targetDirectory: "   ",
+        },
+      }),
+    }),
+  );
+  const body = (await response.json()) as {
+    data: {
+      succeeded: number;
+      failed: number;
+      results: Array<{
+        status: string;
+        document?: { path: string };
+      }>;
+    };
+  };
+
+  assert.equal(response.status, 200);
+  assert.equal(body.data.succeeded, 1);
+  assert.equal(body.data.failed, 0);
+  assert.equal(body.data.results[0]?.status, "succeeded");
+  assert.equal(body.data.results[0]?.document?.path, "bulk-move-to-root");
+});
+
+test("content API bulk requires CSRF before authorization", async () => {
+  let authorizeCalls = 0;
+  const store = createInMemoryContentStore({
+    schemaScopes: [
+      {
+        project: scopeHeaders["x-mdcms-project"],
+        environment: scopeHeaders["x-mdcms-environment"],
+        schemas: createCms26ResolvedSchemas(),
+      },
+    ],
+  });
+  const handler = createServerRequestHandler({
+    env: baseEnv,
+    configureApp: (app) => {
+      mountContentApiRoutes(app, {
+        store,
+        authorize: async () => {
+          authorizeCalls += 1;
+          return authorizeTestRequest();
+        },
+        requireCsrf: async () => {
+          throw new RuntimeError({
+            code: "FORBIDDEN",
+            message:
+              "Valid CSRF token is required for session-authenticated state-changing requests.",
+            statusCode: 403,
+          });
+        },
+        getWriteSchemaSyncState: async () => ({
+          schemaHash: inMemorySchemaHash,
+        }),
+      });
+    },
+    now: () => new Date("2026-03-02T10:00:00.000Z"),
+  });
+
+  const response = await handler(
+    new Request("http://localhost/api/v1/content/bulk", {
+      method: "POST",
+      headers: { ...scopeHeaders, "content-type": "application/json" },
+      body: JSON.stringify({
+        action: "publish",
+        documentIds: ["bulk-csrf-document"],
+      }),
+    }),
+  );
+  const body = (await response.json()) as { code: string };
+
+  assert.equal(response.status, 403);
+  assert.equal(body.code, "FORBIDDEN");
+  assert.equal(authorizeCalls, 0);
+});
+
+test("content API bulk authorizes the required global scope for each action", async () => {
+  for (const [action, expectedScope] of [
+    ["publish", "content:publish"],
+    ["unpublish", "content:publish"],
+    ["delete", "content:delete"],
+    ["move", "content:write"],
+  ] as const) {
+    const authorizeCalls: Array<Record<string, unknown>> = [];
+    const store = createInMemoryContentStore({
+      schemaScopes: [
+        {
+          project: scopeHeaders["x-mdcms-project"],
+          environment: scopeHeaders["x-mdcms-environment"],
+          schemas: createCms26ResolvedSchemas(),
+        },
+      ],
+    });
+    const rawHandler = createServerRequestHandler({
+      env: baseEnv,
+      configureApp: (app) => {
+        mountContentApiRoutes(app, {
+          store,
+          authorize: async (_request, requirement) => {
+            authorizeCalls.push(requirement as Record<string, unknown>);
+            return authorizeTestRequest();
+          },
+          requireCsrf: async () => undefined,
+          getWriteSchemaSyncState: async () => ({
+            schemaHash: inMemorySchemaHash,
+          }),
+        });
+      },
+      now: () => new Date("2026-03-02T10:00:00.000Z"),
+    });
+    const handler = wrapHandlerWithAutoSchemaHash(
+      rawHandler,
+      () => inMemorySchemaHash,
+    );
+
+    const response = await handler(
+      new Request("http://localhost/api/v1/content/bulk", {
+        method: "POST",
+        headers: { ...scopeHeaders, "content-type": "application/json" },
+        body: JSON.stringify({
+          action,
+          documentIds: [`missing-${action}-document`],
+          ...(action === "move"
+            ? { move: { targetDirectory: "archive" } }
+            : undefined),
+        }),
+      }),
+    );
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(authorizeCalls, [
+      {
+        requiredScope: expectedScope,
+        project: scopeHeaders["x-mdcms-project"],
+        environment: scopeHeaders["x-mdcms-environment"],
+      },
+    ]);
+  }
+});
+
+test("content API bulk reports current path authorization failures per document and continues", async () => {
+  const scope = {
+    project: scopeHeaders["x-mdcms-project"],
+    environment: scopeHeaders["x-mdcms-environment"],
+  };
+  const store = createInMemoryContentStore({
+    schemaScopes: [
+      {
+        project: scope.project,
+        environment: scope.environment,
+        schemas: createCms26ResolvedSchemas(),
+      },
+    ],
+  });
+  const forbidden = await store.create(scope, {
+    path: "blog/bulk-current-path-forbidden",
+    type: "BlogPost",
+    locale: "en",
+    format: "md",
+    frontmatter: { slug: "bulk-current-path-forbidden" },
+    body: "forbidden",
+  });
+  const allowed = await store.create(scope, {
+    path: "blog/bulk-current-path-allowed",
+    type: "BlogPost",
+    locale: "en",
+    format: "md",
+    frontmatter: { slug: "bulk-current-path-allowed" },
+    body: "allowed",
+  });
+  const pathAuthorizeCalls: string[] = [];
+  const handler = createServerRequestHandler({
+    env: baseEnv,
+    configureApp: (app) => {
+      mountContentApiRoutes(app, {
+        store,
+        authorize: async (_request, requirement) => {
+          if (requirement.documentPath) {
+            pathAuthorizeCalls.push(requirement.documentPath);
+          }
+
+          if (requirement.documentPath === forbidden.path) {
+            throw new RuntimeError({
+              code: "FORBIDDEN",
+              message: "Forbidden.",
+              statusCode: 403,
+            });
+          }
+
+          return authorizeTestRequest();
+        },
+        requireCsrf: async () => undefined,
+        getWriteSchemaSyncState: async () => ({
+          schemaHash: inMemorySchemaHash,
+        }),
+      });
+    },
+    now: () => new Date("2026-03-02T10:00:00.000Z"),
+  });
+
+  const response = await handler(
+    new Request("http://localhost/api/v1/content/bulk", {
+      method: "POST",
+      headers: { ...scopeHeaders, "content-type": "application/json" },
+      body: JSON.stringify({
+        action: "publish",
+        documentIds: [forbidden.documentId, allowed.documentId],
+      }),
+    }),
+  );
+  const body = (await response.json()) as {
+    data: {
+      succeeded: number;
+      failed: number;
+      results: Array<{
+        documentId: string;
+        status: string;
+        document?: { publishedVersion: number | null };
+        error?: { code: string; statusCode: number };
+      }>;
+    };
+  };
+
+  assert.equal(response.status, 200);
+  assert.equal(body.data.succeeded, 1);
+  assert.equal(body.data.failed, 1);
+  assert.equal(body.data.results[0]?.documentId, forbidden.documentId);
+  assert.equal(body.data.results[0]?.status, "failed");
+  assert.equal(body.data.results[0]?.error?.code, "FORBIDDEN");
+  assert.equal(body.data.results[0]?.error?.statusCode, 403);
+  assert.equal(body.data.results[1]?.documentId, allowed.documentId);
+  assert.equal(body.data.results[1]?.status, "succeeded");
+  assert.equal(body.data.results[1]?.document?.publishedVersion, 1);
+  assert.deepEqual(pathAuthorizeCalls, [forbidden.path, allowed.path]);
+});
+
+test("content API bulk reports move destination authorization failures per document and continues", async () => {
+  const scope = {
+    project: scopeHeaders["x-mdcms-project"],
+    environment: scopeHeaders["x-mdcms-environment"],
+  };
+  const store = createInMemoryContentStore({
+    schemaScopes: [
+      {
+        project: scope.project,
+        environment: scope.environment,
+        schemas: createCms26ResolvedSchemas(),
+      },
+    ],
+  });
+  const forbidden = await store.create(scope, {
+    path: "blog/bulk-move-destination-forbidden",
+    type: "BlogPost",
+    locale: "en",
+    format: "md",
+    frontmatter: { slug: "bulk-move-destination-forbidden" },
+    body: "forbidden",
+  });
+  const allowed = await store.create(scope, {
+    path: "blog/bulk-move-destination-allowed",
+    type: "BlogPost",
+    locale: "en",
+    format: "md",
+    frontmatter: { slug: "bulk-move-destination-allowed" },
+    body: "allowed",
+  });
+  const forbiddenDestination = "archive/bulk-move-destination-forbidden";
+  const allowedDestination = "archive/bulk-move-destination-allowed";
+  const pathAuthorizeCalls: string[] = [];
+  const rawHandler = createServerRequestHandler({
+    env: baseEnv,
+    configureApp: (app) => {
+      mountContentApiRoutes(app, {
+        store,
+        authorize: async (_request, requirement) => {
+          if (requirement.documentPath) {
+            pathAuthorizeCalls.push(requirement.documentPath);
+          }
+
+          if (requirement.documentPath === forbiddenDestination) {
+            throw new RuntimeError({
+              code: "FORBIDDEN",
+              message: "Forbidden.",
+              statusCode: 403,
+            });
+          }
+
+          return authorizeTestRequest();
+        },
+        requireCsrf: async () => undefined,
+        getWriteSchemaSyncState: async () => ({
+          schemaHash: inMemorySchemaHash,
+        }),
+      });
+    },
+    now: () => new Date("2026-03-02T10:00:00.000Z"),
+  });
+  const handler = wrapHandlerWithAutoSchemaHash(
+    rawHandler,
+    () => inMemorySchemaHash,
+  );
+
+  const response = await handler(
+    new Request("http://localhost/api/v1/content/bulk", {
+      method: "POST",
+      headers: { ...scopeHeaders, "content-type": "application/json" },
+      body: JSON.stringify({
+        action: "move",
+        documentIds: [forbidden.documentId, allowed.documentId],
+        move: {
+          targetDirectory: "archive",
+        },
+      }),
+    }),
+  );
+  const body = (await response.json()) as {
+    data: {
+      succeeded: number;
+      failed: number;
+      results: Array<{
+        documentId: string;
+        status: string;
+        document?: { path: string };
+        error?: { code: string; statusCode: number };
+      }>;
+    };
+  };
+
+  assert.equal(response.status, 200);
+  assert.equal(body.data.succeeded, 1);
+  assert.equal(body.data.failed, 1);
+  assert.equal(body.data.results[0]?.documentId, forbidden.documentId);
+  assert.equal(body.data.results[0]?.status, "failed");
+  assert.equal(body.data.results[0]?.error?.code, "FORBIDDEN");
+  assert.equal(body.data.results[0]?.error?.statusCode, 403);
+  assert.equal(body.data.results[1]?.documentId, allowed.documentId);
+  assert.equal(body.data.results[1]?.status, "succeeded");
+  assert.equal(body.data.results[1]?.document?.path, allowedDestination);
+  assert.deepEqual(pathAuthorizeCalls, [
+    forbidden.path,
+    forbiddenDestination,
+    allowed.path,
+    allowedDestination,
+  ]);
+});
+
+test("content API bulk move rethrows schema hash mismatch from item mutation", async () => {
+  const scope = {
+    project: scopeHeaders["x-mdcms-project"],
+    environment: scopeHeaders["x-mdcms-environment"],
+  };
+  const store = createInMemoryContentStore({
+    schemaScopes: [
+      {
+        project: scope.project,
+        environment: scope.environment,
+        schemas: createCms26ResolvedSchemas(),
+      },
+    ],
+  });
+  const document = await store.create(scope, {
+    path: "blog/bulk-move-schema-hash-mismatch",
+    type: "BlogPost",
+    locale: "en",
+    format: "md",
+    frontmatter: { slug: "bulk-move-schema-hash-mismatch" },
+    body: "move me",
+  });
+  const rawHandler = createServerRequestHandler({
+    env: baseEnv,
+    configureApp: (app) => {
+      mountContentApiRoutes(app, {
+        store: {
+          ...store,
+          async update() {
+            throw new RuntimeError({
+              code: "SCHEMA_HASH_MISMATCH",
+              message:
+                "Client schema hash does not match the server schema hash for the target project/environment.",
+              statusCode: 409,
+            });
+          },
+        },
+        authorize: authorizeTestRequest,
+        requireCsrf: async () => undefined,
+        getWriteSchemaSyncState: async () => ({
+          schemaHash: inMemorySchemaHash,
+        }),
+      });
+    },
+    now: () => new Date("2026-03-02T10:00:00.000Z"),
+  });
+  const handler = wrapHandlerWithAutoSchemaHash(
+    rawHandler,
+    () => inMemorySchemaHash,
+  );
+
+  const response = await handler(
+    new Request("http://localhost/api/v1/content/bulk", {
+      method: "POST",
+      headers: { ...scopeHeaders, "content-type": "application/json" },
+      body: JSON.stringify({
+        action: "move",
+        documentIds: [document.documentId],
+        move: {
+          targetDirectory: "archive",
+        },
+      }),
+    }),
+  );
+  const body = (await response.json()) as { code: string; data?: unknown };
+
+  assert.equal(response.status, 409);
+  assert.equal(body.code, "SCHEMA_HASH_MISMATCH");
+  assert.equal(body.data, undefined);
+});
+
+test("content API bulk move reports item-level invalid input from mutations and continues", async () => {
+  const scope = {
+    project: scopeHeaders["x-mdcms-project"],
+    environment: scopeHeaders["x-mdcms-environment"],
+  };
+  const store = createInMemoryContentStore({
+    schemaScopes: [
+      {
+        project: scope.project,
+        environment: scope.environment,
+        schemas: createCms26ResolvedSchemas(),
+      },
+    ],
+  });
+  const invalid = await store.create(scope, {
+    path: "blog/bulk-move-invalid-input",
+    type: "BlogPost",
+    locale: "en",
+    format: "md",
+    frontmatter: { slug: "bulk-move-invalid-input" },
+    body: "invalid",
+  });
+  const valid = await store.create(scope, {
+    path: "blog/bulk-move-valid-after-invalid-input",
+    type: "BlogPost",
+    locale: "en",
+    format: "md",
+    frontmatter: { slug: "bulk-move-valid-after-invalid-input" },
+    body: "valid",
+  });
+  const rawHandler = createServerRequestHandler({
+    env: baseEnv,
+    configureApp: (app) => {
+      mountContentApiRoutes(app, {
+        store: {
+          ...store,
+          async update(updateScope, documentId, payload, options) {
+            if (documentId === invalid.documentId) {
+              throw new RuntimeError({
+                code: "INVALID_INPUT",
+                message: "Field validation failed for this document.",
+                statusCode: 400,
+                details: { documentId },
+              });
+            }
+
+            return store.update(updateScope, documentId, payload, options);
+          },
+        },
+        authorize: authorizeTestRequest,
+        requireCsrf: async () => undefined,
+        getWriteSchemaSyncState: async () => ({
+          schemaHash: inMemorySchemaHash,
+        }),
+      });
+    },
+    now: () => new Date("2026-03-02T10:00:00.000Z"),
+  });
+  const handler = wrapHandlerWithAutoSchemaHash(
+    rawHandler,
+    () => inMemorySchemaHash,
+  );
+
+  const response = await handler(
+    new Request("http://localhost/api/v1/content/bulk", {
+      method: "POST",
+      headers: { ...scopeHeaders, "content-type": "application/json" },
+      body: JSON.stringify({
+        action: "move",
+        documentIds: [invalid.documentId, valid.documentId],
+        move: {
+          targetDirectory: "archive",
+        },
+      }),
+    }),
+  );
+  const body = (await response.json()) as {
+    data: {
+      succeeded: number;
+      failed: number;
+      results: Array<{
+        documentId: string;
+        status: string;
+        document?: { path: string };
+        error?: { code: string; statusCode: number };
+      }>;
+    };
+  };
+
+  assert.equal(response.status, 200);
+  assert.equal(body.data.succeeded, 1);
+  assert.equal(body.data.failed, 1);
+  assert.equal(body.data.results[0]?.documentId, invalid.documentId);
+  assert.equal(body.data.results[0]?.status, "failed");
+  assert.equal(body.data.results[0]?.error?.code, "INVALID_INPUT");
+  assert.equal(body.data.results[0]?.error?.statusCode, 400);
+  assert.equal(body.data.results[1]?.documentId, valid.documentId);
+  assert.equal(body.data.results[1]?.status, "succeeded");
+  assert.equal(
+    body.data.results[1]?.document?.path,
+    "archive/bulk-move-valid-after-invalid-input",
+  );
+});
+
+test("content API bulk rethrows unauthorized errors from per-document authorization", async () => {
+  const scope = {
+    project: scopeHeaders["x-mdcms-project"],
+    environment: scopeHeaders["x-mdcms-environment"],
+  };
+  const store = createInMemoryContentStore({
+    schemaScopes: [
+      {
+        project: scope.project,
+        environment: scope.environment,
+        schemas: createCms26ResolvedSchemas(),
+      },
+    ],
+  });
+  const document = await store.create(scope, {
+    path: "blog/bulk-path-unauthorized",
+    type: "BlogPost",
+    locale: "en",
+    format: "md",
+    frontmatter: { slug: "bulk-path-unauthorized" },
+    body: "publish me",
+  });
+  const handler = createServerRequestHandler({
+    env: baseEnv,
+    configureApp: (app) => {
+      mountContentApiRoutes(app, {
+        store,
+        authorize: async (_request, requirement) => {
+          if (requirement.documentPath === document.path) {
+            throw new RuntimeError({
+              code: "UNAUTHORIZED",
+              message: "Authentication required.",
+              statusCode: 401,
+            });
+          }
+
+          return authorizeTestRequest();
+        },
+        requireCsrf: async () => undefined,
+        getWriteSchemaSyncState: async () => ({
+          schemaHash: inMemorySchemaHash,
+        }),
+      });
+    },
+    now: () => new Date("2026-03-02T10:00:00.000Z"),
+  });
+
+  const response = await handler(
+    new Request("http://localhost/api/v1/content/bulk", {
+      method: "POST",
+      headers: { ...scopeHeaders, "content-type": "application/json" },
+      body: JSON.stringify({
+        action: "publish",
+        documentIds: [document.documentId],
+      }),
+    }),
+  );
+  const body = (await response.json()) as { code: string; data?: unknown };
+
+  assert.equal(response.status, 401);
+  assert.equal(body.code, "UNAUTHORIZED");
+  assert.equal(body.data, undefined);
+});
+
+test("content API bulk operations emit lifecycle events per successful document", async () => {
+  const store = createInMemoryContentStore({
+    schemaScopes: [
+      {
+        project: scopeHeaders["x-mdcms-project"],
+        environment: scopeHeaders["x-mdcms-environment"],
+        schemas: createCms26ResolvedSchemas(),
+      },
+    ],
+  });
+  const emitted: Array<{
+    event: string;
+    documentId: string;
+  }> = [];
+  const rawHandler = createServerRequestHandler({
+    env: baseEnv,
+    configureApp: (app) => {
+      mountContentApiRoutes(app, {
+        store,
+        authorize: authorizeTestRequest,
+        requireCsrf: async () => undefined,
+        getWriteSchemaSyncState: async () => ({
+          schemaHash: inMemorySchemaHash,
+        }),
+        lifecycleEvents: {
+          async emitContentEvent(input) {
+            emitted.push({
+              event: input.event,
+              documentId: input.document.documentId,
+            });
+          },
+        },
+      });
+    },
+    now: () => new Date("2026-03-02T10:00:00.000Z"),
+  });
+  const handler = wrapHandlerWithAutoSchemaHash(
+    rawHandler,
+    () => inMemorySchemaHash,
+  );
+  const first = await createContentDocument(
+    handler,
+    (headers = {}) => headers,
+    scopeHeaders,
+    {
+      path: "blog/bulk-event-one",
+      type: "BlogPost",
+      locale: "en",
+      format: "md",
+      frontmatter: { slug: "bulk-event-one" },
+      body: "one",
+    },
+  );
+  const second = await createContentDocument(
+    handler,
+    (headers = {}) => headers,
+    scopeHeaders,
+    {
+      path: "blog/bulk-event-two",
+      type: "BlogPost",
+      locale: "en",
+      format: "md",
+      frontmatter: { slug: "bulk-event-two" },
+      body: "two",
+    },
+  );
+  emitted.length = 0;
+
+  const response = await handler(
+    new Request("http://localhost/api/v1/content/bulk", {
+      method: "POST",
+      headers: { ...scopeHeaders, "content-type": "application/json" },
+      body: JSON.stringify({
+        action: "publish",
+        documentIds: [
+          first.documentId,
+          "missing-bulk-event-document",
+          second.documentId,
+        ],
+      }),
+    }),
+  );
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(emitted, [
+    {
+      event: "content.published",
+      documentId: first.documentId,
+    },
+    {
+      event: "content.published",
+      documentId: second.documentId,
+    },
+  ]);
+});
+
+test("content API bulk unpublish delete and move emit lifecycle events per successful document", async () => {
+  for (const [action, event] of [
+    ["unpublish", "content.unpublished"],
+    ["delete", "content.deleted"],
+    ["move", "content.updated"],
+  ] as const) {
+    const store = createInMemoryContentStore({
+      schemaScopes: [
+        {
+          project: scopeHeaders["x-mdcms-project"],
+          environment: scopeHeaders["x-mdcms-environment"],
+          schemas: createCms26ResolvedSchemas(),
+        },
+      ],
+    });
+    const emitted: Array<{
+      event: string;
+      documentId: string;
+    }> = [];
+    const rawHandler = createServerRequestHandler({
+      env: baseEnv,
+      configureApp: (app) => {
+        mountContentApiRoutes(app, {
+          store,
+          authorize: authorizeTestRequest,
+          requireCsrf: async () => undefined,
+          getWriteSchemaSyncState: async () => ({
+            schemaHash: inMemorySchemaHash,
+          }),
+          lifecycleEvents: {
+            async emitContentEvent(input) {
+              emitted.push({
+                event: input.event,
+                documentId: input.document.documentId,
+              });
+            },
+          },
+        });
+      },
+      now: () => new Date("2026-03-02T10:00:00.000Z"),
+    });
+    const handler = wrapHandlerWithAutoSchemaHash(
+      rawHandler,
+      () => inMemorySchemaHash,
+    );
+    const first = await createContentDocument(
+      handler,
+      (headers = {}) => headers,
+      scopeHeaders,
+      {
+        path: `blog/bulk-${action}-event-one`,
+        type: "BlogPost",
+        locale: "en",
+        format: "md",
+        frontmatter: { slug: `bulk-${action}-event-one` },
+        body: "one",
+      },
+    );
+    const second = await createContentDocument(
+      handler,
+      (headers = {}) => headers,
+      scopeHeaders,
+      {
+        path: `blog/bulk-${action}-event-two`,
+        type: "BlogPost",
+        locale: "en",
+        format: "md",
+        frontmatter: { slug: `bulk-${action}-event-two` },
+        body: "two",
+      },
+    );
+
+    if (action === "unpublish") {
+      assert.equal(
+        (
+          await handler(
+            new Request(
+              `http://localhost/api/v1/content/${first.documentId}/publish`,
+              {
+                method: "POST",
+                headers: {
+                  ...scopeHeaders,
+                  "content-type": "application/json",
+                },
+                body: JSON.stringify({}),
+              },
+            ),
+          )
+        ).status,
+        200,
+      );
+      assert.equal(
+        (
+          await handler(
+            new Request(
+              `http://localhost/api/v1/content/${second.documentId}/publish`,
+              {
+                method: "POST",
+                headers: {
+                  ...scopeHeaders,
+                  "content-type": "application/json",
+                },
+                body: JSON.stringify({}),
+              },
+            ),
+          )
+        ).status,
+        200,
+      );
+    }
+
+    emitted.length = 0;
+    const response = await handler(
+      new Request("http://localhost/api/v1/content/bulk", {
+        method: "POST",
+        headers: { ...scopeHeaders, "content-type": "application/json" },
+        body: JSON.stringify({
+          action,
+          documentIds: [
+            first.documentId,
+            `missing-bulk-${action}-event-document`,
+            second.documentId,
+          ],
+          ...(action === "move"
+            ? { move: { targetDirectory: "archive" } }
+            : undefined),
+        }),
+      }),
+    );
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(emitted, [
+      {
+        event,
+        documentId: first.documentId,
+      },
+      {
+        event,
+        documentId: second.documentId,
+      },
+    ]);
+  }
+});
+
 test("content API rejects translation group grouping for non-localized types", async () => {
   const store = createInMemoryContentStore({
     schemaScopes: [

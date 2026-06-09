@@ -2,7 +2,7 @@
 status: live
 canonical: true
 created: 2026-03-11
-last_updated: 2026-05-18
+last_updated: 2026-06-05
 ---
 
 # SPEC-011 Local Development and Operations
@@ -28,6 +28,7 @@ services:
       S3_ACCESS_KEY: ${S3_ACCESS_KEY}
       S3_SECRET_KEY: ${S3_SECRET_KEY}
       S3_BUCKET: mdcms-media
+      S3_PUBLIC_BASE_URL: http://localhost:9000/mdcms-media
       SMTP_HOST: mailhog
       SMTP_PORT: 1025
     env_file:
@@ -45,6 +46,8 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
 
   postgres:
     image: postgres:16
@@ -93,6 +96,25 @@ services:
       timeout: 5s
       retries: 5
 
+  minio-init:
+    image: minio/mc
+    restart: "no"
+    environment:
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin
+      S3_BUCKET: mdcms-media
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        mc alias set local "$${S3_ENDPOINT}" "$${S3_ACCESS_KEY}" "$${S3_SECRET_KEY}"
+        mc mb --ignore-existing "local/$${S3_BUCKET}"
+        mc anonymous set download "local/$${S3_BUCKET}"
+    depends_on:
+      minio:
+        condition: service_healthy
+
   mailhog:
     image: mailhog/mailhog
     restart: unless-stopped
@@ -127,7 +149,13 @@ git clone <repo>
 cd mdcms
 bun install
 docker compose up -d postgres redis minio mailhog
+docker compose run --rm --no-deps minio-init
 export DATABASE_URL=postgresql://mdcms:mdcms@localhost:5432/mdcms
+export S3_ENDPOINT=http://localhost:9000
+export S3_ACCESS_KEY=minioadmin
+export S3_SECRET_KEY=minioadmin
+export S3_BUCKET=mdcms-media
+export S3_PUBLIC_BASE_URL=http://localhost:9000/mdcms-media
 bun run --cwd apps/server db:migrate
 MDCMS_DEMO_ENVIRONMENT=staging bun run --cwd apps/server demo:seed
 MDCMS_DEMO_ENVIRONMENT=production bun run --cwd apps/server demo:seed

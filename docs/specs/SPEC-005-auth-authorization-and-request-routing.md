@@ -2,7 +2,7 @@
 status: live
 canonical: true
 created: 2026-03-11
-last_updated: 2026-06-02
+last_updated: 2026-06-05
 ---
 
 # SPEC-005 Auth, Authorization, and Request Routing
@@ -444,6 +444,7 @@ Machine-to-machine access (SDK, CI/CD) uses API keys:
   - `content:delete`
   - `schema:read`
   - `schema:write`
+  - `media:read`
   - `media:upload`
   - `media:delete`
   - `webhooks:read`
@@ -509,12 +510,12 @@ Studio traffic uses session authentication by default and may use bearer API key
 
 **Roles:**
 
-| Role       | Capabilities                                                                                                                        |
-| ---------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| **Owner**  | Full access. Cannot be removed. Manages instance-level settings, billing (future SaaS), and can assign all roles. One per instance. |
-| **Admin**  | User management, settings, read-only schema browsing, schema sync, and all content operations. Can assign Editor and Viewer roles.  |
-| **Editor** | Create, edit, publish, unpublish, and delete content. Can browse schema read-only. Limited to assigned folders.                     |
-| **Viewer** | Read-only access to CMS dashboard and schema. Can view content but not modify. Limited to assigned folders.                         |
+| Role       | Capabilities                                                                                                                                                                           |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Owner**  | Full access. Cannot be removed. Manages instance-level settings, billing (future SaaS), and can assign all roles. One per instance.                                                    |
+| **Admin**  | User management, settings, read-only schema browsing, schema sync, all content operations, and destructive media operations. Can assign Editor and Viewer roles.                       |
+| **Editor** | Create, edit, publish, unpublish, and delete content. Can browse schema read-only and upload media for assigned project contexts. Limited to assigned folders for document operations. |
+| **Viewer** | Read-only access to CMS dashboard, schema, content, and media metadata. Can view content but not modify. Limited to assigned folders for document operations.                          |
 
 **Folder-level assignment:**
 
@@ -543,6 +544,15 @@ Schema authorization semantics:
 
 - `schema:read` authorizes read-only schema browsing for the target `(project, environment)`.
 - `schema:write` authorizes explicit schema sync for the target `(project, environment)`.
+
+Media authorization semantics:
+
+- Media assets are project-scoped and reusable across environments, but media API requests still require explicit `(project, environment)` routing so authorization is evaluated through the same target contract as Studio and content APIs.
+- `media:read` authorizes reading media metadata in the routed project.
+- `media:upload` authorizes storing new media assets in the routed project.
+- `media:delete` authorizes destructive deletion of media metadata and the corresponding object storage asset in the routed project.
+- Session callers derive `media.read` from viewer-or-higher access to the routed project, `media.upload` from editor-or-higher access to the routed project, and `media.delete` from admin/owner access. Folder-prefix grants never grant project-wide media deletion.
+- API-key callers require the matching media operation scope and an allowlist tuple matching the explicit `(project, environment)` routing target.
 - `schema:write` is reserved to `admin` and `owner`.
 - `editor` and `viewer` may receive `schema:read`, but never `schema:write`.
 - API key issuance rejects reserved scopes that the authorizing session may not grant. In particular, non-admin and non-owner sessions cannot mint or authorize API keys with `schema:write`.
@@ -767,11 +777,19 @@ Success response:
         "unpublish": true,
         "delete": true
       },
+      "media": {
+        "read": true,
+        "upload": true,
+        "delete": false
+      },
       "users": {
         "manage": false
       },
       "settings": {
         "manage": false
+      },
+      "ai": {
+        "use": true
       }
     }
   }
@@ -786,3 +804,4 @@ Normative semantics:
 - For API-key callers, explicit routing outside the key allowlist fails with `TARGET_ROUTING_MISMATCH` (`400`) instead of returning a capability payload.
 - `schema.write` corresponds to the same authorization required by `PUT /api/v1/schema`.
 - `schema.read` corresponds to the same authorization required by `GET /api/v1/schema`.
+- `media.read`, `media.upload`, and `media.delete` correspond to the same authorization required by `GET /api/v1/media/:id`, `POST /api/v1/media/upload`, and `DELETE /api/v1/media/:id`.

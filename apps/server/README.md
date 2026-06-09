@@ -12,11 +12,17 @@ The steps below are for contributors working inside the monorepo.
 
 ```bash
 docker compose up -d postgres redis minio mailhog
+docker compose run --rm --no-deps minio-init
 export DATABASE_URL=postgresql://mdcms:mdcms@localhost:5432/mdcms
+export S3_ENDPOINT=http://localhost:9000
+export S3_ACCESS_KEY=minioadmin
+export S3_SECRET_KEY=minioadmin
+export S3_BUCKET=mdcms-media
+export S3_PUBLIC_BASE_URL=http://localhost:9000/mdcms-media
 bun run --cwd apps/server db:migrate
 ```
 
-This starts PostgreSQL, Redis, MinIO, and Mailhog for a local server process, then points local server commands at the Compose PostgreSQL instance.
+This starts PostgreSQL, Redis, initialized MinIO media storage, and Mailhog for a local server process, then points local server commands at the Compose PostgreSQL and MinIO instances.
 
 ### Start the server
 
@@ -53,6 +59,11 @@ Do not run `docker compose up -d --build` before starting the server locally; th
 | `MDCMS_AUTH_ADMIN_USER_IDS`    | No       |         | Comma-separated admin user IDs                            |
 | `MDCMS_AUTH_ADMIN_EMAILS`      | No       |         | Comma-separated admin emails                              |
 | `MDCMS_AUTH_INSECURE_COOKIES`  | No       | `false` | Set `true` for local dev without HTTPS                    |
+| `S3_ENDPOINT`                  | Yes      |         | S3-compatible endpoint URL                                |
+| `S3_ACCESS_KEY`                | Yes      |         | S3 access key                                             |
+| `S3_SECRET_KEY`                | Yes      |         | S3 secret key                                             |
+| `S3_BUCKET`                    | Yes      |         | S3 bucket name                                            |
+| `S3_PUBLIC_BASE_URL`           | No       |         | Optional public base URL for generated asset links        |
 
 ## Database Migrations
 

@@ -6,6 +6,7 @@ import {
   Activity,
   AlertCircle,
   Fingerprint,
+  Image,
   Key,
   Plus,
   Server,
@@ -21,6 +22,10 @@ import {
   type ApiKeyCreateResult,
   type ApiKeyMetadata,
 } from "../../../api-keys-api.js";
+import {
+  useMediaSettings,
+  type SettingsPageMediaSettingsState,
+} from "../../hooks/use-media-settings.js";
 import { createStudioSchemaRouteApi } from "../../../schema-route-api.js";
 import { useApiKeyList } from "../../hooks/use-api-key-list.js";
 import {
@@ -53,6 +58,8 @@ import {
   WebhookCreateConfigurationPage,
   WebhookEditConfigurationPage,
 } from "./settings-webhook-configurations.js";
+import { SettingsMediaPanel } from "./settings-media-panel.js";
+import type { MediaSettingsDraft } from "./settings-media-model.js";
 import { SettingsWebhooksPanel } from "./settings-webhooks-panel.js";
 import { cn } from "../../lib/utils.js";
 import Link from "../../adapters/next-link.js";
@@ -75,13 +82,19 @@ const settingsTabs = [
     icon: Activity,
     href: "/settings/webhooks",
   },
+  {
+    id: "media",
+    label: "Media",
+    icon: Image,
+    href: "/settings/media",
+  },
 ] as const;
 
 type SettingsTabId = (typeof settingsTabs)[number]["id"];
 type SettingsSectionId = string | null;
 
 function toSettingsTabId(value: string | undefined): SettingsTabId {
-  if (value === "api-keys" || value === "webhooks") {
+  if (value === "api-keys" || value === "webhooks" || value === "media") {
     return value;
   }
 
@@ -690,6 +703,8 @@ export function SettingsPageView({
   apiKeysState,
   webhookConfigState,
   webhookHistoryState,
+  mediaSettingsState,
+  mediaInitialDraft,
   createDialogOpen,
   setCreateDialogOpen,
   createKey,
@@ -704,6 +719,8 @@ export function SettingsPageView({
   apiKeysState: SettingsPageApiKeysState;
   webhookConfigState: SettingsPageWebhookConfigState;
   webhookHistoryState: SettingsPageWebhookHistoryState;
+  mediaSettingsState: SettingsPageMediaSettingsState;
+  mediaInitialDraft?: MediaSettingsDraft;
   createDialogOpen: boolean;
   setCreateDialogOpen: (open: boolean) => void;
   createKey: (input: ApiKeyCreateInput) => Promise<ApiKeyCreateResult>;
@@ -757,6 +774,11 @@ export function SettingsPageView({
                   webhookHistoryState={webhookHistoryState}
                 />
               )
+            ) : activeTab === "media" ? (
+              <SettingsMediaPanel
+                state={mediaSettingsState}
+                initialDraft={mediaInitialDraft}
+              />
             ) : (
               <GeneralSettingsPanel
                 mountInfo={mountInfo}
@@ -806,6 +828,9 @@ export default function SettingsPage({ initialTab }: { initialTab?: string }) {
   const webhookHistoryState = useWebhookDeliveryHistory({
     enabled: canManageSettings,
   });
+  const mediaSettingsState = useMediaSettings({
+    enabled: canManageSettings,
+  });
 
   const apiKeysState = useMemo<SettingsPageApiKeysState>(
     () => ({
@@ -844,6 +869,7 @@ export default function SettingsPage({ initialTab }: { initialTab?: string }) {
       apiKeysState={apiKeysState}
       webhookConfigState={webhookConfigState}
       webhookHistoryState={webhookHistoryState}
+      mediaSettingsState={mediaSettingsState}
       createDialogOpen={createDialogOpen}
       setCreateDialogOpen={setCreateDialogOpen}
       createKey={createKey}
