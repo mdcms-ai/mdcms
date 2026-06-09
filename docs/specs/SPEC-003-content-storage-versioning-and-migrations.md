@@ -272,6 +272,12 @@ Content endpoints that return documents expand schema file fields by default. `f
 - `raw`: the persisted raw `MediaAsset.id` string.
 - `expanded` or omitted: a resolved `MediaAsset`, or `null` when expansion fails.
 
+Missing, `null`, and empty string values are treated as unset for optional file
+fields. In `raw` mode, responses preserve the persisted unset representation,
+including absence, so authoring clients can round-trip frontmatter. In
+`expanded` mode or when `fileFields` is omitted, unset optional file fields
+return `null`. Unset optional file fields do not add `resolveErrors` entries.
+
 File-field expansion failures add a top-level `resolveErrors` entry keyed by the full field path, such as `frontmatter.heroImage`. Each entry has this shape:
 
 ```ts
@@ -418,8 +424,11 @@ Contract:
 - The response returns the newly created `ContentDocumentResponse`.
 - The returned `ContentDocumentResponse` follows the global `fileFields`
   response-shape contract.
-- Schema hash validation follows the same rules as `POST /content` when a synced
-  schema exists for the target scope.
+- Schema hash validation follows the same gate as `POST /content`:
+  `x-mdcms-schema-hash` is required; a missing hash returns
+  `SCHEMA_HASH_REQUIRED` (`400`), no synced schema for the target scope returns
+  `SCHEMA_NOT_SYNCED` (`409`), and a mismatched hash returns
+  `SCHEMA_HASH_MISMATCH` (`409`).
 
 ## Bulk Content Operations
 

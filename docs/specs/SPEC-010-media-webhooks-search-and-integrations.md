@@ -9,7 +9,7 @@ last_updated: 2026-06-06
 
 This is the live canonical document under `docs/`.
 
-## Media Management (Post-MVP)
+## Media Management
 
 ### Storage
 
@@ -81,12 +81,12 @@ Rules:
 - Updating media settings replaces only the media settings document. It does not
   modify schema sync state or content type definitions.
 
-### Planned Upload Flow
+### Upload Flow
 
 1. User drags/pastes/uploads a file in the editor context (or uses an upload button).
 2. Studio uploads the file to the MDCMS backend API (`POST /api/v1/media/upload`).
-3. Backend stores the file in S3, records metadata in PostgreSQL, and returns the URL.
-4. The URL is inserted into the markdown content.
+3. Backend stores the file in S3, records metadata in PostgreSQL, and returns the media asset metadata.
+4. Studio inserts the asset URL into Markdown or stores the asset id in a schema file field, depending on the editor context.
 
 ### Media Metadata
 
@@ -135,15 +135,13 @@ the user id that owns the API key.
 Media metadata rows are deleted when a media asset is deleted. Deletion does not
 rewrite existing documents that may contain the deleted asset URL.
 
-### Scope Status
+### API Surface
 
-Media upload is **Post-MVP** in the reduced scope plan. The first shipped media
-API phase includes upload, list/search, metadata read, deletion, and project
-media settings. The initial Studio editor flow inserts uploaded URLs into
-Markdown, and the Studio media library browses the same project-scoped metadata
-rows. Advanced media organization features such as tags, folders, collections,
-usage references, duplicate detection, image transformations, CDN controls, and
-asset governance remain outside this phase.
+The media API provides project-scoped upload, list/search/filter, metadata read,
+deletion, and project media settings. Studio editor uploads and the Studio media
+library use the same project-scoped media metadata rows. Schema file fields use
+media asset ids in content and `MediaAsset` metadata for validation and expanded
+content responses.
 
 ---
 
@@ -453,7 +451,7 @@ The search backend is designed to be pluggable. A post-MVP upgrade path to Meili
 
 ## Media Endpoints
 
-These routes are **Post-MVP**. They are intentionally omitted from the canonical MVP endpoint appendix in §24.
+These routes define the canonical media API surface.
 
 All `/api/v1/media*` endpoints require explicit target routing for `project`
 and `environment` via headers or query parameters. Media metadata is stored at
