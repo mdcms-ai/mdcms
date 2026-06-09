@@ -177,6 +177,13 @@ test("fieldTypes.file rejects category-like accept entries", () => {
 });
 ```
 
+Add preset compatibility tests:
+
+- `fieldTypes.image({ accept: ["application/pdf"] })` is invalid schema config.
+- `fieldTypes.video({ accept: ["image/png"] })` is invalid schema config.
+- `fieldTypes.image({ accept: ["image/png", "image/jpeg"] })` is valid narrowing within the image preset.
+- `fieldTypes.video({ accept: ["video/mp4"] })` is valid narrowing within the video preset.
+
 Add helper option precedence/config tests:
 
 - `fieldTypes.file({ required: false })` resolves to an optional nullable snapshot and write validation treats missing, `null`, and empty string as unset.
@@ -488,17 +495,22 @@ const imageAsset = {
 
 Cover:
 
-- required missing values are ignored by media helper because generic schema validation handles them
+- required file fields fail for missing, `null`, and empty string values after schema defaults/wrappers are resolved
 - non-string present values fail
 - blank strings fail for required file fields
 - optional file fields with `required: false` treat missing, `null`, and empty string as unset and skip media lookup
 - missing asset id fails with `INVALID_INPUT`
+- helper default values are validated for asset existence and MIME compatibility when applied
+- Zod `.default()` values on file helpers are validated for asset existence and MIME compatibility when applied
 - `fieldTypes.image()` accepts `image/jpeg`
 - `fieldTypes.image()` rejects `application/pdf`
 - `fieldTypes.video({ accept: ["video/mp4"] })` accepts `video/mp4; charset=binary`
 - exact accept matching is case-insensitive
 - wildcard accept matching works
 - failure details include `field: "frontmatter.primaryImage"`
+- required failures include `details.reason: "MEDIA_REQUIRED"`
+- missing asset failures include `details.reason: "MEDIA_NOT_FOUND"` and `details.mediaAssetId`
+- MIME mismatch failures include `details.reason: "MEDIA_TYPE_MISMATCH"`, `details.expectedMime`, and `details.actualMimeType`
 
 **Step 3: Write store integration tests**
 
@@ -516,9 +528,11 @@ primaryImage: {
 Configure the store with a media lookup that returns the test asset. Verify:
 
 - create succeeds with valid image id
+- create fails when a required file field is missing, `null`, or an empty string
 - create fails with non-image id
 - update fails with missing media id
-- optional file fields with `required: false` accept missing, `null`, and empty string values as unset
+- optional file fields with `required: false` accept missing, `null`, and empty string values as unset, skip media lookup, and do not fail
+- helper and Zod default ids are validated when they are applied to the write payload
 
 **Step 4: Run failing tests**
 
@@ -573,6 +587,12 @@ export async function validateMediaFieldIdentities(input: {
 
 It walks object/array fields recursively using the pattern from `reference-validation.ts`, but validates `field.file` entries.
 
+Run validation on schema-normalized/default-applied frontmatter when that object
+is available from the write path. If the write path only has raw frontmatter,
+explicitly apply file helper required/default semantics before media lookup so
+missing, `null`, and empty string required values fail and defaults are validated
+after they are applied.
+
 If schema contains file fields and no lookup is configured, throw:
 
 ```ts
@@ -587,11 +607,22 @@ new RuntimeError({
 Validation failure helper:
 
 ```ts
+type MediaFieldValidationReason =
+  | "MEDIA_REQUIRED"
+  | "MEDIA_NOT_FOUND"
+  | "MEDIA_TYPE_MISMATCH";
+
 new RuntimeError({
   code: "INVALID_INPUT",
   message: `Field "${fieldPath}" must reference a media asset matching this file field.`,
   statusCode: 400,
-  details: { field: fieldPath, mediaAssetId },
+  details: {
+    field: fieldPath,
+    mediaAssetId,
+    reason,
+    expectedMime,
+    actualMimeType,
+  },
 });
 ```
 
@@ -689,6 +720,8 @@ Cover:
 
 - top-level image id expands to `MediaAsset`
 - `fileFields=raw` leaves id string unchanged
+- `fileFields=raw` preserves missing, `null`, and empty string representations for optional unset file fields
+- expanded/default mode returns `null` for missing, `null`, and empty string optional unset file fields without adding `resolveErrors`
 - missing asset becomes `null` and records `MEDIA_NOT_FOUND`
 - wrong MIME becomes `null` and records `MEDIA_TYPE_MISMATCH`
 - nested object file fields expand with path `frontmatter.hero.image`
@@ -705,6 +738,9 @@ In `content-api.test.ts`, add route tests:
 - Studio-style `draft=true&fileFields=raw` returns raw id.
 - Invalid `fileFields=banana` returns `INVALID_QUERY_PARAM`.
 - `POST /api/v1/content/:id/duplicate` applies `fileFields` to the returned document.
+- `POST /api/v1/content/:id/duplicate` requires `x-mdcms-schema-hash` and returns `SCHEMA_HASH_REQUIRED` when missing.
+- `POST /api/v1/content/:id/duplicate` returns `SCHEMA_NOT_SYNCED` when the target scope has no synced schema.
+- `POST /api/v1/content/:id/duplicate` returns `SCHEMA_HASH_MISMATCH` when the supplied hash does not match.
 - `POST /api/v1/content/bulk` applies `fileFields` only to succeeded `results[].document` values.
 - `POST /api/v1/content/bulk` with omitted `fileFields` expands succeeded `results[].document` values by default.
 
@@ -768,8 +804,10 @@ Invalid values throw `INVALID_QUERY_PARAM`.
 Rules:
 
 - If mode is raw, return document unchanged.
+- Raw mode preserves persisted optional unset representations: missing fields stay missing, `null` stays `null`, and empty strings stay empty strings.
 - If schema missing or no file fields, return document unchanged.
 - If lookup missing and schema has file fields, fail closed with 500.
+- Expanded/default mode returns `null` for missing, `null`, and empty string optional unset file fields and does not add `resolveErrors`.
 - Clone `frontmatter` before modifications.
 - Merge media resolve errors into existing `resolveErrors`.
 

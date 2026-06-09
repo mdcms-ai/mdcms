@@ -829,10 +829,12 @@ Normative behavior:
   anchored to the corresponding property control when the failure can be mapped
   to a named frontmatter field; otherwise Studio falls back to the route-level
   mutation error banner.
-- File-field validation messages are file-specific. `MEDIA_NOT_FOUND` explains
-  that the selected media asset no longer exists. `MEDIA_TYPE_MISMATCH`
-  explains that the selected asset type is not accepted by the field and, when
-  available, includes the expected MIME preset or `accept` values.
+- File-field validation messages are file-specific and use
+  `details.reason` from write validation failures. `MEDIA_REQUIRED` explains
+  that a required media field is empty. `MEDIA_NOT_FOUND` explains that the
+  selected media asset no longer exists. `MEDIA_TYPE_MISMATCH` explains that the
+  selected asset type is not accepted by the field and, when available, includes
+  the expected MIME preset or `accept` values.
 
 ### Theme Preference Persistence
 

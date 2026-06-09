@@ -342,7 +342,7 @@ This ensures schemas only change through deliberate, reviewable actions.
 
 ### File Field Identity
 
-`fieldTypes.image()`, `fieldTypes.video()`, and `fieldTypes.file()` fields store a project-scoped media asset id string. The persisted value is never a URL and never a full media object. Write-time validation verifies that the media asset exists in the routed project and that its MIME type satisfies the field preset and `accept` narrowing. Validation failures use `INVALID_INPUT` (`400`) with `details.field` pointing at the frontmatter path.
+`fieldTypes.image()`, `fieldTypes.video()`, and `fieldTypes.file()` fields store a project-scoped media asset id string. The persisted value is never a URL and never a full media object. Write-time validation verifies that required values are present, that the media asset exists in the routed project, and that its MIME type satisfies the field preset and `accept` narrowing. Validation failures use `INVALID_INPUT` (`400`) with `details.field` pointing at the frontmatter path and a machine-readable `details.reason` of `MEDIA_REQUIRED`, `MEDIA_NOT_FOUND`, or `MEDIA_TYPE_MISMATCH`. When applicable, details include `mediaAssetId`, `expectedMime`, and `actualMimeType` so Studio can render file-specific validation messages.
 
 ---
 
