@@ -491,6 +491,10 @@ type MediaAsset = {
 };
 ```
 
+Schema file fields use `MediaAsset` metadata for validation and expansion.
+Media upload remains unrestricted by schema; schema restrictions apply when
+assigning an existing or newly uploaded asset to a content field.
+
 `MediaAssetCategory` is a coarse server-defined filter category derived from
 `mimeType`; it is not persisted in media metadata and is not returned as a
 separate field:

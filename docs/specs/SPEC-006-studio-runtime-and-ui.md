@@ -337,9 +337,9 @@ Normative behavior:
 - Client-side validation rejects blank, zero, negative, fractional, unsafe, or
   non-numeric explicit values before submitting. The inline validation message
   must identify that the value must be a positive whole number of bytes.
-- User-facing copy must state that MDCMS does not enforce a file-type allowlist
-  and that the configured limit applies only to uploads whose MIME type starts
-  with `image/`.
+- The panel explains only the image byte-limit setting and infrastructure/proxy
+  caveat. It must not display a general file-type allowlist disclaimer in the
+  document editor or content canvas.
 - Save controls are disabled while loading, while the current form is invalid,
   while the form is unchanged, and while a save request is in flight.
 - A failed load renders a deterministic error state with a retry affordance. A
@@ -786,6 +786,11 @@ Normative behavior:
   not ship hard-coded per-type property forms for routed document editing.
 - Every property row shows an always-visible compact type label derived from
   the resolved schema for the active environment.
+- Schema file fields render in the Properties panel as media picker controls.
+  The control stores the selected media asset id in frontmatter, never a URL or
+  Markdown string. It uses media read capability for browsing/replacing and
+  media upload capability for upload-new. Images render thumbnails, videos
+  render inline playback, and other files render a compact file placeholder.
 - MVP editable field support is intentionally narrow:
   - `string` fields render as single-line text inputs
   - `number` fields render as numeric inputs

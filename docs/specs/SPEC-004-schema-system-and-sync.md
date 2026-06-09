@@ -17,7 +17,7 @@ Developers define content types in `mdcms.config.ts` using Standard Schema with 
 
 ```typescript
 // mdcms.config.ts
-import { defineConfig, defineType, reference } from "@mdcms/cli";
+import { defineConfig, defineType, fieldTypes } from "@mdcms/cli";
 import { z } from "zod";
 
 export default defineConfig({
@@ -45,7 +45,7 @@ export default defineConfig({
         title: z.string().min(1).max(200),
         slug: z.string().regex(/^[a-z0-9-]+$/),
         excerpt: z.string().max(500).optional(),
-        author: reference("Author"),
+        author: fieldTypes.reference("Author"),
         tags: z.array(z.string()).default([]),
         coverImage: z.string().url().optional(),
         publishedAt: z.date().optional(),
@@ -87,6 +87,17 @@ export default defineConfig({
   ],
 });
 ```
+
+**Field type built-ins:**
+
+Schema built-ins are imported through `fieldTypes`:
+
+- `fieldTypes.reference(targetType)` stores an environment-local document id string.
+- `fieldTypes.image(options?)` stores a media asset id string and requires `mimeType` to start with `image/`.
+- `fieldTypes.video(options?)` stores a media asset id string and requires `mimeType` to start with `video/`.
+- `fieldTypes.file(options?)` stores a media asset id string and accepts any media asset unless narrowed by `options.accept`.
+
+`options.accept` is an array of MIME values or MIME wildcards such as `image/png`, `video/*`, or `application/pdf`. It never accepts category labels.
 
 **Localization config contract:**
 
@@ -160,7 +171,7 @@ Environments can have different schemas. The config file uses a **base schema + 
 
 ```typescript
 // mdcms.config.ts
-import { defineConfig, defineType, reference } from "@mdcms/cli";
+import { defineConfig, defineType, fieldTypes } from "@mdcms/cli";
 import { z } from "zod";
 
 const blogPost = defineType("BlogPost", {
@@ -168,7 +179,7 @@ const blogPost = defineType("BlogPost", {
   fields: {
     title: z.string().min(1).max(200),
     slug: z.string().regex(/^[a-z0-9-]+$/),
-    author: reference("Author"),
+    author: fieldTypes.reference("Author"),
     tags: z.array(z.string()).default([]),
     // Field-level sugar: this field only exists in staging and preview
     featured: z.boolean().default(false).env("staging", "preview"),
@@ -262,11 +273,15 @@ This ensures schemas only change through deliberate, reviewable actions.
 
 ### Reference Field Identity
 
-`reference('Type')` fields store the target document's **environment-local `document_id` string**. The persisted value is a plain UUID string, not a `{$ref, type}` object; target type metadata remains schema-owned through `reference('Type')`. Write-time reference validation failures continue to use `INVALID_INPUT` (`400`); `resolve` remains read-time only.
+`fieldTypes.reference('Type')` fields store the target document's environment-local `document_id` string. The persisted value is a plain UUID string, not a `{$ref, type}` object; target type metadata remains schema-owned through `fieldTypes.reference('Type')`. Write-time reference validation failures continue to use `INVALID_INPUT` (`400`); `resolve` remains read-time only.
 
 - Reference resolution is always scoped to the explicit `(project, environment)` request target.
 - Clone/promote operations remap references using `translation_group_id + locale`.
 - If a reference cannot be remapped, the clone/promote operation fails atomically.
+
+### File Field Identity
+
+`fieldTypes.image()`, `fieldTypes.video()`, and `fieldTypes.file()` fields store a project-scoped media asset id string. The persisted value is never a URL and never a full media object. Write-time validation verifies that the media asset exists in the routed project and that its MIME type satisfies the field preset and `accept` narrowing. Validation failures use `INVALID_INPUT` (`400`) with `details.field` pointing at the frontmatter path.
 
 ---
 
