@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent as ReactDragEvent,
+} from "react";
 import { useQuery } from "@tanstack/react-query";
 import { RuntimeError, type MediaAsset } from "@mdcms/shared";
 import {
@@ -36,14 +43,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../../components/ui/select.js";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "../../components/ui/table.js";
 import {
   createStudioMediaLibraryApi,
   type StudioMediaLibraryListQuery,
@@ -232,10 +231,20 @@ function readErrorMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
+function getMediaAssetExtension(filename: string): string {
+  const extension = filename.split(".").pop()?.trim();
+
+  return extension && extension !== filename ? extension.toUpperCase() : "FILE";
+}
+
 function collectMediaLibraryUploadFiles(
   files: FileList | readonly File[] | null | undefined,
 ): File[] {
   return files ? Array.from(files) : [];
+}
+
+function hasMediaLibraryFileDrag(event: ReactDragEvent<HTMLElement>): boolean {
+  return Array.from(event.dataTransfer.types).includes("Files");
 }
 
 function resolveMediaLibraryUploadProgress(
@@ -399,15 +408,6 @@ function MediaLibraryFilterBar({
   );
 }
 
-function MediaLibraryLimitsCopy() {
-  return (
-    <p className="text-xs text-foreground-muted">
-      Basic library limits: filename search only, simple metadata filters only,
-      and no advanced organization features.
-    </p>
-  );
-}
-
 function MediaLibraryUploadControl({
   canUploadMedia,
   uploadState,
@@ -462,14 +462,22 @@ function MediaLibraryUploadControl({
       </Button>
       {isUploading ? (
         <div
+          data-mdcms-media-upload-progress="docked"
           role="status"
           aria-live="polite"
-          className="w-full rounded-md border border-border bg-muted px-3 py-2 text-sm text-foreground-muted sm:w-72"
+          className="fixed bottom-6 right-6 z-50 w-[min(22rem,calc(100vw-3rem))] rounded-lg border border-border bg-background p-4 text-sm shadow-xl"
         >
-          <div className="mb-2 flex items-center justify-between gap-3">
-            <span>{statusText}</span>
+          <div className="mb-3 flex items-start justify-between gap-3">
+            <div>
+              <p className="font-medium text-foreground">Uploading assets</p>
+              <p className="mt-0.5 text-xs text-foreground-muted">
+                {statusText}
+              </p>
+            </div>
             {progress ? (
-              <span className="font-mono">{progress.percent}%</span>
+              <span className="font-mono text-xs text-foreground-muted">
+                {progress.percent}%
+              </span>
             ) : null}
           </div>
           {progress ? (
@@ -582,22 +590,51 @@ function MediaLibraryStatePanel({
 
 function MediaLibraryEmptyPanel({
   state,
+  isDragActive = false,
 }: {
   state: MediaLibraryEmptyPageState;
+  isDragActive?: boolean;
 }) {
   const emptyState = deriveMediaLibraryEmptyState(state.status === "no-match");
   const Icon = state.status === "no-match" ? FileSearch : Image;
+  const panelClassName = [
+    "relative isolate flex min-h-[26rem] overflow-hidden rounded-lg border border-dashed bg-background-subtle text-center transition-colors",
+    isDragActive ? "border-primary bg-accent-subtle" : "border-border",
+  ].join(" ");
 
   return (
     <section
       data-mdcms-media-library-state={state.status}
-      className="flex flex-col items-center justify-center py-16 text-center"
+      className={panelClassName}
     >
-      <div className="mb-4 rounded-full bg-background-subtle p-4">
-        <Icon className="size-8 text-foreground-muted" />
+      {state.status === "empty" ? (
+        <div
+          aria-hidden="true"
+          className="absolute inset-0 grid grid-cols-2 gap-3 p-6 opacity-35 sm:grid-cols-4"
+        >
+          {Array.from({ length: 8 }).map((_, index) => (
+            <div
+              key={index}
+              className="rounded-lg border border-border bg-background"
+            >
+              <div className="h-28 rounded-t-lg bg-muted" />
+              <div className="space-y-2 p-3">
+                <div className="h-2 rounded-full bg-border" />
+                <div className="h-2 w-2/3 rounded-full bg-border" />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      <div className="relative m-auto flex max-w-sm flex-col items-center px-6 py-16">
+        <div className="mb-4 rounded-full border border-border bg-background p-4 shadow-sm">
+          <Icon className="size-8 text-foreground-muted" />
+        </div>
+        <h3 className="mb-2 text-lg font-semibold">{emptyState.title}</h3>
+        <p className="text-sm text-foreground-muted">
+          {emptyState.description}
+        </p>
       </div>
-      <h3 className="mb-2 text-lg font-semibold">{emptyState.title}</h3>
-      <p className="text-sm text-foreground-muted">{emptyState.description}</p>
     </section>
   );
 }
@@ -638,13 +675,20 @@ function MediaAssetActions({
 function MediaAssetPreview({
   asset,
   category,
+  variant = "card",
 }: {
   asset: MediaAsset;
   category: ReturnType<typeof getMediaAssetCategory>;
+  variant?: "card" | "drawer";
 }) {
+  const previewFrameClassName =
+    variant === "drawer"
+      ? "flex aspect-video w-full items-center justify-center overflow-hidden rounded-lg border border-border bg-muted"
+      : "flex aspect-[4/3] w-full items-center justify-center overflow-hidden rounded-md bg-muted";
+
   if (category === "image") {
     return (
-      <div className="flex h-16 w-24 items-center justify-center overflow-hidden rounded-md border border-border bg-muted">
+      <div className={previewFrameClassName}>
         <img
           src={asset.url}
           alt={`${asset.filename} preview`}
@@ -657,21 +701,23 @@ function MediaAssetPreview({
 
   if (category === "video") {
     return (
-      <video
-        controls
-        preload="metadata"
-        aria-label={`Preview video ${asset.filename}`}
-        className="h-16 w-28 rounded-md border border-border bg-black"
-      >
-        <source src={asset.url} type={asset.mimeType} />
-      </video>
+      <div className={previewFrameClassName}>
+        <video
+          controls
+          preload="metadata"
+          aria-label={`Preview video ${asset.filename}`}
+          className="h-full w-full bg-black object-contain"
+        >
+          <source src={asset.url} type={asset.mimeType} />
+        </video>
+      </div>
     );
   }
 
   if (category === "audio") {
     return (
-      <div className="flex min-h-16 w-44 items-center gap-2 rounded-md border border-border bg-muted px-2">
-        <Music className="size-4 shrink-0 text-foreground-muted" />
+      <div className={`${previewFrameClassName} gap-3 px-3`}>
+        <Music className="size-5 shrink-0 text-foreground-muted" />
         <audio
           controls
           preload="metadata"
@@ -687,12 +733,12 @@ function MediaAssetPreview({
   return (
     <div
       aria-label={`Preview unavailable for ${asset.filename}`}
-      className="flex h-16 w-24 flex-col items-center justify-center rounded-md border border-border bg-muted px-2 text-center text-[11px] text-foreground-muted"
+      className={`${previewFrameClassName} flex-col px-2 text-center text-xs text-foreground-muted`}
     >
       {category === "document" ? (
-        <File className="mb-1 size-4" />
+        <File className="mb-2 size-6" />
       ) : (
-        <Play className="mb-1 size-4" />
+        <Play className="mb-2 size-6" />
       )}
       <span className="max-w-full truncate">
         {getMediaAssetCategoryLabel(category)}
@@ -701,72 +747,169 @@ function MediaAssetPreview({
   );
 }
 
-function MediaLibraryTable({
+function MediaAssetMetadataRow({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="flex items-start justify-between gap-4 border-b border-border py-3 last:border-b-0">
+      <dt className="text-xs uppercase text-foreground-muted">{label}</dt>
+      <dd className="max-w-48 truncate text-right text-sm text-foreground">
+        {value}
+      </dd>
+    </div>
+  );
+}
+
+function MediaAssetCard({
+  asset,
+  selected,
+  onSelect,
+  onCopyUrl,
+}: {
+  asset: MediaAsset;
+  selected: boolean;
+  onSelect: (asset: MediaAsset) => void;
+  onCopyUrl: (url: string) => void;
+}) {
+  const category = getMediaAssetCategory(asset);
+  const cardClassName = [
+    "group overflow-hidden rounded-lg border bg-background transition-colors",
+    selected
+      ? "border-primary shadow-sm ring-1 ring-primary/30"
+      : "border-border hover:border-primary/40",
+  ].join(" ");
+
+  return (
+    <article className={cardClassName}>
+      <div className="relative p-2">
+        <MediaAssetPreview asset={asset} category={category} />
+        <Badge
+          variant="outline"
+          className="absolute left-4 top-4 bg-background/90 text-[11px] shadow-sm"
+        >
+          {getMediaAssetCategoryLabel(category)}
+        </Badge>
+      </div>
+      <div className="space-y-3 p-3 pt-1">
+        <button
+          type="button"
+          aria-pressed={selected}
+          aria-label={`Select asset ${asset.filename}`}
+          className="block w-full min-w-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+          onClick={() => onSelect(asset)}
+        >
+          <span className="block truncate text-sm font-medium text-foreground">
+            {asset.filename}
+          </span>
+          <span className="mt-1 block truncate text-xs text-foreground-muted">
+            {formatMediaAssetBytes(asset.sizeBytes)} /{" "}
+            {getMediaAssetExtension(asset.filename)}
+          </span>
+        </button>
+        <div className="flex items-center justify-between gap-3">
+          <span className="truncate font-mono text-[11px] text-foreground-muted">
+            {asset.uploadedBy}
+          </span>
+          <MediaAssetActions asset={asset} onCopyUrl={onCopyUrl} />
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function MediaAssetDetailDrawer({
+  asset,
+  onCopyUrl,
+}: {
+  asset: MediaAsset | null;
+  onCopyUrl: (url: string) => void;
+}) {
+  if (!asset) {
+    return (
+      <aside
+        aria-label="Asset details"
+        className="flex min-h-full items-center justify-center border-t border-border bg-background-subtle p-6 text-center lg:border-l lg:border-t-0"
+      >
+        <p className="max-w-52 text-sm text-foreground-muted">
+          Select an asset to inspect its metadata.
+        </p>
+      </aside>
+    );
+  }
+
+  const category = getMediaAssetCategory(asset);
+
+  return (
+    <aside
+      aria-label="Asset details"
+      className="flex min-h-full flex-col border-t border-border bg-background-subtle lg:border-l lg:border-t-0"
+    >
+      <div className="border-b border-border px-4 py-4">
+        <p className="text-xs uppercase text-foreground-muted">
+          Selected asset
+        </p>
+        <h2 className="mt-1 truncate text-base font-semibold text-foreground">
+          {asset.filename}
+        </h2>
+      </div>
+
+      <div className="flex-1 space-y-5 overflow-y-auto p-4">
+        <MediaAssetPreview asset={asset} category={category} variant="drawer" />
+
+        <div className="flex items-center justify-between gap-3">
+          <Badge variant="outline" className="text-xs">
+            {getMediaAssetCategoryLabel(category)}
+          </Badge>
+          <MediaAssetActions asset={asset} onCopyUrl={onCopyUrl} />
+        </div>
+
+        <dl className="rounded-md border border-border bg-background px-3">
+          <MediaAssetMetadataRow label="MIME type" value={asset.mimeType} />
+          <MediaAssetMetadataRow
+            label="Size"
+            value={formatMediaAssetBytes(asset.sizeBytes)}
+          />
+          <MediaAssetMetadataRow
+            label="Uploaded"
+            value={formatMediaAssetDate(asset.uploadedAt, "en-US")}
+          />
+          <MediaAssetMetadataRow label="Uploader" value={asset.uploadedBy} />
+          <MediaAssetMetadataRow label="Asset ID" value={asset.id} />
+        </dl>
+      </div>
+    </aside>
+  );
+}
+
+function MediaLibraryGallery({
   assets,
+  selectedAsset,
+  onSelectAsset,
   onCopyUrl,
 }: {
   assets: MediaAsset[];
+  selectedAsset: MediaAsset | null;
+  onSelectAsset: (asset: MediaAsset) => void;
   onCopyUrl: (url: string) => void;
 }) {
   return (
-    <div className="rounded-lg border border-border">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead className="w-48">Preview</TableHead>
-            <TableHead>Filename</TableHead>
-            <TableHead className="w-36">MIME type</TableHead>
-            <TableHead className="w-28">Category</TableHead>
-            <TableHead className="w-24">Size</TableHead>
-            <TableHead className="w-40">Uploaded by</TableHead>
-            <TableHead className="w-32">Uploaded</TableHead>
-            <TableHead className="w-24"></TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {assets.map((asset) => {
-            const category = getMediaAssetCategory(asset);
-
-            return (
-              <TableRow key={asset.id}>
-                <TableCell>
-                  <MediaAssetPreview asset={asset} category={category} />
-                </TableCell>
-                <TableCell>
-                  <div className="min-w-0">
-                    <p className="max-w-80 truncate font-medium">
-                      {asset.filename}
-                    </p>
-                    <p className="font-mono text-xs text-foreground-muted">
-                      {asset.id}
-                    </p>
-                  </div>
-                </TableCell>
-                <TableCell className="text-sm text-foreground-muted">
-                  {asset.mimeType}
-                </TableCell>
-                <TableCell>
-                  <Badge variant="outline" className="text-xs">
-                    {getMediaAssetCategoryLabel(category)}
-                  </Badge>
-                </TableCell>
-                <TableCell className="text-sm text-foreground-muted">
-                  {formatMediaAssetBytes(asset.sizeBytes)}
-                </TableCell>
-                <TableCell className="font-mono text-xs text-foreground-muted">
-                  {asset.uploadedBy}
-                </TableCell>
-                <TableCell className="text-sm text-foreground-muted">
-                  {formatMediaAssetDate(asset.uploadedAt, "en-US")}
-                </TableCell>
-                <TableCell>
-                  <MediaAssetActions asset={asset} onCopyUrl={onCopyUrl} />
-                </TableCell>
-              </TableRow>
-            );
-          })}
-        </TableBody>
-      </Table>
+    <div
+      data-mdcms-media-library-layout="gallery"
+      className="grid grid-cols-[repeat(auto-fill,minmax(12rem,1fr))] gap-3"
+    >
+      {assets.map((asset) => (
+        <MediaAssetCard
+          key={asset.id}
+          asset={asset}
+          selected={selectedAsset?.id === asset.id}
+          onSelect={onSelectAsset}
+          onCopyUrl={onCopyUrl}
+        />
+      ))}
     </div>
   );
 }
@@ -903,12 +1046,64 @@ export function MediaLibraryPageView({
     state.status === "no-match" ||
     state.status === "ready" ||
     state.status === "error";
+  const readyAssets = state.status === "ready" ? state.assets : [];
+  const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
+  const selectedAsset =
+    readyAssets.find((asset) => asset.id === selectedAssetId) ??
+    readyAssets[0] ??
+    null;
+  const [isDragActive, setIsDragActive] = useState(false);
+  const canDropUpload = canUploadMedia && uploadState.status !== "uploading";
+  const handleDragOver = useCallback(
+    (event: ReactDragEvent<HTMLDivElement>) => {
+      if (!canDropUpload || !hasMediaLibraryFileDrag(event)) {
+        return;
+      }
+
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
+      setIsDragActive(true);
+    },
+    [canDropUpload],
+  );
+  const handleDragLeave = useCallback(
+    (event: ReactDragEvent<HTMLDivElement>) => {
+      const nextTarget = event.relatedTarget;
+
+      if (
+        nextTarget instanceof Node &&
+        event.currentTarget.contains(nextTarget)
+      ) {
+        return;
+      }
+
+      setIsDragActive(false);
+    },
+    [],
+  );
+  const handleDrop = useCallback(
+    (event: ReactDragEvent<HTMLDivElement>) => {
+      if (!canDropUpload || !hasMediaLibraryFileDrag(event)) {
+        return;
+      }
+
+      event.preventDefault();
+      setIsDragActive(false);
+      onUploadFiles(collectMediaLibraryUploadFiles(event.dataTransfer.files));
+    },
+    [canDropUpload, onUploadFiles],
+  );
 
   return (
     <div className="min-h-screen">
       <PageHeader breadcrumbs={[{ label: "Media" }]} />
 
-      <div className="p-6 space-y-6">
+      <div
+        className="space-y-6 p-6"
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold">Media Library</h1>
@@ -934,7 +1129,6 @@ export function MediaLibraryPageView({
               onFilterChange={onFilterChange}
               onSortChange={onSortChange}
             />
-            <MediaLibraryLimitsCopy />
           </>
         )}
 
@@ -944,14 +1138,30 @@ export function MediaLibraryPageView({
         state.status === "error" ? (
           <MediaLibraryStatePanel state={state} onRetry={onRetry} />
         ) : state.status === "empty" || state.status === "no-match" ? (
-          <MediaLibraryEmptyPanel state={state} />
+          <MediaLibraryEmptyPanel state={state} isDragActive={isDragActive} />
         ) : (
-          <section data-mdcms-media-library-state="ready" className="space-y-4">
-            <MediaLibraryTable assets={state.assets} onCopyUrl={onCopyUrl} />
-            <MediaLibraryPagination
-              pagination={state.pagination}
-              onPageChange={onPageChange}
-            />
+          <section
+            data-mdcms-media-library-state="ready"
+            className="overflow-hidden rounded-lg border border-border bg-background"
+          >
+            <div className="grid min-h-[34rem] lg:grid-cols-[minmax(0,1fr)_20rem] xl:grid-cols-[minmax(0,1fr)_23rem]">
+              <div className="flex min-w-0 flex-col gap-4 p-4">
+                <MediaLibraryGallery
+                  assets={state.assets}
+                  selectedAsset={selectedAsset}
+                  onSelectAsset={(asset) => setSelectedAssetId(asset.id)}
+                  onCopyUrl={onCopyUrl}
+                />
+                <MediaLibraryPagination
+                  pagination={state.pagination}
+                  onPageChange={onPageChange}
+                />
+              </div>
+              <MediaAssetDetailDrawer
+                asset={selectedAsset}
+                onCopyUrl={onCopyUrl}
+              />
+            </div>
           </section>
         )}
       </div>
