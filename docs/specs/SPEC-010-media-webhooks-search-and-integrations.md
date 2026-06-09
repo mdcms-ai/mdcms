@@ -133,7 +133,9 @@ type MediaAsset = {
 the user id that owns the API key.
 
 Media metadata rows are deleted when a media asset is deleted. Deletion does not
-rewrite existing documents that may contain the deleted asset URL.
+rewrite existing documents that may contain the deleted asset URL or stored media
+asset id. Expanded schema file field reads surface `MEDIA_NOT_FOUND` for deleted
+or missing assets.
 
 ### API Surface
 
@@ -621,7 +623,8 @@ Deletion semantics:
   already absent and the object store reports a successful delete, MDCMS
   continues with metadata deletion.
 - Deleting media does not scan or rewrite existing documents that may still
-  contain the asset URL.
+  contain the asset URL or stored media asset id. Expanded schema file field
+  reads surface `MEDIA_NOT_FOUND` for deleted or missing assets.
 
 ## Webhook Endpoints
 

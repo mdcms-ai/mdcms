@@ -42,7 +42,9 @@ Schema built-ins are imported through `fieldTypes`:
 - `fieldTypes.video(options?)` stores a media asset id string and requires `mimeType` to start with `video/`.
 - `fieldTypes.file(options?)` stores a media asset id string and accepts any media asset unless narrowed by `options.accept`.
 
-`options.accept` is an array of MIME values or MIME wildcards such as `image/png`, `video/*`, or `application/pdf`. It never accepts category labels.
+`options.accept` is an array of MIME values or MIME wildcards such as `image/png`, `video/*`, or `application/pdf`. It never accepts category labels. File helper options also include `required?: boolean` and `default?: string`; helper defaults are raw `MediaAsset.id` strings, and helper `required/default` must resolve consistently with Zod `.optional()`, `.nullable()`, and `.default()` wrappers.
+
+Serialized file field snapshots are `kind: "string"` field snapshots with `file: { preset: "image" | "video" | "file", accept: string[] }`. Existing snapshot metadata such as `required`, `nullable`, and `default` stays outside `file`.
 ```
 
 Replace all examples importing or calling top-level `reference` with `fieldTypes.reference`.
@@ -140,6 +142,13 @@ test("fieldTypes create normalized reference and file metadata", () => {
       image: fieldTypes.image().optional(),
       video: fieldTypes.video({ accept: ["video/mp4"] }),
       download: fieldTypes.file({ accept: ["application/pdf", "audio/*"] }),
+      optionalDownload: fieldTypes.file({
+        accept: ["application/pdf"],
+        required: false,
+      }),
+      defaultVideo: fieldTypes.video({
+        default: "6f6a8a6e-8d5b-4d5d-a4df-1b2a3c4d5e6f",
+      }),
     },
   });
 
@@ -168,6 +177,14 @@ test("fieldTypes.file rejects category-like accept entries", () => {
 });
 ```
 
+Add helper option precedence/config tests:
+
+- `fieldTypes.file({ required: false })` resolves to an optional snapshot.
+- `.optional()` around a file helper without `required: false` resolves to an optional snapshot.
+- `.nullable()` around a file helper resolves to `nullable: true`.
+- helper `default` and Zod `.default()` must agree when both are present.
+- helper or Zod defaults on file helpers must be raw media asset id strings.
+
 **Step 2: Write failing schema snapshot tests**
 
 In `schema.test.ts`, update the stable snapshot test to include:
@@ -176,6 +193,13 @@ In `schema.test.ts`, update the stable snapshot test to include:
 primaryImage: fieldTypes.image().optional(),
 heroVideo: fieldTypes.video({ accept: ["video/mp4", "video/webm"] }),
 attachment: fieldTypes.file({ accept: ["application/pdf"] }),
+optionalAttachment: fieldTypes.file({
+  accept: ["application/pdf"],
+  required: false,
+}),
+defaultVideo: fieldTypes.video({
+  default: "6f6a8a6e-8d5b-4d5d-a4df-1b2a3c4d5e6f",
+}),
 ```
 
 Expected snapshot pieces:
@@ -199,9 +223,22 @@ attachment: {
   nullable: false,
   file: { preset: "file", accept: ["application/pdf"] },
 },
+optionalAttachment: {
+  kind: "string",
+  required: false,
+  nullable: false,
+  file: { preset: "file", accept: ["application/pdf"] },
+},
+defaultVideo: {
+  kind: "string",
+  required: true,
+  nullable: false,
+  default: "6f6a8a6e-8d5b-4d5d-a4df-1b2a3c4d5e6f",
+  file: { preset: "video", accept: [] },
+},
 ```
 
-Add validation tests that `assertSchemaRegistrySyncPayload` rejects malformed `file` metadata once schema.ts exposes validation.
+Add validation tests that `assertSchemaRegistrySyncPayload` rejects malformed `file` metadata once schema.ts exposes validation, including `file` metadata on non-string snapshots and malformed snapshot defaults for file fields.
 
 **Step 3: Run failing tests**
 
@@ -240,6 +277,8 @@ export type MdcmsFileFieldMetadata = {
 
 export type MdcmsFileFieldOptions = {
   accept?: readonly string[];
+  required?: boolean;
+  default?: string;
 };
 ```
 
@@ -257,12 +296,15 @@ function createFileField(
   preset: MdcmsFileFieldPreset,
   options: MdcmsFileFieldOptions = {},
 ) {
-  return z.string().meta({
+  const schema = z.string().meta({
     [FILE_METADATA_KEY]: {
       preset,
       accept: normalizeAccept(options.accept ?? []),
     },
   });
+  const withDefault =
+    options.default === undefined ? schema : schema.default(options.default);
+  return options.required === false ? withDefault.optional() : withDefault;
 }
 
 export const fieldTypes = {
@@ -282,7 +324,7 @@ const MIME_ACCEPT_PATTERN =
   /^[a-z0-9][a-z0-9!#$&^_.+-]*\/(\*|[a-z0-9][a-z0-9!#$&^_.+-]*)$/i;
 ```
 
-Trim, lowercase, de-duplicate, sort, and reject invalid entries with `invalidConfig("accept", "...")`.
+Trim, lowercase, de-duplicate, sort, and reject invalid entries with `invalidConfig("accept", "...")`. Validate helper `default` as a raw media asset id string. Add wrapper precedence validation so helper `required: false` cannot serialize to a required snapshot, `.optional()` can make helpers optional, `.nullable()` sets snapshot nullability, and helper/Zod defaults must agree when both are present.
 
 **Step 2: Extend parsed metadata helpers**
 
@@ -298,6 +340,10 @@ file?: MdcmsFileFieldMetadata;
 
 to `SchemaRegistryFieldSnapshot`.
 
+Keep `SchemaRegistryFieldSnapshot.file` limited to `{ preset, accept }`; resolved
+`required`, `nullable`, and `default` metadata remains on the field snapshot
+itself.
+
 Implement `readDirectFileMetadata(schema)` next to `readDirectReferenceMetadata`.
 
 Include `file` in `withFieldSnapshotBase(...)` extras and in all scalar/array/object/enum/literal branches where `reference` is currently included.
@@ -310,6 +356,7 @@ In `assertFieldSnapshot`, validate:
 - `file.preset` is `image`, `video`, or `file`.
 - `file.accept` is an array of valid normalized MIME accept entries.
 - `file` appears only on `kind: "string"` snapshots in synced payload validation.
+- `default`, when present on a file field snapshot, is a raw media asset id string.
 
 **Step 5: Run tests**
 
@@ -1299,4 +1346,3 @@ Do not create an empty commit.
 - Use `superpowers:systematic-debugging` if any new or existing test fails unexpectedly.
 - Use `superpowers:verification-before-completion` before claiming the branch is complete.
 - For independent implementation areas, use `superpowers:subagent-driven-development` and dispatch separate subagents for shared contracts, server, CLI, and Studio once Task 1 is complete.
-
