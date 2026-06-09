@@ -41,6 +41,7 @@ Required contract points:
 - `fieldTypes.image(options?)`, `fieldTypes.video(options?)`, and `fieldTypes.file(options?)` persist raw project-scoped `MediaAsset.id` strings.
 - `FileFieldOptions` includes `accept?: string[]`, `required?: boolean`, and `default?: string`. `accept` values are MIME values or MIME wildcards only; image/video helpers set the broad preset family and custom `accept` narrows within that family.
 - `fieldTypes.*({ required: false })` resolves to `required: false`, `nullable: true`, and `file.emptyStringAsUnset: true`; missing, `null`, and empty string are unset. `.optional()` without helper `required: false` makes missing values optional only, `.nullable()` accepts `null` according to snapshot nullability, and both serialize `file.emptyStringAsUnset: false`.
+- Helper-level `required: false` combined with helper-level `default` is invalid schema config.
 - Helper defaults and Zod `.default()` values are raw `MediaAsset.id` strings and must agree when both are present. Applied defaults are validated for asset existence and MIME compatibility during content write validation.
 - Serialized file field snapshots are `kind: "string"` snapshots with `file: { preset: "image" | "video" | "file", accept: string[], emptyStringAsUnset: boolean }`; `required`, `nullable`, and `default` stay on the field snapshot outside `file`.
 - File-field write validation failures use `INVALID_INPUT` (`400`) with machine-readable details such as `{ field, mediaAssetId?, reason: "MEDIA_REQUIRED" | "MEDIA_NOT_FOUND" | "MEDIA_TYPE_MISMATCH", expectedMime?, actualMimeType? }`.
@@ -184,6 +185,7 @@ Add helper option precedence/config tests:
 - `.optional()` around a file helper without `required: false` resolves to an optional snapshot, treats missing as optional, serializes `file.emptyStringAsUnset: false`, does not treat empty string as unset, and does not accept `null` unless `.nullable()` is also present.
 - `.nullable()` around a file helper resolves to `nullable: true` and serializes `file.emptyStringAsUnset: false` unless helper `required: false` is also present.
 - `.optional().nullable()` around a file helper without `required: false` serializes `required: false`, `nullable: true`, and `file.emptyStringAsUnset: false`.
+- `fieldTypes.file({ required: false, default: "6f6a8a6e-8d5b-4d5d-a4df-1b2a3c4d5e6f" })` is invalid schema config.
 - helper `default` and Zod `.default()` must agree when both are present.
 - helper or Zod defaults on file helpers must be raw media asset id strings.
 
@@ -353,7 +355,7 @@ const MIME_ACCEPT_PATTERN =
   /^[a-z0-9][a-z0-9!#$&^_.+-]*\/(\*|[a-z0-9][a-z0-9!#$&^_.+-]*)$/i;
 ```
 
-Trim, lowercase, de-duplicate, sort, and reject invalid entries with `invalidConfig("accept", "...")`. For image/video helpers, reject custom `accept` entries outside the preset family as invalid schema config; valid entries narrow within the preset. Validate helper `default` as a raw media asset id string. Add wrapper precedence validation so helper `required: false` serializes to an optional nullable snapshot with `file.emptyStringAsUnset: true`, `.optional()` can make helpers optional without enabling empty-string unset, `.nullable()` sets snapshot nullability without enabling empty-string unset, Zod `.default()` yields `required: false`, and helper/Zod defaults must agree when both are present.
+Trim, lowercase, de-duplicate, sort, and reject invalid entries with `invalidConfig("accept", "...")`. For image/video helpers, reject custom `accept` entries outside the preset family as invalid schema config; valid entries narrow within the preset. Validate helper `default` as a raw media asset id string, and reject helper config that sets both `required: false` and helper `default`. Add wrapper precedence validation so helper `required: false` serializes to an optional nullable snapshot with `file.emptyStringAsUnset: true`, `.optional()` can make helpers optional without enabling empty-string unset, `.nullable()` sets snapshot nullability without enabling empty-string unset, Zod `.default()` yields `required: false`, and helper/Zod defaults must agree when both are present.
 
 **Step 2: Extend parsed metadata helpers**
 
@@ -911,6 +913,7 @@ git commit -m "feat(server): expand schema file fields on reads"
 - Modify: `apps/cli/src/lib/pull.ts`
 - Modify: `apps/cli/src/lib/pull.test.ts`
 - Modify: `apps/cli/src/lib/push.ts`
+- Modify: `apps/cli/src/lib/push.test.ts`
 - Modify: `apps/cli/src/lib/validate.ts`
 - Modify: `apps/cli/src/lib/validate.test.ts`
 
@@ -932,6 +935,12 @@ primaryImage: 07ebb057-eeab-4849-94e4-2162cb921c8e
 
 and assert the pulled frontmatter remains the id string.
 
+Add push request tests asserting create and update calls that return documents
+include `fileFields=raw` in the request URL or API client call. Cover both:
+
+- new-file `POST /api/v1/content?fileFields=raw`
+- existing-document `PUT /api/v1/content/:documentId?fileFields=raw`
+
 **Step 2: Write validation tests**
 
 In `validate.test.ts`, add a schema field:
@@ -950,21 +959,24 @@ Assert local id strings validate as strings and expanded objects fail as wrong k
 **Step 3: Run failing CLI tests**
 
 ```bash
-bun test --cwd apps/cli ./src/lib/pull.test.ts ./src/lib/validate.test.ts
+bun test --cwd apps/cli ./src/lib/pull.test.ts ./src/lib/push.test.ts ./src/lib/validate.test.ts
 ```
 
-Expected: fail because pull does not request raw file fields.
+Expected: fail because pull and push do not request raw file fields.
 
 **Step 4: Implement raw query**
 
 In every CLI content read used for local file serialization, add `fileFields=raw`.
+For `cms push`, add `fileFields=raw` to content `POST` and `PUT` requests that
+return documents so manifest/frontmatter round-trips consume raw file-field
+values from the response.
 
 Do not add raw mode to SDK read client defaults; SDK should receive expanded file fields by default.
 
 **Step 5: Run tests**
 
 ```bash
-bun test --cwd apps/cli ./src/lib/pull.test.ts ./src/lib/validate.test.ts
+bun test --cwd apps/cli ./src/lib/pull.test.ts ./src/lib/push.test.ts ./src/lib/validate.test.ts
 ```
 
 Expected: pass.
@@ -972,7 +984,7 @@ Expected: pass.
 **Step 6: Commit**
 
 ```bash
-git add apps/cli/src/lib/pull.ts apps/cli/src/lib/pull.test.ts apps/cli/src/lib/push.ts apps/cli/src/lib/validate.ts apps/cli/src/lib/validate.test.ts
+git add apps/cli/src/lib/pull.ts apps/cli/src/lib/pull.test.ts apps/cli/src/lib/push.ts apps/cli/src/lib/push.test.ts apps/cli/src/lib/validate.ts apps/cli/src/lib/validate.test.ts
 git commit -m "fix(cli): pull raw schema file field ids"
 ```
 
@@ -1013,6 +1025,12 @@ Ensure Studio document read and save paths send `fileFields=raw` on:
 - draft load
 - save draft PUT response
 - version restore response if it updates current editable document state
+
+Add raw round-trip tests for existing unset file-field values:
+
+- a nullable file field whose raw value is `null` remains `null` in edit state and save payload
+- a file field with `file.emptyStringAsUnset: true` whose raw value is `""` remains `""` in edit state and save payload
+- Studio does not collapse these raw unset representations to `undefined` or reject them before save
 
 **Step 4: Implement raw query**
 
@@ -1071,6 +1089,12 @@ Assert `getPropertyDescriptors` returns:
 ```
 
 Assert expanded object values are not accepted for editing state; Studio should have requested raw mode.
+
+Assert raw unset values are accepted in editing state:
+
+- `null` is accepted when the snapshot is nullable
+- `""` is accepted when `file.emptyStringAsUnset: true`
+- descriptor/state generation preserves the exact raw value so saves can round-trip it
 
 Add required file field descriptor tests:
 
@@ -1307,25 +1331,42 @@ git commit -m "fix(studio): remove media allowlist copy"
 ### Task 14: Update SDK And Studio Review Compatibility
 
 **Files:**
+- Modify: `packages/sdk/src/lib/sdk.ts`
+- Modify as needed: `packages/sdk/src/index.ts`
 - Modify: `packages/sdk/src/lib/sdk.test.ts`
 - Modify: `packages/sdk/README.md`
 - Inspect and modify as needed: `apps/studio-review/**`
 
 **Step 1: SDK tests**
 
-Add one SDK test showing default content reads do not request `fileFields=raw`.
+Add SDK tests for schema file field response-shape behavior:
 
-Expected: SDK receives expanded frontmatter objects unchanged as part of `ContentDocumentResponse`.
+- default `get` and `list` content reads do not request `fileFields=raw`
+- default reads receive expanded frontmatter objects unchanged as part of `ContentDocumentResponse`
+- `get(..., { fileFields: "raw" })` appends/sends `fileFields=raw`
+- `list(..., { fileFields: "raw" })` appends/sends `fileFields=raw`
 
-**Step 2: SDK docs**
+**Step 2: SDK implementation**
+
+Add an opt-in raw file-field read option to SDK read inputs:
+
+```ts
+fileFields?: "raw";
+```
+
+Default SDK reads omit `fileFields` so the Content API returns expanded schema
+file fields. When callers set `fileFields: "raw"`, SDK `get` and `list` content
+reads send `fileFields=raw`.
+
+**Step 3: SDK docs**
 
 Add a short README note:
 
 ```md
-Schema file fields are expanded to `MediaAsset` objects by default. Write-capable tooling uses raw mode internally; SDK reads keep the expanded read model.
+Schema file fields are expanded to `MediaAsset` objects by default. Pass `fileFields: "raw"` to SDK read calls when an authoring workflow needs persisted raw media asset ids.
 ```
 
-**Step 3: Studio review app audit**
+**Step 4: Studio review app audit**
 
 Run:
 
@@ -1335,7 +1376,7 @@ rg -n "ContentDocumentResponse|resolvedSchema|reference|frontmatter|media" apps/
 
 If fixtures include schema snapshots or content documents, add file metadata examples or update reference imports as needed.
 
-**Step 4: Run tests**
+**Step 5: Run tests**
 
 ```bash
 bun test --cwd packages/sdk ./src
@@ -1343,10 +1384,10 @@ bun test --cwd packages/sdk ./src
 
 If `apps/studio-review` has a package test target, run its relevant tests. If it has no tests or no relevant files, note that in the final verification.
 
-**Step 5: Commit**
+**Step 6: Commit**
 
 ```bash
-git add packages/sdk/src/lib/sdk.test.ts packages/sdk/README.md apps/studio-review
+git add packages/sdk/src/lib/sdk.ts packages/sdk/src/index.ts packages/sdk/src/lib/sdk.test.ts packages/sdk/README.md apps/studio-review
 git commit -m "docs(sdk): document expanded schema file fields"
 ```
 
@@ -1403,7 +1444,7 @@ Do not hand-write changeset files.
 ```bash
 bun test --cwd packages/shared ./src/lib/contracts/config.test.ts ./src/lib/contracts/schema.test.ts ./src/lib/contracts/content-api.test.ts
 bun test --cwd apps/server ./src/lib/content-api/media-field-validation.test.ts ./src/lib/content-api/media-field-expansion.test.ts ./src/lib/content-api.test.ts
-bun test --cwd apps/cli ./src/lib/init/generate-config.test.ts ./src/lib/init/infer-schema.test.ts ./src/lib/pull.test.ts ./src/lib/validate.test.ts
+bun test --cwd apps/cli ./src/lib/init/generate-config.test.ts ./src/lib/init/infer-schema.test.ts ./src/lib/pull.test.ts ./src/lib/push.test.ts ./src/lib/validate.test.ts
 bun test --cwd packages/studio ./src/lib/runtime-ui/lib/media-library-api.test.ts ./src/lib/document-route-api.test.ts ./src/lib/runtime-ui/pages/content-document-page.test.tsx ./src/lib/runtime-ui/app/admin/settings-page.test.tsx
 bun test --cwd packages/sdk ./src
 ```

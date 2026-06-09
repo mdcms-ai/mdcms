@@ -110,6 +110,7 @@ type FileFieldOptions = {
 - `accept` is an array of MIME values or MIME wildcards such as `image/png`, `video/*`, or `application/pdf`. It never accepts category labels. `fieldTypes.image()` and `fieldTypes.video()` already set the broad `image/*` or `video/*` preset, and custom `accept` entries further narrow within that family. Incompatible entries such as `fieldTypes.image({ accept: ["application/pdf"] })` are invalid schema config.
 - `required` defaults to `true` for the plain helper. Required, non-nullable file fields fail write-time validation when the field is missing, `null`, or an empty string. `fieldTypes.*({ required: false })` resolves to `required: false`, `nullable: true`, and serialized `file.emptyStringAsUnset: true`; missing, `null`, and empty string values are unset for that helper-level optional file field, while non-empty values still validate as media asset ids.
 - `default` is a raw `MediaAsset.id` string applied as the schema default. It is never a URL and never a `MediaAsset` object, and the resulting value must satisfy the helper preset and `accept` narrowing.
+- A helper-level `default` cannot be combined with helper `required: false`; that combination is invalid schema config. Optional file fields represent explicit unset states, while helper defaults represent automatic value materialization.
 
 When a helper or Zod default supplies a file-field value during content write
 validation, MDCMS validates that default against project-scoped media metadata
