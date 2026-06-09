@@ -99,6 +99,8 @@ Schema built-ins are imported through `fieldTypes`:
 
 `options.accept` is an array of MIME values or MIME wildcards such as `image/png`, `video/*`, or `application/pdf`. It never accepts category labels.
 
+`fieldTypes.reference()` is the canonical reference helper. The previous top-level `reference()` helper is removed in this beta contract rather than retained as an alias or deprecation path.
+
 **Localization config contract:**
 
 - `locales` is optional in `defineConfig`.
