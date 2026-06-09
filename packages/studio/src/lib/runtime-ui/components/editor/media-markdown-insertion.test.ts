@@ -89,7 +89,7 @@ test("createMediaAssetsMarkdown joins assets in order with blank lines", () => {
   );
 });
 
-test("createMediaAssetsInsertContent returns TipTap content parsed from generated Markdown", () => {
+test("createMediaAssetsInsertContent creates a native image node for image assets", () => {
   const content = createMediaAssetsInsertContent([
     createMediaAsset({
       filename: "hero.png",
@@ -98,8 +98,20 @@ test("createMediaAssetsInsertContent returns TipTap content parsed from generate
     }),
   ]);
 
-  assert.ok(Array.isArray(content));
-  assert.ok(content.length > 0);
+  assert.deepEqual(content, [
+    {
+      type: "image",
+      attrs: {
+        src: "https://cdn.example.com/hero.png",
+        alt: "hero.png",
+        title: null,
+      },
+    },
+  ]);
+  assert.equal(
+    serializeDocumentToMarkdown({ type: "doc", content }),
+    "![hero.png](https://cdn.example.com/hero.png)",
+  );
 });
 
 test("formatMediaAssetMarkdown keeps destination-sensitive URL characters parse-safe", () => {

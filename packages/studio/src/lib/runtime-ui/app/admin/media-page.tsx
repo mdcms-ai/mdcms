@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { RuntimeError, type MediaAsset } from "@mdcms/shared";
 import {
@@ -9,11 +9,15 @@ import {
   ChevronLeft,
   ChevronRight,
   ExternalLink,
+  File,
   FileSearch,
   Image,
   Loader2,
+  Music,
+  Play,
   Search,
   ShieldAlert,
+  Upload,
 } from "lucide-react";
 
 import { PageHeader } from "../../components/layout/page-header.js";
@@ -44,8 +48,9 @@ import {
   createStudioMediaLibraryApi,
   type StudioMediaLibraryListQuery,
 } from "../../lib/media-library-api.js";
+import { createStudioMediaUploadApi } from "../../lib/media-upload-api.js";
 import type { StudioRuntimeAuth } from "../../../request-auth.js";
-import { useCanReadMedia } from "./capabilities-context.js";
+import { useCanReadMedia, useCanUploadMedia } from "./capabilities-context.js";
 import {
   deriveMediaLibraryEmptyState,
   formatMediaAssetBytes,
@@ -58,6 +63,7 @@ import {
   type MediaLibrarySortOption,
 } from "./media-library-model.js";
 import { useStudioMountInfo } from "./mount-info-context.js";
+import { useStudioSession } from "./session-context.js";
 
 export const MEDIA_LIBRARY_PAGE_SIZE = 30;
 
@@ -108,6 +114,11 @@ export type MediaLibraryPageState =
   | { status: "loading" }
   | MediaLibraryEmptyPageState
   | MediaLibraryReadyPageState
+  | { status: "error"; message: string };
+
+export type MediaLibraryUploadState =
+  | { status: "idle" }
+  | { status: "uploading"; completedFiles: number; totalFiles: number }
   | { status: "error"; message: string };
 
 const defaultFilters: MediaLibraryFilters = {
@@ -219,6 +230,37 @@ function readErrorMessage(error: unknown, fallback: string): string {
   }
 
   return fallback;
+}
+
+function collectMediaLibraryUploadFiles(
+  files: FileList | readonly File[] | null | undefined,
+): File[] {
+  return files ? Array.from(files) : [];
+}
+
+function resolveMediaLibraryUploadProgress(
+  state: MediaLibraryUploadState,
+): { completedFiles: number; totalFiles: number; percent: number } | null {
+  if (state.status !== "uploading") {
+    return null;
+  }
+
+  const totalFiles = Math.max(0, Math.floor(state.totalFiles));
+
+  if (totalFiles === 0) {
+    return null;
+  }
+
+  const completedFiles = Math.min(
+    totalFiles,
+    Math.max(0, Math.floor(state.completedFiles)),
+  );
+
+  return {
+    completedFiles,
+    totalFiles,
+    percent: Math.round((completedFiles / totalFiles) * 100),
+  };
 }
 
 export async function copyMediaAssetUrlToClipboard(url: string): Promise<void> {
@@ -366,6 +408,100 @@ function MediaLibraryLimitsCopy() {
   );
 }
 
+function MediaLibraryUploadControl({
+  canUploadMedia,
+  uploadState,
+  onUploadFiles,
+}: {
+  canUploadMedia: boolean;
+  uploadState: MediaLibraryUploadState;
+  onUploadFiles: (files: File[]) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const isUploading = uploadState.status === "uploading";
+  const progress = resolveMediaLibraryUploadProgress(uploadState);
+  const statusText = progress
+    ? `Uploading media ${progress.completedFiles} of ${progress.totalFiles}`
+    : "Uploading media...";
+
+  if (!canUploadMedia) {
+    return null;
+  }
+
+  return (
+    <div className="flex min-w-64 flex-col items-stretch gap-2 sm:items-end">
+      <input
+        ref={inputRef}
+        aria-label="Upload media files"
+        type="file"
+        multiple
+        disabled={isUploading}
+        tabIndex={-1}
+        className="sr-only"
+        onChange={(event) => {
+          const files = collectMediaLibraryUploadFiles(
+            event.currentTarget.files,
+          );
+          event.currentTarget.value = "";
+          onUploadFiles(files);
+        }}
+      />
+      <Button
+        type="button"
+        variant="default"
+        disabled={isUploading}
+        className="gap-2"
+        onClick={() => inputRef.current?.click()}
+      >
+        {isUploading ? (
+          <Loader2 className="size-4 animate-spin" />
+        ) : (
+          <Upload className="size-4" />
+        )}
+        Upload media
+      </Button>
+      {isUploading ? (
+        <div
+          role="status"
+          aria-live="polite"
+          className="w-full rounded-md border border-border bg-muted px-3 py-2 text-sm text-foreground-muted sm:w-72"
+        >
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <span>{statusText}</span>
+            {progress ? (
+              <span className="font-mono">{progress.percent}%</span>
+            ) : null}
+          </div>
+          {progress ? (
+            <div
+              role="progressbar"
+              aria-label="Media upload progress"
+              aria-valuemin={0}
+              aria-valuemax={progress.totalFiles}
+              aria-valuenow={progress.completedFiles}
+              className="h-1.5 overflow-hidden rounded-full bg-border"
+            >
+              <div
+                className="h-full rounded-full bg-primary transition-[width]"
+                style={{ width: `${progress.percent}%` }}
+              />
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      {uploadState.status === "error" ? (
+        <div
+          role="alert"
+          aria-live="assertive"
+          className="w-full rounded-md border border-destructive/20 bg-destructive/5 px-3 py-2 text-sm text-destructive sm:w-72"
+        >
+          {uploadState.message}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function MediaLibraryStatePanel({
   state,
   onRetry,
@@ -499,6 +635,72 @@ function MediaAssetActions({
   );
 }
 
+function MediaAssetPreview({
+  asset,
+  category,
+}: {
+  asset: MediaAsset;
+  category: ReturnType<typeof getMediaAssetCategory>;
+}) {
+  if (category === "image") {
+    return (
+      <div className="flex h-16 w-24 items-center justify-center overflow-hidden rounded-md border border-border bg-muted">
+        <img
+          src={asset.url}
+          alt={`${asset.filename} preview`}
+          loading="lazy"
+          className="h-full w-full object-cover"
+        />
+      </div>
+    );
+  }
+
+  if (category === "video") {
+    return (
+      <video
+        controls
+        preload="metadata"
+        aria-label={`Preview video ${asset.filename}`}
+        className="h-16 w-28 rounded-md border border-border bg-black"
+      >
+        <source src={asset.url} type={asset.mimeType} />
+      </video>
+    );
+  }
+
+  if (category === "audio") {
+    return (
+      <div className="flex min-h-16 w-44 items-center gap-2 rounded-md border border-border bg-muted px-2">
+        <Music className="size-4 shrink-0 text-foreground-muted" />
+        <audio
+          controls
+          preload="metadata"
+          aria-label={`Preview audio ${asset.filename}`}
+          className="min-w-0 flex-1"
+        >
+          <source src={asset.url} type={asset.mimeType} />
+        </audio>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      aria-label={`Preview unavailable for ${asset.filename}`}
+      className="flex h-16 w-24 flex-col items-center justify-center rounded-md border border-border bg-muted px-2 text-center text-[11px] text-foreground-muted"
+    >
+      {category === "document" ? (
+        <File className="mb-1 size-4" />
+      ) : (
+        <Play className="mb-1 size-4" />
+      )}
+      <span className="max-w-full truncate">
+        {getMediaAssetCategoryLabel(category)}
+      </span>
+    </div>
+  );
+}
+
 function MediaLibraryTable({
   assets,
   onCopyUrl,
@@ -511,6 +713,7 @@ function MediaLibraryTable({
       <Table>
         <TableHeader>
           <TableRow>
+            <TableHead className="w-48">Preview</TableHead>
             <TableHead>Filename</TableHead>
             <TableHead className="w-36">MIME type</TableHead>
             <TableHead className="w-28">Category</TableHead>
@@ -526,6 +729,9 @@ function MediaLibraryTable({
 
             return (
               <TableRow key={asset.id}>
+                <TableCell>
+                  <MediaAssetPreview asset={asset} category={category} />
+                </TableCell>
                 <TableCell>
                   <div className="min-w-0">
                     <p className="max-w-80 truncate font-medium">
@@ -664,9 +870,12 @@ function MediaLibraryPagination({
 
 export function MediaLibraryPageView({
   state,
+  canUploadMedia,
+  uploadState,
   filters,
   searchInput,
   sort,
+  onUploadFiles,
   onSearchInputChange,
   onFilterChange,
   onSortChange,
@@ -675,9 +884,12 @@ export function MediaLibraryPageView({
   onCopyUrl,
 }: {
   state: MediaLibraryPageState;
+  canUploadMedia: boolean;
+  uploadState: MediaLibraryUploadState;
   filters: MediaLibraryFilters;
   searchInput: string;
   sort: MediaLibrarySortOption;
+  onUploadFiles: (files: File[]) => void;
   onSearchInputChange: (value: string) => void;
   onFilterChange: (patch: Partial<MediaLibraryFilters>) => void;
   onSortChange: (value: MediaLibrarySortOption) => void;
@@ -701,12 +913,15 @@ export function MediaLibraryPageView({
           <div>
             <h1 className="text-2xl font-semibold">Media Library</h1>
             <p className="mt-1 text-sm text-foreground-muted">
-              Browse project media metadata for the active environment.
+              Upload, preview, and inspect project media for the active
+              environment.
             </p>
           </div>
-          <Badge variant="outline" className="text-xs">
-            Read-only
-          </Badge>
+          <MediaLibraryUploadControl
+            canUploadMedia={canUploadMedia}
+            uploadState={uploadState}
+            onUploadFiles={onUploadFiles}
+          />
         </div>
 
         {showControls && (
@@ -746,10 +961,15 @@ export function MediaLibraryPageView({
 
 export default function MediaPage() {
   const canReadMedia = useCanReadMedia();
+  const canUploadMedia = useCanUploadMedia();
   const mountInfo = useStudioMountInfo();
+  const sessionState = useStudioSession();
   const [filters, setFilters] = useState<MediaLibraryFilters>(defaultFilters);
   const [searchInput, setSearchInput] = useState(defaultFilters.q);
   const [sort, setSort] = useState<MediaLibrarySortOption>("newest");
+  const [uploadState, setUploadState] = useState<MediaLibraryUploadState>({
+    status: "idle",
+  });
   const [offsetState, setOffsetState] = useState<MediaLibraryOffsetState>({
     targetKey: null,
     offset: 0,
@@ -817,6 +1037,40 @@ export default function MediaPage() {
     mountInfo.apiBaseUrl,
     mountInfo.auth,
   ]);
+  const isMediaUploadAuthUsable =
+    mountInfo.auth.mode === "token" || sessionState.status === "authenticated";
+  const mediaUploadApi = useMemo(() => {
+    if (
+      !mountInfo.project ||
+      !mountInfo.environment ||
+      !mountInfo.apiBaseUrl ||
+      !isMediaUploadAuthUsable
+    ) {
+      return null;
+    }
+
+    return createStudioMediaUploadApi(
+      {
+        project: mountInfo.project,
+        environment: mountInfo.environment,
+        serverUrl: mountInfo.apiBaseUrl,
+      },
+      {
+        auth: mountInfo.auth,
+        csrfToken:
+          sessionState.status === "authenticated"
+            ? sessionState.csrfToken
+            : null,
+      },
+    );
+  }, [
+    mountInfo.project,
+    mountInfo.environment,
+    mountInfo.apiBaseUrl,
+    mountInfo.auth,
+    isMediaUploadAuthUsable,
+    sessionState,
+  ]);
 
   const query = useQuery({
     queryKey: queryKey ?? ["media-library", "unavailable"],
@@ -839,6 +1093,7 @@ export default function MediaPage() {
     setOffsetState((current) =>
       current.targetKey === targetKey ? current : { targetKey, offset: 0 },
     );
+    setUploadState({ status: "idle" });
   }, [targetKey]);
 
   const pageState = useMemo<MediaLibraryPageState>(() => {
@@ -914,13 +1169,59 @@ export default function MediaPage() {
   const handleCopyUrl = (url: string) => {
     void copyMediaAssetUrlToClipboard(url).catch(() => undefined);
   };
+  const handleUploadFiles = useCallback(
+    (files: File[]) => {
+      if (files.length === 0) {
+        return;
+      }
+
+      if (!canUploadMedia || mediaUploadApi === null) {
+        setUploadState({
+          status: "error",
+          message: "You do not have permission to upload media assets.",
+        });
+        return;
+      }
+
+      const totalFiles = files.length;
+      setUploadState({ status: "uploading", completedFiles: 0, totalFiles });
+
+      void (async () => {
+        try {
+          let completedFiles = 0;
+
+          for (const file of files) {
+            await mediaUploadApi.upload(file);
+            completedFiles += 1;
+            setUploadState({
+              status: "uploading",
+              completedFiles,
+              totalFiles,
+            });
+          }
+
+          setUploadState({ status: "idle" });
+          await query.refetch();
+        } catch (error) {
+          setUploadState({
+            status: "error",
+            message: readErrorMessage(error, "Media upload failed."),
+          });
+        }
+      })();
+    },
+    [canUploadMedia, mediaUploadApi, query],
+  );
 
   return (
     <MediaLibraryPageView
       state={pageState}
+      canUploadMedia={canUploadMedia && mediaUploadApi !== null}
+      uploadState={uploadState}
       filters={filters}
       searchInput={searchInput}
       sort={sort}
+      onUploadFiles={handleUploadFiles}
       onSearchInputChange={setSearchInput}
       onFilterChange={handleFilterChange}
       onSortChange={handleSortChange}

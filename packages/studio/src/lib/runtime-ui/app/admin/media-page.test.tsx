@@ -15,6 +15,7 @@ import {
   StudioMountInfoProvider,
   type StudioMountInfo,
 } from "./mount-info-context.js";
+import { StudioSessionProvider } from "./session-context.js";
 import MediaPage, {
   MEDIA_LIBRARY_PAGE_SIZE,
   MediaLibraryPageView,
@@ -49,6 +50,28 @@ const heroAsset: MediaAsset = {
   url: "https://cdn.example.com/media/hero.png",
   uploadedBy: "user_123",
   uploadedAt: "2026-06-05T12:00:00.000Z",
+};
+
+const videoAsset: MediaAsset = {
+  id: "asset_demo_video",
+  project: "marketing-site",
+  filename: "demo.mp4",
+  mimeType: "video/mp4",
+  sizeBytes: 8_388_608,
+  url: "https://cdn.example.com/media/demo.mp4",
+  uploadedBy: "user_123",
+  uploadedAt: "2026-06-05T12:05:00.000Z",
+};
+
+const audioAsset: MediaAsset = {
+  id: "asset_theme_audio",
+  project: "marketing-site",
+  filename: "theme.mp3",
+  mimeType: "audio/mpeg",
+  sizeBytes: 2_097_152,
+  url: "https://cdn.example.com/media/theme.mp3",
+  uploadedBy: "user_456",
+  uploadedAt: "2026-06-05T12:10:00.000Z",
 };
 
 type FetchSpy = typeof fetch & {
@@ -113,20 +136,36 @@ function renderWithProviders(input: {
               },
             },
             createElement(
-              StudioMountInfoProvider,
+              StudioSessionProvider,
               {
                 value: {
-                  project: "marketing-site",
-                  environment: "production",
-                  apiBaseUrl: API_BASE_URL,
-                  auth: { mode: "cookie" as const },
-                  environments: [],
-                  hostBridge: null,
-                  setEnvironment: () => {},
-                  ...input.mountInfo,
+                  status: "authenticated",
+                  csrfToken: "test-csrf-token",
+                  session: {
+                    id: "session_123",
+                    userId: "user_123",
+                    email: "demo@mdcms.local",
+                    issuedAt: "2026-06-08T12:00:00.000Z",
+                    expiresAt: "2026-06-08T13:00:00.000Z",
+                  },
                 },
               },
-              createElement(MediaPage),
+              createElement(
+                StudioMountInfoProvider,
+                {
+                  value: {
+                    project: "marketing-site",
+                    environment: "production",
+                    apiBaseUrl: API_BASE_URL,
+                    auth: { mode: "cookie" as const },
+                    environments: [],
+                    hostBridge: null,
+                    setEnvironment: () => {},
+                    ...input.mountInfo,
+                  },
+                },
+                createElement(MediaPage),
+              ),
             ),
           ),
         ),
@@ -159,9 +198,12 @@ function renderView(input: {
         },
         createElement(MediaLibraryPageView, {
           state: input.state,
+          canUploadMedia: false,
+          uploadState: { status: "idle" },
           filters: input.filters ?? defaultFilters,
           searchInput: input.filters?.q ?? defaultFilters.q,
           sort: input.sort ?? "newest",
+          onUploadFiles: () => {},
           onSearchInputChange: () => {},
           onFilterChange: () => {},
           onSortChange: () => {},
@@ -358,13 +400,13 @@ test("MediaPage renders error state with retry action for media list failures", 
   assert.match(markup, />Retry</);
 });
 
-test("MediaLibraryPageView renders ready controls, media metadata, safe URL actions, and basic-library limits", () => {
+test("MediaLibraryPageView renders ready controls, uploads, inline previews, safe URL actions, and basic-library limits", () => {
   const markup = renderView({
     state: {
       status: "ready",
-      assets: [heroAsset],
+      assets: [heroAsset, videoAsset, audioAsset],
       pagination: {
-        total: 1,
+        total: 3,
         limit: MEDIA_LIBRARY_PAGE_SIZE,
         offset: 0,
         hasMore: false,
@@ -373,15 +415,31 @@ test("MediaLibraryPageView renders ready controls, media metadata, safe URL acti
   });
 
   assert.match(markup, /data-mdcms-media-library-state="ready"/);
+  assert.doesNotMatch(markup, /Read-only/);
   assert.match(markup, /Search filenames/);
   assert.match(markup, /Filter by media category/);
   assert.match(markup, /Filter by uploader/);
   assert.match(markup, /Uploaded from/);
   assert.match(markup, /Uploaded to/);
   assert.match(markup, /Sort media/);
+  assert.doesNotMatch(markup, /Upload media/);
   assert.match(markup, /hero\.png/);
   assert.match(markup, /image\/png/);
   assert.match(markup, /Image/);
+  assert.match(
+    markup,
+    /<img[^>]+src="https:\/\/cdn\.example\.com\/media\/hero\.png"/,
+  );
+  assert.match(markup, /<video[^>]+controls=""[^>]+preload="metadata"/);
+  assert.match(
+    markup,
+    /<source[^>]+src="https:\/\/cdn\.example\.com\/media\/demo\.mp4"[^>]+type="video\/mp4"/,
+  );
+  assert.match(markup, /<audio[^>]+controls=""[^>]+preload="metadata"/);
+  assert.match(
+    markup,
+    /<source[^>]+src="https:\/\/cdn\.example\.com\/media\/theme\.mp3"[^>]+type="audio\/mpeg"/,
+  );
   assert.match(markup, /1\.5 KB/);
   assert.match(markup, /user_123/);
   assert.match(markup, /Jun 5, 2026/);
@@ -390,9 +448,51 @@ test("MediaLibraryPageView renders ready controls, media metadata, safe URL acti
   assert.match(markup, /filename search only/);
   assert.match(markup, /simple metadata filters only/);
   assert.match(markup, /no advanced organization features/);
-  assert.doesNotMatch(markup, /Upload asset/);
   assert.doesNotMatch(markup, />Delete</);
   assert.doesNotMatch(markup, />Bulk</);
+});
+
+test("MediaLibraryPageView renders upload controls and progress when media upload is allowed", () => {
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      null,
+      createElement(MediaLibraryPageView, {
+        state: {
+          status: "ready",
+          assets: [heroAsset],
+          pagination: {
+            total: 1,
+            limit: MEDIA_LIBRARY_PAGE_SIZE,
+            offset: 0,
+            hasMore: false,
+          },
+        },
+        canUploadMedia: true,
+        uploadState: {
+          status: "uploading",
+          completedFiles: 1,
+          totalFiles: 2,
+        },
+        filters: defaultFilters,
+        searchInput: defaultFilters.q,
+        sort: "newest",
+        onUploadFiles: () => {},
+        onSearchInputChange: () => {},
+        onFilterChange: () => {},
+        onSortChange: () => {},
+        onPageChange: () => {},
+        onRetry: () => {},
+        onCopyUrl: () => {},
+      }),
+    ),
+  );
+
+  assert.match(markup, /Upload media/);
+  assert.match(markup, /Uploading media 1 of 2/);
+  assert.match(markup, /role="progressbar"/);
+  assert.match(markup, /aria-valuemax="2"/);
+  assert.match(markup, /aria-valuenow="1"/);
 });
 
 test("MediaLibraryPageView renders pagination actions as buttons", () => {

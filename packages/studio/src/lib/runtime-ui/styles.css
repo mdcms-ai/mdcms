@@ -466,9 +466,30 @@
   }
 
   /* Image */
+  .mdcms-studio-runtime .tiptap [data-mdcms-image-node="true"] {
+    width: fit-content;
+  }
+
   .mdcms-studio-runtime .tiptap img {
     max-width: 100%;
     height: auto;
+    cursor: pointer;
+    border-radius: 0.375rem;
+  }
+
+  .mdcms-studio-runtime .tiptap img.ProseMirror-selectednode {
+    outline: 2px solid var(--primary);
+    outline-offset: 3px;
+  }
+
+  .mdcms-studio-runtime .tiptap [data-mdcms-image-node-selected="true"] > img,
+  .mdcms-studio-runtime
+    .tiptap
+    .ProseMirror-selectednode
+    [data-mdcms-image-node="true"]
+    > img {
+    outline: 2px solid var(--primary);
+    outline-offset: 3px;
   }
 
   .mdcms-studio-runtime :is(button, input, textarea, select) {

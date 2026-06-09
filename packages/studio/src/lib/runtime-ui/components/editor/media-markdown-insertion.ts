@@ -3,10 +3,12 @@ import type { JSONContent } from "@tiptap/core";
 
 import { parseMarkdownToDocument } from "../../../markdown-pipeline.js";
 
-function createMarkdownLabel(filename: string): string {
-  const label = filename.trim().length > 0 ? filename : "media";
+function createMediaLabel(filename: string): string {
+  return filename.trim().length > 0 ? filename : "media";
+}
 
-  return label.replace(/[\\[\]]/g, "\\$&");
+function createMarkdownLabel(filename: string): string {
+  return createMediaLabel(filename).replace(/[\\[\]]/g, "\\$&");
 }
 
 function createMarkdownDestination(url: string): string {
@@ -18,12 +20,15 @@ function createMarkdownDestination(url: string): string {
 }
 
 export function formatMediaAssetMarkdown(asset: MediaAsset): string {
-  const label = createMarkdownLabel(asset.filename);
-  const destination = createMarkdownDestination(asset.url);
-
   if (asset.mimeType.startsWith("image/")) {
+    const label = createMarkdownLabel(asset.filename);
+    const destination = createMarkdownDestination(asset.url);
+
     return `![${label}](${destination})`;
   }
+
+  const label = createMarkdownLabel(asset.filename);
+  const destination = createMarkdownDestination(asset.url);
 
   return `[${label}](${destination})`;
 }

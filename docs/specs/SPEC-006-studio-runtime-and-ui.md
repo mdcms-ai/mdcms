@@ -224,11 +224,13 @@ by the media metadata contract owned by SPEC-010.
 
 ### Media Library (`/admin/media`)
 
-The `/admin/media` route is the Studio surface for browsing project-scoped media
+The `/admin/media` route is the Studio surface for managing project-scoped media
 assets in the active mounted target. It is backed by:
 
 - `GET /api/v1/me/capabilities` for target-scoped capability gating
 - `GET /api/v1/media` for media metadata list/search/filter/sort/pagination
+- `POST /api/v1/media/upload` for page-level uploads when media upload
+  capability is available
 
 Normative behavior:
 
@@ -253,18 +255,27 @@ Normative behavior:
   fixed at 30.
 - Changing search, filters, sort, project, or environment resets the offset to
   zero and refetches the current media list.
-- Each media row or card shows filename, MIME type, coarse category, formatted
-  size, uploaded actor id, upload date, and a safe action cluster.
+- When `capabilities.media.upload` is true, the route exposes a page-level
+  upload control using the same auth and target routing contract as document
+  editor media uploads. While a batch is in flight, the route shows file-count
+  progress and disables additional upload starts. Successful uploads refresh the
+  current media list.
+- Each media row or card shows an inline preview/playback region, filename, MIME
+  type, coarse category, formatted size, uploaded actor id, upload date, and a
+  safe action cluster.
+- Image assets render an inline thumbnail from the returned `url`; video assets
+  render inline browser playback controls with `preload="metadata"`; audio
+  assets render inline browser playback controls with `preload="metadata"`.
+  Other asset categories render a compact file/MIME placeholder.
 - Safe actions are client-only inspection actions: open the returned `url` in a
   new tab and copy the returned `url` to the clipboard when the browser permits
   it. These actions do not mutate backend media metadata or documents.
 - The route does not introduce tags, folders, collections, usage references,
   duplicate detection, image transformations, CDN controls, advanced asset
   governance, full-text file-content search, or bulk media editing.
-- Upload and deletion controls are not required on this route. If a future
-  iteration adds them, they must be gated by `capabilities.media.upload` and
-  `capabilities.media.delete` respectively and must use the media mutation
-  contracts in SPEC-010.
+- Deletion controls are not required on this route. If a future iteration adds
+  them, they must be gated by `capabilities.media.delete` and must use the media
+  mutation contracts in SPEC-010.
 - Point-of-use copy must identify the basic library limits: filename search
   only, simple metadata filters only, and no advanced organization features.
 
@@ -553,41 +564,52 @@ Normative behavior:
   to that mutable head snapshot.
 - The primary canvas edits the document `body` through the editor engine owned
   by SPEC-007.
-- The editor supports media insertion from three equivalent inputs: the toolbar
-  media upload control, files dropped onto the editable body, and files present
-  in a clipboard paste event. These inputs are available only when the active
-  document is writable and the target capability snapshot exposes
-  `capabilities.media.upload`. If either condition is false, the toolbar control
-  is disabled or hidden consistently with other read-only editor actions, and
-  drag/drop or paste events must not start media uploads or mutate the body.
-- Media insertion uses `POST /api/v1/media/upload` with one multipart `file`
-  field and the active Studio `(project, environment)` target routing. The
-  upload request uses the same auth mode as the Studio runtime and includes the
-  session CSRF header for cookie-authenticated mutations. Studio must not add
+- The editor supports media insertion from four inputs: the toolbar image
+  library picker, the picker's upload-new action, files dropped onto the
+  editable body, and files present in a clipboard paste event. Upload inputs are
+  available only when the active document is writable and the target capability
+  snapshot exposes `capabilities.media.upload`. Browsing existing images in the
+  toolbar picker also requires `capabilities.media.read`. If required
+  capabilities are false, unavailable picker actions are disabled or hidden
+  consistently with other read-only editor actions, and drag/drop or paste
+  events must not start media uploads or mutate the body.
+- The toolbar image control opens a compact picker anchored to the toolbar. It
+  lists recent image media assets from `GET /api/v1/media?category=image`, shows
+  loading, empty, and error states, and provides an upload-new action when media
+  upload is allowed. Selecting a listed image inserts that asset without
+  uploading a duplicate file. Successful picker uploads refresh the picker list.
+- Media upload uses `POST /api/v1/media/upload` with one multipart `file` field
+  and the active Studio `(project, environment)` target routing. The upload
+  request uses the same auth mode as the Studio runtime and includes the session
+  CSRF header for cookie-authenticated mutations. Studio must not add
   application multipart fields such as `project`, `environment`, `s3Key`, or
   `url`; the media endpoint derives metadata as defined by SPEC-010.
-- When an upload succeeds, Studio inserts the returned media URL into the
-  Markdown body at the drop position when one is available, otherwise at the
-  current selection/caret. A non-empty selection is replaced. Returned assets
-  whose `mimeType` starts with `image/` insert Markdown image syntax
+- When a media asset is chosen or uploaded, Studio inserts it into the Markdown
+  body at the drop position when one is available, otherwise at the current
+  selection/caret. A non-empty selection is replaced. Returned or selected assets
+  whose `mimeType` starts with `image/` insert a native image node that renders
+  as an `<img>` element in the editor and serializes to Markdown image syntax
   `![filename](url)` using the returned filename as the alt text. Other assets
   insert link syntax `[filename](url)`. Multiple files from one drag/paste/file
   selection are uploaded sequentially and inserted in user-provided order, with
-  each generated Markdown reference separated from the next by a blank line when
-  they land in the same insertion transaction.
+  each generated reference separated from the next by a blank line when they
+  land in the same insertion transaction.
+- Native image nodes are selectable block atoms in the editor. A selected image
+  must show a visible selected state and contextual controls for changing or
+  deleting that image. The contextual change action opens the same image library
+  picker as the toolbar image control and replaces the selected image node when
+  the user chooses or uploads another image. Delete/Backspace and the contextual
+  delete action must remove the selected image node.
 - A successful media insertion marks the body draft unsaved and relies on the
   existing draft persistence path; it must not introduce a separate content save
   endpoint or bypass draft-save guards.
-- During upload, the editor shows an inline upload state near the canvas and
-  disables additional media upload starts while the current batch is in flight.
-  Upload failures keep the current document body unchanged for the failed file
-  and render an assertive inline error with a deterministic message. Route
-  errors use the backend error message when available; `MEDIA_UPLOAD_TOO_LARGE`
-  should mention the image size limit when `details.limitBytes` and
-  `details.sizeBytes` are present.
-- User-facing media upload copy must state that MDCMS does not enforce a
-  file-type allowlist and that the configured byte limit applies only to
-  uploads whose MIME type starts with `image/`.
+- During upload, the editor shows an inline upload state near the canvas with
+  file-count progress for the active batch and disables additional media upload
+  starts while the current batch is in flight. Upload failures keep the current
+  document body unchanged for the failed file and render an assertive inline
+  error with a deterministic message. Route errors use the backend error message
+  when available; `MEDIA_UPLOAD_TOO_LARGE` should mention the image size limit
+  when `details.limitBytes` and `details.sizeBytes` are present.
 - On desktop, the document editor may expose the visual composition palette to
   the left of the canvas. The palette is part of the body editor surface and
   follows the MDX visual composition behavior owned by SPEC-007. It is

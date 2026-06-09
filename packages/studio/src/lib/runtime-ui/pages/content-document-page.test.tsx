@@ -653,10 +653,11 @@ test("createContentDocumentPageState defaults media uploads to disabled without 
     throw new Error("expected ready state");
   }
 
+  assert.equal(state.canReadMedia, false);
   assert.equal(state.canUploadMedia, false);
 });
 
-test("loadContentDocumentPageState enables media uploads from ready schema capabilities", async () => {
+test("loadContentDocumentPageState enables media library reads and uploads from ready schema capabilities", async () => {
   const next = await loadContentDocumentPageState({
     context: createMountContext(),
     typeId: "BlogPost",
@@ -697,10 +698,11 @@ test("loadContentDocumentPageState enables media uploads from ready schema capab
     throw new Error("expected ready state");
   }
 
+  assert.equal(next.canReadMedia, true);
   assert.equal(next.canUploadMedia, true);
 });
 
-test("applySchemaStateToReadyState updates media upload capability from schema state", () => {
+test("applySchemaStateToReadyState updates media capabilities from schema state", () => {
   const initial = createReadyState({
     schemaState: createReadySchemaState({
       capabilities: {
@@ -716,6 +718,7 @@ test("applySchemaStateToReadyState updates media upload capability from schema s
         },
       },
     }),
+    canReadMedia: true,
     canUploadMedia: true,
   });
 
@@ -729,7 +732,7 @@ test("applySchemaStateToReadyState updates media upload capability from schema s
           write: true,
         },
         media: {
-          read: true,
+          read: false,
           upload: false,
           delete: false,
         },
@@ -737,12 +740,13 @@ test("applySchemaStateToReadyState updates media upload capability from schema s
     }),
   });
 
+  assert.equal(next.canReadMedia, false);
   assert.equal(next.canUploadMedia, false);
   assert.equal(next.canWrite, true);
   assert.equal(next.canAi, false);
 });
 
-test("ContentDocumentPageView renders available media upload shell when writes and media capability are enabled", () => {
+test("ContentDocumentPageView renders available media upload controls without persistent policy copy", () => {
   const html = renderPageMarkup(
     createReadyState({
       canWrite: true,
@@ -758,7 +762,7 @@ test("ContentDocumentPageView renders available media upload shell when writes a
   );
 
   assert.match(html, /Upload media/);
-  assert.match(
+  assert.doesNotMatch(
     html,
     /No file-type allowlist is enforced\. Image upload limits apply only when the uploaded MIME type starts with image\/\./,
   );
@@ -824,6 +828,8 @@ test("ContentDocumentPageView renders media upload status and error messages", (
     mediaUpload: {
       canUpload: true,
       isUploading: true,
+      completedFiles: 1,
+      totalFiles: 3,
       uploadFiles: async () => [],
     },
   });
@@ -838,7 +844,11 @@ test("ContentDocumentPageView renders media upload status and error messages", (
 
   assert.match(uploading, /role="status"/);
   assert.match(uploading, /aria-live="polite"/);
-  assert.match(uploading, /Uploading media\.\.\./);
+  assert.match(uploading, /Uploading media 1 of 3/);
+  assert.match(uploading, /role="progressbar"/);
+  assert.match(uploading, /aria-valuemin="0"/);
+  assert.match(uploading, /aria-valuemax="3"/);
+  assert.match(uploading, /aria-valuenow="1"/);
   assert.match(failed, /role="alert"/);
   assert.match(failed, /aria-live="assertive"/);
   assert.match(failed, /Image upload failed\./);

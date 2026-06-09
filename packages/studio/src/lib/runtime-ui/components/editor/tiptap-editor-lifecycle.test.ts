@@ -11,6 +11,7 @@ import {
   getSelectionMarkdownForAi,
   resolveSlashPickerCoordsForEditor,
 } from "./tiptap-editor-utils.js";
+import { extractMarkdownFromEditor } from "../../../markdown-pipeline.js";
 import {
   insertUploadedMediaFiles,
   resolveMediaUploadFileEvent,
@@ -32,6 +33,21 @@ function createMediaAsset(asset: Partial<MediaAsset> = {}): MediaAsset {
   };
 }
 
+function findImagePosition(editor: ReturnType<typeof createDocumentEditor>) {
+  let found = -1;
+
+  editor.state.doc.descendants((node, pos) => {
+    if (node.type.name === "image") {
+      found = pos;
+      return false;
+    }
+
+    return true;
+  });
+
+  return found;
+}
+
 test("createTipTapEditorDependencies keeps editor lifetime independent of onChange identity", () => {
   const hostBridge = {
     version: "1" as const,
@@ -50,7 +66,7 @@ test("createTipTapEditorDependencies keeps editor lifetime independent of onChan
   );
 });
 
-test("TipTapEditor renders an enabled media upload input and toolbar button for writable upload targets", () => {
+test("TipTapEditor renders an enabled image picker and hidden media upload input for writable media targets", () => {
   const markup = renderToStaticMarkup(
     createElement(TipTapEditor, {
       initialContent: "# Launch Notes",
@@ -59,16 +75,23 @@ test("TipTapEditor renders an enabled media upload input and toolbar button for 
         isUploading: false,
         uploadFiles: async () => [],
       },
+      mediaLibrary: {
+        canBrowse: true,
+        listImages: async () => [],
+      },
     }),
   );
 
   assert.match(markup, /type="file"/);
   assert.match(markup, /multiple=""/);
   assert.match(markup, /aria-label="Upload media"/);
-  assert.match(markup, /<button(?=[^>]*aria-label="Upload media")[^>]*>/);
+  assert.match(markup, /<button(?=[^>]*aria-label="Insert image")[^>]*>/);
+  assert.match(markup, /data-mdcms-media-picker-toggle="true"/);
+  assert.match(markup, /aria-controls="mdcms-editor-media-picker"/);
+  assert.match(markup, /aria-expanded="false"/);
   assert.doesNotMatch(
     markup,
-    /<button(?=[^>]*aria-label="Upload media")(?=[^>]*\sdisabled(?:=""|\s|>))[^>]*>/,
+    /<button(?=[^>]*aria-label="Insert image")(?=[^>]*\sdisabled(?:=""|\s|>))[^>]*>/,
   );
 });
 
@@ -356,6 +379,63 @@ test("insertUploadedMediaFiles propagates upload failures without emitting an ed
   );
 
   assert.equal(updateCount, 0);
+});
+
+test("selected native image blocks can be deleted", () => {
+  const editor = createDocumentEditor({
+    content: [
+      "Before",
+      "",
+      "![Hero](https://cdn.example.com/hero.png)",
+      "",
+      "After",
+    ].join("\n"),
+  });
+
+  try {
+    const imagePosition = findImagePosition(editor);
+
+    assert.equal(imagePosition >= 0, true);
+    assert.equal(editor.commands.setNodeSelection(imagePosition), true);
+    assert.equal(editor.commands.deleteSelection(), true);
+    assert.equal(extractMarkdownFromEditor(editor), "Before\n\nAfter");
+  } finally {
+    editor.destroy();
+  }
+});
+
+test("selected native image blocks can be replaced by media insertion", () => {
+  const editor = createDocumentEditor({
+    content: "![Old](https://cdn.example.com/old.png)",
+  });
+
+  try {
+    const imagePosition = findImagePosition(editor);
+    const asset = createMediaAsset({
+      filename: "new.png",
+      mimeType: "image/png",
+      url: "https://cdn.example.com/new.png",
+    });
+
+    assert.equal(imagePosition >= 0, true);
+    assert.equal(editor.commands.setNodeSelection(imagePosition), true);
+    assert.equal(
+      editor.commands.insertContentAt(
+        {
+          from: editor.state.selection.from,
+          to: editor.state.selection.to,
+        },
+        createMediaAssetsInsertContent([asset]),
+      ),
+      true,
+    );
+    assert.equal(
+      extractMarkdownFromEditor(editor),
+      "![new.png](https://cdn.example.com/new.png)",
+    );
+  } finally {
+    editor.destroy();
+  }
 });
 
 test("resolveSlashPickerCoordsForEditor returns null while the editor view is remounting", () => {
