@@ -139,7 +139,7 @@ test("fieldTypes create normalized reference and file metadata", () => {
     directory: "content/articles",
     fields: {
       author: fieldTypes.reference("Author"),
-      image: fieldTypes.image().optional(),
+      image: fieldTypes.image({ required: false }),
       video: fieldTypes.video({ accept: ["video/mp4"] }),
       download: fieldTypes.file({ accept: ["application/pdf", "audio/*"] }),
       optionalDownload: fieldTypes.file({
@@ -179,7 +179,7 @@ test("fieldTypes.file rejects category-like accept entries", () => {
 
 Add helper option precedence/config tests:
 
-- `fieldTypes.file({ required: false })` resolves to an optional snapshot.
+- `fieldTypes.file({ required: false })` resolves to an optional nullable snapshot and write validation treats missing, `null`, and empty string as unset.
 - `.optional()` around a file helper without `required: false` resolves to an optional snapshot.
 - `.nullable()` around a file helper resolves to `nullable: true`.
 - helper `default` and Zod `.default()` must agree when both are present.
@@ -190,7 +190,7 @@ Add helper option precedence/config tests:
 In `schema.test.ts`, update the stable snapshot test to include:
 
 ```ts
-primaryImage: fieldTypes.image().optional(),
+primaryImage: fieldTypes.image({ required: false }),
 heroVideo: fieldTypes.video({ accept: ["video/mp4", "video/webm"] }),
 attachment: fieldTypes.file({ accept: ["application/pdf"] }),
 optionalAttachment: fieldTypes.file({
@@ -208,7 +208,7 @@ Expected snapshot pieces:
 primaryImage: {
   kind: "string",
   required: false,
-  nullable: false,
+  nullable: true,
   file: { preset: "image", accept: [] },
 },
 heroVideo: {
@@ -226,12 +226,12 @@ attachment: {
 optionalAttachment: {
   kind: "string",
   required: false,
-  nullable: false,
+  nullable: true,
   file: { preset: "file", accept: ["application/pdf"] },
 },
 defaultVideo: {
   kind: "string",
-  required: true,
+  required: false,
   nullable: false,
   default: "6f6a8a6e-8d5b-4d5d-a4df-1b2a3c4d5e6f",
   file: { preset: "video", accept: [] },
@@ -304,7 +304,7 @@ function createFileField(
   });
   const withDefault =
     options.default === undefined ? schema : schema.default(options.default);
-  return options.required === false ? withDefault.optional() : withDefault;
+  return options.required === false ? withDefault.optional().nullable() : withDefault;
 }
 
 export const fieldTypes = {
@@ -324,7 +324,7 @@ const MIME_ACCEPT_PATTERN =
   /^[a-z0-9][a-z0-9!#$&^_.+-]*\/(\*|[a-z0-9][a-z0-9!#$&^_.+-]*)$/i;
 ```
 
-Trim, lowercase, de-duplicate, sort, and reject invalid entries with `invalidConfig("accept", "...")`. Validate helper `default` as a raw media asset id string. Add wrapper precedence validation so helper `required: false` cannot serialize to a required snapshot, `.optional()` can make helpers optional, `.nullable()` sets snapshot nullability, and helper/Zod defaults must agree when both are present.
+Trim, lowercase, de-duplicate, sort, and reject invalid entries with `invalidConfig("accept", "...")`. Validate helper `default` as a raw media asset id string. Add wrapper precedence validation so helper `required: false` serializes to an optional nullable snapshot, `.optional()` can make helpers optional, `.nullable()` sets snapshot nullability, Zod `.default()` yields `required: false`, and helper/Zod defaults must agree when both are present.
 
 **Step 2: Extend parsed metadata helpers**
 
@@ -490,7 +490,8 @@ Cover:
 
 - required missing values are ignored by media helper because generic schema validation handles them
 - non-string present values fail
-- blank strings fail
+- blank strings fail for required file fields
+- optional file fields with `required: false` treat missing, `null`, and empty string as unset and skip media lookup
 - missing asset id fails with `INVALID_INPUT`
 - `fieldTypes.image()` accepts `image/jpeg`
 - `fieldTypes.image()` rejects `application/pdf`
@@ -517,6 +518,7 @@ Configure the store with a media lookup that returns the test asset. Verify:
 - create succeeds with valid image id
 - create fails with non-image id
 - update fails with missing media id
+- optional file fields with `required: false` accept missing, `null`, and empty string values as unset
 
 **Step 4: Run failing tests**
 
@@ -589,7 +591,7 @@ new RuntimeError({
   code: "INVALID_INPUT",
   message: `Field "${fieldPath}" must reference a media asset matching this file field.`,
   statusCode: 400,
-  details: { field: fieldPath, mediaAssetId, expectedPreset, accept },
+  details: { field: fieldPath, mediaAssetId },
 });
 ```
 
@@ -664,9 +666,8 @@ export type ContentMediaResolveError = {
   code: "MEDIA_NOT_FOUND" | "MEDIA_TYPE_MISMATCH";
   message: string;
   media: {
-    id: string;
-    expectedPreset: "image" | "video" | "file";
-    accept: string[];
+    assetId: string;
+    expectedMime?: string[];
     actualMimeType?: string;
   };
 };
@@ -703,6 +704,9 @@ In `content-api.test.ts`, add route tests:
 - `GET /api/v1/content?type=Article` expands by default.
 - Studio-style `draft=true&fileFields=raw` returns raw id.
 - Invalid `fileFields=banana` returns `INVALID_QUERY_PARAM`.
+- `POST /api/v1/content/:id/duplicate` applies `fileFields` to the returned document.
+- `POST /api/v1/content/bulk` applies `fileFields` only to succeeded `results[].document` values.
+- `POST /api/v1/content/bulk` with omitted `fileFields` expands succeeded `results[].document` values by default.
 
 **Step 4: Run failing tests**
 
@@ -953,7 +957,7 @@ Add tests in `content-document-page.test.tsx` or existing state tests for schema
 primaryImage: {
   kind: "string",
   required: false,
-  nullable: false,
+  nullable: true,
   file: { preset: "image", accept: [] },
 }
 ```

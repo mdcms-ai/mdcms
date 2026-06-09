@@ -111,9 +111,13 @@ type FileFieldOptions = {
 - `required` defaults to `true` for the plain helper. Required, non-nullable file fields fail write-time validation when the field is missing, `null`, or an empty string. `required: false` treats missing, `null`, or empty string values as unset; non-empty values still validate as media asset ids.
 - `default` is a raw `MediaAsset.id` string applied as the schema default. It is never a URL and never a `MediaAsset` object, and the resulting value must satisfy the helper preset and `accept` narrowing.
 
+When a helper or Zod default supplies a file-field value during content write
+validation, MDCMS validates that default against project-scoped media metadata
+for asset existence and MIME compatibility.
+
 Helper metadata is canonical for identifying MDCMS file fields and for validating helper-level `accept`, `required`, and `default` config. Normal Zod wrappers still determine the resolved schema snapshot's `required`, `nullable`, and `default` metadata:
 
-- `required: false` must resolve to snapshot `required: false`; a helper with `required: false` and a required resolved snapshot is invalid schema config.
+- `required: false` must resolve to snapshot `required: false` and `nullable: true`; a helper with `required: false` and a required or non-nullable resolved snapshot is invalid schema config.
 - `.optional()` around a helper without `required: false` is valid and resolves to snapshot `required: false`.
 - `.nullable()` resolves to snapshot `nullable: true`; file-field asset validation runs for non-empty string values, while `null` acceptance follows the resolved snapshot metadata.
 - If a helper `default` and Zod `.default()` are both present, they must be the same raw `MediaAsset.id` string or schema config is invalid. A Zod `.default()` on a file helper must also be a raw `MediaAsset.id` string satisfying the helper preset and `accept` narrowing.
