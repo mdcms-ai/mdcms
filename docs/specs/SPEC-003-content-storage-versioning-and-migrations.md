@@ -269,23 +269,27 @@ Content endpoints that return documents expand schema file fields by default. `f
 
 `ContentDocumentResponse.frontmatter` file-field values follow the selected mode:
 
-- `raw`: the persisted raw value: a `MediaAsset.id` string for set file fields, or the persisted missing, `null`, or empty string unset representation for helper-level optional file fields.
+- `raw`: the persisted raw value: a `MediaAsset.id` string for set file fields, or the persisted missing, `null`, or empty string unset representation allowed by the synced file-field snapshot.
 - `expanded` or omitted: a resolved `MediaAsset`, or `null` when expansion fails.
 
-In this contract, an unset optional file field means a file helper configured
-with `required: false`. `fieldTypes.*({ required: false })` resolves to
-`required: false` and `nullable: true`; missing, `null`, and empty string values
-are unset for that helper-level optional file field. In `raw` mode, responses
-preserve the persisted unset representation, including absence, so authoring
-clients can round-trip frontmatter. In `expanded` mode or when `fileFields` is
-omitted, unset optional file fields return `null`. Unset optional file fields do
-not add `resolveErrors` entries.
+Unset file-field values are evaluated from the synced field snapshot. Missing
+values are unset when snapshot `required` is `false`; `null` is unset when
+snapshot `nullable` is `true`; and an empty string is unset only when
+`file.emptyStringAsUnset` is `true`. `fieldTypes.*({ required: false })`
+serializes `required: false`, `nullable: true`, and
+`file.emptyStringAsUnset: true`. A helper wrapped only in `.optional()` without
+helper `required: false` allows missing values but serializes
+`file.emptyStringAsUnset: false`, so empty strings still validate as media asset
+ids. `.nullable()` accepts `null` according to snapshot nullability; it does not
+change `file.emptyStringAsUnset` unless helper `required: false` is also set.
+In `raw` mode, responses preserve the persisted unset representation, including
+absence, so authoring clients can round-trip frontmatter. In `expanded` mode or
+when `fileFields` is omitted, unset file fields return `null`. Unset file fields
+do not add `resolveErrors` entries.
 
-A file helper wrapped only in `.optional()` without helper `required: false`
-allows missing values but does not treat empty strings as unset and does not
-accept `null` unless `.nullable()` is also present. `.nullable()` accepts `null`
-according to snapshot nullability; non-empty strings still validate and expand
-as media asset ids.
+For `GET /api/v1/content` list responses, schema file-field expansion uses each
+document's own type snapshot. Mixed-type list reads without a `type` filter are
+allowed, and file fields are expanded per document type.
 
 File-field expansion failures add a top-level `resolveErrors` entry keyed by the full field path, such as `frontmatter.heroImage`. Each entry has this shape:
 
@@ -341,7 +345,7 @@ File-field expansion may report:
 - `MEDIA_NOT_FOUND` when the stored media asset id does not resolve in the routed project.
 - `MEDIA_TYPE_MISMATCH` when the media asset exists but its `mimeType` does not satisfy the schema field preset or `accept` narrowing.
 
-Create and update payloads always send schema file fields as raw media asset id strings in `frontmatter`; `fileFields` changes only the returned document shape.
+Create and update payloads send set schema file fields as raw media asset id strings in `frontmatter`; unset optional file fields may be omitted, `null`, or an empty string when allowed by the synced snapshot. `fileFields` changes only the returned document shape.
 
 ## Query Parameters (Content Listing)
 
@@ -356,7 +360,7 @@ Create and update payloads always send schema file fields as raw media asset id 
 | `hasUnpublishedChanges` | boolean  | Filter by unpublished divergence from latest publish                                                                                                                                                                                                                            |
 | `draft`                 | boolean  | Return mutable head content (published API default is latest published only; requires draft permission)                                                                                                                                                                         |
 | `resolve`               | string[] | Resolve listed references inline at read time (shallow only). See the Reference Resolution Contract above for `resolveErrors`, `null` fallback values, and `INVALID_QUERY_PARAM` treatment of invalid paths. When used on the list endpoint, `type` is required.                |
-| `fileFields`            | string   | Response shape for schema file fields. Omitted or `expanded` returns resolved `MediaAsset` objects by default; `raw` returns persisted media asset id strings for authoring clients that round-trip frontmatter. Unsupported values fail with `INVALID_QUERY_PARAM` (`400`).    |
+| `fileFields`            | string   | Response shape for schema file fields. Omitted or `expanded` returns resolved `MediaAsset` objects by default; `raw` returns persisted raw file-field values for authoring clients that round-trip frontmatter. Unsupported values fail with `INVALID_QUERY_PARAM` (`400`).     |
 | `project`               | string   | Target project (required if header not set)                                                                                                                                                                                                                                     |
 | `environment`           | string   | Target environment (required if header not set)                                                                                                                                                                                                                                 |
 | `limit`                 | integer  | Page size (default: 20, max: 100)                                                                                                                                                                                                                                               |

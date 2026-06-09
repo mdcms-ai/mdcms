@@ -40,9 +40,9 @@ Required contract points:
 - Schema built-ins are imported through `fieldTypes`; `fieldTypes.reference()` is canonical and the previous top-level `reference()` helper is removed from the beta contract.
 - `fieldTypes.image(options?)`, `fieldTypes.video(options?)`, and `fieldTypes.file(options?)` persist raw project-scoped `MediaAsset.id` strings.
 - `FileFieldOptions` includes `accept?: string[]`, `required?: boolean`, and `default?: string`. `accept` values are MIME values or MIME wildcards only; image/video helpers set the broad preset family and custom `accept` narrows within that family.
-- `fieldTypes.*({ required: false })` resolves to `required: false` and `nullable: true`; missing, `null`, and empty string are unset. `.optional()` without helper `required: false` makes missing values optional only, and `.nullable()` accepts `null` according to snapshot nullability.
+- `fieldTypes.*({ required: false })` resolves to `required: false`, `nullable: true`, and `file.emptyStringAsUnset: true`; missing, `null`, and empty string are unset. `.optional()` without helper `required: false` makes missing values optional only, `.nullable()` accepts `null` according to snapshot nullability, and both serialize `file.emptyStringAsUnset: false`.
 - Helper defaults and Zod `.default()` values are raw `MediaAsset.id` strings and must agree when both are present. Applied defaults are validated for asset existence and MIME compatibility during content write validation.
-- Serialized file field snapshots are `kind: "string"` snapshots with `file: { preset: "image" | "video" | "file", accept: string[] }`; `required`, `nullable`, and `default` stay on the field snapshot outside `file`.
+- Serialized file field snapshots are `kind: "string"` snapshots with `file: { preset: "image" | "video" | "file", accept: string[], emptyStringAsUnset: boolean }`; `required`, `nullable`, and `default` stay on the field snapshot outside `file`.
 - File-field write validation failures use `INVALID_INPUT` (`400`) with machine-readable details such as `{ field, mediaAssetId?, reason: "MEDIA_REQUIRED" | "MEDIA_NOT_FOUND" | "MEDIA_TYPE_MISMATCH", expectedMime?, actualMimeType? }`.
 
 Replace all examples importing or calling top-level `reference` with `fieldTypes.reference`.
@@ -60,8 +60,9 @@ Add a new `File Field Identity` subsection covering raw id persistence, preset a
 Find the content API read/write contract section. Add the `fileFields` response-shape contract:
 
 - `fileFields` accepts only `raw` or `expanded`; unsupported values fail with `INVALID_QUERY_PARAM` (`400`).
-- Content endpoints that return documents expand schema file fields by default. `fileFields=raw` returns persisted media asset id strings and is required for authoring clients that round-trip frontmatter, including Studio editing and CLI pull/push.
+- Content endpoints that return documents expand schema file fields by default. `fileFields=raw` returns persisted raw file-field values and is required for authoring clients that round-trip frontmatter, including Studio editing and CLI pull/push.
 - Raw mode preserves persisted unset representations. Expanded/default mode returns `MediaAsset | null`; optional unset file fields return `null` and do not add `resolveErrors` entries.
+- Empty string is treated as unset only when the synced snapshot has `file.emptyStringAsUnset: true`; missing and `null` acceptance remain governed by snapshot `required` and `nullable`.
 - File-field expansion failures put `null` in the field and a `FileFieldResolveError` at `resolveErrors["frontmatter.<field>"]` with `code` `MEDIA_NOT_FOUND` or `MEDIA_TYPE_MISMATCH`, `media.assetId`, `expectedMime`, and `actualMimeType` where available.
 - `ContentDocumentResponse` and `ContentVersionDocumentResponse` carry the shaped frontmatter plus the unified `resolveErrors` union. Bulk response shaping applies only to succeeded `results[].document` values, with omitted `fileFields` using expanded mode.
 
@@ -179,8 +180,10 @@ Add preset compatibility tests:
 Add helper option precedence/config tests:
 
 - `fieldTypes.file({ required: false })` resolves to an optional nullable snapshot and write validation treats missing, `null`, and empty string as unset.
-- `.optional()` around a file helper without `required: false` resolves to an optional snapshot, treats missing as optional, does not treat empty string as unset, and does not accept `null` unless `.nullable()` is also present.
-- `.nullable()` around a file helper resolves to `nullable: true`.
+- `fieldTypes.file({ required: false })` serializes `file.emptyStringAsUnset: true`.
+- `.optional()` around a file helper without `required: false` resolves to an optional snapshot, treats missing as optional, serializes `file.emptyStringAsUnset: false`, does not treat empty string as unset, and does not accept `null` unless `.nullable()` is also present.
+- `.nullable()` around a file helper resolves to `nullable: true` and serializes `file.emptyStringAsUnset: false` unless helper `required: false` is also present.
+- `.optional().nullable()` around a file helper without `required: false` serializes `required: false`, `nullable: true`, and `file.emptyStringAsUnset: false`.
 - helper `default` and Zod `.default()` must agree when both are present.
 - helper or Zod defaults on file helpers must be raw media asset id strings.
 
@@ -196,6 +199,9 @@ optionalAttachment: fieldTypes.file({
   accept: ["application/pdf"],
   required: false,
 }),
+optionalNullableAttachment: fieldTypes.file({
+  accept: ["application/pdf"],
+}).optional().nullable(),
 defaultVideo: fieldTypes.video({
   default: "6f6a8a6e-8d5b-4d5d-a4df-1b2a3c4d5e6f",
 }),
@@ -208,36 +214,58 @@ primaryImage: {
   kind: "string",
   required: false,
   nullable: true,
-  file: { preset: "image", accept: [] },
+  file: { preset: "image", accept: [], emptyStringAsUnset: true },
 },
 heroVideo: {
   kind: "string",
   required: true,
   nullable: false,
-  file: { preset: "video", accept: ["video/mp4", "video/webm"] },
+  file: {
+    preset: "video",
+    accept: ["video/mp4", "video/webm"],
+    emptyStringAsUnset: false,
+  },
 },
 attachment: {
   kind: "string",
   required: true,
   nullable: false,
-  file: { preset: "file", accept: ["application/pdf"] },
+  file: {
+    preset: "file",
+    accept: ["application/pdf"],
+    emptyStringAsUnset: false,
+  },
 },
 optionalAttachment: {
   kind: "string",
   required: false,
   nullable: true,
-  file: { preset: "file", accept: ["application/pdf"] },
+  file: {
+    preset: "file",
+    accept: ["application/pdf"],
+    emptyStringAsUnset: true,
+  },
+},
+optionalNullableAttachment: {
+  kind: "string",
+  required: false,
+  nullable: true,
+  file: {
+    preset: "file",
+    accept: ["application/pdf"],
+    emptyStringAsUnset: false,
+  },
 },
 defaultVideo: {
   kind: "string",
   required: false,
   nullable: false,
   default: "6f6a8a6e-8d5b-4d5d-a4df-1b2a3c4d5e6f",
-  file: { preset: "video", accept: [] },
+  file: { preset: "video", accept: [], emptyStringAsUnset: false },
 },
 ```
 
-Add validation tests that `assertSchemaRegistrySyncPayload` rejects malformed `file` metadata once schema.ts exposes validation, including `file` metadata on non-string snapshots and malformed snapshot defaults for file fields.
+Add validation tests that `assertSchemaRegistrySyncPayload` rejects malformed `file` metadata once schema.ts exposes validation, including `file` metadata on non-string snapshots, missing or non-boolean `file.emptyStringAsUnset`, and malformed snapshot defaults for file fields.
 
 **Step 3: Run failing tests**
 
@@ -272,6 +300,7 @@ export type MdcmsFileFieldPreset = "image" | "video" | "file";
 export type MdcmsFileFieldMetadata = {
   preset: MdcmsFileFieldPreset;
   accept: string[];
+  emptyStringAsUnset: boolean;
 };
 
 export type MdcmsFileFieldOptions = {
@@ -299,6 +328,7 @@ function createFileField(
     [FILE_METADATA_KEY]: {
       preset,
       accept: normalizeAccept(options.accept ?? []),
+      emptyStringAsUnset: options.required === false,
     },
   });
   const withDefault =
@@ -323,7 +353,7 @@ const MIME_ACCEPT_PATTERN =
   /^[a-z0-9][a-z0-9!#$&^_.+-]*\/(\*|[a-z0-9][a-z0-9!#$&^_.+-]*)$/i;
 ```
 
-Trim, lowercase, de-duplicate, sort, and reject invalid entries with `invalidConfig("accept", "...")`. For image/video helpers, reject custom `accept` entries outside the preset family as invalid schema config; valid entries narrow within the preset. Validate helper `default` as a raw media asset id string. Add wrapper precedence validation so helper `required: false` serializes to an optional nullable snapshot, `.optional()` can make helpers optional, `.nullable()` sets snapshot nullability, Zod `.default()` yields `required: false`, and helper/Zod defaults must agree when both are present.
+Trim, lowercase, de-duplicate, sort, and reject invalid entries with `invalidConfig("accept", "...")`. For image/video helpers, reject custom `accept` entries outside the preset family as invalid schema config; valid entries narrow within the preset. Validate helper `default` as a raw media asset id string. Add wrapper precedence validation so helper `required: false` serializes to an optional nullable snapshot with `file.emptyStringAsUnset: true`, `.optional()` can make helpers optional without enabling empty-string unset, `.nullable()` sets snapshot nullability without enabling empty-string unset, Zod `.default()` yields `required: false`, and helper/Zod defaults must agree when both are present.
 
 **Step 2: Extend parsed metadata helpers**
 
@@ -339,9 +369,9 @@ file?: MdcmsFileFieldMetadata;
 
 to `SchemaRegistryFieldSnapshot`.
 
-Keep `SchemaRegistryFieldSnapshot.file` limited to `{ preset, accept }`; resolved
-`required`, `nullable`, and `default` metadata remains on the field snapshot
-itself.
+Keep `SchemaRegistryFieldSnapshot.file` limited to the `preset`, `accept`, and
+`emptyStringAsUnset` metadata; resolved `required`, `nullable`, and `default`
+metadata remains on the field snapshot itself.
 
 Implement `readDirectFileMetadata(schema)` next to `readDirectReferenceMetadata`.
 
@@ -354,6 +384,7 @@ In `assertFieldSnapshot`, validate:
 - `file` is an object when present.
 - `file.preset` is `image`, `video`, or `file`.
 - `file.accept` is an array of valid normalized MIME accept entries.
+- `file.emptyStringAsUnset` is a boolean.
 - `file` appears only on `kind: "string"` snapshots in synced payload validation.
 - `default`, when present on a file field snapshot, is a raw media asset id string.
 
@@ -386,6 +417,7 @@ git commit -m "feat(shared): add schema file field types"
 - Modify: `apps/cli/README.md`
 - Modify: `apps/studio-example/mdcms.config.ts`
 - Modify: `apps/studio-example/mdcms.config.test.ts`
+- Modify as needed: `apps/docs/**`
 - Modify: `skills/mdcms-content-editing/SKILL.md`
 - Modify: `skills/mdcms-schema-refine/SKILL.md`
 
@@ -435,7 +467,8 @@ In `init.ts`, update stand-in handling for reference zodType detection from `ref
 
 **Step 4: Update examples and public skills**
 
-Replace user-facing top-level reference examples with `fieldTypes.reference`.
+Replace user-facing top-level reference examples with `fieldTypes.reference`,
+including examples under `apps/docs/**`.
 
 Do not introduce file fields into the example config unless the test suite already has stable media ids available. Keep this task focused on the breaking reference API migration.
 
@@ -451,7 +484,7 @@ Expected: pass.
 **Step 6: Commit**
 
 ```bash
-git add apps/cli/src/lib/init/generate-config.ts apps/cli/src/lib/init/generate-config.test.ts apps/cli/src/lib/init/infer-schema.ts apps/cli/src/lib/init/infer-schema.test.ts apps/cli/src/lib/init.ts apps/cli/src/lib/config.test.ts apps/cli/README.md apps/studio-example/mdcms.config.ts apps/studio-example/mdcms.config.test.ts skills/mdcms-content-editing/SKILL.md skills/mdcms-schema-refine/SKILL.md
+git add apps/cli/src/lib/init/generate-config.ts apps/cli/src/lib/init/generate-config.test.ts apps/cli/src/lib/init/infer-schema.ts apps/cli/src/lib/init/infer-schema.test.ts apps/cli/src/lib/init.ts apps/cli/src/lib/config.test.ts apps/cli/README.md apps/studio-example/mdcms.config.ts apps/studio-example/mdcms.config.test.ts apps/docs skills/mdcms-content-editing/SKILL.md skills/mdcms-schema-refine/SKILL.md
 git commit -m "refactor(cli): move references under fieldTypes"
 ```
 
@@ -513,7 +546,7 @@ primaryImage: {
   kind: "string",
   required: true,
   nullable: false,
-  file: { preset: "image", accept: [] },
+  file: { preset: "image", accept: [], emptyStringAsUnset: false },
 }
 ```
 
@@ -713,8 +746,8 @@ Cover:
 
 - top-level image id expands to `MediaAsset`
 - `fileFields=raw` leaves id string unchanged
-- `fileFields=raw` preserves missing, `null`, and empty string representations for optional unset file fields
-- expanded/default mode returns `null` for missing, `null`, and empty string optional unset file fields without adding `resolveErrors`
+- `fileFields=raw` preserves persisted missing, `null`, and empty string representations for file fields whose snapshot allows those unset forms
+- expanded/default mode returns `null` for missing values allowed by `required: false`, `null` values allowed by `nullable: true`, and empty strings only when `file.emptyStringAsUnset: true`, without adding `resolveErrors`
 - missing asset becomes `null` and records `MEDIA_NOT_FOUND`
 - wrong MIME becomes `null` and records `MEDIA_TYPE_MISMATCH`
 - media expansion merges with existing `resolveErrors` instead of replacing them
@@ -730,6 +763,7 @@ In `content-api.test.ts`, add route tests:
 - `GET /api/v1/content/:id?fileFields=raw` returns raw id.
 - `GET /api/v1/content/:id` with an unresolved reference and a missing media asset returns both reference and media entries in `resolveErrors`.
 - `GET /api/v1/content?type=Article` expands by default.
+- `GET /api/v1/content` without `type` expands a mixed list per document type when multiple returned types have schema file fields.
 - `GET /api/v1/content/:id/versions/:version?fileFields=raw` applies `fileFields` to the returned version document.
 - Studio-style `draft=true&fileFields=raw` returns raw id.
 - Invalid `fileFields=banana` returns `INVALID_QUERY_PARAM`.
@@ -807,10 +841,10 @@ Invalid values throw `INVALID_QUERY_PARAM`.
 Rules:
 
 - If mode is raw, return document unchanged.
-- Raw mode preserves persisted optional unset representations: missing fields stay missing, `null` stays `null`, and empty strings stay empty strings.
+- Raw mode returns the document unchanged and preserves persisted missing, `null`, and empty string representations.
 - If schema missing or no file fields, return document unchanged.
 - If lookup missing and schema has file fields, fail closed with 500.
-- Expanded/default mode returns `null` for missing, `null`, and empty string optional unset file fields and does not add `resolveErrors`.
+- Expanded/default mode returns `null` for missing values allowed by `required: false`, `null` values allowed by `nullable: true`, and empty strings only when `file.emptyStringAsUnset: true`; these unset values do not add `resolveErrors`.
 - Clone `frontmatter` before modifications.
 - Merge media resolve errors into existing `resolveErrors`.
 
@@ -828,6 +862,11 @@ errors. Keep the regression test that returns both a reference resolve failure
 and a media expansion failure.
 
 Use the same mode for list/get/version/write responses. Studio and CLI will pass `fileFields=raw`.
+
+For list responses, resolve the schema snapshot per returned document using
+`document.type`. Do not reuse a single query type snapshot for untyped mixed
+lists; `GET /api/v1/content` without `type` must expand file fields for each
+document according to that document's type snapshot.
 
 **Step 4: Enforce duplicate schema hash gate**
 
@@ -902,7 +941,7 @@ primaryImage: {
   kind: "string",
   required: true,
   nullable: false,
-  file: { preset: "image", accept: [] },
+  file: { preset: "image", accept: [], emptyStringAsUnset: false },
 }
 ```
 
@@ -1012,7 +1051,7 @@ primaryImage: {
   kind: "string",
   required: false,
   nullable: true,
-  file: { preset: "image", accept: [] },
+  file: { preset: "image", accept: [], emptyStringAsUnset: true },
 }
 ```
 
@@ -1139,7 +1178,11 @@ Component props:
 type MediaFieldControlProps = {
   fieldName: string;
   value: string | undefined;
-  file: { preset: "image" | "video" | "file"; accept: string[] };
+  file: {
+    preset: "image" | "video" | "file";
+    accept: string[];
+    emptyStringAsUnset: boolean;
+  };
   canUnset: boolean;
   readOnly: boolean;
   canReadMedia: boolean;
