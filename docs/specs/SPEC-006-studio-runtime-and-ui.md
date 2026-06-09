@@ -791,6 +791,8 @@ Normative behavior:
   Markdown string. It uses media read capability for browsing/replacing and
   media upload capability for upload-new. Images render thumbnails, videos
   render inline playback, and other files render a compact file placeholder.
+  Studio document editing requests `fileFields=raw` so the editor round-trips
+  raw frontmatter values.
   Optional file fields expose a clear/remove action that stores the field as
   unset. Required file fields allow replacement but cannot be saved empty; an
   empty required file field shows an inline required-field validation message.

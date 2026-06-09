@@ -267,9 +267,27 @@ Content endpoints that return documents expand schema file fields by default. `f
 
 `fileFields` accepts only `raw` or `expanded`; unsupported values fail with `INVALID_QUERY_PARAM` (`400`).
 
+`ContentDocumentResponse.frontmatter` file-field values follow the selected mode:
+
+- `raw`: the persisted raw `MediaAsset.id` string.
+- `expanded` or omitted: a resolved `MediaAsset`, or `null` when expansion fails.
+
 File-field expansion failures add a top-level `resolveErrors` entry keyed by the full field path, such as `frontmatter.heroImage`. Each entry has this shape:
 
 ```ts
+type ReferenceResolveError = {
+  code:
+    | "REFERENCE_NOT_FOUND"
+    | "REFERENCE_DELETED"
+    | "REFERENCE_TYPE_MISMATCH"
+    | "REFERENCE_FORBIDDEN";
+  message: string;
+  ref: {
+    documentId: string;
+    type: string;
+  };
+};
+
 type FileFieldResolveError = {
   code: "MEDIA_NOT_FOUND" | "MEDIA_TYPE_MISMATCH";
   message: string;
@@ -278,6 +296,10 @@ type FileFieldResolveError = {
     expectedMime?: string[];
     actualMimeType?: string;
   };
+};
+
+type ContentDocumentResponse = ContentDocument & {
+  resolveErrors?: Record<string, ReferenceResolveError | FileFieldResolveError>;
 };
 ```
 
@@ -670,7 +692,7 @@ parameter as authorization.
 | GET    | `/api/v1/content/:documentId/versions`                  | session_or_api_key | `content:read`                                                                                             | required: `project_environment` | path `documentId`, optional `limit`, optional `offset`                                                                                                                                                              | `200` `{ data: DocumentVersionSummary[], pagination: { total, limit, offset, hasMore } }`                                                      | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_QUERY_PARAM` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`)                                                                                                                                                                                                                                                                  |
 | GET    | `/api/v1/content/:documentId/versions/:version`         | session_or_api_key | `content:read`                                                                                             | required: `project_environment` | path `documentId`, `version`, optional `resolve`, optional `fileFields`                                                                                                                                             | `200` `{ data: DocumentVersion }`                                                                                                              | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_QUERY_PARAM` (`400`), `INVALID_INPUT` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`)                                                                                                                                                                                                                                         |
 | POST   | `/api/v1/content`                                       | session_or_api_key | `content:write`                                                                                            | required: `project_environment` | JSON create payload (`path`, `type`, `locale`, `format`, `frontmatter`, `body`, optional actor fields, optional `sourceDocumentId`), required `x-mdcms-schema-hash` header, optional query `fileFields`             | `200` `{ data: ContentDocument }`                                                                                                              | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_QUERY_PARAM` (`400`), `SCHEMA_HASH_REQUIRED` (`400`), `SCHEMA_NOT_SYNCED` (`409`), `SCHEMA_HASH_MISMATCH` (`409`), `INVALID_INPUT` (`400`), `NOT_FOUND` (`404`) for missing/soft-deleted `sourceDocumentId`, `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `CONTENT_PATH_CONFLICT` (`409`), `TRANSLATION_VARIANT_CONFLICT` (`409`)                       |
-| POST   | `/api/v1/content/:documentId/duplicate`                 | session_or_api_key | `content:write`                                                                                            | required: `project_environment` | path `documentId`, optional query `fileFields`                                                                                                                                                                      | `200` `{ data: ContentDocument }`                                                                                                              | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_QUERY_PARAM` (`400`), `SCHEMA_HASH_REQUIRED` (`400`), `SCHEMA_NOT_SYNCED` (`409`), `SCHEMA_HASH_MISMATCH` (`409`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`) for missing/soft-deleted source document, `DUPLICATE_PATH_EXHAUSTED` (`409`)                                                                                        |
+| POST   | `/api/v1/content/:documentId/duplicate`                 | session_or_api_key | `content:write`                                                                                            | required: `project_environment` | path `documentId`, required `x-mdcms-schema-hash` header, optional query `fileFields`                                                                                                                               | `200` `{ data: ContentDocument }`                                                                                                              | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_QUERY_PARAM` (`400`), `SCHEMA_HASH_REQUIRED` (`400`), `SCHEMA_NOT_SYNCED` (`409`), `SCHEMA_HASH_MISMATCH` (`409`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`) for missing/soft-deleted source document, `DUPLICATE_PATH_EXHAUSTED` (`409`)                                                                                        |
 | PUT    | `/api/v1/content/:documentId`                           | session_or_api_key | `content:write`                                                                                            | required: `project_environment` | path `documentId`, JSON update payload, required `x-mdcms-schema-hash` header, optional query `fileFields`                                                                                                          | `200` `{ data: ContentDocument }`                                                                                                              | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_QUERY_PARAM` (`400`), `SCHEMA_HASH_REQUIRED` (`400`), `SCHEMA_NOT_SYNCED` (`409`), `SCHEMA_HASH_MISMATCH` (`409`), `INVALID_INPUT` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`), `CONTENT_PATH_CONFLICT` (`409`), `TRANSLATION_VARIANT_CONFLICT` (`409`)                                                                   |
 | POST   | `/api/v1/content/:documentId/publish`                   | session_or_api_key | `content:publish`                                                                                          | required: `project_environment` | path `documentId`, JSON optional `{ changeSummary?, actorId? }`, optional query `fileFields`                                                                                                                        | `200` `{ data: ContentDocument }`                                                                                                              | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_QUERY_PARAM` (`400`), `INVALID_INPUT` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`)                                                                                                                                                                                                                                         |
 | POST   | `/api/v1/content/:documentId/unpublish`                 | session_or_api_key | `content:publish`                                                                                          | required: `project_environment` | path `documentId`, JSON optional `{ actorId? }`, optional query `fileFields`                                                                                                                                        | `200` `{ data: ContentDocument }`                                                                                                              | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_QUERY_PARAM` (`400`), `INVALID_INPUT` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`)                                                                                                                                                                                                                                         |
