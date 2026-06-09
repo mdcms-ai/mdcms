@@ -12,7 +12,9 @@ import { useQuery } from "@tanstack/react-query";
 import { RuntimeError, type MediaAsset } from "@mdcms/shared";
 import {
   AlertCircle,
+  Check,
   Clipboard,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   ExternalLink,
@@ -27,7 +29,6 @@ import {
   Upload,
 } from "lucide-react";
 
-import { PageHeader } from "../../components/layout/page-header.js";
 import { Badge } from "../../components/ui/badge.js";
 import { Button } from "../../components/ui/button.js";
 import { Input } from "../../components/ui/input.js";
@@ -37,12 +38,17 @@ import {
   PaginationItem,
 } from "../../components/ui/pagination.js";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "../../components/ui/select.js";
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "../../components/ui/dropdown-menu.js";
+import { Avatar, AvatarFallback } from "../../components/ui/avatar.js";
+import { PageHeader } from "../../components/layout/page-header.js";
 import {
   createStudioMediaLibraryApi,
   type StudioMediaLibraryListQuery,
@@ -132,9 +138,9 @@ const categoryOptions: Array<{
   value: MediaLibraryFilters["category"];
   label: string;
 }> = [
-  { value: "all", label: "All categories" },
+  { value: "all", label: "All types" },
   { value: "image", label: "Images" },
-  { value: "video", label: "Videos" },
+  { value: "video", label: "Video" },
   { value: "audio", label: "Audio" },
   { value: "document", label: "Documents" },
   { value: "archive", label: "Archives" },
@@ -142,12 +148,12 @@ const categoryOptions: Array<{
 ];
 
 const sortOptions: Array<{ value: MediaLibrarySortOption; label: string }> = [
-  { value: "newest", label: "Uploaded date, newest" },
-  { value: "oldest", label: "Uploaded date, oldest" },
-  { value: "name-asc", label: "Name, A-Z" },
-  { value: "name-desc", label: "Name, Z-A" },
-  { value: "size-desc", label: "Size, largest" },
-  { value: "size-asc", label: "Size, smallest" },
+  { value: "newest", label: "Recent" },
+  { value: "oldest", label: "Oldest" },
+  { value: "name-asc", label: "Name A-Z" },
+  { value: "name-desc", label: "Name Z-A" },
+  { value: "size-desc", label: "Largest first" },
+  { value: "size-asc", label: "Smallest first" },
 ];
 
 export function createMediaLibraryQueryKey(input: MediaLibraryQueryKeyInput) {
@@ -237,6 +243,54 @@ function getMediaAssetExtension(filename: string): string {
   return extension && extension !== filename ? extension.toUpperCase() : "FILE";
 }
 
+function getMediaLibrarySortLabel(sort: MediaLibrarySortOption): string {
+  return (
+    sortOptions.find((option) => option.value === sort)?.label ??
+    sortOptions[0]!.label
+  );
+}
+
+function getMediaLibraryFilterCount(filters: MediaLibraryFilters): number {
+  return [
+    filters.category !== "all",
+    filters.uploadedBy.trim().length > 0,
+    filters.uploadedFrom.trim().length > 0,
+    filters.uploadedTo.trim().length > 0,
+  ].filter(Boolean).length;
+}
+
+function createMediaUploaderOptions(
+  assets: readonly MediaAsset[],
+  selectedUploadedBy: string,
+): string[] {
+  const uploaders = new Set<string>();
+
+  for (const asset of assets) {
+    if (asset.uploadedBy.trim().length > 0) {
+      uploaders.add(asset.uploadedBy);
+    }
+  }
+
+  if (selectedUploadedBy.trim().length > 0) {
+    uploaders.add(selectedUploadedBy.trim());
+  }
+
+  return Array.from(uploaders).sort((a, b) => a.localeCompare(b));
+}
+
+function getUploaderInitials(value: string): string {
+  const words = value
+    .replace(/[_@.-]+/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (words.length >= 2) {
+    return `${words[0]![0]}${words[1]![0]}`.toUpperCase();
+  }
+
+  return value.slice(0, 2).toUpperCase() || "?";
+}
+
 function collectMediaLibraryUploadFiles(
   files: FileList | readonly File[] | null | undefined,
 ): File[] {
@@ -307,102 +361,196 @@ export async function copyMediaAssetUrlToClipboard(url: string): Promise<void> {
   }
 }
 
-function MediaLibraryFilterBar({
-  filters,
+function MediaLibraryTopbar({
+  canUploadMedia,
+  uploadState,
   searchInput,
-  sort,
+  onUploadFiles,
   onSearchInputChange,
+}: {
+  canUploadMedia: boolean;
+  uploadState: MediaLibraryUploadState;
+  searchInput: string;
+  onUploadFiles: (files: File[]) => void;
+  onSearchInputChange: (value: string) => void;
+}) {
+  const mountInfo = useStudioMountInfo();
+
+  return (
+    <div className="flex flex-wrap items-center gap-4 border-b border-border bg-card px-6 py-4 lg:px-8">
+      <div className="min-w-0 flex-1 font-mono text-xs text-foreground-muted">
+        <span className="truncate">{mountInfo.project ?? "project"}</span>
+        <span className="mx-2 opacity-50">/</span>
+        <span className="truncate">
+          {mountInfo.environment ?? "environment"}
+        </span>
+        <span className="mx-2 opacity-50">/</span>
+        <span className="font-medium text-foreground">Media</span>
+      </div>
+      <div className="relative w-full sm:w-72">
+        <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-foreground-muted" />
+        <Input
+          aria-label="Search media"
+          className="h-9 rounded-md bg-background-subtle pl-9 font-mono text-xs"
+          placeholder="Search media..."
+          value={searchInput}
+          onChange={(event) => onSearchInputChange(event.target.value)}
+        />
+      </div>
+      <MediaLibraryUploadControl
+        canUploadMedia={canUploadMedia}
+        uploadState={uploadState}
+        onUploadFiles={onUploadFiles}
+      />
+    </div>
+  );
+}
+
+function MediaLibraryControlsBar({
+  state,
+  filters,
+  sort,
+  assets,
   onFilterChange,
   onSortChange,
 }: {
+  state: MediaLibraryEmptyPageState | MediaLibraryReadyPageState;
   filters: MediaLibraryFilters;
-  searchInput: string;
   sort: MediaLibrarySortOption;
-  onSearchInputChange: (value: string) => void;
+  assets: readonly MediaAsset[];
   onFilterChange: (patch: Partial<MediaLibraryFilters>) => void;
   onSortChange: (value: MediaLibrarySortOption) => void;
 }) {
+  const activeFilterCount = getMediaLibraryFilterCount(filters);
+  const uploaderOptions = createMediaUploaderOptions(
+    assets,
+    filters.uploadedBy,
+  );
+  const selectedUploader = filters.uploadedBy.trim() || "__anyone";
+  const countLabel = `${state.pagination.total} asset${
+    state.pagination.total === 1 ? "" : "s"
+  }`;
+
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="relative min-w-64 flex-1 sm:max-w-80">
-          <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-foreground-muted" />
-          <Input
-            aria-label="Search filenames"
-            className="pl-9"
-            placeholder="Search filenames..."
-            value={searchInput}
-            onChange={(event) => onSearchInputChange(event.target.value)}
-          />
-        </div>
+    <div className="flex flex-wrap items-center gap-3 px-6 py-4 lg:px-8">
+      <span className="font-mono text-xs text-foreground-muted">
+        {countLabel}
+      </span>
+      <div className="ml-auto flex flex-wrap items-center gap-2">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className={[
+                "h-8 gap-2 rounded border-border bg-card font-mono text-xs",
+                activeFilterCount > 0 ? "border-primary text-primary" : "",
+              ].join(" ")}
+            >
+              <span>Filters</span>
+              {activeFilterCount > 0 ? (
+                <span className="inline-flex min-w-4 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold leading-none text-primary-foreground">
+                  {activeFilterCount}
+                </span>
+              ) : null}
+              <ChevronDown className="size-3.5 opacity-70" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-72 p-2">
+            <DropdownMenuLabel className="font-mono text-[10px] uppercase tracking-wide text-foreground-muted">
+              Type
+            </DropdownMenuLabel>
+            <div className="flex flex-wrap gap-1.5 px-2 pb-2">
+              {categoryOptions.map((option) => {
+                const selected = filters.category === option.value;
 
-        <Select
-          value={sort}
-          onValueChange={(value) =>
-            onSortChange(value as MediaLibrarySortOption)
-          }
-        >
-          <SelectTrigger className="w-48" aria-label="Sort media">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    className={[
+                      "rounded border px-2.5 py-1.5 font-mono text-[11px] transition-colors",
+                      selected
+                        ? "border-primary bg-primary/10 text-primary"
+                        : "border-border bg-background text-foreground-muted hover:text-foreground",
+                    ].join(" ")}
+                    onClick={() => onFilterChange({ category: option.value })}
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel className="font-mono text-[10px] uppercase tracking-wide text-foreground-muted">
+              Uploaded by
+            </DropdownMenuLabel>
+            <DropdownMenuRadioGroup
+              value={selectedUploader}
+              onValueChange={(value) =>
+                onFilterChange({
+                  uploadedBy: value === "__anyone" ? "" : value,
+                })
+              }
+            >
+              <DropdownMenuRadioItem value="__anyone">
+                Anyone
+              </DropdownMenuRadioItem>
+              {uploaderOptions.map((uploader) => (
+                <DropdownMenuRadioItem key={uploader} value={uploader}>
+                  <Avatar className="size-5">
+                    <AvatarFallback className="font-mono text-[10px]">
+                      {getUploaderInitials(uploader)}
+                    </AvatarFallback>
+                  </Avatar>
+                  <span className="truncate">{uploader}</span>
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              className="justify-end font-mono text-xs text-primary"
+              onSelect={() =>
+                onFilterChange({
+                  category: "all",
+                  uploadedBy: "",
+                  uploadedFrom: "",
+                  uploadedTo: "",
+                })
+              }
+            >
+              Clear all
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 gap-2 rounded border-border bg-card font-mono text-xs"
+            >
+              <span>Sort: {getMediaLibrarySortLabel(sort)}</span>
+              <ChevronDown className="size-3.5 opacity-70" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-44">
             {sortOptions.map((option) => (
-              <SelectItem key={option.value} value={option.value}>
-                {option.label}
-              </SelectItem>
+              <DropdownMenuItem
+                key={option.value}
+                onSelect={() => onSortChange(option.value)}
+              >
+                <span>{option.label}</span>
+                {sort === option.value ? (
+                  <Check className="ml-auto size-4 text-primary" />
+                ) : null}
+              </DropdownMenuItem>
             ))}
-          </SelectContent>
-        </Select>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-3">
-        <Select
-          value={filters.category}
-          onValueChange={(value) =>
-            onFilterChange({
-              category: value as MediaLibraryFilters["category"],
-            })
-          }
-        >
-          <SelectTrigger className="w-44" aria-label="Filter by media category">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {categoryOptions.map((option) => (
-              <SelectItem key={option.value} value={option.value}>
-                {option.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <Input
-          aria-label="Filter by uploader"
-          className="w-56"
-          placeholder="Uploader actor id"
-          value={filters.uploadedBy}
-          onChange={(event) =>
-            onFilterChange({ uploadedBy: event.target.value })
-          }
-        />
-        <Input
-          aria-label="Uploaded from"
-          className="w-40"
-          type="date"
-          value={filters.uploadedFrom}
-          onChange={(event) =>
-            onFilterChange({ uploadedFrom: event.target.value })
-          }
-        />
-        <Input
-          aria-label="Uploaded to"
-          className="w-40"
-          type="date"
-          value={filters.uploadedTo}
-          onChange={(event) =>
-            onFilterChange({ uploadedTo: event.target.value })
-          }
-        />
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </div>
   );
@@ -429,7 +577,7 @@ function MediaLibraryUploadControl({
   }
 
   return (
-    <div className="flex min-w-64 flex-col items-stretch gap-2 sm:items-end">
+    <div className="flex items-center gap-2">
       <input
         ref={inputRef}
         aria-label="Upload media files"
@@ -450,6 +598,7 @@ function MediaLibraryUploadControl({
         type="button"
         variant="default"
         disabled={isUploading}
+        size="sm"
         className="gap-2"
         onClick={() => inputRef.current?.click()}
       >
@@ -458,7 +607,7 @@ function MediaLibraryUploadControl({
         ) : (
           <Upload className="size-4" />
         )}
-        Upload media
+        Upload
       </Button>
       {isUploading ? (
         <div
@@ -501,7 +650,7 @@ function MediaLibraryUploadControl({
         <div
           role="alert"
           aria-live="assertive"
-          className="w-full rounded-md border border-destructive/20 bg-destructive/5 px-3 py-2 text-sm text-destructive sm:w-72"
+          className="fixed bottom-6 right-6 z-50 w-[min(22rem,calc(100vw-3rem))] rounded-md border border-destructive/20 bg-background px-3 py-2 text-sm text-destructive shadow-xl"
         >
           {uploadState.message}
         </div>
@@ -832,7 +981,7 @@ function MediaAssetDetailDrawer({
     return (
       <aside
         aria-label="Asset details"
-        className="flex min-h-full items-center justify-center border-t border-border bg-background-subtle p-6 text-center lg:border-l lg:border-t-0"
+        className="flex min-h-0 w-full shrink-0 items-center justify-center border-t border-border bg-card p-6 text-center lg:w-[340px] lg:border-l lg:border-t-0"
       >
         <p className="max-w-52 text-sm text-foreground-muted">
           Select an asset to inspect its metadata.
@@ -846,20 +995,22 @@ function MediaAssetDetailDrawer({
   return (
     <aside
       aria-label="Asset details"
-      className="flex min-h-full flex-col border-t border-border bg-background-subtle lg:border-l lg:border-t-0"
+      className="flex min-h-0 w-full shrink-0 flex-col overflow-y-auto border-t border-border bg-card lg:w-[340px] lg:border-l lg:border-t-0"
     >
-      <div className="border-b border-border px-4 py-4">
-        <p className="text-xs uppercase text-foreground-muted">
-          Selected asset
+      <div className="sticky top-0 z-10 border-b border-border bg-card px-5 py-4">
+        <p className="font-mono text-[10px] uppercase tracking-wide text-foreground-muted">
+          Asset details
         </p>
-        <h2 className="mt-1 truncate text-base font-semibold text-foreground">
+      </div>
+
+      <div className="border-b border-border p-5">
+        <MediaAssetPreview asset={asset} category={category} variant="drawer" />
+        <h2 className="mt-4 break-words text-base font-semibold text-foreground">
           {asset.filename}
         </h2>
       </div>
 
-      <div className="flex-1 space-y-5 overflow-y-auto p-4">
-        <MediaAssetPreview asset={asset} category={category} variant="drawer" />
-
+      <div className="flex-1 space-y-5 p-5">
         <div className="flex items-center justify-between gap-3">
           <Badge variant="outline" className="text-xs">
             {getMediaAssetCategoryLabel(category)}
@@ -868,6 +1019,10 @@ function MediaAssetDetailDrawer({
         </div>
 
         <dl className="rounded-md border border-border bg-background px-3">
+          <MediaAssetMetadataRow
+            label="Kind"
+            value={getMediaAssetCategoryLabel(category)}
+          />
           <MediaAssetMetadataRow label="MIME type" value={asset.mimeType} />
           <MediaAssetMetadataRow
             label="Size"
@@ -899,7 +1054,7 @@ function MediaLibraryGallery({
   return (
     <div
       data-mdcms-media-library-layout="gallery"
-      className="grid grid-cols-[repeat(auto-fill,minmax(12rem,1fr))] gap-3"
+      className="grid grid-cols-[repeat(auto-fill,minmax(196px,1fr))] gap-4"
     >
       {assets.map((asset) => (
         <MediaAssetCard
@@ -1040,12 +1195,6 @@ export function MediaLibraryPageView({
   onRetry: () => void;
   onCopyUrl: (url: string) => void;
 }) {
-  const showControls =
-    state.status === "loading" ||
-    state.status === "empty" ||
-    state.status === "no-match" ||
-    state.status === "ready" ||
-    state.status === "error";
   const readyAssets = state.status === "ready" ? state.assets : [];
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
   const selectedAsset =
@@ -1095,73 +1244,96 @@ export function MediaLibraryPageView({
   );
 
   return (
-    <div className="min-h-screen">
+    <div className="flex min-h-screen flex-col bg-background">
       <PageHeader breadcrumbs={[{ label: "Media" }]} />
 
       <div
-        className="space-y-6 p-6"
+        className="flex min-h-0 flex-1 flex-col"
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-semibold">Media Library</h1>
-            <p className="mt-1 text-sm text-foreground-muted">
-              Upload, preview, and inspect project media for the active
-              environment.
-            </p>
-          </div>
-          <MediaLibraryUploadControl
-            canUploadMedia={canUploadMedia}
-            uploadState={uploadState}
-            onUploadFiles={onUploadFiles}
-          />
-        </div>
-
-        {showControls && (
-          <>
-            <MediaLibraryFilterBar
-              filters={filters}
-              searchInput={searchInput}
-              sort={sort}
-              onSearchInputChange={onSearchInputChange}
-              onFilterChange={onFilterChange}
-              onSortChange={onSortChange}
-            />
-          </>
-        )}
+        <MediaLibraryTopbar
+          canUploadMedia={canUploadMedia}
+          uploadState={uploadState}
+          searchInput={searchInput}
+          onUploadFiles={onUploadFiles}
+          onSearchInputChange={onSearchInputChange}
+        />
 
         {state.status === "unavailable" ||
         state.status === "forbidden" ||
         state.status === "loading" ||
         state.status === "error" ? (
-          <MediaLibraryStatePanel state={state} onRetry={onRetry} />
+          <div className="flex-1 overflow-auto p-6 lg:p-8">
+            <MediaLibraryStatePanel state={state} onRetry={onRetry} />
+          </div>
         ) : state.status === "empty" || state.status === "no-match" ? (
-          <MediaLibraryEmptyPanel state={state} isDragActive={isDragActive} />
+          <section className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <div className="px-6 pt-7 lg:px-8">
+              <h1 className="font-heading text-[36px] font-bold leading-[1.05] text-foreground">
+                Media
+              </h1>
+              <p className="mt-1.5 font-mono text-xs text-foreground-muted">
+                {state.pagination.total} assets
+                {state.status === "empty" ? " · drop files to begin" : ""}
+              </p>
+            </div>
+            {state.status === "no-match" ? (
+              <MediaLibraryControlsBar
+                state={state}
+                filters={filters}
+                sort={sort}
+                assets={state.assets}
+                onFilterChange={onFilterChange}
+                onSortChange={onSortChange}
+              />
+            ) : null}
+            <div className="min-h-0 flex-1 overflow-auto p-6 lg:px-8">
+              <MediaLibraryEmptyPanel
+                state={state}
+                isDragActive={isDragActive}
+              />
+            </div>
+          </section>
         ) : (
           <section
             data-mdcms-media-library-state="ready"
-            className="overflow-hidden rounded-lg border border-border bg-background"
+            className="flex min-h-0 flex-1 overflow-hidden bg-background"
           >
-            <div className="grid min-h-[34rem] lg:grid-cols-[minmax(0,1fr)_20rem] xl:grid-cols-[minmax(0,1fr)_23rem]">
-              <div className="flex min-w-0 flex-col gap-4 p-4">
+            <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+              <div className="px-6 pt-7 lg:px-8">
+                <h1 className="font-heading text-[36px] font-bold leading-[1.05] text-foreground">
+                  Media
+                </h1>
+              </div>
+              <MediaLibraryControlsBar
+                state={state}
+                filters={filters}
+                sort={sort}
+                assets={state.assets}
+                onFilterChange={onFilterChange}
+                onSortChange={onSortChange}
+              />
+              <div className="min-h-0 flex-1 overflow-auto px-6 pb-8 pt-1 lg:px-8">
                 <MediaLibraryGallery
                   assets={state.assets}
                   selectedAsset={selectedAsset}
                   onSelectAsset={(asset) => setSelectedAssetId(asset.id)}
                   onCopyUrl={onCopyUrl}
                 />
+              </div>
+              <div className="border-t border-border px-6 py-3 lg:px-8">
                 <MediaLibraryPagination
                   pagination={state.pagination}
                   onPageChange={onPageChange}
                 />
               </div>
-              <MediaAssetDetailDrawer
-                asset={selectedAsset}
-                onCopyUrl={onCopyUrl}
-              />
             </div>
+            <MediaAssetDetailDrawer
+              asset={selectedAsset}
+              onCopyUrl={onCopyUrl}
+            />
           </section>
         )}
       </div>

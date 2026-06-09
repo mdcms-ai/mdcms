@@ -1,0 +1,14 @@
+HTTP/2 200
+date: Tue, 09 Jun 2026 15:36:05 GMT
+content-type: application/gzip
+cache-control: no-store
+content-disposition: attachment; filename="MDCMS Design System-handoff.tar.gz"
+request-id: req_011Cbsw3qdF6Not3pLv3MN93
+x-robots-tag: none
+x-version: cc040f9006c6b2526c838cfa7ac3ce1bf13a6357
+server: cloudflare
+server-timing: x-originResponse;dur=963
+cf-cache-status: DYNAMIC
+set-cookie: <redacted>
+content-security-policy: default-src 'none'; frame-ancestors 'none'
+cf-ray: a09135b18feb0213-WAW

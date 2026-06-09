@@ -400,7 +400,7 @@ test("MediaPage renders error state with retry action for media list failures", 
   assert.match(markup, />Retry</);
 });
 
-test("MediaLibraryPageView renders gallery controls, inline previews, safe URL actions, and asset details", () => {
+test("MediaLibraryPageView renders the locked gallery layout, collapsed filters, sort, inline previews, and asset details", () => {
   const markup = renderView({
     state: {
       status: "ready",
@@ -417,12 +417,16 @@ test("MediaLibraryPageView renders gallery controls, inline previews, safe URL a
   assert.match(markup, /data-mdcms-media-library-state="ready"/);
   assert.match(markup, /data-mdcms-media-library-layout="gallery"/);
   assert.doesNotMatch(markup, /Read-only/);
-  assert.match(markup, /Search filenames/);
-  assert.match(markup, /Filter by media category/);
-  assert.match(markup, /Filter by uploader/);
-  assert.match(markup, /Uploaded from/);
-  assert.match(markup, /Uploaded to/);
-  assert.match(markup, /Sort media/);
+  assert.match(markup, /Search media/);
+  assert.match(markup, /3 assets/);
+  assert.match(markup, />Filters</);
+  assert.match(markup, /Sort: Recent/);
+  assert.doesNotMatch(markup, /Filter by media category/);
+  assert.doesNotMatch(markup, /Filter by uploader/);
+  assert.doesNotMatch(markup, /Uploaded from/);
+  assert.doesNotMatch(markup, /Uploaded to/);
+  assert.doesNotMatch(markup, /GRID/);
+  assert.doesNotMatch(markup, /LIST/);
   assert.doesNotMatch(markup, /Upload media/);
   assert.match(markup, /hero\.png/);
   assert.match(markup, /image\/png/);
@@ -447,11 +451,13 @@ test("MediaLibraryPageView renders gallery controls, inline previews, safe URL a
   assert.match(markup, /Open asset hero\.png/);
   assert.match(markup, /Copy asset URL for hero\.png/);
   assert.match(markup, /aria-label="Asset details"/);
-  assert.match(markup, /Selected asset/);
+  assert.match(markup, /Asset details/);
   assert.match(markup, /asset_hero/);
   assert.doesNotMatch(markup, /filename search only/);
   assert.doesNotMatch(markup, /simple metadata filters only/);
   assert.doesNotMatch(markup, /no advanced organization features/);
+  assert.doesNotMatch(markup, /Storage/);
+  assert.doesNotMatch(markup, /Images<\/span>.*Videos<\/span>/s);
   assert.doesNotMatch(markup, /Used in/);
   assert.doesNotMatch(markup, /Alt text/);
   assert.doesNotMatch(markup, /Tags/);
@@ -495,7 +501,7 @@ test("MediaLibraryPageView renders upload controls and progress when media uploa
     ),
   );
 
-  assert.match(markup, /Upload media/);
+  assert.match(markup, />Upload</);
   assert.match(markup, /data-mdcms-media-upload-progress="docked"/);
   assert.match(markup, /Uploading media 1 of 2/);
   assert.match(markup, /role="progressbar"/);
