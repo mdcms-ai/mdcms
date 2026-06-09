@@ -263,13 +263,13 @@ Reference fields persist plain env-local `document_id` UUID strings in
 
 ### Schema File Field Expansion Contract
 
-Content endpoints that return documents expand schema file fields by default. `fileFields=raw` returns persisted media asset id strings instead and is required for authoring clients that round-trip frontmatter, including Studio editing and CLI pull/push. Omitted or `fileFields=expanded` returns `MediaAsset` objects for resolved file fields and `null` with `resolveErrors["frontmatter.<field>"]` when resolution fails.
+Content endpoints that return documents expand schema file fields by default. `fileFields=raw` returns persisted raw file-field values instead and is required for authoring clients that round-trip frontmatter, including Studio editing and CLI pull/push. Omitted or `fileFields=expanded` returns `MediaAsset` objects for resolved file fields and `null` with `resolveErrors["frontmatter.<field>"]` when resolution fails.
 
 `fileFields` accepts only `raw` or `expanded`; unsupported values fail with `INVALID_QUERY_PARAM` (`400`).
 
 `ContentDocumentResponse.frontmatter` file-field values follow the selected mode:
 
-- `raw`: the persisted raw `MediaAsset.id` string.
+- `raw`: the persisted raw value: a `MediaAsset.id` string for set file fields, or the persisted missing, `null`, or empty string unset representation for helper-level optional file fields.
 - `expanded` or omitted: a resolved `MediaAsset`, or `null` when expansion fails.
 
 In this contract, an unset optional file field means a file helper configured

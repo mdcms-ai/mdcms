@@ -23,10 +23,13 @@ Do not stage or modify unrelated existing untracked files.
 ### Task 1: Specify The Contract
 
 **Files:**
-- Modify: `docs/specs/SPEC-004-schema-system-and-sync.md`
+- Modify: `docs/specs/SPEC-001-platform-overview-and-scope.md`
 - Modify: `docs/specs/SPEC-003-content-storage-versioning-and-migrations.md`
+- Modify: `docs/specs/SPEC-004-schema-system-and-sync.md`
 - Modify: `docs/specs/SPEC-006-studio-runtime-and-ui.md`
+- Modify: `docs/specs/SPEC-008-cli-and-sdk.md`
 - Modify: `docs/specs/SPEC-010-media-webhooks-search-and-integrations.md`
+- Modify: `docs/specs/README.md`
 
 **Step 1: Update SPEC-004**
 
@@ -105,7 +108,7 @@ Expected: either pass, or fail only with files touched in this task. If it fails
 **Step 6: Commit**
 
 ```bash
-git add docs/specs/SPEC-004-schema-system-and-sync.md docs/specs/SPEC-003-content-storage-versioning-and-migrations.md docs/specs/SPEC-006-studio-runtime-and-ui.md docs/specs/SPEC-010-media-webhooks-search-and-integrations.md
+git add docs/specs/SPEC-001-platform-overview-and-scope.md docs/specs/SPEC-003-content-storage-versioning-and-migrations.md docs/specs/SPEC-004-schema-system-and-sync.md docs/specs/SPEC-006-studio-runtime-and-ui.md docs/specs/SPEC-008-cli-and-sdk.md docs/specs/SPEC-010-media-webhooks-search-and-integrations.md docs/specs/README.md
 git commit -m "docs(schema): specify file field types"
 ```
 
@@ -714,6 +717,7 @@ Cover:
 - expanded/default mode returns `null` for missing, `null`, and empty string optional unset file fields without adding `resolveErrors`
 - missing asset becomes `null` and records `MEDIA_NOT_FOUND`
 - wrong MIME becomes `null` and records `MEDIA_TYPE_MISMATCH`
+- media expansion merges with existing `resolveErrors` instead of replacing them
 - nested object file fields expand with path `frontmatter.hero.image`
 - arrays can expand structurally even though Studio only edits single top-level fields
 - unresolved reads do not mutate the original document object
@@ -724,7 +728,9 @@ In `content-api.test.ts`, add route tests:
 
 - `GET /api/v1/content/:id` expands by default.
 - `GET /api/v1/content/:id?fileFields=raw` returns raw id.
+- `GET /api/v1/content/:id` with an unresolved reference and a missing media asset returns both reference and media entries in `resolveErrors`.
 - `GET /api/v1/content?type=Article` expands by default.
+- `GET /api/v1/content/:id/versions/:version?fileFields=raw` applies `fileFields` to the returned version document.
 - Studio-style `draft=true&fileFields=raw` returns raw id.
 - Invalid `fileFields=banana` returns `INVALID_QUERY_PARAM`.
 - `POST /api/v1/content?fileFields=raw` returns raw file ids in the created document, and omitted `fileFields` expands by default.
@@ -735,7 +741,11 @@ In `content-api.test.ts`, add route tests:
 - `POST /api/v1/content/:id/duplicate` returns `SCHEMA_HASH_MISMATCH` when the supplied hash does not match.
 - `POST /api/v1/content/bulk` applies `fileFields` only to succeeded `results[].document` values.
 - `POST /api/v1/content/bulk` with omitted `fileFields` expands succeeded `results[].document` values by default.
-- At least one lifecycle or restore route that returns a document, such as publish or restore, applies `fileFields` to the returned document.
+- `POST /api/v1/content/:id/publish?fileFields=raw` applies `fileFields` to the returned document.
+- `POST /api/v1/content/:id/unpublish?fileFields=raw` applies `fileFields` to the returned document.
+- `DELETE /api/v1/content/:id?fileFields=raw` applies `fileFields` to the returned soft-deleted document.
+- `POST /api/v1/content/:id/restore?fileFields=raw` applies `fileFields` to the returned document.
+- `POST /api/v1/content/:id/versions/:version/restore?fileFields=raw` applies `fileFields` to the returned document.
 
 **Step 4: Run failing tests**
 
@@ -809,12 +819,25 @@ Rules:
 Before returning documents from content endpoints, run:
 
 1. `stripUnknownFrontmatterFields(...)`
-2. `applyMediaFieldExpansion(...)`
-3. `applyResolvePlan(...)` for explicit reference `resolve` paths
+2. `applyResolvePlan(...)` for explicit reference `resolve` paths
+3. `applyMediaFieldExpansion(...)`
+
+Reference resolution currently owns its returned `resolveErrors` shape, so media
+expansion runs after it and merges media errors into any existing reference
+errors. Keep the regression test that returns both a reference resolve failure
+and a media expansion failure.
 
 Use the same mode for list/get/version/write responses. Studio and CLI will pass `fileFields=raw`.
 
-**Step 4: Wire media lookup into mount options**
+**Step 4: Enforce duplicate schema hash gate**
+
+Update duplicate routing to call the same client `x-mdcms-schema-hash`
+validation helper used by the other schema-gated writes. Do not satisfy the
+gate by passing the server's expected hash through as the client-supplied value.
+Keep the duplicate route tests for `SCHEMA_HASH_REQUIRED`, `SCHEMA_NOT_SYNCED`,
+and `SCHEMA_HASH_MISMATCH`.
+
+**Step 5: Wire media lookup into mount options**
 
 Add `lookupMediaAsset?: ContentMediaAssetLookup` to `MountContentApiRoutesOptions`.
 
@@ -826,7 +849,7 @@ lookupMediaAsset: (scope, id) => mediaStore.getAsset(scope, id)
 
 Update test support to accept fake lookup.
 
-**Step 5: Run tests**
+**Step 6: Run tests**
 
 ```bash
 bun test --cwd apps/server ./src/lib/content-api/media-field-expansion.test.ts ./src/lib/content-api.test.ts
@@ -834,7 +857,7 @@ bun test --cwd apps/server ./src/lib/content-api/media-field-expansion.test.ts .
 
 Expected: pass.
 
-**Step 6: Commit**
+**Step 7: Commit**
 
 ```bash
 git add apps/server/src/lib/content-api/media-field-expansion.ts apps/server/src/lib/content-api/media-field-expansion.test.ts apps/server/src/lib/content-api/routes.ts apps/server/src/lib/content-api/types.ts apps/server/src/lib/runtime-with-modules.ts apps/server/src/lib/content-api-test-support.ts apps/server/src/lib/content-api.test.ts packages/shared/src/lib/contracts/content-api.ts packages/shared/src/lib/contracts/content-api.test.ts
@@ -1010,6 +1033,11 @@ Assert `getPropertyDescriptors` returns:
 
 Assert expanded object values are not accepted for editing state; Studio should have requested raw mode.
 
+Add required file field descriptor tests:
+
+- `required: true` and `nullable: false` file fields return `canUnset: false`.
+- required file fields with empty raw values surface a save-blocking validation state or anchor the `MEDIA_REQUIRED` error when the server returns it.
+
 **Step 2: Run failing tests**
 
 ```bash
@@ -1086,6 +1114,8 @@ Assert:
 - image filename appears after asset load
 - replace/select button appears when writable
 - unset button appears for optional fields
+- unset/clear button does not appear for required fields
+- an empty required file field blocks save locally when possible or anchors the server `MEDIA_REQUIRED` validation message to the field
 
 Add permission tests:
 
