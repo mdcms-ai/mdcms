@@ -97,7 +97,35 @@ Schema built-ins are imported through `fieldTypes`:
 - `fieldTypes.video(options?)` stores a media asset id string and requires `mimeType` to start with `video/`.
 - `fieldTypes.file(options?)` stores a media asset id string and accepts any media asset unless narrowed by `options.accept`.
 
-`options.accept` is an array of MIME values or MIME wildcards such as `image/png`, `video/*`, or `application/pdf`. It never accepts category labels.
+`fieldTypes.image()`, `fieldTypes.video()`, and `fieldTypes.file()` accept helper options:
+
+```typescript
+type FileFieldOptions = {
+  accept?: string[];
+  required?: boolean;
+  default?: string;
+};
+```
+
+- `accept` is an array of MIME values or MIME wildcards such as `image/png`, `video/*`, or `application/pdf`. It never accepts category labels. `fieldTypes.image()` and `fieldTypes.video()` already set the broad `image/*` or `video/*` preset, and custom `accept` entries further narrow within that family. Incompatible entries such as `fieldTypes.image({ accept: ["application/pdf"] })` are invalid schema config.
+- `required` defaults to `true`. Required file fields fail write-time validation when the field is missing, `null`, or an empty string. `required: false` treats missing, `null`, or empty string values as unset; non-empty values still validate as media asset ids.
+- `default` is a raw `MediaAsset.id` string applied as the schema default. It is never a URL and never a `MediaAsset` object, and the resulting value must satisfy the helper preset and `accept` narrowing.
+
+```typescript
+fields: {
+  heroImage: fieldTypes.image({
+    accept: ["image/png", "image/jpeg"],
+  }),
+  productSheet: fieldTypes.file({
+    accept: ["application/pdf"],
+    required: false,
+  }),
+  launchVideo: fieldTypes.video({
+    accept: ["video/mp4"],
+    default: "6f6a8a6e-8d5b-4d5d-a4df-1b2a3c4d5e6f",
+  }),
+}
+```
 
 `fieldTypes.reference()` is the canonical reference helper. The previous top-level `reference()` helper is removed in this beta contract rather than retained as an alias or deprecation path.
 

@@ -791,6 +791,9 @@ Normative behavior:
   Markdown string. It uses media read capability for browsing/replacing and
   media upload capability for upload-new. Images render thumbnails, videos
   render inline playback, and other files render a compact file placeholder.
+  Optional file fields expose a clear/remove action that stores the field as
+  unset. Required file fields allow replacement but cannot be saved empty; an
+  empty required file field shows an inline required-field validation message.
 - MVP editable field support is intentionally narrow:
   - `string` fields render as single-line text inputs
   - `number` fields render as numeric inputs
@@ -824,6 +827,10 @@ Normative behavior:
   anchored to the corresponding property control when the failure can be mapped
   to a named frontmatter field; otherwise Studio falls back to the route-level
   mutation error banner.
+- File-field validation messages are file-specific. `MEDIA_NOT_FOUND` explains
+  that the selected media asset no longer exists. `MEDIA_TYPE_MISMATCH`
+  explains that the selected asset type is not accepted by the field and, when
+  available, includes the expected MIME preset or `accept` values.
 
 ### Theme Preference Persistence
 
