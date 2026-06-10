@@ -8,6 +8,7 @@ import type {
   ContentOverviewCountsResponse,
   ContentVersionDocumentResponse,
   ContentVersionSummaryResponse,
+  MediaAsset,
   SchemaRegistryTypeSnapshot,
   TranslationVariantSummary,
 } from "@mdcms/shared";
@@ -43,6 +44,11 @@ export type ContentScope = {
   project: string;
   environment: string;
 };
+
+export type ContentMediaAssetLookup = (
+  scope: ContentScope,
+  id: string,
+) => Promise<MediaAsset | undefined>;
 
 export type ContentWriteSchemaSyncState = {
   schemaHash: string;
@@ -245,6 +251,7 @@ export type ContentStore = {
 
 export type CreateDatabaseContentStoreOptions = {
   db: DrizzleDatabase;
+  lookupMediaAsset?: ContentMediaAssetLookup;
 };
 
 export type InMemoryContentSchemaScope = {
@@ -259,6 +266,7 @@ export type InMemoryContentSchemaScope = {
 
 export type CreateInMemoryContentStoreOptions = {
   schemaScopes?: InMemoryContentSchemaScope[];
+  lookupMediaAsset?: ContentMediaAssetLookup;
 };
 
 export type ContentRequestAuthorizer = (

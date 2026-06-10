@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { test } from "bun:test";
-import { RuntimeError, verifyMdcmsPreviewToken } from "@mdcms/shared";
+import {
+  RuntimeError,
+  type MediaAsset,
+  type SchemaRegistryTypeSnapshot,
+  verifyMdcmsPreviewToken,
+} from "@mdcms/shared";
 
 import {
   createInMemoryContentStore,
@@ -20,6 +25,80 @@ import {
   wrapHandlerWithAutoSchemaHash,
 } from "./content-api-test-support.js";
 import { createServerRequestHandler } from "./server.js";
+
+const mediaFieldImageAsset = {
+  id: "07ebb057-eeab-4849-94e4-2162cb921c8e",
+  project: "marketing-site",
+  filename: "hero.jpg",
+  mimeType: "image/jpeg",
+  sizeBytes: 100,
+  url: "https://cdn.example.test/hero.jpg",
+  uploadedBy: "user_1",
+  uploadedAt: "2026-06-09T10:00:00.000Z",
+} satisfies MediaAsset;
+
+const mediaFieldPdfAsset = {
+  ...mediaFieldImageAsset,
+  id: "31d87a14-4c4f-4ed3-8a27-1e5fb7dce19f",
+  filename: "terms.pdf",
+  mimeType: "application/pdf",
+  url: "https://cdn.example.test/terms.pdf",
+} satisfies MediaAsset;
+
+function createMediaFieldSchema(
+  fields: SchemaRegistryTypeSnapshot["fields"],
+): SchemaRegistryTypeSnapshot {
+  return {
+    type: "MediaPage",
+    directory: "content/media-pages",
+    localized: true,
+    fields,
+  };
+}
+
+function requiredImageField(): SchemaRegistryTypeSnapshot["fields"][string] {
+  return {
+    kind: "string",
+    required: true,
+    nullable: false,
+    file: {
+      preset: "image",
+      accept: [],
+      emptyStringAsUnset: false,
+    },
+  };
+}
+
+function createMediaLookup(assets: MediaAsset[], calls: string[] = []) {
+  return async (
+    _scope: { project: string; environment: string },
+    id: string,
+  ) => {
+    calls.push(id);
+    return assets.find((asset) => asset.id === id);
+  };
+}
+
+async function assertContentWriteRuntimeError(
+  action: () => Promise<unknown>,
+  expected: {
+    code: string;
+    statusCode: number;
+    details: Record<string, unknown>;
+  },
+) {
+  await assert.rejects(action, (error: unknown) => {
+    const actual = error as {
+      code?: string;
+      statusCode?: number;
+      details?: Record<string, unknown>;
+    };
+    assert.equal(actual.code, expected.code);
+    assert.equal(actual.statusCode, expected.statusCode);
+    assert.deepEqual(actual.details, expected.details);
+    return true;
+  });
+}
 
 test("cms-28 in-memory content store enforces reference identity when schema snapshots are present", async () => {
   const scope = {
@@ -76,6 +155,186 @@ test("cms-28 in-memory content store enforces reference identity when schema sna
       return true;
     },
   );
+});
+
+test("in-memory content store validates schema file field media assets on writes", async () => {
+  const scope = {
+    project: "media-field-write-validation",
+    environment: "production",
+  };
+  const missingAssetId = "76e8cc2a-43c8-48cf-91d6-fc4deebaf8c8";
+  const store = createInMemoryContentStore({
+    lookupMediaAsset: createMediaLookup([
+      mediaFieldImageAsset,
+      mediaFieldPdfAsset,
+    ]),
+    schemaScopes: [
+      {
+        project: scope.project,
+        environment: scope.environment,
+        schemas: {
+          MediaPage: createMediaFieldSchema({
+            slug: {
+              kind: "string",
+              required: true,
+              nullable: false,
+            },
+            primaryImage: requiredImageField(),
+            defaultImage: {
+              ...requiredImageField(),
+              required: false,
+              default: mediaFieldImageAsset.id,
+            },
+            zodDefaultImage: {
+              ...requiredImageField(),
+              required: false,
+              default: mediaFieldImageAsset.id,
+            },
+          }),
+        },
+      },
+    ],
+  });
+
+  const created = await store.create(scope, {
+    path: "content/media-pages/valid",
+    type: "MediaPage",
+    locale: "en",
+    format: "md",
+    frontmatter: {
+      slug: "valid",
+      primaryImage: mediaFieldImageAsset.id,
+    },
+    body: "body",
+  });
+
+  assert.equal(created.frontmatter.primaryImage, mediaFieldImageAsset.id);
+  assert.equal(created.frontmatter.defaultImage, mediaFieldImageAsset.id);
+  assert.equal(created.frontmatter.zodDefaultImage, mediaFieldImageAsset.id);
+
+  for (const [label, value] of [
+    ["missing", undefined],
+    ["null", null],
+    ["empty", ""],
+  ] as const) {
+    await assertContentWriteRuntimeError(
+      () =>
+        store.create(scope, {
+          path: `content/media-pages/${label}`,
+          type: "MediaPage",
+          locale: "en",
+          format: "md",
+          frontmatter: {
+            slug: label,
+            ...(value !== undefined ? { primaryImage: value } : {}),
+          },
+          body: "body",
+        }),
+      {
+        code: "INVALID_INPUT",
+        statusCode: 400,
+        details: {
+          field: "frontmatter.primaryImage",
+          reason: "MEDIA_REQUIRED",
+        },
+      },
+    );
+  }
+
+  await assertContentWriteRuntimeError(
+    () =>
+      store.create(scope, {
+        path: "content/media-pages/non-image",
+        type: "MediaPage",
+        locale: "en",
+        format: "md",
+        frontmatter: {
+          slug: "non-image",
+          primaryImage: mediaFieldPdfAsset.id,
+        },
+        body: "body",
+      }),
+    {
+      code: "INVALID_INPUT",
+      statusCode: 400,
+      details: {
+        field: "frontmatter.primaryImage",
+        mediaAssetId: mediaFieldPdfAsset.id,
+        reason: "MEDIA_TYPE_MISMATCH",
+        expectedMime: "image/*",
+        actualMimeType: "application/pdf",
+      },
+    },
+  );
+
+  await assertContentWriteRuntimeError(
+    () =>
+      store.update(scope, created.documentId, {
+        frontmatter: {
+          slug: "missing-update",
+          primaryImage: missingAssetId,
+        },
+      }),
+    {
+      code: "INVALID_INPUT",
+      statusCode: 400,
+      details: {
+        field: "frontmatter.primaryImage",
+        mediaAssetId: missingAssetId,
+        reason: "MEDIA_NOT_FOUND",
+      },
+    },
+  );
+});
+
+test("in-memory content store treats optional file field unset values as absent", async () => {
+  const scope = {
+    project: "media-field-optional-validation",
+    environment: "production",
+  };
+  const calls: string[] = [];
+  const store = createInMemoryContentStore({
+    lookupMediaAsset: createMediaLookup([mediaFieldImageAsset], calls),
+    schemaScopes: [
+      {
+        project: scope.project,
+        environment: scope.environment,
+        schemas: {
+          MediaPage: createMediaFieldSchema({
+            optionalImage: {
+              ...requiredImageField(),
+              required: false,
+              nullable: true,
+              file: {
+                preset: "image",
+                accept: [],
+                emptyStringAsUnset: true,
+              },
+            },
+          }),
+        },
+      },
+    ],
+  });
+
+  for (const [label, value] of [
+    ["missing", undefined],
+    ["null", null],
+    ["empty", ""],
+  ] as const) {
+    const created = await store.create(scope, {
+      path: `content/media-pages/optional-${label}`,
+      type: "MediaPage",
+      locale: "en",
+      format: "md",
+      frontmatter: value === undefined ? {} : { optionalImage: value },
+      body: "body",
+    });
+
+    assert.equal("optionalImage" in created.frontmatter, false);
+  }
+
+  assert.deepEqual(calls, []);
 });
 
 test("content API in-memory resolve supports configured schema scopes", async () => {

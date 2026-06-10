@@ -157,13 +157,16 @@ export function createServerRequestHandlerWithModules(
     env: rawEnv,
     emailService,
   });
-  const contentStore = createDatabaseContentStore({ db: dbConnection.db });
+  const mediaStore = createDatabaseMediaStore({ db: dbConnection.db });
+  const contentStore = createDatabaseContentStore({
+    db: dbConnection.db,
+    lookupMediaAsset: (scope, id) => mediaStore.getAsset(scope, id),
+  });
   const schemaStore = createDatabaseSchemaStore({ db: dbConnection.db });
   const environmentStore = createDatabaseEnvironmentStore({
     db: dbConnection.db,
   });
   const projectStore = createDatabaseProjectStore({ db: dbConnection.db });
-  const mediaStore = createDatabaseMediaStore({ db: dbConnection.db });
   const mediaObjectStore = createRuntimeMediaObjectStore(env);
   const webhookRuntime = createRuntimeWebhookRuntime({
     db: dbConnection.db,

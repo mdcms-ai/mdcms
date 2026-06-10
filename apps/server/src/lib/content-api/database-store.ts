@@ -50,13 +50,14 @@ import {
   toIsoString,
 } from "./responses.js";
 import { groupDocumentsByTranslationGroup } from "./grouped-list.js";
+import { validateMediaFieldIdentities } from "./media-field-validation.js";
 import { validateReferenceFieldIdentities } from "./reference-validation.js";
 import { matchesDeletedListVisibility } from "./visibility.js";
 
 export function createDatabaseContentStore(
   options: CreateDatabaseContentStoreOptions,
 ): ContentStore {
-  const { db } = options;
+  const { db, lookupMediaAsset } = options;
 
   async function resolveScopeIds(
     scope: ContentScope,
@@ -600,6 +601,13 @@ export function createDatabaseContentStore(
           };
         },
       });
+      const { frontmatter: normalizedFrontmatter } =
+        await validateMediaFieldIdentities({
+          schema,
+          frontmatter,
+          scope,
+          lookupMediaAsset,
+        });
 
       const conflict = await findPathConflict(scopeIds, {
         path,
@@ -666,7 +674,7 @@ export function createDatabaseContentStore(
               locale,
               contentFormat: format,
               body,
-              frontmatter,
+              frontmatter: normalizedFrontmatter,
               isDeleted: false,
               hasUnpublishedChanges: true,
               publishedVersion: null,
@@ -1039,6 +1047,13 @@ export function createDatabaseContentStore(
           };
         },
       });
+      const { frontmatter: normalizedFrontmatter } =
+        await validateMediaFieldIdentities({
+          schema,
+          frontmatter: nextFrontmatter,
+          scope,
+          lookupMediaAsset,
+        });
 
       const nextPath =
         payload.path !== undefined
@@ -1109,7 +1124,7 @@ export function createDatabaseContentStore(
                 payload.format !== undefined
                   ? parseContentFormat(payload.format)
                   : existing.contentFormat,
-              frontmatter: nextFrontmatter,
+              frontmatter: normalizedFrontmatter,
               body:
                 payload.body !== undefined
                   ? assertRequiredString(payload.body, "body", {
