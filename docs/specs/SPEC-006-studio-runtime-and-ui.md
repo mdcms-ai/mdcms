@@ -2,7 +2,7 @@
 status: live
 canonical: true
 created: 2026-03-11
-last_updated: 2026-06-06
+last_updated: 2026-06-10
 ---
 
 # SPEC-006 Studio Runtime and UI
@@ -229,6 +229,7 @@ assets in the active mounted target. It is backed by:
 
 - `GET /api/v1/me/capabilities` for target-scoped capability gating
 - `GET /api/v1/media` for media metadata list/search/filter/sort/pagination
+  and object-storage availability metadata
 - `POST /api/v1/media/upload` for page-level uploads when media upload
   capability is available
 - `GET /api/v1/auth/users` for display-only uploader name resolution when the
@@ -268,6 +269,13 @@ Normative behavior:
   per-file progress — each file's name, live completion percentage, and final
   done or failed status — alongside the batch summary, and disables additional
   upload starts. Successful uploads refresh the current media list.
+- The media list response includes `storage.objectStorageConfigured`. When it
+  is `false`, Studio renders an immediate warning on `/admin/media`, disables
+  upload controls and file-drop upload starts, and continues to allow reading,
+  searching, filtering, sorting, and deleting existing media metadata according
+  to the caller's capabilities. The upload endpoint still returns
+  `MEDIA_STORAGE_UNAVAILABLE` if invoked directly while object storage is not
+  configured.
 - Each media row or card shows an inline preview/playback region, filename, MIME
   type, coarse category, formatted size, uploader display name when resolvable
   otherwise uploaded actor id, upload date, and a safe action cluster.

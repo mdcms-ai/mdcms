@@ -37,6 +37,10 @@ export type MediaAssetResponse = {
   data: MediaAsset;
 };
 
+export type MediaStorageStatus = {
+  objectStorageConfigured: boolean;
+};
+
 export type MediaAssetListResponse = {
   data: MediaAsset[];
   pagination: {
@@ -45,6 +49,7 @@ export type MediaAssetListResponse = {
     offset: number;
     hasMore: boolean;
   };
+  storage: MediaStorageStatus;
 };
 
 export type MediaDeleteResponse = {
@@ -123,6 +128,12 @@ const MediaAssetResponseSchema = z
   })
   .strict();
 
+const MediaStorageStatusSchema = z
+  .object({
+    objectStorageConfigured: z.boolean(),
+  })
+  .strict();
+
 const MediaAssetListResponseSchema = z
   .object({
     data: z.array(MediaAssetSchema),
@@ -134,6 +145,7 @@ const MediaAssetListResponseSchema = z
         hasMore: z.boolean(),
       })
       .strict(),
+    storage: MediaStorageStatusSchema,
   })
   .strict();
 

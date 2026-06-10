@@ -644,6 +644,9 @@ export function mountMediaApiRoutes(
       return {
         data: result.assets,
         pagination: result.pagination,
+        storage: {
+          objectStorageConfigured: Boolean(options.objectStore),
+        },
       };
     });
   });
