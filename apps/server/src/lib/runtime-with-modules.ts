@@ -526,6 +526,7 @@ export function createServerRequestHandlerWithModules(
 
           return schemaHash ? { schemaHash } : undefined;
         },
+        lookupMediaAsset: (scope, id) => mediaStore.getAsset(scope, id),
         resolveUsers: async (userIds) => {
           if (userIds.length === 0) return {};
           const rows = await dbConnection.db

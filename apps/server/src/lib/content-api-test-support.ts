@@ -6,7 +6,10 @@ import { createConsoleLogger } from "@mdcms/shared";
 import { and, eq } from "drizzle-orm";
 import postgres from "postgres";
 
-import type { ContentWritePayload } from "./content-api/types.js";
+import type {
+  ContentMediaAssetLookup,
+  ContentWritePayload,
+} from "./content-api/types.js";
 import type { DrizzleDatabase } from "./db.js";
 import {
   documentVersions,
@@ -234,8 +237,11 @@ function wrapHandlerWithAutoSchemaHash(
 
 export { wrapHandlerWithAutoSchemaHash };
 
-export function createHandler() {
+export function createHandler(
+  options: { lookupMediaAsset?: ContentMediaAssetLookup } = {},
+) {
   const store = createInMemoryContentStore({
+    lookupMediaAsset: options.lookupMediaAsset,
     schemaScopes: [
       {
         project: scopeHeaders["x-mdcms-project"],
@@ -254,6 +260,7 @@ export function createHandler() {
         getWriteSchemaSyncState: async () => ({
           schemaHash: inMemorySchemaHash,
         }),
+        lookupMediaAsset: options.lookupMediaAsset,
       });
     },
     now: () => new Date("2026-03-02T10:00:00.000Z"),

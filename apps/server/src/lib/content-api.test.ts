@@ -79,6 +79,171 @@ function createMediaLookup(assets: MediaAsset[], calls: string[] = []) {
   };
 }
 
+function optionalImageField(): SchemaRegistryTypeSnapshot["fields"][string] {
+  return {
+    ...requiredImageField(),
+    required: false,
+    nullable: true,
+    file: {
+      preset: "image",
+      accept: [],
+      emptyStringAsUnset: true,
+    },
+  };
+}
+
+function mediaReadSchemas(): Record<string, SchemaRegistryTypeSnapshot> {
+  return {
+    Article: {
+      type: "Article",
+      directory: "content/articles",
+      localized: true,
+      fields: {
+        slug: {
+          kind: "string",
+          required: true,
+          nullable: false,
+        },
+        title: {
+          kind: "string",
+          required: false,
+          nullable: true,
+        },
+        author: {
+          kind: "string",
+          required: false,
+          nullable: true,
+          reference: {
+            targetType: "Author",
+          },
+        },
+        heroImage: optionalImageField(),
+      },
+    },
+    Gallery: {
+      type: "Gallery",
+      directory: "content/galleries",
+      localized: true,
+      fields: {
+        slug: {
+          kind: "string",
+          required: true,
+          nullable: false,
+        },
+        coverImage: optionalImageField(),
+      },
+    },
+    Author: {
+      type: "Author",
+      directory: "content/authors",
+      localized: true,
+      fields: {
+        slug: {
+          kind: "string",
+          required: true,
+          nullable: false,
+        },
+        name: {
+          kind: "string",
+          required: true,
+          nullable: false,
+        },
+      },
+    },
+  };
+}
+
+function createMediaReadHandler(
+  input: {
+    assets?: MediaAsset[];
+    getWriteSchemaSyncState?: () => Promise<{ schemaHash: string } | undefined>;
+  } = {},
+) {
+  const assets = [...(input.assets ?? [mediaFieldImageAsset])];
+  const store = createInMemoryContentStore({
+    lookupMediaAsset: async (_scope, id) =>
+      assets.find((asset) => asset.id === id),
+    schemaScopes: [
+      {
+        project: scopeHeaders["x-mdcms-project"],
+        environment: scopeHeaders["x-mdcms-environment"],
+        schemas: mediaReadSchemas(),
+      },
+    ],
+  });
+  const rawHandler = createServerRequestHandler({
+    env: baseEnv,
+    configureApp: (app) => {
+      mountContentApiRoutes(app, {
+        store,
+        authorize: authorizeTestRequest,
+        requireCsrf: async () => undefined,
+        getWriteSchemaSyncState:
+          input.getWriteSchemaSyncState ??
+          (async () => ({
+            schemaHash: inMemorySchemaHash,
+          })),
+        lookupMediaAsset: async (scope, id) =>
+          createMediaLookup(assets)(scope, id),
+      });
+    },
+    now: () => new Date("2026-06-09T12:00:00.000Z"),
+  });
+
+  return {
+    assets,
+    store,
+    handler: wrapHandlerWithAutoSchemaHash(
+      rawHandler,
+      () => inMemorySchemaHash,
+    ),
+  };
+}
+
+function jsonContentRequest(
+  path: string,
+  method: string,
+  body?: unknown,
+  headers: Record<string, string> = {},
+): Request {
+  return new Request(`http://localhost${path}`, {
+    method,
+    headers: {
+      ...scopeHeaders,
+      "content-type": "application/json",
+      ...headers,
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+}
+
+async function createMediaArticle(
+  handler: ReturnType<typeof createServerRequestHandler>,
+  slug: string,
+  frontmatter: Record<string, unknown> = {},
+) {
+  const response = await handler(
+    jsonContentRequest("/api/v1/content?fileFields=raw", "POST", {
+      path: `articles/${slug}`,
+      type: "Article",
+      locale: "en",
+      format: "md",
+      frontmatter: {
+        slug,
+        heroImage: mediaFieldImageAsset.id,
+        ...frontmatter,
+      },
+      body: `${slug} body`,
+    }),
+  );
+  const body = (await response.json()) as {
+    data: { documentId: string; frontmatter: Record<string, unknown> };
+  };
+
+  assert.equal(response.status, 200);
+  return body.data;
+}
+
 async function assertContentWriteRuntimeError(
   action: () => Promise<unknown>,
   expected: {
@@ -389,6 +554,526 @@ test("in-memory content store treats optional file field unset values as absent"
   assert.deepEqual(calls, []);
 });
 
+test("content API expands file fields by default and supports raw mode on reads", async () => {
+  const { handler } = createMediaReadHandler();
+  const article = await createMediaArticle(handler, "read-expansion");
+  const publishResponse = await handler(
+    jsonContentRequest(
+      `/api/v1/content/${article.documentId}/publish?fileFields=raw`,
+      "POST",
+    ),
+  );
+  assert.equal(publishResponse.status, 200);
+
+  const expandedResponse = await handler(
+    new Request(`http://localhost/api/v1/content/${article.documentId}`, {
+      headers: scopeHeaders,
+    }),
+  );
+  const expanded = (await expandedResponse.json()) as {
+    data: { frontmatter: Record<string, unknown> };
+  };
+  assert.equal(expandedResponse.status, 200);
+  assert.deepEqual(expanded.data.frontmatter.heroImage, mediaFieldImageAsset);
+
+  const rawResponse = await handler(
+    new Request(
+      `http://localhost/api/v1/content/${article.documentId}?fileFields=raw`,
+      {
+        headers: scopeHeaders,
+      },
+    ),
+  );
+  const raw = (await rawResponse.json()) as {
+    data: { frontmatter: Record<string, unknown> };
+  };
+  assert.equal(rawResponse.status, 200);
+  assert.equal(raw.data.frontmatter.heroImage, mediaFieldImageAsset.id);
+
+  const draftRawResponse = await handler(
+    new Request(
+      `http://localhost/api/v1/content/${article.documentId}?draft=true&fileFields=raw`,
+      {
+        headers: scopeHeaders,
+      },
+    ),
+  );
+  const draftRaw = (await draftRawResponse.json()) as {
+    data: { frontmatter: Record<string, unknown> };
+  };
+  assert.equal(draftRawResponse.status, 200);
+  assert.equal(draftRaw.data.frontmatter.heroImage, mediaFieldImageAsset.id);
+
+  const invalidResponse = await handler(
+    new Request(
+      `http://localhost/api/v1/content/${article.documentId}?fileFields=banana`,
+      {
+        headers: scopeHeaders,
+      },
+    ),
+  );
+  const invalid = (await invalidResponse.json()) as { code: string };
+  assert.equal(invalidResponse.status, 400);
+  assert.equal(invalid.code, "INVALID_QUERY_PARAM");
+});
+
+test("content API merges unresolved reference and media resolve errors", async () => {
+  const { assets, handler } = createMediaReadHandler();
+
+  const authorResponse = await handler(
+    jsonContentRequest("/api/v1/content?fileFields=raw", "POST", {
+      path: "authors/unresolved-media-author",
+      type: "Author",
+      locale: "en",
+      format: "md",
+      frontmatter: {
+        slug: "unresolved-media-author",
+        name: "Unresolved Media Author",
+      },
+      body: "author body",
+    }),
+  );
+  const author = (await authorResponse.json()) as {
+    data: { documentId: string };
+  };
+  assert.equal(authorResponse.status, 200);
+
+  const article = await createMediaArticle(handler, "resolve-error-merge", {
+    author: author.data.documentId,
+  });
+
+  const deleteAuthorResponse = await handler(
+    jsonContentRequest(`/api/v1/content/${author.data.documentId}`, "DELETE"),
+  );
+  assert.equal(deleteAuthorResponse.status, 200);
+  assets.length = 0;
+
+  const response = await handler(
+    new Request(
+      `http://localhost/api/v1/content/${article.documentId}?draft=true&resolve=author`,
+      {
+        headers: scopeHeaders,
+      },
+    ),
+  );
+  const body = (await response.json()) as {
+    data: {
+      frontmatter: Record<string, unknown>;
+      resolveErrors?: Record<string, { code: string }>;
+    };
+  };
+
+  assert.equal(response.status, 200);
+  assert.equal(body.data.frontmatter.author, null);
+  assert.equal(body.data.frontmatter.heroImage, null);
+  assert.equal(
+    body.data.resolveErrors?.["frontmatter.author"]?.code,
+    "REFERENCE_DELETED",
+  );
+  assert.equal(
+    body.data.resolveErrors?.["frontmatter.heroImage"]?.code,
+    "MEDIA_NOT_FOUND",
+  );
+});
+
+test("content API expands file fields for typed and mixed list reads", async () => {
+  const { handler } = createMediaReadHandler({
+    assets: [mediaFieldImageAsset, mediaFieldPdfAsset],
+  });
+  const article = await createMediaArticle(handler, "typed-list-expansion");
+  const galleryResponse = await handler(
+    jsonContentRequest("/api/v1/content?fileFields=raw", "POST", {
+      path: "galleries/mixed-list-expansion",
+      type: "Gallery",
+      locale: "en",
+      format: "md",
+      frontmatter: {
+        slug: "mixed-list-expansion",
+        coverImage: mediaFieldImageAsset.id,
+      },
+      body: "gallery body",
+    }),
+  );
+  const gallery = (await galleryResponse.json()) as {
+    data: { documentId: string };
+  };
+  assert.equal(galleryResponse.status, 200);
+
+  for (const documentId of [article.documentId, gallery.data.documentId]) {
+    const publishResponse = await handler(
+      jsonContentRequest(
+        `/api/v1/content/${documentId}/publish?fileFields=raw`,
+        "POST",
+      ),
+    );
+    assert.equal(publishResponse.status, 200);
+  }
+
+  const typedResponse = await handler(
+    new Request("http://localhost/api/v1/content?type=Article", {
+      headers: scopeHeaders,
+    }),
+  );
+  const typed = (await typedResponse.json()) as {
+    data: Array<{ documentId: string; frontmatter: Record<string, unknown> }>;
+  };
+  assert.equal(typedResponse.status, 200);
+  assert.deepEqual(
+    typed.data.find((document) => document.documentId === article.documentId)
+      ?.frontmatter.heroImage,
+    mediaFieldImageAsset,
+  );
+
+  const mixedResponse = await handler(
+    new Request("http://localhost/api/v1/content", {
+      headers: scopeHeaders,
+    }),
+  );
+  const mixed = (await mixedResponse.json()) as {
+    data: Array<{
+      documentId: string;
+      type: string;
+      frontmatter: Record<string, unknown>;
+    }>;
+  };
+  assert.equal(mixedResponse.status, 200);
+  assert.deepEqual(
+    mixed.data.find((document) => document.documentId === article.documentId)
+      ?.frontmatter.heroImage,
+    mediaFieldImageAsset,
+  );
+  assert.deepEqual(
+    mixed.data.find(
+      (document) => document.documentId === gallery.data.documentId,
+    )?.frontmatter.coverImage,
+    mediaFieldImageAsset,
+  );
+});
+
+test("content API applies fileFields to version detail reads", async () => {
+  const { handler } = createMediaReadHandler();
+  const article = await createMediaArticle(handler, "version-raw");
+  const publishResponse = await handler(
+    jsonContentRequest(
+      `/api/v1/content/${article.documentId}/publish?fileFields=raw`,
+      "POST",
+    ),
+  );
+  assert.equal(publishResponse.status, 200);
+
+  const rawVersionResponse = await handler(
+    new Request(
+      `http://localhost/api/v1/content/${article.documentId}/versions/1?fileFields=raw`,
+      {
+        headers: scopeHeaders,
+      },
+    ),
+  );
+  const rawVersion = (await rawVersionResponse.json()) as {
+    data: { frontmatter: Record<string, unknown> };
+  };
+  assert.equal(rawVersionResponse.status, 200);
+  assert.equal(rawVersion.data.frontmatter.heroImage, mediaFieldImageAsset.id);
+});
+
+test("content API applies fileFields to write responses", async () => {
+  const { handler } = createMediaReadHandler();
+
+  const rawCreateResponse = await handler(
+    jsonContentRequest("/api/v1/content?fileFields=raw", "POST", {
+      path: "articles/create-raw",
+      type: "Article",
+      locale: "en",
+      format: "md",
+      frontmatter: {
+        slug: "create-raw",
+        heroImage: mediaFieldImageAsset.id,
+      },
+      body: "raw create body",
+    }),
+  );
+  const rawCreate = (await rawCreateResponse.json()) as {
+    data: { documentId: string; frontmatter: Record<string, unknown> };
+  };
+  assert.equal(rawCreateResponse.status, 200);
+  assert.equal(rawCreate.data.frontmatter.heroImage, mediaFieldImageAsset.id);
+
+  const expandedCreateResponse = await handler(
+    jsonContentRequest("/api/v1/content", "POST", {
+      path: "articles/create-expanded",
+      type: "Article",
+      locale: "en",
+      format: "md",
+      frontmatter: {
+        slug: "create-expanded",
+        heroImage: mediaFieldImageAsset.id,
+      },
+      body: "expanded create body",
+    }),
+  );
+  const expandedCreate = (await expandedCreateResponse.json()) as {
+    data: { documentId: string; frontmatter: Record<string, unknown> };
+  };
+  assert.equal(expandedCreateResponse.status, 200);
+  assert.deepEqual(
+    expandedCreate.data.frontmatter.heroImage,
+    mediaFieldImageAsset,
+  );
+
+  const rawUpdateResponse = await handler(
+    jsonContentRequest(
+      `/api/v1/content/${expandedCreate.data.documentId}?fileFields=raw`,
+      "PUT",
+      {
+        frontmatter: {
+          slug: "create-expanded",
+          heroImage: mediaFieldImageAsset.id,
+          title: "Raw update",
+        },
+      },
+    ),
+  );
+  const rawUpdate = (await rawUpdateResponse.json()) as {
+    data: { frontmatter: Record<string, unknown> };
+  };
+  assert.equal(rawUpdateResponse.status, 200);
+  assert.equal(rawUpdate.data.frontmatter.heroImage, mediaFieldImageAsset.id);
+
+  const expandedUpdateResponse = await handler(
+    jsonContentRequest(`/api/v1/content/${rawCreate.data.documentId}`, "PUT", {
+      frontmatter: {
+        slug: "create-raw",
+        heroImage: mediaFieldImageAsset.id,
+        title: "Expanded update",
+      },
+    }),
+  );
+  const expandedUpdate = (await expandedUpdateResponse.json()) as {
+    data: { frontmatter: Record<string, unknown> };
+  };
+  assert.equal(expandedUpdateResponse.status, 200);
+  assert.deepEqual(
+    expandedUpdate.data.frontmatter.heroImage,
+    mediaFieldImageAsset,
+  );
+});
+
+test("content API duplicate applies fileFields and enforces schema hash gate", async () => {
+  const { handler } = createMediaReadHandler();
+  const article = await createMediaArticle(handler, "duplicate-file-fields");
+
+  const rawDuplicateResponse = await handler(
+    jsonContentRequest(
+      `/api/v1/content/${article.documentId}/duplicate?fileFields=raw`,
+      "POST",
+      undefined,
+      {
+        "x-mdcms-schema-hash": inMemorySchemaHash,
+      },
+    ),
+  );
+  const rawDuplicate = (await rawDuplicateResponse.json()) as {
+    data: { frontmatter: Record<string, unknown> };
+  };
+  assert.equal(rawDuplicateResponse.status, 200);
+  assert.equal(
+    rawDuplicate.data.frontmatter.heroImage,
+    mediaFieldImageAsset.id,
+  );
+
+  const missingHashResponse = await handler(
+    jsonContentRequest(
+      `/api/v1/content/${article.documentId}/duplicate`,
+      "POST",
+    ),
+  );
+  const missingHash = (await missingHashResponse.json()) as { code: string };
+  assert.equal(missingHashResponse.status, 400);
+  assert.equal(missingHash.code, "SCHEMA_HASH_REQUIRED");
+
+  const mismatchResponse = await handler(
+    jsonContentRequest(
+      `/api/v1/content/${article.documentId}/duplicate`,
+      "POST",
+      undefined,
+      {
+        "x-mdcms-schema-hash": "wrong-hash",
+      },
+    ),
+  );
+  const mismatch = (await mismatchResponse.json()) as { code: string };
+  assert.equal(mismatchResponse.status, 409);
+  assert.equal(mismatch.code, "SCHEMA_HASH_MISMATCH");
+
+  const unsynced = createMediaReadHandler({
+    getWriteSchemaSyncState: async () => undefined,
+  });
+  const source = await unsynced.store.create(
+    {
+      project: scopeHeaders["x-mdcms-project"],
+      environment: scopeHeaders["x-mdcms-environment"],
+    },
+    {
+      path: "articles/duplicate-unsynced",
+      type: "Article",
+      locale: "en",
+      format: "md",
+      frontmatter: {
+        slug: "duplicate-unsynced",
+        heroImage: mediaFieldImageAsset.id,
+      },
+      body: "unsynced source body",
+    },
+  );
+  const unsyncedResponse = await unsynced.handler(
+    jsonContentRequest(
+      `/api/v1/content/${source.documentId}/duplicate`,
+      "POST",
+      undefined,
+      {
+        "x-mdcms-schema-hash": inMemorySchemaHash,
+      },
+    ),
+  );
+  const unsyncedBody = (await unsyncedResponse.json()) as { code: string };
+  assert.equal(unsyncedResponse.status, 409);
+  assert.equal(unsyncedBody.code, "SCHEMA_NOT_SYNCED");
+});
+
+test("content API bulk applies fileFields only to succeeded result documents", async () => {
+  const { handler } = createMediaReadHandler();
+  const article = await createMediaArticle(handler, "bulk-file-fields");
+
+  const rawBulkResponse = await handler(
+    jsonContentRequest("/api/v1/content/bulk?fileFields=raw", "POST", {
+      action: "publish",
+      documentIds: [article.documentId, "missing-bulk-file-field-doc"],
+      changeSummary: "Bulk raw",
+    }),
+  );
+  const rawBulk = (await rawBulkResponse.json()) as {
+    data: {
+      results: Array<{
+        status: "succeeded" | "failed";
+        document?: { frontmatter: Record<string, unknown> };
+        error?: { code: string };
+      }>;
+    };
+  };
+  assert.equal(rawBulkResponse.status, 200);
+  assert.equal(rawBulk.data.results[0]?.status, "succeeded");
+  assert.equal(
+    rawBulk.data.results[0]?.document?.frontmatter.heroImage,
+    mediaFieldImageAsset.id,
+  );
+  assert.equal(rawBulk.data.results[1]?.status, "failed");
+  assert.equal(rawBulk.data.results[1]?.document, undefined);
+
+  const expandedBulkResponse = await handler(
+    jsonContentRequest("/api/v1/content/bulk", "POST", {
+      action: "unpublish",
+      documentIds: [article.documentId],
+    }),
+  );
+  const expandedBulk = (await expandedBulkResponse.json()) as {
+    data: {
+      results: Array<{
+        document?: { frontmatter: Record<string, unknown> };
+      }>;
+    };
+  };
+  assert.equal(expandedBulkResponse.status, 200);
+  assert.deepEqual(
+    expandedBulk.data.results[0]?.document?.frontmatter.heroImage,
+    mediaFieldImageAsset,
+  );
+});
+
+test("content API lifecycle endpoints apply raw fileFields to returned documents", async () => {
+  const { handler } = createMediaReadHandler();
+  const article = await createMediaArticle(handler, "lifecycle-raw");
+
+  const publishResponse = await handler(
+    jsonContentRequest(
+      `/api/v1/content/${article.documentId}/publish?fileFields=raw`,
+      "POST",
+      { changeSummary: "publish raw" },
+    ),
+  );
+  const published = (await publishResponse.json()) as {
+    data: { frontmatter: Record<string, unknown> };
+  };
+  assert.equal(publishResponse.status, 200);
+  assert.equal(published.data.frontmatter.heroImage, mediaFieldImageAsset.id);
+
+  const unpublishResponse = await handler(
+    jsonContentRequest(
+      `/api/v1/content/${article.documentId}/unpublish?fileFields=raw`,
+      "POST",
+    ),
+  );
+  const unpublished = (await unpublishResponse.json()) as {
+    data: { frontmatter: Record<string, unknown> };
+  };
+  assert.equal(unpublishResponse.status, 200);
+  assert.equal(unpublished.data.frontmatter.heroImage, mediaFieldImageAsset.id);
+
+  const deleteResponse = await handler(
+    jsonContentRequest(
+      `/api/v1/content/${article.documentId}?fileFields=raw`,
+      "DELETE",
+    ),
+  );
+  const deleted = (await deleteResponse.json()) as {
+    data: { frontmatter: Record<string, unknown> };
+  };
+  assert.equal(deleteResponse.status, 200);
+  assert.equal(deleted.data.frontmatter.heroImage, mediaFieldImageAsset.id);
+
+  const restoreResponse = await handler(
+    jsonContentRequest(
+      `/api/v1/content/${article.documentId}/restore?fileFields=raw`,
+      "POST",
+    ),
+  );
+  const restored = (await restoreResponse.json()) as {
+    data: { frontmatter: Record<string, unknown> };
+  };
+  assert.equal(restoreResponse.status, 200);
+  assert.equal(restored.data.frontmatter.heroImage, mediaFieldImageAsset.id);
+
+  const updateResponse = await handler(
+    jsonContentRequest(`/api/v1/content/${article.documentId}`, "PUT", {
+      body: "version two body",
+    }),
+  );
+  assert.equal(updateResponse.status, 200);
+  const secondPublishResponse = await handler(
+    jsonContentRequest(
+      `/api/v1/content/${article.documentId}/publish?fileFields=raw`,
+      "POST",
+      { changeSummary: "publish v2" },
+    ),
+  );
+  assert.equal(secondPublishResponse.status, 200);
+
+  const versionRestoreResponse = await handler(
+    jsonContentRequest(
+      `/api/v1/content/${article.documentId}/versions/1/restore?fileFields=raw`,
+      "POST",
+      { targetStatus: "draft" },
+    ),
+  );
+  const versionRestore = (await versionRestoreResponse.json()) as {
+    data: { frontmatter: Record<string, unknown> };
+  };
+  assert.equal(versionRestoreResponse.status, 200);
+  assert.equal(
+    versionRestore.data.frontmatter.heroImage,
+    mediaFieldImageAsset.id,
+  );
+});
+
 test("content API in-memory resolve supports configured schema scopes", async () => {
   const store = createInMemoryContentStore({
     schemaScopes: [
@@ -618,13 +1303,19 @@ test("content API emits webhook events for document lifecycle mutations", async 
     rawHandler,
     () => inMemorySchemaHash,
   );
-  const requestJson = (path: string, method: string, body?: unknown) =>
+  const requestJson = (
+    path: string,
+    method: string,
+    body?: unknown,
+    headers: Record<string, string> = {},
+  ) =>
     handler(
       new Request(`http://localhost${path}`, {
         method,
         headers: {
           ...scopeHeaders,
           "content-type": "application/json",
+          ...headers,
         },
         body: body === undefined ? undefined : JSON.stringify(body),
       }),
@@ -736,13 +1427,19 @@ test("content API emits webhook events for duplicate and version restore mutatio
     rawHandler,
     () => inMemorySchemaHash,
   );
-  const requestJson = (path: string, method: string, body?: unknown) =>
+  const requestJson = (
+    path: string,
+    method: string,
+    body?: unknown,
+    headers: Record<string, string> = {},
+  ) =>
     handler(
       new Request(`http://localhost${path}`, {
         method,
         headers: {
           ...scopeHeaders,
           "content-type": "application/json",
+          ...headers,
         },
         body: body === undefined ? undefined : JSON.stringify(body),
       }),
@@ -765,6 +1462,10 @@ test("content API emits webhook events for duplicate and version restore mutatio
   const duplicateResponse = await requestJson(
     `/api/v1/content/${created.data.documentId}/duplicate`,
     "POST",
+    undefined,
+    {
+      "x-mdcms-schema-hash": inMemorySchemaHash,
+    },
   );
   const duplicated = (await duplicateResponse.json()) as {
     data: { documentId: string };

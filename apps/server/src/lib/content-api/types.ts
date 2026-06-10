@@ -101,6 +101,7 @@ export type ContentListQuery = {
   hasUnpublishedChanges?: string;
   draft?: string;
   resolve?: string | string[];
+  fileFields?: string;
   project?: string;
   environment?: string;
   limit?: string;
@@ -311,6 +312,7 @@ export type MountContentApiRoutesOptions = {
   authorize: ContentRequestAuthorizer;
   requireCsrf: ContentRequestCsrfProtector;
   getWriteSchemaSyncState: ContentWriteSchemaSyncLookup;
+  lookupMediaAsset?: ContentMediaAssetLookup;
   resolveUsers?: ContentUserSummaryLookup;
   lifecycleEvents?: ContentLifecycleEventSink;
   previewTokenSecret?: string;
