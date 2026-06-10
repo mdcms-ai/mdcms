@@ -13,7 +13,8 @@ export type GenerateConfigInput = {
 function hasReferences(types: InferredType[]): boolean {
   return types.some((t) =>
     Object.values(t.fields).some((f) =>
-      f.zodType.startsWith("fieldTypes.reference("),
+      f.zodType.startsWith("fieldTypes.reference(") ||
+      f.zodType.startsWith("reference("),
     ),
   );
 }
@@ -28,11 +29,19 @@ function renderFieldValue(field: {
   zodType: string;
   optional: boolean;
 }): string {
-  const base = field.zodType;
+  const base = normalizeReferenceHelper(field.zodType);
   if (field.optional) {
     return `${base}.optional()`;
   }
   return base;
+}
+
+function normalizeReferenceHelper(zodType: string): string {
+  if (zodType.startsWith("reference(")) {
+    return `fieldTypes.${zodType}`;
+  }
+
+  return zodType;
 }
 
 function renderType(type: InferredType): string {

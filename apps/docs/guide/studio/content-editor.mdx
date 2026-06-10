@@ -84,7 +84,7 @@ The Fields tab generates form controls based on your schema field definitions. E
 | `z.enum([...])`       | Dropdown select | Options derived from enum values                      |
 | `z.coerce.date()`     | Date picker     | Calendar popover with formatted display               |
 | `z.array(z.string())` | Tag input       | Type and press Enter to add tags; click to remove     |
-| `reference("Type")`   | Document picker | Select from existing documents of the referenced type |
+| `fieldTypes.reference("Type")` | Document picker | Select from existing documents of the referenced type |
 
 <Accordion title="What about unsupported types?">
   Complex or nested Zod types that don't map to a standard control display a

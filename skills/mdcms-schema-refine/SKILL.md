@@ -1,6 +1,6 @@
 ---
 name: mdcms-schema-refine
-description: Use when the user wants to add, edit, extend, or fix MDCMS content types, fields, or references — phrases like "add a new content type", "register a new type with MDCMS", "create a content model", "make me an author type", "add a tags field to posts", "add a new field to my CMS", "link blog posts to authors", "edit mdcms.config.ts", "the inferred schema is wrong", "the schema is missing X", "change the schema", or "author the content model". Triggers on any intent to evolve the content schema, including localizing a type or adding a `reference()` between types.
+description: Use when the user wants to add, edit, extend, or fix MDCMS content types, fields, or references — phrases like "add a new content type", "register a new type with MDCMS", "create a content model", "make me an author type", "add a tags field to posts", "add a new field to my CMS", "link blog posts to authors", "edit mdcms.config.ts", "the inferred schema is wrong", "the schema is missing X", "change the schema", or "author the content model". Triggers on any intent to evolve the content schema, including localizing a type or adding a `fieldTypes.reference()` between types.
 ---
 
 # MDCMS Schema Refine
@@ -25,7 +25,7 @@ Not for importing content, embedding Studio, or editing individual documents —
 
 - **Type** — a content kind (e.g. `post`, `page`, `author`). Declared via `defineType(name, { directory, fields, ... })`.
 - **Field** — a Zod validator attached to a frontmatter key. Typical shapes: `z.string().min(1)`, `z.number().optional()`, `z.boolean().default(false)`, `z.array(z.string())`, `z.enum([...])`.
-- **Reference** — `reference("<target-type>")` makes a field point to a document of another type. References are resolved by the SDK and surfaced in Studio as pickers.
+- **Reference** — `fieldTypes.reference("<target-type>")` makes a field point to a document of another type. References are resolved by the SDK and surfaced in Studio as pickers.
 - **Localized type** — `localized: true` on `defineType` makes every document live in multiple locale variants grouped by a shared translation group id.
 - **Environment-scoped fields** — `.env("staging")` chained onto a Zod validator makes a field only apply in that environment. Use sparingly.
 
@@ -50,7 +50,7 @@ Edit `mdcms.config.ts`. Common patterns:
 **Add a new type**
 
 ```ts
-import { defineType, reference } from "@mdcms/cli";
+import { defineType, fieldTypes } from "@mdcms/cli";
 import { z } from "zod";
 
 const author = defineType("author", {
@@ -85,12 +85,12 @@ const post = defineType("post", {
   directory: "content/posts",
   fields: {
     title: z.string().min(1),
-    author: reference("author").optional(),
+    author: fieldTypes.reference("author").optional(),
   },
 });
 ```
 
-`reference("author")` means the frontmatter value is an author document id. Studio renders a picker; the SDK can resolve the reference to the full document.
+`fieldTypes.reference("author")` means the frontmatter value is an author document id. Studio renders a picker; the SDK can resolve the reference to the full document.
 
 **Make a type localized**
 
@@ -153,7 +153,7 @@ If the refinement added a new field to an existing type, go update the affected 
 - **Removing a field** is a schema-breaking change from the documents' perspective. The CLI surfaces the conflict; plan a migration (populate a default, then remove). Don't just delete it and hope.
 - **Adding a required field to an existing type** without a `.default(...)` will fail schema sync if documents don't already have that frontmatter key. Use `.optional()` or `.default(...)`.
 - **Renaming a type** is not a rename — it's a delete + create. Use the migration flow or keep the old name.
-- **Reference targets must exist** — `reference("author")` requires an `author` type declared in the same config.
+- **Reference targets must exist** — `fieldTypes.reference("author")` requires an `author` type declared in the same config.
 - **Studio-visible labels** come from the type name. Use readable names (`author`, `blogPost`) over cryptic ones.
 
 ## Related skills
@@ -164,6 +164,6 @@ If the refinement added a new field to an existing type, go update the affected 
 
 ## Assumptions and limitations
 
-- Schema validators are Zod. The MDCMS CLI currently ships `defineType`, `defineConfig`, and `reference` from `@mdcms/cli` — verify that import path if the repo's packaging has changed.
+- Schema validators are Zod. The MDCMS CLI currently ships `defineType`, `defineConfig`, and `fieldTypes` from `@mdcms/cli` — verify that import path if the repo's packaging has changed.
 - This skill does not write content migrations. For shape-breaking changes (required field, rename), hand off to the user or an MDCMS migration skill when it exists.
 - Every schema change is pushed server-side; make one coherent edit per sync rather than batching many unrelated changes.

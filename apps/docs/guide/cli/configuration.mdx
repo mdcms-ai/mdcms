@@ -8,7 +8,7 @@ description: "mdcms.config.ts reference and local state files"
 The CLI reads its configuration from `mdcms.config.ts` at the project root. Use `defineConfig` and `defineType` from `@mdcms/cli` to get full type safety.
 
 ```typescript mdcms.config.ts
-import { defineConfig, defineType, reference } from "@mdcms/cli";
+import { defineConfig, defineType, fieldTypes } from "@mdcms/cli";
 import { z } from "zod";
 
 const Author = defineType("Author", {
@@ -27,7 +27,7 @@ const BlogPost = defineType("BlogPost", {
   fields: {
     title: z.string().min(1).max(200),
     slug: z.string().regex(/^[a-z0-9-]+$/),
-    author: reference("Author"),
+    author: fieldTypes.reference("Author"),
     publishedAt: z.coerce.date(),
     tags: z.array(z.string()).default([]),
     featured: z.boolean().default(false),

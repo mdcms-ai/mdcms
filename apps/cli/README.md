@@ -22,7 +22,7 @@ npx mdcms pull
 Create a `mdcms.config.ts` in your project root:
 
 ```ts
-import { defineConfig, defineType, reference } from "@mdcms/cli";
+import { defineConfig, defineType, fieldTypes } from "@mdcms/cli";
 import { z } from "zod";
 
 export default defineConfig({
@@ -42,7 +42,7 @@ export default defineConfig({
       localized: true,
       fields: {
         title: z.string().min(1),
-        author: reference("Author"),
+        author: fieldTypes.reference("Author"),
       },
     }),
   ],

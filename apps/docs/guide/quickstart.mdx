@@ -58,7 +58,7 @@ See [CLI Installation](/guide/cli/installation) for details on the init wizard.
 The generated `mdcms.config.ts` is your starting point. Customize it to match your content model:
 
 ```typescript mdcms.config.ts
-import { defineConfig, defineType, reference } from "@mdcms/cli";
+import { defineConfig, defineType, fieldTypes } from "@mdcms/cli";
 import { z } from "zod";
 
 const Author = defineType("Author", {
@@ -74,7 +74,7 @@ const BlogPost = defineType("BlogPost", {
   localized: true,
   fields: {
     title: z.string().min(1),
-    author: reference("Author"),
+    author: fieldTypes.reference("Author"),
     tags: z.array(z.string()),
   },
 });

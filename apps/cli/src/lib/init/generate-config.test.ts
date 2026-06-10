@@ -114,6 +114,41 @@ test("includes reference import when reference fields exist", () => {
   assert.ok(source.includes('fieldTypes.reference("author").optional()'));
 });
 
+test("normalizes legacy reference helper strings to fieldTypes.reference in generated configs", () => {
+  const types: InferredType[] = [
+    {
+      name: "post",
+      directory: "content/posts",
+      localized: false,
+      fields: {
+        author: {
+          zodType: 'reference("Author")',
+          optional: false,
+          samples: 1,
+        },
+      },
+      fileCount: 1,
+    },
+  ];
+
+  const source = generateConfigSource({
+    project: "my-site",
+    serverUrl: "http://localhost:4000",
+    environment: "staging",
+    contentDirectories: ["content"],
+    types,
+    localeConfig: null,
+  });
+
+  assert.ok(
+    source.includes(
+      'import { defineConfig, defineType, fieldTypes } from "@mdcms/cli"',
+    ),
+  );
+  assert.ok(source.includes('fieldTypes.reference("Author")'));
+  assert.ok(!source.includes('author: reference("Author")'));
+});
+
 test("appends .optional() for optional fields", () => {
   const types: InferredType[] = [
     {

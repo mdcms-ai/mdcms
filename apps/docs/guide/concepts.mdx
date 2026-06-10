@@ -73,7 +73,7 @@ Key properties of environments:
 Content types define the shape of your content. They are declared in `mdcms.config.ts` using `defineType()` with [Zod](https://zod.dev) validators:
 
 ```typescript mdcms.config.ts
-import { defineConfig, defineType, reference } from "@mdcms/cli";
+import { defineConfig, defineType, fieldTypes } from "@mdcms/cli";
 import { z } from "zod";
 
 const Author = defineType("Author", {
@@ -92,7 +92,7 @@ const BlogPost = defineType("BlogPost", {
     title: z.string().min(1).max(200),
     slug: z.string().regex(/^[a-z0-9-]+$/),
     excerpt: z.string().max(500).optional(),
-    author: reference("Author"),
+    author: fieldTypes.reference("Author"),
     publishedAt: z.coerce.date(),
     tags: z.array(z.string()).default([]),
   },
@@ -250,15 +250,15 @@ How localized documents work:
 
 ## References
 
-The `reference()` helper creates a typed relationship between content types. A reference field stores the `documentId` of the target document.
+The `fieldTypes.reference()` helper creates a typed relationship between content types. A reference field stores the `documentId` of the target document.
 
 ```typescript
 const BlogPost = defineType("BlogPost", {
   directory: "content/blog",
   fields: {
     title: z.string().min(1),
-    author: reference("Author"),
-    relatedPosts: z.array(reference("BlogPost")).default([]),
+    author: fieldTypes.reference("Author"),
+    relatedPosts: z.array(fieldTypes.reference("BlogPost")).default([]),
   },
 });
 ```
@@ -279,8 +279,8 @@ Reference resolution error codes:
 | `REFERENCE_FORBIDDEN`     | The current API key or user does not have read access to the referenced document.              |
 
 <Tip>
-  References can be optional (`reference("Author").optional()`) or collected in
-  arrays (`z.array(reference("BlogPost"))`). The resolution engine handles both
+  References can be optional (`fieldTypes.reference("Author").optional()`) or collected in
+  arrays (`z.array(fieldTypes.reference("BlogPost"))`). The resolution engine handles both
   forms.
 </Tip>
 

@@ -65,7 +65,7 @@ For localized types, files for each locale either share a translation group via 
 - Required fields can't be empty strings; use `field: "value"` not `field: ""`.
 - Arrays use YAML list syntax (`tags: [a, b]` or block style with `-`).
 - Date fields written as ISO 8601 strings (e.g. `publishedAt: 2026-04-01T10:00:00Z`).
-- Reference fields (declared via `reference("<type>")`) take a document id, not a file path.
+- Reference fields (declared via `fieldTypes.reference("<type>")`) take a document id, not a file path.
 
 **Body** is everything after the closing `---`. Markdown is parsed normally; `.mdx` files can use registered React components — see **`mdcms-mdx-components`** for the registry contract.
 
@@ -161,5 +161,5 @@ If unsure about the project's locale-file convention (subdirectory vs filename s
 
 - Assumes the current MDCMS CLI surface: `init`, `login`, `logout`, `pull`, `push`, `schema sync`, `status`. There is no `mdcms create` or `mdcms publish` command — new docs are created by writing files; publishing happens in Studio.
 - Bulk-edit examples target Bash + GNU/BSD `sed`. macOS `sed` requires the `''` after `-i` shown above; Linux drops it.
-- Reference field shape (id vs slug) is determined by the schema's `reference()` declaration. When in doubt, look at a sibling document.
+- Reference field shape (id vs slug) is determined by the schema's `fieldTypes.reference()` declaration. When in doubt, look at a sibling document.
 - Frontmatter is YAML; if the project later moves to TOML or JSON frontmatter, this skill's syntax notes need an update.

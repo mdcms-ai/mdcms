@@ -7,24 +7,24 @@ References let you create relationships between content types. A `BlogPost` can 
 
 ## Defining references
 
-Use the `reference()` helper to create a reference field. It accepts the target type name as a string:
+Use the `fieldTypes.reference()` helper to create a reference field. It accepts the target type name as a string:
 
 ```typescript mdcms.config.ts
-import { defineType, reference } from "@mdcms/cli";
+import { defineType, fieldTypes } from "@mdcms/cli";
 import { z } from "zod";
 
 const BlogPost = defineType("BlogPost", {
   directory: "content/blog",
   fields: {
     title: z.string().min(1),
-    author: reference("Author"),
-    reviewer: reference("Author").optional(),
-    relatedPosts: z.array(reference("BlogPost")).optional(),
+    author: fieldTypes.reference("Author"),
+    reviewer: fieldTypes.reference("Author").optional(),
+    relatedPosts: z.array(fieldTypes.reference("BlogPost")).optional(),
   },
 });
 ```
 
-Under the hood, `reference()` returns a `z.string()` schema with metadata that marks it as a reference to the target type. This means reference fields support the same modifiers as strings: `.optional()`, `.nullable()`, and `.default()`.
+Under the hood, `fieldTypes.reference()` returns a `z.string()` schema with metadata that marks it as a reference to the target type. This means reference fields support the same modifiers as strings: `.optional()`, `.nullable()`, and `.default()`.
 
 ## What gets stored
 
@@ -102,7 +102,7 @@ The resolve path must point to a field that is registered as a reference in the 
 
 Reference resolution is **one level deep only**. If a resolved document itself contains reference fields, those nested references are returned as raw documentId strings, not expanded.
 
-For example, if `Author` had a `team: reference("Team")` field, resolving `author` on a BlogPost would return the Author document with `team` as a UUID string. To get the Team document, you would need a separate API call.
+For example, if `Author` had a `team: fieldTypes.reference("Team")` field, resolving `author` on a BlogPost would return the Author document with `team` as a UUID string. To get the Team document, you would need a separate API call.
 
 ## Resolve errors
 
@@ -146,7 +146,7 @@ If a reference cannot be resolved, the field value is set to `null` and an entry
 
 ## Studio behavior
 
-In Studio, reference fields render as a **document picker** filtered by the target type. When editing a BlogPost with an `author: reference("Author")` field, the picker shows only Author documents.
+In Studio, reference fields render as a **document picker** filtered by the target type. When editing a BlogPost with an `author: fieldTypes.reference("Author")` field, the picker shows only Author documents.
 
 <Steps>
   <Step title="Click the reference field">
@@ -164,12 +164,12 @@ In Studio, reference fields render as a **document picker** filtered by the targ
 
 ## Multiple references
 
-Use `z.array(reference("TypeName"))` for one-to-many relationships:
+Use `z.array(fieldTypes.reference("TypeName"))` for one-to-many relationships:
 
 ```typescript
 fields: {
-  authors: z.array(reference("Author")),
-  relatedPosts: z.array(reference("BlogPost")).optional(),
+  authors: z.array(fieldTypes.reference("Author")),
+  relatedPosts: z.array(fieldTypes.reference("BlogPost")).optional(),
 }
 ```
 
