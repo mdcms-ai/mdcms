@@ -69,6 +69,14 @@ export type MdcmsFileFieldOptions = {
   default?: string;
 };
 
+type MdcmsPlainFileFieldSchema = z.ZodString;
+type MdcmsOptionalFileFieldSchema = z.ZodNullable<z.ZodOptional<z.ZodString>>;
+type MdcmsDefaultFileFieldSchema = z.ZodDefault<z.ZodString>;
+type MdcmsConcreteFileFieldSchema =
+  | MdcmsPlainFileFieldSchema
+  | MdcmsOptionalFileFieldSchema
+  | MdcmsDefaultFileFieldSchema;
+
 export type MdcmsFieldSchema = StandardSchemaLike;
 
 export type MdcmsTypeOverlay = {
@@ -233,7 +241,7 @@ function createReferenceField(targetType: string) {
 function createFileField(
   preset: MdcmsFileFieldPreset,
   options: MdcmsFileFieldOptions = {},
-) {
+): MdcmsConcreteFileFieldSchema {
   const accept = normalizeAccept(
     options.accept,
     `fieldTypes.${preset}.accept`,
@@ -255,7 +263,7 @@ function createFileField(
     );
   }
 
-  let schema: z.ZodType = z.string().meta({
+  const schema = z.string().meta({
     [FILE_METADATA_KEY]: {
       preset,
       accept,
@@ -264,11 +272,11 @@ function createFileField(
   });
 
   if (!required) {
-    schema = schema.optional().nullable();
+    return schema.optional().nullable();
   }
 
   if (helperDefault !== undefined) {
-    schema = withSchemaMetadata(schema.default(helperDefault), {
+    return withSchemaMetadata(schema.default(helperDefault), {
       [FILE_HELPER_DEFAULT_METADATA_KEY]: helperDefault,
     });
   }
@@ -276,11 +284,102 @@ function createFileField(
   return schema;
 }
 
+type FileFieldFactory = {
+  (): MdcmsPlainFileFieldSchema;
+  (
+    options: Omit<MdcmsFileFieldOptions, "required" | "default"> & {
+      required?: true | undefined;
+      default?: undefined;
+    },
+  ): MdcmsPlainFileFieldSchema;
+  (
+    options: Omit<MdcmsFileFieldOptions, "default"> & {
+      required: false;
+      default?: undefined;
+    },
+  ): MdcmsOptionalFileFieldSchema;
+  (
+    options: Omit<MdcmsFileFieldOptions, "required"> & {
+      required?: true | undefined;
+      default: string;
+    },
+  ): MdcmsDefaultFileFieldSchema;
+};
+
+function createImageField(): MdcmsPlainFileFieldSchema;
+function createImageField(
+  options: Omit<MdcmsFileFieldOptions, "required" | "default"> & {
+    required?: true | undefined;
+    default?: undefined;
+  },
+): MdcmsPlainFileFieldSchema;
+function createImageField(
+  options: Omit<MdcmsFileFieldOptions, "default"> & {
+    required: false;
+    default?: undefined;
+  },
+): MdcmsOptionalFileFieldSchema;
+function createImageField(
+  options: Omit<MdcmsFileFieldOptions, "required"> & {
+    required?: true | undefined;
+    default: string;
+  },
+): MdcmsDefaultFileFieldSchema;
+function createImageField(options: MdcmsFileFieldOptions = {}) {
+  return createFileField("image", options);
+}
+
+function createVideoField(): MdcmsPlainFileFieldSchema;
+function createVideoField(
+  options: Omit<MdcmsFileFieldOptions, "required" | "default"> & {
+    required?: true | undefined;
+    default?: undefined;
+  },
+): MdcmsPlainFileFieldSchema;
+function createVideoField(
+  options: Omit<MdcmsFileFieldOptions, "default"> & {
+    required: false;
+    default?: undefined;
+  },
+): MdcmsOptionalFileFieldSchema;
+function createVideoField(
+  options: Omit<MdcmsFileFieldOptions, "required"> & {
+    required?: true | undefined;
+    default: string;
+  },
+): MdcmsDefaultFileFieldSchema;
+function createVideoField(options: MdcmsFileFieldOptions = {}) {
+  return createFileField("video", options);
+}
+
+function createGenericFileField(): MdcmsPlainFileFieldSchema;
+function createGenericFileField(
+  options: Omit<MdcmsFileFieldOptions, "required" | "default"> & {
+    required?: true | undefined;
+    default?: undefined;
+  },
+): MdcmsPlainFileFieldSchema;
+function createGenericFileField(
+  options: Omit<MdcmsFileFieldOptions, "default"> & {
+    required: false;
+    default?: undefined;
+  },
+): MdcmsOptionalFileFieldSchema;
+function createGenericFileField(
+  options: Omit<MdcmsFileFieldOptions, "required"> & {
+    required?: true | undefined;
+    default: string;
+  },
+): MdcmsDefaultFileFieldSchema;
+function createGenericFileField(options: MdcmsFileFieldOptions = {}) {
+  return createFileField("file", options);
+}
+
 export const fieldTypes = {
   reference: createReferenceField,
-  image: (options?: MdcmsFileFieldOptions) => createFileField("image", options),
-  video: (options?: MdcmsFileFieldOptions) => createFileField("video", options),
-  file: (options?: MdcmsFileFieldOptions) => createFileField("file", options),
+  image: createImageField as FileFieldFactory,
+  video: createVideoField as FileFieldFactory,
+  file: createGenericFileField as FileFieldFactory,
 } as const;
 
 /**

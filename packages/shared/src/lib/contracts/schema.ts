@@ -344,6 +344,7 @@ function assertSnapshotMediaAssetId(value: unknown, path: string): string {
 function assertNormalizedFileAccept(
   value: unknown,
   path: string,
+  preset: MdcmsFileFieldMetadata["preset"],
 ): asserts value is string[] {
   if (!Array.isArray(value)) {
     invalidInput(path, "must be an array.", { value });
@@ -356,6 +357,14 @@ function assertNormalizedFileAccept(
           `${path}[${index}]`,
           "must be a valid MIME type or wildcard.",
           { value: entry },
+        );
+      }
+
+      if (preset !== "file" && !entry.startsWith(`${preset}/`)) {
+        invalidInput(
+          path,
+          `must stay within the ${preset}/* MIME family.`,
+          { value },
         );
       }
 
@@ -443,7 +452,11 @@ function assertFieldSnapshot(
       );
     }
 
-    assertNormalizedFileAccept(value.file.accept, `${path}.file.accept`);
+    assertNormalizedFileAccept(
+      value.file.accept,
+      `${path}.file.accept`,
+      value.file.preset,
+    );
 
     if (typeof value.file.emptyStringAsUnset !== "boolean") {
       invalidInput(

@@ -126,7 +126,7 @@ export function inferSchema(
       let zodType: string;
       // Reference detection: field name matches another type name AND value is a string
       if (allTypeNames.has(key) && typeof sampleValue === "string") {
-        zodType = `reference("${key}")`;
+        zodType = `fieldTypes.reference("${key}")`;
       } else {
         zodType = inferZodType(sampleValue);
       }

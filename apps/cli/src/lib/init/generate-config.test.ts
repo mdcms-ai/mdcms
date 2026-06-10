@@ -87,7 +87,7 @@ test("includes reference import when reference fields exist", () => {
       fields: {
         title: { zodType: "z.string()", optional: false, samples: 1 },
         author: {
-          zodType: 'reference("author")',
+          zodType: 'fieldTypes.reference("author")',
           optional: true,
           samples: 1,
         },
@@ -105,13 +105,13 @@ test("includes reference import when reference fields exist", () => {
     localeConfig: null,
   });
 
-  assert.ok(source.includes("reference"));
+  assert.ok(source.includes("fieldTypes.reference"));
   assert.ok(
     source.includes(
-      'import { defineConfig, defineType, reference } from "@mdcms/cli"',
+      'import { defineConfig, defineType, fieldTypes } from "@mdcms/cli"',
     ),
   );
-  assert.ok(source.includes('reference("author").optional()'));
+  assert.ok(source.includes('fieldTypes.reference("author").optional()'));
 });
 
 test("appends .optional() for optional fields", () => {

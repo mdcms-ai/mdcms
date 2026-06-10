@@ -167,6 +167,19 @@ test(
   },
 );
 
+test(
+  "file helpers preserve string schema methods in TypeScript",
+  { timeout: TYPECHECK_TEST_TIMEOUT_MS },
+  () => {
+    typecheckSource(`
+    import { fieldTypes } from "./config.ts";
+
+    fieldTypes.file().min(1);
+    fieldTypes.image().uuid();
+  `);
+  },
+);
+
 test("parseMdcmsConfig accepts typed propHints and preserves them", () => {
   const parsed = parseMdcmsConfig(
     defineConfig({

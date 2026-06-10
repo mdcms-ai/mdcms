@@ -5,7 +5,7 @@ import {
   createEmptyCurrentPrincipalCapabilities,
   defineConfig,
   defineType,
-  reference,
+  fieldTypes,
 } from "@mdcms/shared";
 
 import { createStudioSchemaRouteApi } from "./schema-route-api.js";
@@ -26,7 +26,7 @@ function createConfig() {
       defineType("BlogPost", {
         directory: "content/blog",
         fields: {
-          title: reference("BlogPost"),
+          title: fieldTypes.reference("BlogPost"),
         },
       }),
     ],
@@ -46,7 +46,7 @@ function createAuthoredConfig() {
       defineType("BlogPost", {
         directory: "content/blog",
         fields: {
-          title: reference("BlogPost"),
+          title: fieldTypes.reference("BlogPost"),
         },
       }),
     ],

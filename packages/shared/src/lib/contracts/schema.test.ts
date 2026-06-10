@@ -661,6 +661,64 @@ test("assertSchemaRegistrySyncPayload rejects non-normalized file accept arrays"
   );
 });
 
+test("assertSchemaRegistrySyncPayload rejects preset-incompatible file accept arrays", () => {
+  expectInvalidInput(
+    () =>
+      assertSchemaRegistrySyncPayload({
+        rawConfigSnapshot: {},
+        resolvedSchema: {
+          Post: {
+            type: "Post",
+            directory: "content/posts",
+            localized: false,
+            fields: {
+              asset: {
+                kind: "string",
+                required: true,
+                nullable: false,
+                file: {
+                  preset: "image",
+                  accept: ["application/pdf"],
+                  emptyStringAsUnset: false,
+                },
+              },
+            },
+          },
+        },
+        schemaHash: "hash",
+      }),
+    "payload.resolvedSchema.Post.fields.asset.file.accept",
+  );
+
+  expectInvalidInput(
+    () =>
+      assertSchemaRegistrySyncPayload({
+        rawConfigSnapshot: {},
+        resolvedSchema: {
+          Post: {
+            type: "Post",
+            directory: "content/posts",
+            localized: false,
+            fields: {
+              asset: {
+                kind: "string",
+                required: true,
+                nullable: false,
+                file: {
+                  preset: "video",
+                  accept: ["image/png"],
+                  emptyStringAsUnset: false,
+                },
+              },
+            },
+          },
+        },
+        schemaHash: "hash",
+      }),
+    "payload.resolvedSchema.Post.fields.asset.file.accept",
+  );
+});
+
 test("toRawConfigSnapshot includes project, omits deployment context, and omits implicit locales", () => {
   const parsed = parseMdcmsConfig(
     defineConfig({

@@ -346,7 +346,10 @@ function buildRawConfig(input: {
     const result: Record<string, MdcmsFieldSchema> = {};
     for (const [name, field] of Object.entries(fields)) {
       let schema: MdcmsFieldSchema;
-      if (field.zodType.startsWith("reference(")) {
+      if (
+        field.zodType.startsWith("fieldTypes.reference(") ||
+        field.zodType.startsWith("reference(")
+      ) {
         // For parseMdcmsConfig, we need Standard Schema-compatible validators
         // Use z.string() as a stand-in for references
         schema = z.string();

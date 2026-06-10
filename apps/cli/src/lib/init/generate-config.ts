@@ -12,7 +12,9 @@ export type GenerateConfigInput = {
 
 function hasReferences(types: InferredType[]): boolean {
   return types.some((t) =>
-    Object.values(t.fields).some((f) => f.zodType.startsWith("reference(")),
+    Object.values(t.fields).some((f) =>
+      f.zodType.startsWith("fieldTypes.reference("),
+    ),
   );
 }
 
@@ -59,7 +61,7 @@ export function generateConfigSource(input: GenerateConfigInput): string {
 
   const sharedImports = ["defineConfig", "defineType"];
   if (hasReferences(input.types)) {
-    sharedImports.push("reference");
+    sharedImports.push("fieldTypes");
   }
   lines.push(`import { ${sharedImports.join(", ")} } from "@mdcms/cli";`);
 
