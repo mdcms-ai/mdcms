@@ -1339,6 +1339,46 @@ test("saveContentDocumentReadyState anchors mapped frontmatter validation failur
   assert.equal(next.saveState, "unsaved");
 });
 
+test("saveContentDocumentReadyState anchors wrapped media-required route failures to the file field", async () => {
+  const initial = reduceContentDocumentPageReadyState(createReadyState(), {
+    type: "frontmatterFieldChanged",
+    fieldName: "primaryImage",
+    value: "",
+  });
+
+  const next = await saveContentDocumentReadyState({
+    api: {
+      updateDraft: async () => {
+        throw new RuntimeError({
+          code: "INVALID_INPUT",
+          message: "A media asset is required.",
+          statusCode: 400,
+          details: {
+            operation: "PUT /api/v1/content/:documentId",
+            status: 400,
+            payload: {
+              code: "INVALID_INPUT",
+              message: "A media asset is required.",
+              details: {
+                field: "frontmatter.primaryImage",
+                reason: "MEDIA_REQUIRED",
+              },
+            },
+          },
+        });
+      },
+    },
+    route: createRouteContext(),
+    state: initial,
+  });
+
+  assert.equal(next.mutationError, undefined);
+  assert.deepEqual(next.fieldErrors, {
+    primaryImage: "A media asset is required.",
+  });
+  assert.equal(next.saveState, "unsaved");
+});
+
 test("saveContentDocumentReadyState surfaces forbidden routed draft updates without pretending the draft persisted", async () => {
   const initial = reduceContentDocumentPageReadyState(createReadyState(), {
     type: "draftChanged",

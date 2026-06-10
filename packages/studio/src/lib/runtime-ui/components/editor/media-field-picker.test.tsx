@@ -7,6 +7,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import {
   FileFieldAssetPreview,
+  FileFieldSelectedAssetView,
   mediaAssetMatchesFileField,
   resolveFileFieldMediaListQuery,
 } from "./media-field-picker.js";
@@ -128,4 +129,20 @@ test("FileFieldAssetPreview renders image, video, and file placeholders", () => 
   assert.match(videoMarkup, /preload="metadata"/);
   assert.match(fileMarkup, /brief\.pdf/);
   assert.match(fileMarkup, /application\/pdf/);
+});
+
+test("FileFieldSelectedAssetView renders a loaded image asset filename and preview", () => {
+  const markup = renderToStaticMarkup(
+    createElement(FileFieldSelectedAssetView, {
+      asset: createMediaAsset({
+        filename: "hero.png",
+        mimeType: "image/png",
+        url: "https://cdn.example.com/hero.png",
+      }),
+    }),
+  );
+
+  assert.match(markup, /hero\.png/);
+  assert.match(markup, /<img /);
+  assert.match(markup, /src="https:\/\/cdn.example.com\/hero.png"/);
 });

@@ -368,13 +368,9 @@ function clearFieldError(
   return Object.keys(nextErrors).length > 0 ? nextErrors : undefined;
 }
 
-function mapErrorToFrontmatterField(error: unknown): string | undefined {
-  if (!(error instanceof RuntimeError) || !isRecord(error.details)) {
-    return undefined;
-  }
-
-  const candidate = error.details.field;
-
+function normalizeFrontmatterFieldCandidate(
+  candidate: unknown,
+): string | undefined {
   if (typeof candidate !== "string" || candidate.trim().length === 0) {
     return undefined;
   }
@@ -387,6 +383,25 @@ function mapErrorToFrontmatterField(error: unknown): string | undefined {
   const [fieldName] = normalized.split(/[.[\]]/, 1);
 
   return fieldName?.trim().length ? fieldName : undefined;
+}
+
+function mapErrorToFrontmatterField(error: unknown): string | undefined {
+  if (!(error instanceof RuntimeError) || !isRecord(error.details)) {
+    return undefined;
+  }
+
+  const directField = normalizeFrontmatterFieldCandidate(error.details.field);
+
+  if (directField) {
+    return directField;
+  }
+
+  const payload = error.details.payload;
+  const payloadDetails = isRecord(payload) ? payload.details : undefined;
+
+  return isRecord(payloadDetails)
+    ? normalizeFrontmatterFieldCandidate(payloadDetails.field)
+    : undefined;
 }
 
 function isUnsettableField(field: SchemaRegistryFieldSnapshot): boolean {

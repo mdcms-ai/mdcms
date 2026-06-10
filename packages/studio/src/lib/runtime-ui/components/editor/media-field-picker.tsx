@@ -177,6 +177,15 @@ export function FileFieldAssetPreview({ asset }: { asset: MediaAsset }) {
   );
 }
 
+export function FileFieldSelectedAssetView({ asset }: { asset: MediaAsset }) {
+  return (
+    <div className="flex flex-col gap-2">
+      <FileFieldAssetPreview asset={asset} />
+      <div className="truncate text-xs text-foreground">{asset.filename}</div>
+    </div>
+  );
+}
+
 export function MediaFieldControl({
   fieldName,
   value,
@@ -328,12 +337,7 @@ export function MediaFieldControl({
     <div className="flex flex-col gap-2">
       <div className="rounded border border-border bg-muted/30 p-2">
         {assetState.status === "ready" ? (
-          <div className="flex flex-col gap-2">
-            <FileFieldAssetPreview asset={assetState.asset} />
-            <div className="truncate text-xs text-foreground">
-              {assetState.asset.filename}
-            </div>
-          </div>
+          <FileFieldSelectedAssetView asset={assetState.asset} />
         ) : selectedAssetId ? (
           <div className="break-all font-mono text-[11px] text-foreground">
             {selectedAssetId}
