@@ -287,6 +287,58 @@ test("in-memory content store validates schema file field media assets on writes
   );
 });
 
+test("in-memory content store normalizes malformed media id lookup errors", async () => {
+  const scope = {
+    project: "media-field-malformed-id-validation",
+    environment: "production",
+  };
+  const malformedId = "not-a-media-uuid";
+  const store = createInMemoryContentStore({
+    lookupMediaAsset: async () => {
+      throw new RuntimeError({
+        code: "INVALID_INPUT",
+        message: "Media id must be a UUID.",
+        statusCode: 400,
+        details: { field: "id" },
+      });
+    },
+    schemaScopes: [
+      {
+        project: scope.project,
+        environment: scope.environment,
+        schemas: {
+          MediaPage: createMediaFieldSchema({
+            primaryImage: requiredImageField(),
+          }),
+        },
+      },
+    ],
+  });
+
+  await assertContentWriteRuntimeError(
+    () =>
+      store.create(scope, {
+        path: "content/media-pages/malformed-id",
+        type: "MediaPage",
+        locale: "en",
+        format: "md",
+        frontmatter: {
+          primaryImage: malformedId,
+        },
+        body: "body",
+      }),
+    {
+      code: "INVALID_INPUT",
+      statusCode: 400,
+      details: {
+        field: "frontmatter.primaryImage",
+        mediaAssetId: malformedId,
+        reason: "MEDIA_NOT_FOUND",
+      },
+    },
+  );
+});
+
 test("in-memory content store treats optional file field unset values as absent", async () => {
   const scope = {
     project: "media-field-optional-validation",

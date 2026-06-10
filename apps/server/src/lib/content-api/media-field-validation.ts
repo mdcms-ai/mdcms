@@ -1,5 +1,6 @@
 import {
   RuntimeError,
+  isRuntimeErrorLike,
   type MdcmsFileFieldMetadata,
   type MediaAsset,
   type SchemaRegistryFieldSnapshot,
@@ -107,6 +108,15 @@ function createMediaFieldValidationError(input: {
       ...(input.actualMimeType ? { actualMimeType: input.actualMimeType } : {}),
     },
   });
+}
+
+function isMalformedMediaIdLookupError(error: unknown): boolean {
+  return (
+    isRuntimeErrorLike(error) &&
+    error.code === "INVALID_INPUT" &&
+    error.statusCode === 400 &&
+    error.details?.field === "id"
+  );
 }
 
 export function normalizeMimeType(value: string): string {
@@ -223,7 +233,21 @@ async function validateConcreteFileField(input: {
   }
 
   const mediaAssetId = value.trim();
-  const asset = await input.lookupMediaAsset(input.scope, mediaAssetId);
+  let asset: MediaAsset | undefined;
+
+  try {
+    asset = await input.lookupMediaAsset(input.scope, mediaAssetId);
+  } catch (error) {
+    if (isMalformedMediaIdLookupError(error)) {
+      throw createMediaFieldValidationError({
+        fieldPath: input.fieldPath,
+        mediaAssetId,
+        reason: "MEDIA_NOT_FOUND",
+      });
+    }
+
+    throw error;
+  }
 
   if (!asset) {
     throw createMediaFieldValidationError({
@@ -264,8 +288,15 @@ async function normalizeFieldValue(input: {
         : { include: true, value: input.value };
     }
 
-    if (input.value === undefined) {
+    if (input.value === undefined && !input.field.required) {
       return { include: false };
+    }
+
+    if (input.value === undefined) {
+      throw createMediaFieldValidationError({
+        fieldPath: input.fieldPath,
+        reason: "MEDIA_REQUIRED",
+      });
     }
 
     if (input.value === null) {
@@ -314,8 +345,15 @@ async function normalizeFieldValue(input: {
         : { include: true, value: input.value };
     }
 
-    if (input.value === undefined) {
+    if (input.value === undefined && !input.field.required) {
       return { include: false };
+    }
+
+    if (input.value === undefined) {
+      throw createMediaFieldValidationError({
+        fieldPath: input.fieldPath,
+        reason: "MEDIA_REQUIRED",
+      });
     }
 
     if (input.value === null) {

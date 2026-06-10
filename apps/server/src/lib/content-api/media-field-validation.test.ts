@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "bun:test";
-import type { MediaAsset, SchemaRegistryTypeSnapshot } from "@mdcms/shared";
+import {
+  RuntimeError,
+  type MediaAsset,
+  type SchemaRegistryTypeSnapshot,
+} from "@mdcms/shared";
 
 import {
   mediaAssetMatchesFileField,
@@ -241,6 +245,101 @@ test("array fields containing file fields reject present non-array values", asyn
   );
 });
 
+test("required object and array containers containing file fields reject missing values", async () => {
+  const schema = createSchema({
+    hero: {
+      kind: "object",
+      required: true,
+      nullable: false,
+      fields: {
+        image: primaryImageField(),
+      },
+    },
+    gallery: {
+      kind: "array",
+      required: true,
+      nullable: false,
+      item: {
+        kind: "object",
+        required: true,
+        nullable: false,
+        fields: {
+          image: primaryImageField(),
+        },
+      },
+    },
+  });
+
+  await assertRuntimeError(
+    () =>
+      validateMediaFieldIdentities({
+        schema,
+        frontmatter: { gallery: [{ image: imageAsset.id }] },
+        scope,
+        lookupMediaAsset: createLookup([imageAsset]),
+      }),
+    {
+      code: "INVALID_INPUT",
+      statusCode: 400,
+      details: {
+        field: "frontmatter.hero",
+        reason: "MEDIA_REQUIRED",
+      },
+    },
+  );
+
+  await assertRuntimeError(
+    () =>
+      validateMediaFieldIdentities({
+        schema,
+        frontmatter: { hero: { image: imageAsset.id } },
+        scope,
+        lookupMediaAsset: createLookup([imageAsset]),
+      }),
+    {
+      code: "INVALID_INPUT",
+      statusCode: 400,
+      details: {
+        field: "frontmatter.gallery",
+        reason: "MEDIA_REQUIRED",
+      },
+    },
+  );
+});
+
+test("optional object and array containers containing file fields allow missing values", async () => {
+  const result = await validateMediaFieldIdentities({
+    schema: createSchema({
+      hero: {
+        kind: "object",
+        required: false,
+        nullable: false,
+        fields: {
+          image: primaryImageField(),
+        },
+      },
+      gallery: {
+        kind: "array",
+        required: false,
+        nullable: false,
+        item: {
+          kind: "object",
+          required: true,
+          nullable: false,
+          fields: {
+            image: primaryImageField(),
+          },
+        },
+      },
+    }),
+    frontmatter: {},
+    scope,
+    lookupMediaAsset: createLookup([imageAsset]),
+  });
+
+  assert.deepEqual(result.frontmatter, {});
+});
+
 test("missing media asset ids fail with machine-readable details", async () => {
   await assertRuntimeError(
     () =>
@@ -256,6 +355,36 @@ test("missing media asset ids fail with machine-readable details", async () => {
       details: {
         field: "frontmatter.primaryImage",
         mediaAssetId: imageAsset.id,
+        reason: "MEDIA_NOT_FOUND",
+      },
+    },
+  );
+});
+
+test("malformed media asset ids from lookup failures normalize to media field details", async () => {
+  const malformedId = "not-a-media-uuid";
+
+  await assertRuntimeError(
+    () =>
+      validateMediaFieldIdentities({
+        schema: createSchema({ primaryImage: primaryImageField() }),
+        frontmatter: { primaryImage: malformedId },
+        scope,
+        lookupMediaAsset: async () => {
+          throw new RuntimeError({
+            code: "INVALID_INPUT",
+            message: "Media id must be a UUID.",
+            statusCode: 400,
+            details: { field: "id" },
+          });
+        },
+      }),
+    {
+      code: "INVALID_INPUT",
+      statusCode: 400,
+      details: {
+        field: "frontmatter.primaryImage",
+        mediaAssetId: malformedId,
         reason: "MEDIA_NOT_FOUND",
       },
     },
