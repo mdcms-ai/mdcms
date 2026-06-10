@@ -37,6 +37,14 @@ type FileFieldPickerState =
   | { status: "ready"; assets: MediaAsset[] }
   | { status: "error"; message: string };
 
+type MediaFieldOperationGuard = {
+  startUpload: () => number;
+  finishUpload: (token: number) => void;
+  invalidate: () => void;
+  isCurrentUpload: (token: number) => boolean;
+  isUploadActive: () => boolean;
+};
+
 export type MediaFieldControlProps = {
   fieldName: string;
   value: string | null | undefined;
@@ -98,6 +106,68 @@ export function resolveFileFieldMediaListQuery(
     sort: "uploadedAt",
     order: "desc",
     limit: 24,
+  };
+}
+
+export async function listMatchingMediaAssets(input: {
+  list: StudioMediaLibraryApi["list"];
+  file: Pick<FileFieldMetadata, "preset" | "accept">;
+  desiredCount?: number;
+  pageSize?: number;
+}): Promise<MediaAsset[]> {
+  const pageSize = input.pageSize ?? 24;
+  const desiredCount = input.desiredCount ?? pageSize;
+  const matches: MediaAsset[] = [];
+  let offset = 0;
+
+  while (matches.length < desiredCount) {
+    const response = await input.list({
+      ...resolveFileFieldMediaListQuery(input.file.preset),
+      limit: pageSize,
+      offset,
+    });
+
+    matches.push(
+      ...response.data.filter((asset) =>
+        mediaAssetMatchesFileField(asset, input.file),
+      ),
+    );
+
+    if (!response.pagination.hasMore) {
+      break;
+    }
+
+    offset = response.pagination.offset + response.pagination.limit;
+  }
+
+  return matches.slice(0, desiredCount);
+}
+
+export function createMediaFieldOperationGuard(): MediaFieldOperationGuard {
+  let generation = 0;
+  let activeUpload: number | undefined;
+
+  return {
+    startUpload() {
+      generation += 1;
+      activeUpload = generation;
+      return generation;
+    },
+    finishUpload(token) {
+      if (activeUpload === token) {
+        activeUpload = undefined;
+      }
+    },
+    invalidate() {
+      generation += 1;
+      activeUpload = undefined;
+    },
+    isCurrentUpload(token) {
+      return activeUpload === token && generation === token;
+    },
+    isUploadActive() {
+      return activeUpload !== undefined;
+    },
   };
 }
 
@@ -186,6 +256,37 @@ export function FileFieldSelectedAssetView({ asset }: { asset: MediaAsset }) {
   );
 }
 
+export function FileFieldUploadFeedback({
+  uploadProgress,
+  localError,
+}: {
+  uploadProgress?: number;
+  localError?: string;
+}) {
+  return (
+    <>
+      {uploadProgress !== undefined ? (
+        <div
+          role="status"
+          aria-live="polite"
+          className="text-[11px] text-foreground-muted"
+        >
+          Uploading {uploadProgress}%
+        </div>
+      ) : null}
+      {localError ? (
+        <div
+          role="alert"
+          aria-live="assertive"
+          className="text-[11px] text-destructive"
+        >
+          {localError}
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 export function MediaFieldControl({
   fieldName,
   value,
@@ -204,6 +305,7 @@ export function MediaFieldControl({
   const canBrowse = !readOnly && canReadMedia && mediaLibraryApi !== null;
   const canUpload = !readOnly && canUploadMedia && mediaUploadApi !== null;
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const operationGuard = useMemo(() => createMediaFieldOperationGuard(), []);
   const [assetState, setAssetState] = useState<FileFieldAssetState>({
     status: "idle",
   });
@@ -258,15 +360,15 @@ export function MediaFieldControl({
     let cancelled = false;
     setPickerState({ status: "loading" });
 
-    void mediaLibraryApi
-      .list(resolveFileFieldMediaListQuery(file.preset))
-      .then((response) => {
+    void listMatchingMediaAssets({
+      list: (query) => mediaLibraryApi.list(query),
+      file,
+    })
+      .then((assets) => {
         if (!cancelled) {
           setPickerState({
             status: "ready",
-            assets: response.data.filter((asset) =>
-              mediaAssetMatchesFileField(asset, file),
-            ),
+            assets,
           });
         }
       })
@@ -285,6 +387,9 @@ export function MediaFieldControl({
   }, [acceptKey, canBrowse, file, mediaLibraryApi, pickerOpen]);
 
   const selectAsset = (asset: MediaAsset) => {
+    operationGuard.invalidate();
+    setUploadProgress(undefined);
+
     if (!mediaAssetMatchesFileField(asset, file)) {
       setLocalError(formatUploadedAssetMismatch(file));
       return;
@@ -299,17 +404,26 @@ export function MediaFieldControl({
     const uploadFile = event.currentTarget.files?.[0];
     event.currentTarget.value = "";
 
-    if (!uploadFile || !canUpload || mediaUploadApi === null) {
+    if (
+      !uploadFile ||
+      !canUpload ||
+      mediaUploadApi === null ||
+      operationGuard.isUploadActive()
+    ) {
       return;
     }
 
+    const uploadToken = operationGuard.startUpload();
     setLocalError(undefined);
     setUploadProgress(0);
 
     try {
       const asset = await mediaUploadApi.upload(uploadFile, {
         onProgress: (progress) => {
-          if (progress.total > 0) {
+          if (
+            progress.total > 0 &&
+            operationGuard.isCurrentUpload(uploadToken)
+          ) {
             setUploadProgress(
               Math.min(
                 100,
@@ -320,6 +434,10 @@ export function MediaFieldControl({
         },
       });
 
+      if (!operationGuard.isCurrentUpload(uploadToken)) {
+        return;
+      }
+
       if (!mediaAssetMatchesFileField(asset, file)) {
         setLocalError(formatUploadedAssetMismatch(file));
         return;
@@ -327,9 +445,16 @@ export function MediaFieldControl({
 
       onChange(asset.id);
     } catch (error) {
-      setLocalError(formatMediaError(error, "Media upload failed."));
+      if (operationGuard.isCurrentUpload(uploadToken)) {
+        setLocalError(formatMediaError(error, "Media upload failed."));
+      }
     } finally {
-      setUploadProgress(undefined);
+      if (operationGuard.isCurrentUpload(uploadToken)) {
+        operationGuard.finishUpload(uploadToken);
+        setUploadProgress(undefined);
+      } else {
+        operationGuard.finishUpload(uploadToken);
+      }
     }
   };
 
@@ -385,6 +510,7 @@ export function MediaFieldControl({
                 type="button"
                 variant="ghost"
                 size="sm"
+                disabled={uploadProgress !== undefined}
                 className="h-7 gap-1.5 px-2 text-xs"
                 onClick={() => inputRef.current?.click()}
               >
@@ -399,7 +525,11 @@ export function MediaFieldControl({
               type="button"
               aria-label={`Unset ${fieldName}`}
               className="text-xs text-foreground-muted hover:text-foreground"
-              onClick={onUnset}
+              onClick={() => {
+                operationGuard.invalidate();
+                setUploadProgress(undefined);
+                onUnset();
+              }}
             >
               Unset
             </button>
@@ -407,14 +537,10 @@ export function MediaFieldControl({
         </div>
       ) : null}
 
-      {uploadProgress !== undefined ? (
-        <div className="text-[11px] text-foreground-muted">
-          Uploading {uploadProgress}%
-        </div>
-      ) : null}
-      {localError ? (
-        <div className="text-[11px] text-destructive">{localError}</div>
-      ) : null}
+      <FileFieldUploadFeedback
+        uploadProgress={uploadProgress}
+        localError={localError}
+      />
 
       <Dialog open={pickerOpen} onOpenChange={setPickerOpen}>
         <DialogContent>

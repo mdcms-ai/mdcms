@@ -8,6 +8,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   FileFieldAssetPreview,
   FileFieldSelectedAssetView,
+  FileFieldUploadFeedback,
+  createMediaFieldOperationGuard,
+  listMatchingMediaAssets,
   mediaAssetMatchesFileField,
   resolveFileFieldMediaListQuery,
 } from "./media-field-picker.js";
@@ -91,6 +94,66 @@ test("resolveFileFieldMediaListQuery scopes image and video presets to their cat
   });
 });
 
+test("listMatchingMediaAssets scans later pages until a matching accepted asset is found", async () => {
+  const calls: Array<{ offset?: number; limit?: number }> = [];
+  const pngAsset = createMediaAsset({
+    id: "asset_png",
+    filename: "hero.png",
+    mimeType: "image/png",
+  });
+  const pdfAsset = createMediaAsset({
+    id: "asset_pdf",
+    filename: "brief.pdf",
+    mimeType: "application/pdf",
+  });
+
+  const assets = await listMatchingMediaAssets({
+    file: { preset: "file", accept: ["application/pdf"] },
+    list: async (query) => {
+      calls.push({ offset: query?.offset, limit: query?.limit });
+
+      if (query?.offset === 24) {
+        return {
+          data: [pdfAsset],
+          pagination: { total: 25, limit: 24, offset: 24, hasMore: false },
+        };
+      }
+
+      return {
+        data: [pngAsset],
+        pagination: { total: 25, limit: 24, offset: 0, hasMore: true },
+      };
+    },
+  });
+
+  assert.deepEqual(
+    assets.map((asset) => asset.id),
+    ["asset_pdf"],
+  );
+  assert.deepEqual(calls, [
+    { offset: 0, limit: 24 },
+    { offset: 24, limit: 24 },
+  ]);
+});
+
+test("createMediaFieldOperationGuard invalidates pending uploads after newer field operations", () => {
+  const guard = createMediaFieldOperationGuard();
+  const firstUpload = guard.startUpload();
+
+  assert.equal(guard.isCurrentUpload(firstUpload), true);
+
+  guard.invalidate();
+
+  assert.equal(guard.isCurrentUpload(firstUpload), false);
+
+  const secondUpload = guard.startUpload();
+
+  assert.equal(guard.isCurrentUpload(firstUpload), false);
+  assert.equal(guard.isCurrentUpload(secondUpload), true);
+  guard.finishUpload(secondUpload);
+  assert.equal(guard.isUploadActive(), false);
+});
+
 test("FileFieldAssetPreview renders image, video, and file placeholders", () => {
   const imageMarkup = renderToStaticMarkup(
     createElement(FileFieldAssetPreview, {
@@ -145,4 +208,24 @@ test("FileFieldSelectedAssetView renders a loaded image asset filename and previ
   assert.match(markup, /hero\.png/);
   assert.match(markup, /<img /);
   assert.match(markup, /src="https:\/\/cdn.example.com\/hero.png"/);
+});
+
+test("FileFieldUploadFeedback exposes live regions for progress and errors", () => {
+  const progressMarkup = renderToStaticMarkup(
+    createElement(FileFieldUploadFeedback, {
+      uploadProgress: 42,
+    }),
+  );
+  const errorMarkup = renderToStaticMarkup(
+    createElement(FileFieldUploadFeedback, {
+      localError: "Uploaded asset must be a video.",
+    }),
+  );
+
+  assert.match(progressMarkup, /role="status"/);
+  assert.match(progressMarkup, /aria-live="polite"/);
+  assert.match(progressMarkup, /Uploading 42%/);
+  assert.match(errorMarkup, /role="alert"/);
+  assert.match(errorMarkup, /aria-live="assertive"/);
+  assert.match(errorMarkup, /Uploaded asset must be a video\./);
 });
