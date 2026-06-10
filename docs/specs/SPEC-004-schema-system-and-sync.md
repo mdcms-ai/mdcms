@@ -110,18 +110,20 @@ type FileFieldOptions = {
 - `accept` is an array of MIME values or MIME wildcards such as `image/png`, `video/*`, or `application/pdf`. It never accepts category labels. `fieldTypes.image()` and `fieldTypes.video()` already set the broad `image/*` or `video/*` preset, and custom `accept` entries further narrow within that family. Incompatible entries such as `fieldTypes.image({ accept: ["application/pdf"] })` are invalid schema config.
 - `required` defaults to `true` for the plain helper. Required, non-nullable file fields fail write-time validation when the field is missing, `null`, or an empty string. `fieldTypes.*({ required: false })` resolves to `required: false`, `nullable: true`, and serialized `file.emptyStringAsUnset: true`; missing, `null`, and empty string values are unset for that helper-level optional file field, while non-empty values still validate as media asset ids.
 - `default` is a raw `MediaAsset.id` string applied as the schema default. It is never a URL and never a `MediaAsset` object, and the resulting value must satisfy the helper preset and `accept` narrowing.
-- A helper-level `default` cannot be combined with helper `required: false`; that combination is invalid schema config. Optional file fields represent explicit unset states, while helper defaults represent automatic value materialization.
+- Defaults cannot be combined with helper `required: false`; `fieldTypes.file({ required: false }).default(id)` and equivalent Zod `.default()` wrappers are invalid schema config. Optional file fields represent explicit unset states, while defaults represent automatic value materialization.
 
 When a helper or Zod default supplies a file-field value during content write
 validation, MDCMS validates that default against project-scoped media metadata
 for asset existence and MIME compatibility.
+Schema defaults for file fields are materialized into normalized stored
+frontmatter as raw `MediaAsset.id` strings during content writes.
 
 Helper metadata is canonical for identifying MDCMS file fields and for validating helper-level `accept`, `required`, and `default` config. Normal Zod wrappers still determine the resolved schema snapshot's `required`, `nullable`, and `default` metadata:
 
 - `required: false` must resolve to snapshot `required: false` and `nullable: true`; a helper with `required: false` and a required or non-nullable resolved snapshot is invalid schema config.
 - `.optional()` around a helper without `required: false` is valid and resolves to snapshot `required: false`, but it only makes missing values optional. It serializes `file.emptyStringAsUnset: false`, does not treat empty strings as unset, and does not accept `null` unless `.nullable()` is also present.
 - `.nullable()` resolves to snapshot `nullable: true`; file-field asset validation runs for non-empty string values, while `null` acceptance follows the resolved snapshot metadata. `.nullable()` without helper `required: false` serializes `file.emptyStringAsUnset: false`.
-- If a helper `default` and Zod `.default()` are both present, they must be the same raw `MediaAsset.id` string or schema config is invalid. A Zod `.default()` on a file helper must also be a raw `MediaAsset.id` string satisfying the helper preset and `accept` narrowing.
+- If a helper `default` and Zod `.default()` are both present, they must be the same raw `MediaAsset.id` string or schema config is invalid. A Zod `.default()` on a file helper must also be a raw `MediaAsset.id` string satisfying the helper preset and `accept` narrowing, and it remains invalid when the helper has `required: false`.
 
 ```typescript
 fields: {

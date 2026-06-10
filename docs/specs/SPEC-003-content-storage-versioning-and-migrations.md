@@ -345,7 +345,7 @@ File-field expansion may report:
 - `MEDIA_NOT_FOUND` when the stored media asset id does not resolve in the routed project.
 - `MEDIA_TYPE_MISMATCH` when the media asset exists but its `mimeType` does not satisfy the schema field preset or `accept` narrowing.
 
-Create and update payloads send set schema file fields as raw media asset id strings in `frontmatter`; unset optional file fields may be omitted, `null`, or an empty string when allowed by the synced snapshot. `fileFields` changes only the returned document shape.
+Create and update payloads send set schema file fields as raw media asset id strings in `frontmatter`; unset optional file fields may be omitted, `null`, or an empty string when allowed by the synced snapshot. Schema defaults for file fields are materialized into normalized stored frontmatter as raw `MediaAsset.id` strings during content writes. `fileFields` changes only the returned document shape, including defaulted file-field values.
 
 ## Query Parameters (Content Listing)
 

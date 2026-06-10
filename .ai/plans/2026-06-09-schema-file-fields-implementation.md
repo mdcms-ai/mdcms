@@ -41,7 +41,7 @@ Required contract points:
 - `fieldTypes.image(options?)`, `fieldTypes.video(options?)`, and `fieldTypes.file(options?)` persist raw project-scoped `MediaAsset.id` strings.
 - `FileFieldOptions` includes `accept?: string[]`, `required?: boolean`, and `default?: string`. `accept` values are MIME values or MIME wildcards only; image/video helpers set the broad preset family and custom `accept` narrows within that family.
 - `fieldTypes.*({ required: false })` resolves to `required: false`, `nullable: true`, and `file.emptyStringAsUnset: true`; missing, `null`, and empty string are unset. `.optional()` without helper `required: false` makes missing values optional only, `.nullable()` accepts `null` according to snapshot nullability, and both serialize `file.emptyStringAsUnset: false`.
-- Helper-level `required: false` combined with helper-level `default` is invalid schema config.
+- Helper-level `required: false` combined with any helper or Zod `.default()` is invalid schema config.
 - Helper defaults and Zod `.default()` values are raw `MediaAsset.id` strings and must agree when both are present. Applied defaults are validated for asset existence and MIME compatibility during content write validation.
 - Serialized file field snapshots are `kind: "string"` snapshots with `file: { preset: "image" | "video" | "file", accept: string[], emptyStringAsUnset: boolean }`; `required`, `nullable`, and `default` stay on the field snapshot outside `file`.
 - File-field write validation failures use `INVALID_INPUT` (`400`) with machine-readable details such as `{ field, mediaAssetId?, reason: "MEDIA_REQUIRED" | "MEDIA_NOT_FOUND" | "MEDIA_TYPE_MISMATCH", expectedMime?, actualMimeType? }`.
@@ -186,6 +186,7 @@ Add helper option precedence/config tests:
 - `.nullable()` around a file helper resolves to `nullable: true` and serializes `file.emptyStringAsUnset: false` unless helper `required: false` is also present.
 - `.optional().nullable()` around a file helper without `required: false` serializes `required: false`, `nullable: true`, and `file.emptyStringAsUnset: false`.
 - `fieldTypes.file({ required: false, default: "6f6a8a6e-8d5b-4d5d-a4df-1b2a3c4d5e6f" })` is invalid schema config.
+- `fieldTypes.file({ required: false }).default("6f6a8a6e-8d5b-4d5d-a4df-1b2a3c4d5e6f")` is invalid schema config.
 - helper `default` and Zod `.default()` must agree when both are present.
 - helper or Zod defaults on file helpers must be raw media asset id strings.
 
@@ -355,7 +356,7 @@ const MIME_ACCEPT_PATTERN =
   /^[a-z0-9][a-z0-9!#$&^_.+-]*\/(\*|[a-z0-9][a-z0-9!#$&^_.+-]*)$/i;
 ```
 
-Trim, lowercase, de-duplicate, sort, and reject invalid entries with `invalidConfig("accept", "...")`. For image/video helpers, reject custom `accept` entries outside the preset family as invalid schema config; valid entries narrow within the preset. Validate helper `default` as a raw media asset id string, and reject helper config that sets both `required: false` and helper `default`. Add wrapper precedence validation so helper `required: false` serializes to an optional nullable snapshot with `file.emptyStringAsUnset: true`, `.optional()` can make helpers optional without enabling empty-string unset, `.nullable()` sets snapshot nullability without enabling empty-string unset, Zod `.default()` yields `required: false`, and helper/Zod defaults must agree when both are present.
+Trim, lowercase, de-duplicate, sort, and reject invalid entries with `invalidConfig("accept", "...")`. For image/video helpers, reject custom `accept` entries outside the preset family as invalid schema config; valid entries narrow within the preset. Validate helper `default` as a raw media asset id string, and reject config that combines helper `required: false` with either helper `default` or a Zod `.default()` wrapper. Add wrapper precedence validation so helper `required: false` serializes to an optional nullable snapshot with `file.emptyStringAsUnset: true`, `.optional()` can make helpers optional without enabling empty-string unset, `.nullable()` sets snapshot nullability without enabling empty-string unset, Zod `.default()` yields `required: false`, and helper/Zod defaults must agree when both are present.
 
 **Step 2: Extend parsed metadata helpers**
 
@@ -529,6 +530,7 @@ Cover:
 - missing asset id fails with `INVALID_INPUT`
 - helper default values are validated for asset existence and MIME compatibility when applied
 - Zod `.default()` values on file helpers are validated for asset existence and MIME compatibility when applied
+- applied helper and Zod defaults are materialized into normalized frontmatter as raw media asset id strings
 - `fieldTypes.image()` accepts `image/jpeg`
 - `fieldTypes.image()` rejects `application/pdf`
 - `fieldTypes.video({ accept: ["video/mp4"] })` accepts `video/mp4; charset=binary`
@@ -560,6 +562,7 @@ Configure the store with a media lookup that returns the test asset. Verify:
 - update fails with missing media id
 - optional file fields with `required: false` accept missing, `null`, and empty string values as unset, skip media lookup, and do not fail
 - helper and Zod default ids are validated when they are applied to the write payload
+- applied defaults are persisted in stored frontmatter and returned according to `fileFields`: raw id with `fileFields=raw`, expanded `MediaAsset` by default
 
 **Step 4: Run failing tests**
 
@@ -618,7 +621,9 @@ Run validation on schema-normalized/default-applied frontmatter when that object
 is available from the write path. If the write path only has raw frontmatter,
 explicitly apply file helper required/default semantics before media lookup so
 missing, `null`, and empty string required values fail and defaults are validated
-after they are applied.
+after they are applied. Store the normalized/default-applied frontmatter so file
+field defaults are materialized as raw media asset id strings before response
+shaping.
 
 If schema contains file fields and no lookup is configured, throw:
 
@@ -1095,6 +1100,7 @@ Assert raw unset values are accepted in editing state:
 - `null` is accepted when the snapshot is nullable
 - `""` is accepted when `file.emptyStringAsUnset: true`
 - descriptor/state generation preserves the exact raw value so saves can round-trip it
+- `null`, `undefined`, and `""` render as visually empty, but the raw value is preserved exactly unless the user changes it
 
 Add required file field descriptor tests:
 
@@ -1116,7 +1122,7 @@ Extend `ContentDocumentPropertyControl`:
 ```ts
 | {
     kind: "file";
-    value: string | undefined;
+    value: string | null | undefined;
     preset: "image" | "video" | "file";
     accept: string[];
     canUnset: boolean;
@@ -1201,7 +1207,7 @@ Component props:
 ```ts
 type MediaFieldControlProps = {
   fieldName: string;
-  value: string | undefined;
+  value: string | null | undefined;
   file: {
     preset: "image" | "video" | "file";
     accept: string[];
@@ -1217,7 +1223,9 @@ type MediaFieldControlProps = {
 };
 ```
 
-Use `mediaLibraryApi.get(value)` to load the selected asset preview.
+Use `mediaLibraryApi.get(value)` to load the selected asset preview only when
+`value` is a non-empty string. `null`, `undefined`, and `""` render as visually
+empty, but the raw value is preserved exactly unless the user changes it.
 
 Use existing media preview conventions:
 
