@@ -632,6 +632,44 @@ test("loadDraft rejects media resolve errors with unsupported codes", async () =
   );
 });
 
+test("loadDraft rejects media resolve error codes with ref-shaped entries", async () => {
+  const api = createNewMethodsApi({
+    fetcher: async () =>
+      new Response(
+        JSON.stringify({
+          data: {
+            ...validDocumentResponse.data,
+            frontmatter: {
+              author: null,
+            },
+            resolveErrors: {
+              "frontmatter.author": {
+                code: "MEDIA_NOT_FOUND",
+                message: "This is not a reference resolve error code.",
+                ref: {
+                  documentId: "author-1",
+                  type: "Author",
+                },
+              },
+            },
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+  });
+
+  await assert.rejects(
+    () =>
+      api.loadDraft({
+        type: "BlogPost",
+        documentId: "doc-1",
+      }),
+    (error: unknown) =>
+      error instanceof RuntimeError &&
+      error.code === "DOCUMENT_ROUTE_RESPONSE_INVALID",
+  );
+});
+
 test("updateDraft requests raw file fields and preserves raw unset values in request and response", async () => {
   const { fetcher, calls } = createMockFetcher([
     sessionResponse("csrf-abc"),

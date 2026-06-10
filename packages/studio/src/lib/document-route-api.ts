@@ -212,6 +212,10 @@ function isStringArray(value: unknown): value is string[] {
 
 function isReferenceResolveErrorEntry(entry: Record<string, unknown>): boolean {
   return (
+    (entry.code === "REFERENCE_NOT_FOUND" ||
+      entry.code === "REFERENCE_DELETED" ||
+      entry.code === "REFERENCE_TYPE_MISMATCH" ||
+      entry.code === "REFERENCE_FORBIDDEN") &&
     isRecord(entry.ref) &&
     isString(entry.ref.documentId) &&
     isString(entry.ref.type)
