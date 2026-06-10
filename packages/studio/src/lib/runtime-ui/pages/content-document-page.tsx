@@ -32,6 +32,7 @@ import {
   MdxPropsPanel,
   type MdxPropsPanelSelection,
 } from "../components/editor/mdx-props-panel.js";
+import { MediaFieldControl } from "../components/editor/media-field-picker.js";
 import {
   TipTapEditor,
   type TipTapEditorHandle,
@@ -85,8 +86,14 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "../lib/utils.js";
-import { createStudioMediaUploadApi } from "../lib/media-upload-api.js";
-import { createStudioMediaLibraryApi } from "../lib/media-library-api.js";
+import {
+  createStudioMediaUploadApi,
+  type StudioMediaUploadApi,
+} from "../lib/media-upload-api.js";
+import {
+  createStudioMediaLibraryApi,
+  type StudioMediaLibraryApi,
+} from "../lib/media-library-api.js";
 import {
   Select,
   SelectContent,
@@ -327,6 +334,8 @@ type ContentDocumentPageViewProps = {
   onCancelVariantCreation?: () => void;
   mediaUpload?: TipTapEditorMediaUploadState;
   mediaLibrary?: TipTapEditorMediaLibraryState;
+  fileFieldMediaUploadApi?: StudioMediaUploadApi | null;
+  fileFieldMediaLibraryApi?: Pick<StudioMediaLibraryApi, "get" | "list"> | null;
   aiSelection?: TipTapEditorSelectionInfo | null;
   onAiSelectionChange?: (selection: TipTapEditorSelectionInfo | null) => void;
   aiApi?: StudioAiRouteApi;
@@ -761,6 +770,8 @@ export function SidebarInfoTab(props: {
 function SidebarPropertiesTab(props: {
   state: ContentDocumentPageReadyState;
   onFrontmatterFieldChange?: (fieldName: string, value: unknown) => void;
+  fileFieldMediaUploadApi?: StudioMediaUploadApi | null;
+  fileFieldMediaLibraryApi?: Pick<StudioMediaLibraryApi, "get" | "list"> | null;
 }) {
   const propertyDescriptors = getPropertyDescriptors(props.state);
   const propertiesReadOnly =
@@ -901,6 +912,37 @@ function SidebarPropertiesTab(props: {
                               descriptor.control.canUnset
                               ? unsetFieldValue(descriptor.field)
                               : event.currentTarget.value,
+                          )
+                        }
+                      />
+                    ) : null}
+
+                    {descriptor.control.kind === "file" ? (
+                      <MediaFieldControl
+                        fieldName={descriptor.fieldName}
+                        value={descriptor.control.value}
+                        file={{
+                          preset: descriptor.control.preset,
+                          accept: descriptor.control.accept,
+                          emptyStringAsUnset:
+                            descriptor.field.file?.emptyStringAsUnset ?? false,
+                        }}
+                        canUnset={descriptor.control.canUnset}
+                        readOnly={propertiesReadOnly}
+                        canReadMedia={props.state.canReadMedia}
+                        canUploadMedia={props.state.canUploadMedia}
+                        mediaLibraryApi={props.fileFieldMediaLibraryApi ?? null}
+                        mediaUploadApi={props.fileFieldMediaUploadApi ?? null}
+                        onChange={(value) =>
+                          props.onFrontmatterFieldChange?.(
+                            descriptor.fieldName,
+                            value,
+                          )
+                        }
+                        onUnset={() =>
+                          props.onFrontmatterFieldChange?.(
+                            descriptor.fieldName,
+                            unsetFieldValue(descriptor.field),
                           )
                         }
                       />
@@ -1117,6 +1159,8 @@ function ContentDocumentPageSidebar(props: {
   context?: StudioMountContext;
   activeMdxComponent?: MdxPropsPanelSelection | null;
   onFrontmatterFieldChange?: (fieldName: string, value: unknown) => void;
+  fileFieldMediaUploadApi?: StudioMediaUploadApi | null;
+  fileFieldMediaLibraryApi?: Pick<StudioMediaLibraryApi, "get" | "list"> | null;
   onViewVersion?: (version: number) => void;
   onBackToDraft?: () => void;
   onClose?: () => void;
@@ -1188,6 +1232,8 @@ function ContentDocumentPageSidebar(props: {
           <SidebarPropertiesTab
             state={props.state}
             onFrontmatterFieldChange={props.onFrontmatterFieldChange}
+            fileFieldMediaUploadApi={props.fileFieldMediaUploadApi}
+            fileFieldMediaLibraryApi={props.fileFieldMediaLibraryApi}
           />
         ) : (
           <SidebarInfoTab state={props.state} />
@@ -1835,6 +1881,8 @@ function useContentDocumentPageViewElement({
   onCancelVariantCreation,
   mediaUpload,
   mediaLibrary,
+  fileFieldMediaUploadApi,
+  fileFieldMediaLibraryApi,
   aiSelection,
   onAiSelectionChange,
   aiApi,
@@ -2393,6 +2441,8 @@ function useContentDocumentPageViewElement({
                   context={context}
                   activeMdxComponent={activeMdxComponent}
                   onFrontmatterFieldChange={onFrontmatterFieldChange}
+                  fileFieldMediaUploadApi={fileFieldMediaUploadApi}
+                  fileFieldMediaLibraryApi={fileFieldMediaLibraryApi}
                   onViewVersion={onViewVersion}
                   onBackToDraft={onBackToDraft}
                   onClose={onToggleSidebar}
@@ -2409,6 +2459,8 @@ function useContentDocumentPageViewElement({
                   context={context}
                   activeMdxComponent={activeMdxComponent}
                   onFrontmatterFieldChange={onFrontmatterFieldChange}
+                  fileFieldMediaUploadApi={fileFieldMediaUploadApi}
+                  fileFieldMediaLibraryApi={fileFieldMediaLibraryApi}
                   onViewVersion={onViewVersion}
                   onBackToDraft={onBackToDraft}
                 />
@@ -3899,6 +3951,8 @@ function useContentDocumentPageController({
     onCancelVariantCreation: handleCancelVariantCreation,
     mediaUpload,
     mediaLibrary,
+    fileFieldMediaUploadApi: mediaUploadApi,
+    fileFieldMediaLibraryApi: mediaLibraryApi,
     editorRef,
     onViewVersion: (version) => {
       void handleViewVersion(version);

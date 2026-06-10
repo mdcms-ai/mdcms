@@ -251,6 +251,13 @@ export type ContentDocumentPropertyControl =
       value: unknown;
       options: unknown[];
       canUnset: boolean;
+    }
+  | {
+      kind: "file";
+      value: string | null | undefined;
+      preset: "image" | "video" | "file";
+      accept: string[];
+      canUnset: boolean;
     };
 
 export type ContentDocumentPropertyDescriptor = {
@@ -438,6 +445,10 @@ function canEditStringField(
   return value === undefined || value === null || typeof value === "string";
 }
 
+function canEditFileField(value: unknown): value is string | undefined | null {
+  return value === undefined || value === null || typeof value === "string";
+}
+
 function canEditNumberField(
   value: unknown,
 ): value is number | undefined | null {
@@ -484,6 +495,10 @@ function canEditSelectField(
 }
 
 function describePropertyFieldType(field: SchemaRegistryFieldSnapshot): string {
+  if (field.file) {
+    return `file:${field.file.preset}`;
+  }
+
   if (field.reference) {
     return `reference:${field.reference.targetType}`;
   }
@@ -503,6 +518,24 @@ function resolvePropertyDescriptor(input: {
   const error = input.state.fieldErrors?.[input.fieldName];
   const currentValue = input.state.draftFrontmatter[input.fieldName];
   const typeLabel = describePropertyFieldType(input.field);
+
+  if (input.field.file && canEditFileField(currentValue)) {
+    return {
+      fieldName: input.fieldName,
+      field: input.field,
+      typeLabel,
+      badgeLabel,
+      error,
+      status: "editable",
+      control: {
+        kind: "file",
+        value: currentValue,
+        preset: input.field.file.preset,
+        accept: input.field.file.accept,
+        canUnset: isUnsettableField(input.field),
+      },
+    };
+  }
 
   if (input.field.options && canEditSelectField(input.field, currentValue)) {
     return {
