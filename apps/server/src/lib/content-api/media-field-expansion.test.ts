@@ -272,6 +272,37 @@ test("nested object file fields expand with their full frontmatter path", async 
   assert.equal(expanded.resolveErrors, undefined);
 });
 
+test("nested object file field failures record the full frontmatter path", async () => {
+  const expanded = await applyMediaFieldExpansion({
+    schema: schema({
+      hero: {
+        kind: "object",
+        required: true,
+        nullable: false,
+        fields: {
+          image: fileField(),
+        },
+      },
+    }),
+    document: document({ hero: { image: imageAsset.id } }),
+    scope,
+    lookupMediaAsset: createLookup([]),
+    mode: "expanded",
+  });
+
+  assert.deepEqual(expanded.frontmatter.hero, { image: null });
+  assert.deepEqual(expanded.resolveErrors, {
+    "frontmatter.hero.image": {
+      code: "MEDIA_NOT_FOUND",
+      message:
+        "Media asset could not be resolved in the target project/environment.",
+      media: {
+        assetId: imageAsset.id,
+      },
+    },
+  });
+});
+
 test("arrays expand structurally", async () => {
   const expanded = await applyMediaFieldExpansion({
     schema: schema({

@@ -615,6 +615,22 @@ test("content API expands file fields by default and supports raw mode on reads"
   const invalid = (await invalidResponse.json()) as { code: string };
   assert.equal(invalidResponse.status, 400);
   assert.equal(invalid.code, "INVALID_QUERY_PARAM");
+
+  const emptyResponse = await handler(
+    new Request(
+      `http://localhost/api/v1/content/${article.documentId}?fileFields=`,
+      {
+        headers: scopeHeaders,
+      },
+    ),
+  );
+  const empty = (await emptyResponse.json()) as {
+    code: string;
+    details?: { field?: string };
+  };
+  assert.equal(emptyResponse.status, 400);
+  assert.equal(empty.code, "INVALID_QUERY_PARAM");
+  assert.equal(empty.details?.field, "fileFields");
 });
 
 test("content API merges unresolved reference and media resolve errors", async () => {

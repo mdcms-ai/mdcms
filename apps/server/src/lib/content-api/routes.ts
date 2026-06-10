@@ -133,7 +133,7 @@ function parseOverviewTypes(request: Request): string[] {
 function parseFileFieldReadMode(request: Request): FileFieldReadMode {
   const value = new URL(request.url).searchParams.get("fileFields");
 
-  if (value === null || value === "" || value === "expanded") {
+  if (value === null || value === "expanded") {
     return "expanded";
   }
 
