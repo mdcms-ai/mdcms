@@ -261,12 +261,8 @@ export function SettingsMediaPanel({
                 Enforcement
               </p>
               <p className="mt-3 text-sm text-foreground">
-                No file-type allowlist is enforced. The configured limit applies
-                only when the uploaded MIME type starts with{" "}
-                <code className="rounded-sm bg-code-bg px-1.5 py-0.5 font-mono text-[12px]">
-                  image/
-                </code>
-                .
+                This setting only controls the application-level byte cap for
+                image uploads.
               </p>
               <p className="mt-2 text-sm text-foreground-muted">
                 Infrastructure and proxy limits can still reject uploads before

@@ -10,3 +10,6 @@
 
 # Migrated historical plans — preserve original formatting
 /.ai/plans/
+
+# External design handoff — preserve upstream bundle verbatim
+/.ai/research/2026-06-09-studio-media-design-handoff/

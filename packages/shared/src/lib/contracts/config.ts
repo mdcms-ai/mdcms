@@ -8,7 +8,11 @@ import { RuntimeError } from "../runtime/error.js";
 export const IMPLICIT_DEFAULT_LOCALE = "__mdcms_default__" as const;
 
 const REFERENCE_METADATA_KEY = "mdcms:reference";
+const FILE_METADATA_KEY = "mdcms:file";
+const FILE_HELPER_DEFAULT_METADATA_KEY = "mdcms:file-helper-default";
 const ENVIRONMENT_TARGETS_METADATA_KEY = "mdcms:environmentTargets";
+const MIME_ACCEPT_PATTERN =
+  /^[a-z0-9][a-z0-9!#$&^_.+-]*\/(\*|[a-z0-9][a-z0-9!#$&^_.+-]*)$/i;
 
 declare module "zod" {
   interface ZodType<
@@ -50,6 +54,28 @@ export type StandardSchemaLike<Input = unknown, Output = Input> = {
 export type MdcmsReferenceMetadata = {
   targetType: string;
 };
+
+export type MdcmsFileFieldPreset = "image" | "video" | "file";
+
+export type MdcmsFileFieldMetadata = {
+  preset: MdcmsFileFieldPreset;
+  accept: string[];
+  emptyStringAsUnset: boolean;
+};
+
+export type MdcmsFileFieldOptions = {
+  accept?: string[];
+  required?: boolean;
+  default?: string;
+};
+
+type MdcmsPlainFileFieldSchema = z.ZodString;
+type MdcmsOptionalFileFieldSchema = z.ZodNullable<z.ZodOptional<z.ZodString>>;
+type MdcmsDefaultFileFieldSchema = z.ZodDefault<z.ZodString>;
+type MdcmsConcreteFileFieldSchema =
+  | MdcmsPlainFileFieldSchema
+  | MdcmsOptionalFileFieldSchema
+  | MdcmsDefaultFileFieldSchema;
 
 export type MdcmsFieldSchema = StandardSchemaLike;
 
@@ -202,7 +228,7 @@ export function defineType<
   };
 }
 
-export function reference(targetType: string) {
+function createReferenceField(targetType: string) {
   const normalizedTargetType = parseRequiredString(targetType, "targetType");
 
   return z.string().meta({
@@ -211,6 +237,147 @@ export function reference(targetType: string) {
     },
   });
 }
+
+function createFileField(
+  preset: MdcmsFileFieldPreset,
+  options: MdcmsFileFieldOptions = {},
+): MdcmsConcreteFileFieldSchema {
+  const accept = normalizeAccept(
+    options.accept,
+    `fieldTypes.${preset}.accept`,
+    preset,
+  );
+  const required = options.required ?? true;
+  const helperDefault =
+    options.default === undefined
+      ? undefined
+      : parseMediaAssetId(options.default, `fieldTypes.${preset}.default`);
+
+  if (!required && helperDefault !== undefined) {
+    throw invalidConfig(
+      `fieldTypes.${preset}`,
+      "must not combine `required: false` with a helper default.",
+    );
+  }
+
+  const schema = z.string().meta({
+    [FILE_METADATA_KEY]: {
+      preset,
+      accept,
+      emptyStringAsUnset: !required,
+    } satisfies MdcmsFileFieldMetadata,
+  });
+
+  if (!required) {
+    return schema.optional().nullable();
+  }
+
+  if (helperDefault !== undefined) {
+    return withSchemaMetadata(schema.default(helperDefault), {
+      [FILE_HELPER_DEFAULT_METADATA_KEY]: helperDefault,
+    });
+  }
+
+  return schema;
+}
+
+type FileFieldFactory = {
+  (): MdcmsPlainFileFieldSchema;
+  (
+    options: Omit<MdcmsFileFieldOptions, "required" | "default"> & {
+      required?: true | undefined;
+      default?: undefined;
+    },
+  ): MdcmsPlainFileFieldSchema;
+  (
+    options: Omit<MdcmsFileFieldOptions, "default"> & {
+      required: false;
+      default?: undefined;
+    },
+  ): MdcmsOptionalFileFieldSchema;
+  (
+    options: Omit<MdcmsFileFieldOptions, "required"> & {
+      required?: true | undefined;
+      default: string;
+    },
+  ): MdcmsDefaultFileFieldSchema;
+};
+
+function createImageField(): MdcmsPlainFileFieldSchema;
+function createImageField(
+  options: Omit<MdcmsFileFieldOptions, "required" | "default"> & {
+    required?: true | undefined;
+    default?: undefined;
+  },
+): MdcmsPlainFileFieldSchema;
+function createImageField(
+  options: Omit<MdcmsFileFieldOptions, "default"> & {
+    required: false;
+    default?: undefined;
+  },
+): MdcmsOptionalFileFieldSchema;
+function createImageField(
+  options: Omit<MdcmsFileFieldOptions, "required"> & {
+    required?: true | undefined;
+    default: string;
+  },
+): MdcmsDefaultFileFieldSchema;
+function createImageField(options: MdcmsFileFieldOptions = {}) {
+  return createFileField("image", options);
+}
+
+function createVideoField(): MdcmsPlainFileFieldSchema;
+function createVideoField(
+  options: Omit<MdcmsFileFieldOptions, "required" | "default"> & {
+    required?: true | undefined;
+    default?: undefined;
+  },
+): MdcmsPlainFileFieldSchema;
+function createVideoField(
+  options: Omit<MdcmsFileFieldOptions, "default"> & {
+    required: false;
+    default?: undefined;
+  },
+): MdcmsOptionalFileFieldSchema;
+function createVideoField(
+  options: Omit<MdcmsFileFieldOptions, "required"> & {
+    required?: true | undefined;
+    default: string;
+  },
+): MdcmsDefaultFileFieldSchema;
+function createVideoField(options: MdcmsFileFieldOptions = {}) {
+  return createFileField("video", options);
+}
+
+function createGenericFileField(): MdcmsPlainFileFieldSchema;
+function createGenericFileField(
+  options: Omit<MdcmsFileFieldOptions, "required" | "default"> & {
+    required?: true | undefined;
+    default?: undefined;
+  },
+): MdcmsPlainFileFieldSchema;
+function createGenericFileField(
+  options: Omit<MdcmsFileFieldOptions, "default"> & {
+    required: false;
+    default?: undefined;
+  },
+): MdcmsOptionalFileFieldSchema;
+function createGenericFileField(
+  options: Omit<MdcmsFileFieldOptions, "required"> & {
+    required?: true | undefined;
+    default: string;
+  },
+): MdcmsDefaultFileFieldSchema;
+function createGenericFileField(options: MdcmsFileFieldOptions = {}) {
+  return createFileField("file", options);
+}
+
+export const fieldTypes = {
+  reference: createReferenceField,
+  image: createImageField as FileFieldFactory,
+  video: createVideoField as FileFieldFactory,
+  file: createGenericFileField as FileFieldFactory,
+} as const;
 
 /**
  * readSupportedLocales safely extracts the set of supported locale codes
@@ -1007,9 +1174,83 @@ function findReferenceMetadata(
   return undefined;
 }
 
+function withSchemaMetadata<TSchema extends z.ZodType>(
+  schema: TSchema,
+  metadata: Record<string, unknown>,
+): TSchema {
+  const existingMetadata = readSchemaMetadata(schema as object);
+
+  return schema.meta({
+    ...(isPlainObject(existingMetadata) ? existingMetadata : {}),
+    ...metadata,
+  }) as TSchema;
+}
+
 function readSchemaMetadata(value: object): unknown {
   const candidate = value as { meta?: () => unknown };
   return typeof candidate.meta === "function" ? candidate.meta() : undefined;
+}
+
+function normalizeAccept(
+  value: unknown,
+  field: string,
+  preset: MdcmsFileFieldPreset,
+): string[] {
+  if (value === undefined) {
+    return [];
+  }
+
+  if (!Array.isArray(value)) {
+    throw invalidConfig(field, "must be an array of MIME type strings.");
+  }
+
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+
+  value.forEach((entry, index) => {
+    const acceptValue = parseRequiredString(
+      entry,
+      `${field}[${index}]`,
+    ).toLowerCase();
+
+    if (!MIME_ACCEPT_PATTERN.test(acceptValue)) {
+      throw invalidConfig(
+        `${field}[${index}]`,
+        "must be a valid MIME type or wildcard.",
+      );
+    }
+
+    if (preset !== "file" && !acceptValue.startsWith(`${preset}/`)) {
+      throw invalidConfig(
+        `${field}[${index}]`,
+        `must stay within the ${preset}/* MIME family.`,
+      );
+    }
+
+    if (seen.has(acceptValue)) {
+      return;
+    }
+
+    seen.add(acceptValue);
+    normalized.push(acceptValue);
+  });
+
+  return normalized.sort((left, right) => left.localeCompare(right));
+}
+
+function parseMediaAssetId(value: unknown, field: string): string {
+  const mediaAssetId = parseRequiredString(value, field);
+
+  if (
+    mediaAssetId.includes("://") ||
+    mediaAssetId.startsWith("/") ||
+    mediaAssetId.startsWith("./") ||
+    mediaAssetId.startsWith("../")
+  ) {
+    throw invalidConfig(field, "must be a raw media asset id string.");
+  }
+
+  return mediaAssetId;
 }
 
 function isStandardSchemaLike(value: unknown): value is MdcmsFieldSchema {

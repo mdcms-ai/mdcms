@@ -473,6 +473,156 @@ test("bulkOperation uses Authorization and omits CSRF bootstrap in token auth mo
   assert.equal(result.results[1]?.status, "failed");
 });
 
+test("bulkOperation accepts succeeded documents with media resolve errors", async () => {
+  const api = createApi({
+    auth: { mode: "token", token: "mdcms_key_test" },
+    fetcher: async () =>
+      new Response(
+        JSON.stringify({
+          data: {
+            ...validBulkResponse.data,
+            requested: 1,
+            succeeded: 1,
+            failed: 0,
+            results: [
+              {
+                documentId: "doc-1",
+                status: "succeeded",
+                document: {
+                  ...validPaginatedResponse.data[0],
+                  frontmatter: { title: "Hello", heroImage: null },
+                  resolveErrors: {
+                    "frontmatter.heroImage": {
+                      code: "MEDIA_TYPE_MISMATCH",
+                      message: "Media asset MIME type does not match.",
+                      media: {
+                        assetId: "07ebb057-eeab-4849-94e4-2162cb921c8e",
+                        expectedMime: ["image/*"],
+                        actualMimeType: "application/pdf",
+                      },
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+  });
+
+  const result = await api.bulkOperation({
+    action: "publish",
+    documentIds: ["doc-1"],
+  });
+
+  const firstResult = result.results[0];
+  assert.equal(firstResult?.status, "succeeded");
+  assert.equal(
+    firstResult?.status === "succeeded"
+      ? firstResult.document.resolveErrors?.["frontmatter.heroImage"]?.code
+      : undefined,
+    "MEDIA_TYPE_MISMATCH",
+  );
+});
+
+test("bulkOperation rejects media resolve errors with unsupported codes", async () => {
+  const api = createApi({
+    auth: { mode: "token", token: "mdcms_key_test" },
+    fetcher: async () =>
+      new Response(
+        JSON.stringify({
+          data: {
+            ...validBulkResponse.data,
+            requested: 1,
+            succeeded: 1,
+            failed: 0,
+            results: [
+              {
+                documentId: "doc-1",
+                status: "succeeded",
+                document: {
+                  ...validPaginatedResponse.data[0],
+                  frontmatter: { title: "Hello", heroImage: null },
+                  resolveErrors: {
+                    "frontmatter.heroImage": {
+                      code: "REFERENCE_NOT_FOUND",
+                      message: "This is not a media resolve error code.",
+                      media: {
+                        assetId: "07ebb057-eeab-4849-94e4-2162cb921c8e",
+                      },
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+  });
+
+  await assert.rejects(
+    () =>
+      api.bulkOperation({
+        action: "publish",
+        documentIds: ["doc-1"],
+      }),
+    (error: unknown) =>
+      error instanceof RuntimeError &&
+      error.code === "CONTENT_LIST_RESPONSE_INVALID",
+  );
+});
+
+test("bulkOperation rejects media resolve error codes with ref-shaped entries", async () => {
+  const api = createApi({
+    auth: { mode: "token", token: "mdcms_key_test" },
+    fetcher: async () =>
+      new Response(
+        JSON.stringify({
+          data: {
+            ...validBulkResponse.data,
+            requested: 1,
+            succeeded: 1,
+            failed: 0,
+            results: [
+              {
+                documentId: "doc-1",
+                status: "succeeded",
+                document: {
+                  ...validPaginatedResponse.data[0],
+                  frontmatter: { title: "Hello", author: null },
+                  resolveErrors: {
+                    "frontmatter.author": {
+                      code: "MEDIA_NOT_FOUND",
+                      message: "This is not a reference resolve error code.",
+                      ref: {
+                        documentId: "author-1",
+                        type: "Author",
+                      },
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+  });
+
+  await assert.rejects(
+    () =>
+      api.bulkOperation({
+        action: "publish",
+        documentIds: ["doc-1"],
+      }),
+    (error: unknown) =>
+      error instanceof RuntimeError &&
+      error.code === "CONTENT_LIST_RESPONSE_INVALID",
+  );
+});
+
 test("bulkOperation throws RuntimeError when cookie auth session lacks CSRF token", async () => {
   const api = createApi({
     auth: { mode: "cookie" },

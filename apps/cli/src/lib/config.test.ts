@@ -34,7 +34,7 @@ async function writeConfigFile(source: string): Promise<{
 
 test("loadCliConfig parses helper-based config files into the normalized CLI shape", async () => {
   const { cwd, cleanup } = await writeConfigFile(`
-    import { defineConfig, defineType, reference } from "${SHARED_SOURCE_IMPORT}";
+    import { defineConfig, defineType, fieldTypes } from "${SHARED_SOURCE_IMPORT}";
 
     const stringField = {
       "~standard": {
@@ -72,7 +72,7 @@ test("loadCliConfig parses helper-based config files into the normalized CLI sha
           localized: true,
           fields: {
             title: stringField,
-            author: reference("Author"),
+            author: fieldTypes.reference("Author"),
           },
         }),
       ],

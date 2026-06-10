@@ -76,15 +76,15 @@ When a content type has no resolver, or the server is not configured to mint pre
 
 The Fields tab generates form controls based on your schema field definitions. Each Zod type maps to a specific UI control:
 
-| Schema type           | Form control    | Notes                                                 |
-| --------------------- | --------------- | ----------------------------------------------------- |
-| `z.string()`          | Text input      | Supports `.min()` / `.max()` validation               |
-| `z.number()`          | Number input    |                                                       |
-| `z.boolean()`         | Toggle switch   |                                                       |
-| `z.enum([...])`       | Dropdown select | Options derived from enum values                      |
-| `z.coerce.date()`     | Date picker     | Calendar popover with formatted display               |
-| `z.array(z.string())` | Tag input       | Type and press Enter to add tags; click to remove     |
-| `reference("Type")`   | Document picker | Select from existing documents of the referenced type |
+| Schema type                    | Form control    | Notes                                                 |
+| ------------------------------ | --------------- | ----------------------------------------------------- |
+| `z.string()`                   | Text input      | Supports `.min()` / `.max()` validation               |
+| `z.number()`                   | Number input    |                                                       |
+| `z.boolean()`                  | Toggle switch   |                                                       |
+| `z.enum([...])`                | Dropdown select | Options derived from enum values                      |
+| `z.coerce.date()`              | Date picker     | Calendar popover with formatted display               |
+| `z.array(z.string())`          | Tag input       | Type and press Enter to add tags; click to remove     |
+| `fieldTypes.reference("Type")` | Document picker | Select from existing documents of the referenced type |
 
 <Accordion title="What about unsupported types?">
   Complex or nested Zod types that don't map to a standard control display a

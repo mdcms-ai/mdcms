@@ -1,4 +1,4 @@
-import { defineConfig, defineType, reference } from "@mdcms/cli";
+import { defineConfig, defineType, fieldTypes } from "@mdcms/cli";
 import { z } from "zod";
 
 import {
@@ -18,7 +18,7 @@ const post = defineType("post", {
     slug: z.string().min(1),
     featured: z.boolean().default(false).env("staging"),
     abTestVariant: z.string().min(1).optional().env("staging"),
-    author: reference("author").optional(),
+    author: fieldTypes.reference("author").optional(),
   },
 });
 

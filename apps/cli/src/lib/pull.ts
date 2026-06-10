@@ -118,6 +118,7 @@ function encodeScopeQuery(input: {
   query.set("draft", input.draft ? "true" : "false");
   query.set("limit", String(input.limit));
   query.set("offset", String(input.offset));
+  query.set("fileFields", "raw");
   return query.toString();
 }
 

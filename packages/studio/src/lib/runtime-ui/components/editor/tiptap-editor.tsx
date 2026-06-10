@@ -47,6 +47,7 @@ import type { Mappable } from "@tiptap/pm/transform";
 
 import {
   Bold,
+  Check,
   ChevronsDownUp,
   ChevronsUpDown,
   Code,
@@ -65,6 +66,7 @@ import {
   Quote,
   Redo,
   RefreshCw,
+  Search,
   Strikethrough,
   Table2,
   Trash2,
@@ -138,7 +140,12 @@ import {
   stripBlockMarkers,
 } from "./tiptap-editor-utils.js";
 import { Button } from "../ui/button.js";
-import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover.js";
+import {
+  Popover,
+  PopoverAnchor,
+  PopoverContent,
+  PopoverTrigger,
+} from "../ui/popover.js";
 import { Separator } from "../ui/separator.js";
 import { cn } from "../../lib/utils.js";
 
@@ -673,7 +680,7 @@ function preventMediaPickerButtonMouseDown(
   event.preventDefault();
 }
 
-function MediaImagePickerView({
+export function MediaImagePickerView({
   id,
   state,
   canBrowse,
@@ -694,14 +701,38 @@ function MediaImagePickerView({
   onUpload: () => void;
   onRetry: () => void;
 }) {
+  const [query, setQuery] = useState("");
+  const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
+  const visibleAssets = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+
+    if (normalizedQuery.length === 0) {
+      return state.assets;
+    }
+
+    return state.assets.filter((asset) =>
+      asset.filename.toLowerCase().includes(normalizedQuery),
+    );
+  }, [query, state.assets]);
+  const selectedAsset =
+    state.assets.find((asset) => asset.id === selectedAssetId) ?? null;
   const showAssets = canBrowse && state.assets.length > 0;
+
+  useEffect(() => {
+    if (
+      selectedAssetId !== null &&
+      !state.assets.some((asset) => asset.id === selectedAssetId)
+    ) {
+      setSelectedAssetId(null);
+    }
+  }, [selectedAssetId, state.assets]);
 
   return (
     <div id={id} className="space-y-3">
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate text-sm font-medium text-foreground">
-            Image library
+            Insert image
           </p>
         </div>
         <Button
@@ -714,7 +745,7 @@ function MediaImagePickerView({
           className="shrink-0 gap-1.5"
         >
           <Upload className="size-3.5" />
-          <span>Upload new</span>
+          <span>Upload</span>
         </Button>
       </div>
 
@@ -746,30 +777,86 @@ function MediaImagePickerView({
           No images in the library yet.
         </p>
       ) : (
-        <div className="grid max-h-72 grid-cols-2 gap-2 overflow-y-auto pr-1">
-          {state.assets.map((asset) => (
-            <button
-              key={asset.id}
+        <>
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-foreground-muted" />
+            <input
+              aria-label="Search image library"
+              className="h-8 w-full rounded-md border border-border bg-background px-8 text-xs text-foreground outline-none transition-colors placeholder:text-foreground-muted focus:border-primary/50 focus:ring-2 focus:ring-primary/20"
+              placeholder="Search images..."
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+          </div>
+
+          {visibleAssets.length === 0 ? (
+            <p className="rounded-md border border-border bg-muted px-3 py-2 text-xs text-foreground-muted">
+              No images match that search.
+            </p>
+          ) : (
+            <div className="grid max-h-72 grid-cols-2 gap-2 overflow-y-auto pr-1">
+              {visibleAssets.map((asset) => {
+                const selected = selectedAsset?.id === asset.id;
+
+                return (
+                  <button
+                    key={asset.id}
+                    type="button"
+                    aria-pressed={selected}
+                    aria-label={`Select ${asset.filename}`}
+                    title={asset.filename}
+                    onMouseDown={preventMediaPickerButtonMouseDown}
+                    onClick={() => setSelectedAssetId(asset.id)}
+                    className={[
+                      "group min-w-0 rounded-md border bg-background p-1 text-left transition-colors hover:border-primary/40 hover:bg-accent-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+                      selected
+                        ? "border-primary ring-1 ring-primary/30"
+                        : "border-border",
+                    ].join(" ")}
+                  >
+                    <span className="relative block aspect-[4/3] overflow-hidden rounded-sm bg-muted">
+                      <img
+                        src={asset.url}
+                        alt=""
+                        className="h-full w-full object-cover transition-transform group-hover:scale-[1.02]"
+                      />
+                      {selected ? (
+                        <span
+                          aria-hidden="true"
+                          className="absolute right-2 top-2 flex size-5 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm"
+                        >
+                          <Check className="size-3" />
+                        </span>
+                      ) : null}
+                    </span>
+                    <span className="mt-1 block truncate px-0.5 text-xs text-foreground-muted">
+                      {asset.filename}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          <div className="flex items-center justify-between gap-3 border-t border-border pt-3">
+            <span className="text-xs text-foreground-muted">
+              {selectedAsset ? "1 selected" : "Select one image"}
+            </span>
+            <Button
               type="button"
-              aria-label={`Insert ${asset.filename}`}
-              title={asset.filename}
+              size="sm"
+              disabled={!selectedAsset}
               onMouseDown={preventMediaPickerButtonMouseDown}
-              onClick={() => onSelect(asset)}
-              className="group min-w-0 rounded-md border border-border bg-background p-1 text-left transition-colors hover:border-primary/40 hover:bg-accent-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+              onClick={() => {
+                if (selectedAsset) {
+                  onSelect(selectedAsset);
+                }
+              }}
             >
-              <span className="block aspect-[4/3] overflow-hidden rounded-sm bg-muted">
-                <img
-                  src={asset.url}
-                  alt=""
-                  className="h-full w-full object-cover transition-transform group-hover:scale-[1.02]"
-                />
-              </span>
-              <span className="mt-1 block truncate px-0.5 text-xs text-foreground-muted">
-                {asset.filename}
-              </span>
-            </button>
-          ))}
-        </div>
+              Insert
+            </Button>
+          </div>
+        </>
       )}
     </div>
   );
@@ -1057,6 +1144,14 @@ function useTipTapEditorElement({
   const [linkPopoverOpen, setLinkPopoverOpen] = useState(false);
   const [linkInputValue, setLinkInputValue] = useState("");
   const [mediaPickerOpen, setMediaPickerOpen] = useState(false);
+  // When the picker is opened to change an existing image, anchor it to that
+  // image's on-screen rect instead of the toolbar button so it opens inline.
+  const [mediaPickerAnchorRect, setMediaPickerAnchorRect] = useState<{
+    top: number;
+    left: number;
+    width: number;
+    height: number;
+  } | null>(null);
   const [mediaPickerState, setMediaPickerState] =
     useState<MediaImagePickerState>(INITIAL_MEDIA_IMAGE_PICKER_STATE);
   // While the user drags an MDX component handle, the browser's default
@@ -1569,6 +1664,7 @@ function useTipTapEditorElement({
 
   const closeMediaPicker = useCallback(() => {
     mediaPickerInsertionTargetRef.current = null;
+    setMediaPickerAnchorRect(null);
     setMediaPickerOpen(false);
   }, []);
 
@@ -1666,6 +1762,7 @@ function useTipTapEditorElement({
 
       mediaPickerInsertionTargetRef.current =
         createCurrentMediaInsertionTarget();
+      setMediaPickerAnchorRect(null);
       setMediaPickerOpen(true);
     },
     [closeMediaPicker, createCurrentMediaInsertionTarget, isMediaPickerEnabled],
@@ -1720,6 +1817,20 @@ function useTipTapEditorElement({
         kind: "selection",
         bookmark: editor.state.selection.getBookmark(),
       };
+
+      const nodeDom = editor.view.nodeDOM(position);
+      if (nodeDom instanceof HTMLElement) {
+        const rect = nodeDom.getBoundingClientRect();
+        setMediaPickerAnchorRect({
+          top: rect.top,
+          left: rect.left,
+          width: rect.width,
+          height: rect.height,
+        });
+      } else {
+        setMediaPickerAnchorRect(null);
+      }
+
       setMediaPickerOpen(true);
     },
     [editor, isMediaPickerEnabled],
@@ -2867,6 +2978,21 @@ function useTipTapEditorElement({
                         <PopoverTrigger asChild>
                           <div>{imageToolbarButton}</div>
                         </PopoverTrigger>
+                        {mediaPickerAnchorRect ? (
+                          <PopoverAnchor asChild>
+                            <div
+                              aria-hidden="true"
+                              style={{
+                                position: "fixed",
+                                top: mediaPickerAnchorRect.top,
+                                left: mediaPickerAnchorRect.left,
+                                width: mediaPickerAnchorRect.width,
+                                height: mediaPickerAnchorRect.height,
+                                pointerEvents: "none",
+                              }}
+                            />
+                          </PopoverAnchor>
+                        ) : null}
                         <PopoverContent
                           className="w-80 p-3"
                           side="bottom"

@@ -251,6 +251,13 @@ export type ContentDocumentPropertyControl =
       value: unknown;
       options: unknown[];
       canUnset: boolean;
+    }
+  | {
+      kind: "file";
+      value: string | null | undefined;
+      preset: "image" | "video" | "file";
+      accept: string[];
+      canUnset: boolean;
     };
 
 export type ContentDocumentPropertyDescriptor = {
@@ -361,13 +368,9 @@ function clearFieldError(
   return Object.keys(nextErrors).length > 0 ? nextErrors : undefined;
 }
 
-function mapErrorToFrontmatterField(error: unknown): string | undefined {
-  if (!(error instanceof RuntimeError) || !isRecord(error.details)) {
-    return undefined;
-  }
-
-  const candidate = error.details.field;
-
+function normalizeFrontmatterFieldCandidate(
+  candidate: unknown,
+): string | undefined {
   if (typeof candidate !== "string" || candidate.trim().length === 0) {
     return undefined;
   }
@@ -380,6 +383,25 @@ function mapErrorToFrontmatterField(error: unknown): string | undefined {
   const [fieldName] = normalized.split(/[.[\]]/, 1);
 
   return fieldName?.trim().length ? fieldName : undefined;
+}
+
+function mapErrorToFrontmatterField(error: unknown): string | undefined {
+  if (!(error instanceof RuntimeError) || !isRecord(error.details)) {
+    return undefined;
+  }
+
+  const directField = normalizeFrontmatterFieldCandidate(error.details.field);
+
+  if (directField) {
+    return directField;
+  }
+
+  const payload = error.details.payload;
+  const payloadDetails = isRecord(payload) ? payload.details : undefined;
+
+  return isRecord(payloadDetails)
+    ? normalizeFrontmatterFieldCandidate(payloadDetails.field)
+    : undefined;
 }
 
 function isUnsettableField(field: SchemaRegistryFieldSnapshot): boolean {
@@ -438,6 +460,10 @@ function canEditStringField(
   return value === undefined || value === null || typeof value === "string";
 }
 
+function canEditFileField(value: unknown): value is string | undefined | null {
+  return value === undefined || value === null || typeof value === "string";
+}
+
 function canEditNumberField(
   value: unknown,
 ): value is number | undefined | null {
@@ -484,6 +510,10 @@ function canEditSelectField(
 }
 
 function describePropertyFieldType(field: SchemaRegistryFieldSnapshot): string {
+  if (field.file) {
+    return `file:${field.file.preset}`;
+  }
+
   if (field.reference) {
     return `reference:${field.reference.targetType}`;
   }
@@ -503,6 +533,24 @@ function resolvePropertyDescriptor(input: {
   const error = input.state.fieldErrors?.[input.fieldName];
   const currentValue = input.state.draftFrontmatter[input.fieldName];
   const typeLabel = describePropertyFieldType(input.field);
+
+  if (input.field.file && canEditFileField(currentValue)) {
+    return {
+      fieldName: input.fieldName,
+      field: input.field,
+      typeLabel,
+      badgeLabel,
+      error,
+      status: "editable",
+      control: {
+        kind: "file",
+        value: currentValue,
+        preset: input.field.file.preset,
+        accept: input.field.file.accept,
+        canUnset: isUnsettableField(input.field),
+      },
+    };
+  }
 
   if (input.field.options && canEditSelectField(input.field, currentValue)) {
     return {

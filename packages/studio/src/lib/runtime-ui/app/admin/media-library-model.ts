@@ -36,7 +36,7 @@ export type MediaLibraryEmptyState =
   | {
       kind: "empty";
       title: "No media yet";
-      description: "Uploaded media assets will appear here.";
+      description: "Drop files here or use Upload media to add assets.";
     }
   | {
       kind: "no-match";
@@ -135,6 +135,6 @@ export function deriveMediaLibraryEmptyState(
   return {
     kind: "empty",
     title: "No media yet",
-    description: "Uploaded media assets will appear here.",
+    description: "Drop files here or use Upload media to add assets.",
   };
 }

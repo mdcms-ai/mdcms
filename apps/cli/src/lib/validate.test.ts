@@ -76,6 +76,61 @@ test("validateFrontmatter returns error for kind mismatch", () => {
   assert.equal(result.errors[0]!.includes("string"), true);
 });
 
+test("validateFrontmatter accepts raw schema file field ids as strings", () => {
+  const schema: SchemaRegistryTypeSnapshot = {
+    type: "Post",
+    directory: "content/posts",
+    localized: false,
+    fields: {
+      primaryImage: {
+        kind: "string",
+        required: true,
+        nullable: false,
+        file: { preset: "image", accept: [], emptyStringAsUnset: false },
+      },
+    },
+  };
+
+  const result = validateFrontmatter(
+    { primaryImage: "07ebb057-eeab-4849-94e4-2162cb921c8e" },
+    schema,
+  );
+
+  assert.equal(result.errors.length, 0);
+  assert.equal(result.warnings.length, 0);
+});
+
+test("validateFrontmatter rejects expanded schema file field objects", () => {
+  const schema: SchemaRegistryTypeSnapshot = {
+    type: "Post",
+    directory: "content/posts",
+    localized: false,
+    fields: {
+      primaryImage: {
+        kind: "string",
+        required: true,
+        nullable: false,
+        file: { preset: "image", accept: [], emptyStringAsUnset: false },
+      },
+    },
+  };
+
+  const result = validateFrontmatter(
+    {
+      primaryImage: {
+        id: "07ebb057-eeab-4849-94e4-2162cb921c8e",
+        mimeType: "image/png",
+      },
+    },
+    schema,
+  );
+
+  assert.equal(result.errors.length, 1);
+  assert.equal(result.errors[0]!.includes("primaryImage"), true);
+  assert.equal(result.errors[0]!.includes('expected kind "string"'), true);
+  assert.equal(result.errors[0]!.includes("object"), true);
+});
+
 test("validateFrontmatter returns error for null on non-nullable field", () => {
   const schema: SchemaRegistryTypeSnapshot = {
     type: "Post",

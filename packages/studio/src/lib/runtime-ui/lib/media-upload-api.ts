@@ -22,8 +22,26 @@ export type StudioMediaUploadApiOptions = {
   fetcher?: typeof fetch;
 };
 
+export type StudioMediaUploadProgress = {
+  loaded: number;
+  total: number;
+};
+
+export type StudioMediaUploadOptions = {
+  /**
+   * Receives byte-level upload progress when the request runs over
+   * `XMLHttpRequest`. When the request falls back to `fetch` (an injected
+   * `fetcher`, no `XMLHttpRequest`), it fires once at start (`0`) and once on a
+   * successful response (`total`) so callers still see begin/end transitions.
+   */
+  onProgress?: (progress: StudioMediaUploadProgress) => void;
+};
+
 export type StudioMediaUploadApi = {
-  upload: (file: File) => Promise<MediaAsset>;
+  upload: (
+    file: File,
+    options?: StudioMediaUploadOptions,
+  ) => Promise<MediaAsset>;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -115,6 +133,88 @@ function requireMutationCsrfToken(
   return csrfToken;
 }
 
+function createNetworkError(operation: string): RuntimeError {
+  return new RuntimeError({
+    code: "MEDIA_UPLOAD_REQUEST_FAILED",
+    message: "Media upload request failed.",
+    statusCode: 0,
+    details: { operation },
+  });
+}
+
+/**
+ * Sends the multipart upload over `XMLHttpRequest` so that
+ * `xhr.upload.onprogress` can report byte-level progress, then normalizes the
+ * result into a `Response` so the success/error handling matches the fetch
+ * path exactly. Auth is derived from {@link applyStudioAuthToRequestInit} and
+ * translated to XHR (`withCredentials` for cookie auth, request headers for
+ * token auth and routing). The browser sets the multipart `content-type`.
+ */
+function uploadWithXhr(input: {
+  operation: string;
+  url: URL;
+  init: RequestInit;
+  body: FormData;
+  onProgress: (progress: StudioMediaUploadProgress) => void;
+}): Promise<Response> {
+  return new Promise<Response>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", input.url.toString(), true);
+
+    if (input.init.credentials === "include") {
+      xhr.withCredentials = true;
+    }
+
+    const headers = input.init.headers;
+    if (headers && !(headers instanceof Headers) && !Array.isArray(headers)) {
+      for (const [name, value] of Object.entries(
+        headers as Record<string, string>,
+      )) {
+        xhr.setRequestHeader(name, value);
+      }
+    }
+
+    if (xhr.upload) {
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable) {
+          input.onProgress({ loaded: event.loaded, total: event.total });
+        }
+      };
+    }
+
+    xhr.onload = () => {
+      // status 0 means the request never completed (network/CORS); a Response
+      // cannot be constructed with status 0, so surface it as a network error.
+      if (xhr.status === 0) {
+        reject(createNetworkError(input.operation));
+        return;
+      }
+      resolve(
+        new Response(xhr.responseText || null, {
+          status: xhr.status,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    };
+    xhr.onerror = () => reject(createNetworkError(input.operation));
+    xhr.onabort = () => reject(createNetworkError(input.operation));
+    xhr.ontimeout = () => reject(createNetworkError(input.operation));
+
+    xhr.send(input.body);
+  });
+}
+
+function canUseXhrProgress(
+  options: StudioMediaUploadApiOptions,
+  uploadOptions: StudioMediaUploadOptions | undefined,
+): uploadOptions is Required<Pick<StudioMediaUploadOptions, "onProgress">> {
+  return (
+    typeof uploadOptions?.onProgress === "function" &&
+    options.fetcher === undefined &&
+    typeof XMLHttpRequest !== "undefined"
+  );
+}
+
 export function createStudioMediaUploadApi(
   config: StudioMediaUploadApiConfig,
   options: StudioMediaUploadApiOptions = {},
@@ -122,7 +222,7 @@ export function createStudioMediaUploadApi(
   const fetcher = options.fetcher ?? fetch;
 
   return {
-    async upload(file) {
+    async upload(file, uploadOptions) {
       const operation = "POST /api/v1/media/upload";
       const csrfToken = requireMutationCsrfToken(options);
       const url = resolveStudioRelativeUrl(
@@ -131,17 +231,35 @@ export function createStudioMediaUploadApi(
       );
       const body = new FormData();
       body.set("file", file);
-
-      const response = await fetcher(
-        url,
-        applyStudioAuthToRequestInit(options.auth, {
-          method: "POST",
-          headers: createScopedHeaders(config, {
-            "x-mdcms-csrf-token": csrfToken,
-          }),
-          body,
+      const init = applyStudioAuthToRequestInit(options.auth, {
+        method: "POST",
+        headers: createScopedHeaders(config, {
+          "x-mdcms-csrf-token": csrfToken,
         }),
-      );
+        body,
+      });
+
+      let response: Response;
+      if (canUseXhrProgress(options, uploadOptions)) {
+        try {
+          response = await uploadWithXhr({
+            operation,
+            url,
+            init,
+            body,
+            onProgress: uploadOptions.onProgress,
+          });
+        } catch {
+          // The XHR transport (used for byte-level progress) failed at the
+          // network layer. Retry once over fetch, which is the baseline upload
+          // path, so progress reporting never costs us a working upload.
+          uploadOptions.onProgress({ loaded: 0, total: file.size });
+          response = await fetcher(url, init);
+        }
+      } else {
+        uploadOptions?.onProgress?.({ loaded: 0, total: file.size });
+        response = await fetcher(url, init);
+      }
       const payload = await readResponsePayload(response);
 
       if (!response.ok) {
@@ -149,7 +267,7 @@ export function createStudioMediaUploadApi(
           operation,
           response,
           payload,
-          "Media upload request failed.",
+          `Media upload failed (HTTP ${response.status}).`,
         );
       }
 
@@ -158,6 +276,8 @@ export function createStudioMediaUploadApi(
       } catch {
         throw toInvalidResponseError(operation, payload);
       }
+
+      uploadOptions?.onProgress?.({ loaded: file.size, total: file.size });
 
       return payload.data;
     },

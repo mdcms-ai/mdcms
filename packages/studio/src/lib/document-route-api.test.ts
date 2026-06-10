@@ -97,7 +97,7 @@ test("loadStudioDocumentDraft fetches draft content with scoped headers", async 
   assert.equal(calls.length, 1);
   assert.equal(
     String(calls[0]?.input),
-    "http://localhost:4000/api/v1/content/11111111-1111-4111-8111-111111111111?draft=true",
+    "http://localhost:4000/api/v1/content/11111111-1111-4111-8111-111111111111?draft=true&fileFields=raw",
   );
   assert.equal(readHeader(calls[0]?.init, "x-mdcms-project"), "marketing-site");
   assert.equal(readHeader(calls[0]?.init, "x-mdcms-environment"), "staging");
@@ -134,7 +134,7 @@ test("cookie-authenticated mutations bootstrap CSRF from auth/session", async ()
 
       assert.equal(
         String(input),
-        "http://localhost:4000/api/v1/content/11111111-1111-4111-8111-111111111111",
+        "http://localhost:4000/api/v1/content/11111111-1111-4111-8111-111111111111?fileFields=raw",
       );
       assert.equal(readHeader(init, "x-mdcms-csrf-token"), "csrf-cookie-token");
       assert.equal(readHeader(init, "x-mdcms-schema-hash"), "schema-hash-123");
@@ -207,7 +207,7 @@ test("token-authenticated mutations do not bootstrap CSRF", async () => {
 
       assert.equal(
         String(input),
-        "http://localhost:4000/api/v1/content/11111111-1111-4111-8111-111111111111/publish",
+        "http://localhost:4000/api/v1/content/11111111-1111-4111-8111-111111111111/publish?fileFields=raw",
       );
       assert.equal(readHeader(init, "authorization"), "Bearer mdcms_key_test");
       assert.equal(readHeader(init, "x-mdcms-csrf-token"), null);
@@ -358,7 +358,7 @@ test("cookie-authenticated mutations preserve a path-prefixed studio serverUrl",
 
         assert.equal(
           String(input),
-          "http://localhost:4000/review-api/editor/api/v1/content/11111111-1111-4111-8111-111111111111",
+          "http://localhost:4000/review-api/editor/api/v1/content/11111111-1111-4111-8111-111111111111?fileFields=raw",
         );
         assert.equal(
           readHeader(init, "x-mdcms-csrf-token"),
@@ -415,7 +415,7 @@ test("cookie-authenticated mutations preserve a path-prefixed studio serverUrl",
     calls.map((call) => String(call.input)),
     [
       "http://localhost:4000/review-api/editor/api/v1/auth/session",
-      "http://localhost:4000/review-api/editor/api/v1/content/11111111-1111-4111-8111-111111111111",
+      "http://localhost:4000/review-api/editor/api/v1/content/11111111-1111-4111-8111-111111111111?fileFields=raw",
     ],
   );
 });
@@ -547,6 +547,204 @@ const validDocumentResponse = {
   },
 };
 
+test("loadDraft preserves raw unset file field values and accepts media resolve errors", async () => {
+  const calls: Array<{ input: string | URL | Request; init?: RequestInit }> =
+    [];
+  const api = createNewMethodsApi({
+    fetcher: async (input, init) => {
+      calls.push({ input, init });
+      return new Response(
+        JSON.stringify({
+          data: {
+            ...validDocumentResponse.data,
+            frontmatter: {
+              nullableFile: null,
+              emptyStringFile: "",
+              missingMedia: null,
+            },
+            resolveErrors: {
+              "frontmatter.missingMedia": {
+                code: "MEDIA_NOT_FOUND",
+                message: "Media asset was not found.",
+                media: {
+                  assetId: "07ebb057-eeab-4849-94e4-2162cb921c8e",
+                },
+              },
+            },
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    },
+  });
+
+  const result = await api.loadDraft({
+    type: "BlogPost",
+    documentId: "doc-1",
+    locale: "en",
+  });
+
+  const url = new URL(String(calls[0]?.input));
+  assert.equal(url.searchParams.get("draft"), "true");
+  assert.equal(url.searchParams.get("fileFields"), "raw");
+  assert.equal(result.frontmatter.nullableFile, null);
+  assert.equal(result.frontmatter.emptyStringFile, "");
+  assert.equal(
+    result.resolveErrors?.["frontmatter.missingMedia"]?.code,
+    "MEDIA_NOT_FOUND",
+  );
+});
+
+test("loadDraft rejects media resolve errors with unsupported codes", async () => {
+  const api = createNewMethodsApi({
+    fetcher: async () =>
+      new Response(
+        JSON.stringify({
+          data: {
+            ...validDocumentResponse.data,
+            frontmatter: {
+              heroImage: null,
+            },
+            resolveErrors: {
+              "frontmatter.heroImage": {
+                code: "REFERENCE_NOT_FOUND",
+                message: "This is not a media resolve error code.",
+                media: {
+                  assetId: "07ebb057-eeab-4849-94e4-2162cb921c8e",
+                },
+              },
+            },
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+  });
+
+  await assert.rejects(
+    () =>
+      api.loadDraft({
+        type: "BlogPost",
+        documentId: "doc-1",
+      }),
+    (error: unknown) =>
+      error instanceof RuntimeError &&
+      error.code === "DOCUMENT_ROUTE_RESPONSE_INVALID",
+  );
+});
+
+test("loadDraft rejects media resolve error codes with ref-shaped entries", async () => {
+  const api = createNewMethodsApi({
+    fetcher: async () =>
+      new Response(
+        JSON.stringify({
+          data: {
+            ...validDocumentResponse.data,
+            frontmatter: {
+              author: null,
+            },
+            resolveErrors: {
+              "frontmatter.author": {
+                code: "MEDIA_NOT_FOUND",
+                message: "This is not a reference resolve error code.",
+                ref: {
+                  documentId: "author-1",
+                  type: "Author",
+                },
+              },
+            },
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+  });
+
+  await assert.rejects(
+    () =>
+      api.loadDraft({
+        type: "BlogPost",
+        documentId: "doc-1",
+      }),
+    (error: unknown) =>
+      error instanceof RuntimeError &&
+      error.code === "DOCUMENT_ROUTE_RESPONSE_INVALID",
+  );
+});
+
+test("updateDraft requests raw file fields and preserves raw unset values in request and response", async () => {
+  const { fetcher, calls } = createMockFetcher([
+    sessionResponse("csrf-abc"),
+    new Response(
+      JSON.stringify({
+        data: {
+          ...validDocumentResponse.data,
+          frontmatter: {
+            nullableFile: null,
+            emptyStringFile: "",
+          },
+        },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    ),
+  ]);
+  const api = createNewMethodsApi({ auth: { mode: "cookie" }, fetcher });
+
+  const result = await api.updateDraft({
+    documentId: "doc-1",
+    payload: {
+      type: "BlogPost",
+      frontmatter: {
+        nullableFile: null,
+        emptyStringFile: "",
+      },
+      body: "# Hello",
+    },
+  });
+
+  const updateUrl = new URL(String(calls[1]?.input));
+  assert.equal(updateUrl.pathname, "/api/v1/content/doc-1");
+  assert.equal(updateUrl.searchParams.get("fileFields"), "raw");
+  assert.deepEqual(readJsonBody(calls[1]?.init), {
+    type: "BlogPost",
+    frontmatter: {
+      nullableFile: null,
+      emptyStringFile: "",
+    },
+    body: "# Hello",
+  });
+  assert.equal(result.frontmatter.nullableFile, null);
+  assert.equal(result.frontmatter.emptyStringFile, "");
+});
+
+test("restoreVersion requests raw file fields and preserves raw response frontmatter", async () => {
+  const { fetcher, calls } = createMockFetcher([
+    sessionResponse("csrf-abc"),
+    new Response(
+      JSON.stringify({
+        data: {
+          ...validDocumentResponse.data,
+          frontmatter: {
+            nullableFile: null,
+            emptyStringFile: "",
+          },
+        },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    ),
+  ]);
+  const api = createNewMethodsApi({ auth: { mode: "cookie" }, fetcher });
+
+  const result = await api.restoreVersion({
+    documentId: "doc-1",
+    version: 3,
+  });
+
+  const restoreUrl = new URL(String(calls[1]?.input));
+  assert.equal(restoreUrl.pathname, "/api/v1/content/doc-1/versions/3/restore");
+  assert.equal(restoreUrl.searchParams.get("fileFields"), "raw");
+  assert.equal(result.frontmatter.nullableFile, null);
+  assert.equal(result.frontmatter.emptyStringFile, "");
+});
+
 function createNewMethodsApi(options: StudioDocumentRouteApiOptions = {}) {
   return createStudioDocumentRouteApi(newMethodsConfig, options);
 }
@@ -586,7 +784,9 @@ test("create sends POST /api/v1/content with payload and CSRF token", async () =
   assert.equal(result.documentId, "doc-1");
   assert.equal(calls.length, 2);
   const createCall = calls[1];
-  assert.ok(String(createCall?.input).endsWith("/api/v1/content"));
+  const createUrl = new URL(String(createCall?.input));
+  assert.equal(createUrl.pathname, "/api/v1/content");
+  assert.equal(createUrl.searchParams.get("fileFields"), "raw");
   assert.equal(createCall?.init?.method, "POST");
   const body = JSON.parse(createCall?.init?.body as string);
   assert.equal(body.type, "BlogPost");
@@ -637,7 +837,9 @@ test("softDelete sends DELETE /api/v1/content/:documentId", async () => {
 
   assert.equal(result.documentId, "doc-1");
   const deleteCall = calls[1];
-  assert.ok(String(deleteCall?.input).endsWith("/api/v1/content/doc-1"));
+  const deleteUrl = new URL(String(deleteCall?.input));
+  assert.equal(deleteUrl.pathname, "/api/v1/content/doc-1");
+  assert.equal(deleteUrl.searchParams.get("fileFields"), "raw");
   assert.equal(deleteCall?.init?.method, "DELETE");
   assert.equal(readHeader(deleteCall?.init, "x-mdcms-csrf-token"), "csrf-abc");
 });
@@ -669,9 +871,9 @@ test("restore sends POST /api/v1/content/:documentId/restore with CSRF token", a
 
   assert.equal(result.documentId, "doc-1");
   const restoreCall = calls[1];
-  assert.ok(
-    String(restoreCall?.input).endsWith("/api/v1/content/doc-1/restore"),
-  );
+  const restoreUrl = new URL(String(restoreCall?.input));
+  assert.equal(restoreUrl.pathname, "/api/v1/content/doc-1/restore");
+  assert.equal(restoreUrl.searchParams.get("fileFields"), "raw");
   assert.equal(restoreCall?.init?.method, "POST");
   assert.equal(readHeader(restoreCall?.init, "x-mdcms-csrf-token"), "csrf-abc");
 });
@@ -687,11 +889,9 @@ test("restoreVersion sends POST /api/v1/content/:documentId/versions/:version/re
 
   assert.equal(result.documentId, "doc-1");
   const restoreCall = calls[1];
-  assert.ok(
-    String(restoreCall?.input).endsWith(
-      "/api/v1/content/doc-1/versions/3/restore",
-    ),
-  );
+  const restoreUrl = new URL(String(restoreCall?.input));
+  assert.equal(restoreUrl.pathname, "/api/v1/content/doc-1/versions/3/restore");
+  assert.equal(restoreUrl.searchParams.get("fileFields"), "raw");
   assert.equal(restoreCall?.init?.method, "POST");
   assert.equal(readHeader(restoreCall?.init, "x-mdcms-csrf-token"), "csrf-abc");
   // Default body is empty — server defaults targetStatus to "draft", so the

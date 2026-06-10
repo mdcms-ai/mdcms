@@ -6,6 +6,7 @@ import { z } from "zod";
 import {
   defineConfig,
   defineType,
+  fieldTypes,
   parseMdcmsConfig,
   RuntimeError,
   type MdcmsFieldSchema,
@@ -340,16 +341,20 @@ function buildRawConfig(input: {
   types: InferredType[];
   localeConfig: LocaleConfig | null;
 }): unknown {
+  const parseReferenceTarget = (zodType: string): string | undefined => {
+    const match = /^(?:fieldTypes\.)?reference\((["'])(.+)\1\)$/.exec(zodType);
+    return match?.[2];
+  };
+
   const zodFields = (
     fields: Record<string, { zodType: string; optional: boolean }>,
   ) => {
     const result: Record<string, MdcmsFieldSchema> = {};
     for (const [name, field] of Object.entries(fields)) {
       let schema: MdcmsFieldSchema;
-      if (field.zodType.startsWith("reference(")) {
-        // For parseMdcmsConfig, we need Standard Schema-compatible validators
-        // Use z.string() as a stand-in for references
-        schema = z.string();
+      const referenceTarget = parseReferenceTarget(field.zodType);
+      if (referenceTarget !== undefined) {
+        schema = fieldTypes.reference(referenceTarget);
       } else if (field.zodType === "z.string()") {
         schema = z.string();
       } else if (field.zodType === "z.number()") {

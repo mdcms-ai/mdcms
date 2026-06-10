@@ -434,8 +434,15 @@ test("SettingsPageView renders media settings ready state with backend semantics
 
   assert.match(markup, /data-mdcms-settings-media-state="ready"/);
   assert.match(markup, /Image upload limit/);
-  assert.match(markup, /No file-type allowlist/);
-  assert.match(markup, /image\//);
+  assert.doesNotMatch(markup, /No file-type allowlist/i);
+  assert.match(
+    markup,
+    /This setting only controls the application-level byte cap for image uploads\./,
+  );
+  assert.match(
+    markup,
+    /Infrastructure and proxy limits can still reject uploads before MDCMS sees them\./,
+  );
   assert.match(markup, /10,485,760 bytes/);
   assert.match(markup, /Save changes/);
   assert.match(markup, /role="status"/);

@@ -151,7 +151,10 @@ test("detects reference fields when field name matches another type", () => {
   const result = inferSchema(files, ["content/posts", "content/authors"]);
 
   const postType = result.find((t) => t.name === "post")!;
-  assert.equal(postType.fields["author"]!.zodType, 'reference("author")');
+  assert.equal(
+    postType.fields["author"]!.zodType,
+    'fieldTypes.reference("author")',
+  );
 });
 
 test("ignores files outside selected directories", () => {

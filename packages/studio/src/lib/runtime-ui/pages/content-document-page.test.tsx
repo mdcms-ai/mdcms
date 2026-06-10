@@ -35,6 +35,7 @@ import {
   createContentDocumentRouteRequestToken,
   createContentDocumentPageState,
   filterLocaleOptions,
+  getPropertyDescriptors,
   loadContentDocumentPageState,
   loadContentDocumentVersionDiff,
   matchesContentDocumentRouteRequestToken,
@@ -124,6 +125,23 @@ function renderInfoTabMarkup(
   state: ReturnType<typeof createReadyState>,
 ): string {
   return renderToStaticMarkup(createElement(SidebarInfoTab, { state }));
+}
+
+function getPropertyFieldMarkup(markup: string, fieldName: string): string {
+  const fieldMarker = `data-mdcms-property-field="${fieldName}"`;
+  const start = markup.indexOf(fieldMarker);
+
+  assert.notEqual(start, -1, `expected ${fieldMarker} in markup`);
+
+  const nextFieldStart = markup.indexOf(
+    "data-mdcms-property-field=",
+    start + fieldMarker.length,
+  );
+
+  return markup.slice(
+    start,
+    nextFieldStart === -1 ? undefined : nextFieldStart,
+  );
 }
 
 function createReadyState(
@@ -1321,6 +1339,46 @@ test("saveContentDocumentReadyState anchors mapped frontmatter validation failur
   assert.equal(next.saveState, "unsaved");
 });
 
+test("saveContentDocumentReadyState anchors wrapped media-required route failures to the file field", async () => {
+  const initial = reduceContentDocumentPageReadyState(createReadyState(), {
+    type: "frontmatterFieldChanged",
+    fieldName: "primaryImage",
+    value: "",
+  });
+
+  const next = await saveContentDocumentReadyState({
+    api: {
+      updateDraft: async () => {
+        throw new RuntimeError({
+          code: "INVALID_INPUT",
+          message: "A media asset is required.",
+          statusCode: 400,
+          details: {
+            operation: "PUT /api/v1/content/:documentId",
+            status: 400,
+            payload: {
+              code: "INVALID_INPUT",
+              message: "A media asset is required.",
+              details: {
+                field: "frontmatter.primaryImage",
+                reason: "MEDIA_REQUIRED",
+              },
+            },
+          },
+        });
+      },
+    },
+    route: createRouteContext(),
+    state: initial,
+  });
+
+  assert.equal(next.mutationError, undefined);
+  assert.deepEqual(next.fieldErrors, {
+    primaryImage: "A media asset is required.",
+  });
+  assert.equal(next.saveState, "unsaved");
+});
+
 test("saveContentDocumentReadyState surfaces forbidden routed draft updates without pretending the draft persisted", async () => {
   const initial = reduceContentDocumentPageReadyState(createReadyState(), {
     type: "draftChanged",
@@ -2456,6 +2514,403 @@ test("ContentDocumentPageView renders environment-specific field badges inline w
   assert.match(markup, /data-mdcms-property-type="string"/);
   assert.match(markup, />abTestVariant</);
   assert.match(markup, /preview, staging/);
+});
+
+test("getPropertyDescriptors exposes editable schema file controls for raw media asset ids", () => {
+  const state = createReadyState({
+    schemaState: createReadySchemaState({
+      entries: [
+        createSchemaEntry({
+          primaryImage: {
+            kind: "string",
+            required: false,
+            nullable: true,
+            file: {
+              preset: "image",
+              accept: [],
+              emptyStringAsUnset: true,
+            },
+          },
+        }),
+      ],
+    }),
+    draftFrontmatter: {
+      primaryImage: "07ebb057-eeab-4849-94e4-2162cb921c8e",
+    },
+  });
+
+  const [descriptor] = getPropertyDescriptors(state);
+
+  assert.equal(descriptor?.fieldName, "primaryImage");
+  assert.equal(descriptor?.status, "editable");
+  assert.equal(descriptor?.typeLabel, "file:image");
+  assert.equal(
+    descriptor?.status === "editable" && descriptor.control.kind,
+    "file",
+  );
+  assert.deepEqual(
+    descriptor?.status === "editable" ? descriptor.control : undefined,
+    {
+      kind: "file",
+      value: "07ebb057-eeab-4849-94e4-2162cb921c8e",
+      preset: "image",
+      accept: [],
+      canUnset: true,
+    },
+  );
+});
+
+test("getPropertyDescriptors rejects expanded media objects for schema file controls", () => {
+  const state = createReadyState({
+    schemaState: createReadySchemaState({
+      entries: [
+        createSchemaEntry({
+          primaryImage: {
+            kind: "string",
+            required: false,
+            nullable: true,
+            file: {
+              preset: "image",
+              accept: [],
+              emptyStringAsUnset: true,
+            },
+          },
+        }),
+      ],
+    }),
+    draftFrontmatter: {
+      primaryImage: {
+        id: "07ebb057-eeab-4849-94e4-2162cb921c8e",
+        url: "https://cdn.example.com/hero.png",
+      },
+    },
+  });
+
+  const [descriptor] = getPropertyDescriptors(state);
+
+  assert.equal(descriptor?.status, "unsupported");
+  assert.equal(descriptor?.typeLabel, "file:image");
+});
+
+test("getPropertyDescriptors preserves raw unset schema file values", () => {
+  for (const value of [undefined, null, ""] as const) {
+    const draftFrontmatter: Record<string, unknown> = {};
+    if (value !== undefined) {
+      draftFrontmatter.primaryImage = value;
+    }
+    const state = createReadyState({
+      schemaState: createReadySchemaState({
+        entries: [
+          createSchemaEntry({
+            primaryImage: {
+              kind: "string",
+              required: false,
+              nullable: true,
+              file: {
+                preset: "image",
+                accept: [],
+                emptyStringAsUnset: true,
+              },
+            },
+          }),
+        ],
+      }),
+      draftFrontmatter,
+    });
+
+    const [descriptor] = getPropertyDescriptors(state);
+
+    assert.equal(descriptor?.status, "editable");
+    assert.equal(
+      descriptor?.status === "editable" && descriptor.control.kind,
+      "file",
+    );
+    assert.equal(
+      descriptor?.status === "editable" && descriptor.control.kind === "file"
+        ? descriptor.control.value
+        : "unexpected",
+      value,
+    );
+  }
+});
+
+test("getPropertyDescriptors marks required schema file controls as not unsettable", () => {
+  const state = createReadyState({
+    schemaState: createReadySchemaState({
+      entries: [
+        createSchemaEntry({
+          attachment: {
+            kind: "string",
+            required: true,
+            nullable: false,
+            file: {
+              preset: "file",
+              accept: ["application/pdf"],
+              emptyStringAsUnset: false,
+            },
+          },
+        }),
+      ],
+    }),
+    draftFrontmatter: {
+      attachment: "07ebb057-eeab-4849-94e4-2162cb921c8e",
+    },
+  });
+
+  const [descriptor] = getPropertyDescriptors(state);
+
+  assert.equal(descriptor?.status, "editable");
+  assert.equal(
+    descriptor?.status === "editable" && descriptor.control.kind,
+    "file",
+  );
+  assert.equal(
+    descriptor?.status === "editable" && descriptor.control.kind === "file"
+      ? descriptor.control.canUnset
+      : true,
+    false,
+  );
+});
+
+test("ContentDocumentPageView renders schema file field editors with writable media actions", () => {
+  const state = createReadyState({
+    canReadMedia: true,
+    canUploadMedia: true,
+    schemaState: createReadySchemaState({
+      entries: [
+        createSchemaEntry({
+          primaryImage: {
+            kind: "string",
+            required: false,
+            nullable: true,
+            file: {
+              preset: "image",
+              accept: [],
+              emptyStringAsUnset: true,
+            },
+          },
+        }),
+      ],
+    }),
+    draftFrontmatter: {
+      primaryImage: "07ebb057-eeab-4849-94e4-2162cb921c8e",
+    },
+  });
+
+  const markup = renderPageMarkup(state, {
+    sidebarOpen: true,
+    fileFieldMediaLibraryApi: {
+      get: async () => ({
+        id: "07ebb057-eeab-4849-94e4-2162cb921c8e",
+        project: "marketing-site",
+        filename: "hero.png",
+        mimeType: "image/png",
+        sizeBytes: 1200,
+        url: "https://cdn.example.com/hero.png",
+        uploadedBy: "editor@example.com",
+        uploadedAt: "2026-06-01T12:00:00.000Z",
+      }),
+      list: async () => ({
+        data: [],
+        pagination: { total: 0, limit: 12, offset: 0, hasMore: false },
+      }),
+    },
+    fileFieldMediaUploadApi: {
+      upload: async () => ({
+        id: "07ebb057-eeab-4849-94e4-2162cb921c8e",
+        project: "marketing-site",
+        filename: "hero.png",
+        mimeType: "image/png",
+        sizeBytes: 1200,
+        url: "https://cdn.example.com/hero.png",
+        uploadedBy: "editor@example.com",
+        uploadedAt: "2026-06-01T12:00:00.000Z",
+      }),
+    },
+  } as any);
+  const fieldMarkup = getPropertyFieldMarkup(markup, "primaryImage");
+
+  assert.match(fieldMarkup, /data-mdcms-property-field="primaryImage"/);
+  assert.match(fieldMarkup, /data-mdcms-property-type="file:image"/);
+  assert.match(fieldMarkup, /data-mdcms-property-editor="file"/);
+  assert.match(fieldMarkup, /07ebb057-eeab-4849-94e4-2162cb921c8e/);
+  assert.match(fieldMarkup, /Browse media/);
+  assert.match(fieldMarkup, /Upload media/);
+});
+
+test("ContentDocumentPageView renders unset action only for optional set schema file fields", () => {
+  const state = createReadyState({
+    canReadMedia: true,
+    schemaState: createReadySchemaState({
+      entries: [
+        createSchemaEntry({
+          primaryImage: {
+            kind: "string",
+            required: false,
+            nullable: true,
+            file: {
+              preset: "image",
+              accept: [],
+              emptyStringAsUnset: true,
+            },
+          },
+          requiredAttachment: {
+            kind: "string",
+            required: true,
+            nullable: false,
+            file: {
+              preset: "file",
+              accept: ["application/pdf"],
+              emptyStringAsUnset: false,
+            },
+          },
+        }),
+      ],
+    }),
+    draftFrontmatter: {
+      primaryImage: "07ebb057-eeab-4849-94e4-2162cb921c8e",
+      requiredAttachment: "08ebb057-eeab-4849-94e4-2162cb921c8e",
+    },
+  });
+
+  const markup = renderPageMarkup(state, {
+    sidebarOpen: true,
+    fileFieldMediaLibraryApi: {
+      get: async (id: string) => ({
+        id,
+        project: "marketing-site",
+        filename: "asset.bin",
+        mimeType: "application/octet-stream",
+        sizeBytes: 1200,
+        url: "https://cdn.example.com/asset.bin",
+        uploadedBy: "editor@example.com",
+        uploadedAt: "2026-06-01T12:00:00.000Z",
+      }),
+      list: async () => ({
+        data: [],
+        pagination: { total: 0, limit: 12, offset: 0, hasMore: false },
+      }),
+    },
+  } as any);
+  const optionalMarkup = getPropertyFieldMarkup(markup, "primaryImage");
+  const requiredMarkup = getPropertyFieldMarkup(markup, "requiredAttachment");
+
+  assert.match(optionalMarkup, /aria-label="Unset primaryImage"/);
+  assert.doesNotMatch(requiredMarkup, /aria-label="Unset requiredAttachment"/);
+});
+
+test("ContentDocumentPageView hides schema file media actions without media capabilities or writable draft state", () => {
+  const state = createReadyState({
+    canReadMedia: false,
+    canUploadMedia: false,
+    schemaState: createReadySchemaState({
+      entries: [
+        createSchemaEntry({
+          primaryImage: {
+            kind: "string",
+            required: false,
+            nullable: true,
+            file: {
+              preset: "image",
+              accept: [],
+              emptyStringAsUnset: true,
+            },
+          },
+        }),
+      ],
+    }),
+    draftFrontmatter: {
+      primaryImage: "07ebb057-eeab-4849-94e4-2162cb921c8e",
+    },
+  });
+
+  const noMediaMarkup = renderPageMarkup(state, {
+    sidebarOpen: true,
+    fileFieldMediaLibraryApi: {
+      get: async () => {
+        throw new Error("not used");
+      },
+      list: async () => {
+        throw new Error("not used");
+      },
+    },
+    fileFieldMediaUploadApi: {
+      upload: async () => {
+        throw new Error("not used");
+      },
+    },
+  } as any);
+  const readOnlyMarkup = renderPageMarkup(
+    {
+      ...state,
+      canReadMedia: true,
+      canUploadMedia: true,
+      canWrite: false,
+    },
+    {
+      sidebarOpen: true,
+      fileFieldMediaLibraryApi: {
+        get: async () => {
+          throw new Error("not used");
+        },
+        list: async () => {
+          throw new Error("not used");
+        },
+      },
+      fileFieldMediaUploadApi: {
+        upload: async () => {
+          throw new Error("not used");
+        },
+      },
+    } as any,
+  );
+  const noMediaFieldMarkup = getPropertyFieldMarkup(
+    noMediaMarkup,
+    "primaryImage",
+  );
+  const readOnlyFieldMarkup = getPropertyFieldMarkup(
+    readOnlyMarkup,
+    "primaryImage",
+  );
+
+  assert.doesNotMatch(noMediaFieldMarkup, /Browse media/);
+  assert.doesNotMatch(noMediaFieldMarkup, /Upload media/);
+  assert.doesNotMatch(readOnlyFieldMarkup, /Browse media/);
+  assert.doesNotMatch(readOnlyFieldMarkup, /Upload media/);
+  assert.doesNotMatch(readOnlyFieldMarkup, /aria-label="Unset primaryImage"/);
+});
+
+test("ContentDocumentPageView anchors server schema file field errors under the file editor", () => {
+  const state = createReadyState({
+    fieldErrors: {
+      primaryImage: "A media asset is required.",
+    },
+    schemaState: createReadySchemaState({
+      entries: [
+        createSchemaEntry({
+          primaryImage: {
+            kind: "string",
+            required: true,
+            nullable: false,
+            file: {
+              preset: "image",
+              accept: [],
+              emptyStringAsUnset: false,
+            },
+          },
+        }),
+      ],
+    }),
+    draftFrontmatter: {
+      primaryImage: "",
+    },
+  });
+
+  const markup = renderPageMarkup(state, { sidebarOpen: true });
+
+  assert.match(markup, /data-mdcms-property-editor="file"/);
+  assert.match(markup, /data-mdcms-property-error="primaryImage"/);
+  assert.match(markup, /A media asset is required\./);
 });
 
 test("ContentDocumentPageView renders schema-driven property controls and unsupported fallback rows", () => {

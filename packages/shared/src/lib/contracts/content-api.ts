@@ -16,7 +16,7 @@ export type ApiPaginatedEnvelope<T> = {
   pagination: PaginationMetadata;
 };
 
-export type ContentResolveError = {
+export type ContentReferenceResolveError = {
   code:
     | "REFERENCE_NOT_FOUND"
     | "REFERENCE_DELETED"
@@ -28,6 +28,20 @@ export type ContentResolveError = {
     type: string;
   };
 };
+
+export type ContentMediaResolveError = {
+  code: "MEDIA_NOT_FOUND" | "MEDIA_TYPE_MISMATCH";
+  message: string;
+  media: {
+    assetId: string;
+    expectedMime?: string[];
+    actualMimeType?: string;
+  };
+};
+
+export type ContentResolveError =
+  | ContentReferenceResolveError
+  | ContentMediaResolveError;
 
 export type ResolveErrorsMap = Record<string, ContentResolveError>;
 

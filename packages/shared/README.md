@@ -14,7 +14,7 @@ npm install @mdcms/shared
 
 ### Config Authoring
 
-- `defineConfig`, `defineType`, `reference` — Content schema authoring helpers
+- `defineConfig`, `defineType`, `fieldTypes` — Content schema authoring helpers
 - `parseMdcmsConfig` — Config validator and normalizer
 
 ### Content and Schema Contracts

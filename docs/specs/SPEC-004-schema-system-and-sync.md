@@ -2,7 +2,7 @@
 status: live
 canonical: true
 created: 2026-03-11
-last_updated: 2026-03-31
+last_updated: 2026-06-09
 ---
 
 # SPEC-004 Schema System and Sync
@@ -17,7 +17,7 @@ Developers define content types in `mdcms.config.ts` using Standard Schema with 
 
 ```typescript
 // mdcms.config.ts
-import { defineConfig, defineType, reference } from "@mdcms/cli";
+import { defineConfig, defineType, fieldTypes } from "@mdcms/cli";
 import { z } from "zod";
 
 export default defineConfig({
@@ -45,7 +45,7 @@ export default defineConfig({
         title: z.string().min(1).max(200),
         slug: z.string().regex(/^[a-z0-9-]+$/),
         excerpt: z.string().max(500).optional(),
-        author: reference("Author"),
+        author: fieldTypes.reference("Author"),
         tags: z.array(z.string()).default([]),
         coverImage: z.string().url().optional(),
         publishedAt: z.date().optional(),
@@ -87,6 +87,88 @@ export default defineConfig({
   ],
 });
 ```
+
+**Field type built-ins:**
+
+Schema built-ins are imported through `fieldTypes`:
+
+- `fieldTypes.reference(targetType)` stores an environment-local document id string.
+- `fieldTypes.image(options?)` stores a media asset id string and requires `mimeType` to start with `image/`.
+- `fieldTypes.video(options?)` stores a media asset id string and requires `mimeType` to start with `video/`.
+- `fieldTypes.file(options?)` stores a media asset id string and accepts any media asset unless narrowed by `options.accept`.
+
+`fieldTypes.image()`, `fieldTypes.video()`, and `fieldTypes.file()` accept helper options:
+
+```typescript
+type FileFieldOptions = {
+  accept?: string[];
+  required?: boolean;
+  default?: string;
+};
+```
+
+- `accept` is an array of MIME values or MIME wildcards such as `image/png`, `video/*`, or `application/pdf`. It never accepts category labels. `fieldTypes.image()` and `fieldTypes.video()` already set the broad `image/*` or `video/*` preset, and custom `accept` entries further narrow within that family. Incompatible entries such as `fieldTypes.image({ accept: ["application/pdf"] })` are invalid schema config.
+- `required` defaults to `true` for the plain helper. Required, non-nullable file fields fail write-time validation when the field is missing, `null`, or an empty string. `fieldTypes.*({ required: false })` resolves to `required: false`, `nullable: true`, and serialized `file.emptyStringAsUnset: true`; missing, `null`, and empty string values are unset for that helper-level optional file field, while non-empty values still validate as media asset ids.
+- `default` is a raw `MediaAsset.id` string applied as the schema default. It is never a URL and never a `MediaAsset` object, and the resulting value must satisfy the helper preset and `accept` narrowing.
+- Defaults cannot be combined with helper `required: false`; `fieldTypes.file({ required: false }).default(id)` and equivalent Zod `.default()` wrappers are invalid schema config. Optional file fields represent explicit unset states, while defaults represent automatic value materialization.
+
+When a helper or Zod default supplies a file-field value during content write
+validation, MDCMS validates that default against project-scoped media metadata
+for asset existence and MIME compatibility.
+Schema defaults for file fields are materialized into normalized stored
+frontmatter as raw `MediaAsset.id` strings during content writes.
+
+Helper metadata is canonical for identifying MDCMS file fields and for validating helper-level `accept`, `required`, and `default` config. Normal Zod wrappers still determine the resolved schema snapshot's `required`, `nullable`, and `default` metadata:
+
+- `required: false` must resolve to snapshot `required: false` and `nullable: true`; a helper with `required: false` and a required or non-nullable resolved snapshot is invalid schema config.
+- `.optional()` around a helper without `required: false` is valid and resolves to snapshot `required: false`, but it only makes missing values optional. It serializes `file.emptyStringAsUnset: false`, does not treat empty strings as unset, and does not accept `null` unless `.nullable()` is also present.
+- `.nullable()` resolves to snapshot `nullable: true`; file-field asset validation runs for non-empty string values, while `null` acceptance follows the resolved snapshot metadata. `.nullable()` without helper `required: false` serializes `file.emptyStringAsUnset: false`.
+- If a helper `default` and Zod `.default()` are both present, they must be the same raw `MediaAsset.id` string or schema config is invalid. A Zod `.default()` on a file helper must also be a raw `MediaAsset.id` string satisfying the helper preset and `accept` narrowing, and it remains invalid when the helper has `required: false`.
+
+```typescript
+fields: {
+  heroImage: fieldTypes.image({
+    accept: ["image/png", "image/jpeg"],
+  }),
+  productSheet: fieldTypes.file({
+    accept: ["application/pdf"],
+    required: false,
+  }),
+  launchVideo: fieldTypes.video({
+    accept: ["video/mp4"],
+    default: "6f6a8a6e-8d5b-4d5d-a4df-1b2a3c4d5e6f",
+  }),
+}
+```
+
+Serialized schema snapshots represent file fields as string field snapshots:
+
+```typescript
+type SchemaFileFieldSnapshot = {
+  kind: "string";
+  required: boolean;
+  nullable: boolean;
+  default?: string;
+  file: {
+    preset: "image" | "video" | "file";
+    accept: string[];
+    emptyStringAsUnset: boolean;
+  };
+};
+```
+
+`file` metadata contains the helper preset, normalized `accept` entries, and
+the helper-level empty-string unset policy. Existing snapshot metadata such as
+`required`, `nullable`, and `default` remains outside `file`. Missing and `null`
+acceptance is governed only by snapshot `required` and `nullable`.
+`file.emptyStringAsUnset` controls only whether an empty string is treated as
+unset instead of validated as a media asset id. Helpers configured with
+`required: false` serialize `emptyStringAsUnset: true`; plain helpers and
+`.optional()` or `.nullable()` wrappers without helper `required: false`
+serialize `emptyStringAsUnset: false`. `file` metadata is valid only on
+`kind: "string"` snapshots; malformed file metadata is invalid schema config.
+
+`fieldTypes.reference()` is the canonical reference helper. The previous top-level `reference()` helper is removed in this beta contract rather than retained as an alias or deprecation path.
 
 **Localization config contract:**
 
@@ -160,7 +242,7 @@ Environments can have different schemas. The config file uses a **base schema + 
 
 ```typescript
 // mdcms.config.ts
-import { defineConfig, defineType, reference } from "@mdcms/cli";
+import { defineConfig, defineType, fieldTypes } from "@mdcms/cli";
 import { z } from "zod";
 
 const blogPost = defineType("BlogPost", {
@@ -168,7 +250,7 @@ const blogPost = defineType("BlogPost", {
   fields: {
     title: z.string().min(1).max(200),
     slug: z.string().regex(/^[a-z0-9-]+$/),
-    author: reference("Author"),
+    author: fieldTypes.reference("Author"),
     tags: z.array(z.string()).default([]),
     // Field-level sugar: this field only exists in staging and preview
     featured: z.boolean().default(false).env("staging", "preview"),
@@ -236,7 +318,7 @@ Inspired by Payload CMS's dev/prod split:
 
 - **All environments:** Schema writes are explicit via `cms schema sync` (and `cms migrate` when data backfill is required). Studio can only run an explicit user-triggered sync action that sends the same schema snapshot payload.
 - **Mismatch behavior:** If Studio's local config hash differs from the server schema hash, Studio shows a banner ("Schema changes detected, run `cms schema sync`"), switches to read-only mode, and blocks content writes until schemas match.
-- **Content write gate:** `POST /api/v1/content` and `PUT /api/v1/content/:documentId` require the `x-mdcms-schema-hash` header. Missing or blank values fail with `SCHEMA_HASH_REQUIRED` (`400`), a missing target sync record fails with `SCHEMA_NOT_SYNCED` (`409`), and a non-matching client/server hash fails with `SCHEMA_HASH_MISMATCH` (`409`).
+- **Content write gate:** Content mutation endpoints whose contract validates against the synced schema require the `x-mdcms-schema-hash` header. This includes create, update, duplicate, and bulk `move`. Missing or blank values fail with `SCHEMA_HASH_REQUIRED` (`400`), a missing target sync record fails with `SCHEMA_NOT_SYNCED` (`409`), and a non-matching client/server hash fails with `SCHEMA_HASH_MISMATCH` (`409`).
 
 This ensures schemas only change through deliberate, reviewable actions.
 
@@ -262,11 +344,15 @@ This ensures schemas only change through deliberate, reviewable actions.
 
 ### Reference Field Identity
 
-`reference('Type')` fields store the target document's **environment-local `document_id` string**. The persisted value is a plain UUID string, not a `{$ref, type}` object; target type metadata remains schema-owned through `reference('Type')`. Write-time reference validation failures continue to use `INVALID_INPUT` (`400`); `resolve` remains read-time only.
+`fieldTypes.reference('Type')` fields store the target document's environment-local `document_id` string. The persisted value is a plain UUID string, not a `{$ref, type}` object; target type metadata remains schema-owned through `fieldTypes.reference('Type')`. Write-time reference validation failures continue to use `INVALID_INPUT` (`400`); `resolve` remains read-time only.
 
 - Reference resolution is always scoped to the explicit `(project, environment)` request target.
 - Clone/promote operations remap references using `translation_group_id + locale`.
 - If a reference cannot be remapped, the clone/promote operation fails atomically.
+
+### File Field Identity
+
+`fieldTypes.image()`, `fieldTypes.video()`, and `fieldTypes.file()` fields store a project-scoped media asset id string. The persisted value is never a URL and never a full media object. Write-time validation verifies that required values are present, that the media asset exists in the routed project, and that its MIME type satisfies the field preset and `accept` narrowing. Validation failures use `INVALID_INPUT` (`400`) with `details.field` pointing at the frontmatter path and a machine-readable `details.reason` of `MEDIA_REQUIRED`, `MEDIA_NOT_FOUND`, or `MEDIA_TYPE_MISMATCH`. When applicable, details include `mediaAssetId`, `expectedMime`, and `actualMimeType` so Studio can render file-specific validation messages.
 
 ---
 

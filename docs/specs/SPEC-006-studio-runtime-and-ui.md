@@ -231,6 +231,8 @@ assets in the active mounted target. It is backed by:
 - `GET /api/v1/media` for media metadata list/search/filter/sort/pagination
 - `POST /api/v1/media/upload` for page-level uploads when media upload
   capability is available
+- `GET /api/v1/auth/users` for display-only uploader name resolution when the
+  current principal is allowed to manage users
 
 Normative behavior:
 
@@ -246,9 +248,12 @@ Normative behavior:
   Studio debounces search changes before issuing list requests and resets
   pagination offset when search changes.
 - Filters map directly to the media list contract:
-  - MIME category select: `category=image|video|audio|document|archive|other`
-  - Uploader text input: exact `uploadedBy` actor id
-  - Upload date range date inputs: `uploadedFrom` and `uploadedTo`
+  - Type choices: `category=image|video|audio|document|archive|other`
+  - Uploaded-by choices submit the exact `uploadedBy` actor id, but Studio shows
+    a resolved user name and initials when that actor id matches a known user.
+    Unresolved actor ids fall back to the raw id.
+  - Upload date range query parameters remain `uploadedFrom` and `uploadedTo`;
+    the gallery surface does not expose date controls.
 - Sort controls map to the media list contract and expose uploaded date, name,
   and size in both directions. The default view is uploaded date descending.
 - Pagination is server-side with `limit` and `offset`. The Studio page size is
@@ -257,25 +262,42 @@ Normative behavior:
   zero and refetches the current media list.
 - When `capabilities.media.upload` is true, the route exposes a page-level
   upload control using the same auth and target routing contract as document
-  editor media uploads. While a batch is in flight, the route shows file-count
-  progress and disables additional upload starts. Successful uploads refresh the
-  current media list.
+  editor media uploads. Files dropped anywhere on the media surface also upload;
+  an active file drag shows a drop-to-upload affordance over the library. While
+  a batch is in flight, the route shows a docked upload panel that reports
+  per-file progress — each file's name, live completion percentage, and final
+  done or failed status — alongside the batch summary, and disables additional
+  upload starts. Successful uploads refresh the current media list.
 - Each media row or card shows an inline preview/playback region, filename, MIME
-  type, coarse category, formatted size, uploaded actor id, upload date, and a
-  safe action cluster.
+  type, coarse category, formatted size, uploader display name when resolvable
+  otherwise uploaded actor id, upload date, and a safe action cluster.
+- Uploader resolution is presentation-only. Failure or denial from the users
+  endpoint must not block the media list; Studio must continue rendering media
+  assets with raw actor-id fallbacks.
 - Image assets render an inline thumbnail from the returned `url`; video assets
   render inline browser playback controls with `preload="metadata"`; audio
   assets render inline browser playback controls with `preload="metadata"`.
   Other asset categories render a compact file/MIME placeholder.
 - Safe actions are client-only inspection actions: open the returned `url` in a
-  new tab and copy the returned `url` to the clipboard when the browser permits
-  it. These actions do not mutate backend media metadata or documents.
+  new tab, copy the returned `url` to the clipboard when the browser permits it,
+  and download the asset by its returned `url`. These actions do not mutate
+  backend media metadata or documents.
+- Selecting an asset opens a dismissible detail panel that shows the asset
+  preview and read-only metadata (filename, MIME type, coarse category, size,
+  uploader, upload date, asset id). The panel can be closed to return the grid
+  to full width; it never edits backend media metadata.
+- When `capabilities.media.delete` is true, the route supports page-local
+  multi-select: a per-asset selection control and a bulk action bar over the
+  selection. The bar can download the selected assets (the client-only download
+  action applied to each) or delete them. Bulk delete requires explicit
+  confirmation and issues one `DELETE /api/v1/media/:id` request per selected
+  asset using the media mutation contract in SPEC-010; it surfaces partial
+  failures, clears the selection on success, and refreshes the media list.
+  Selection and bulk controls are hidden when `capabilities.media.delete` is
+  false.
 - The route does not introduce tags, folders, collections, usage references,
   duplicate detection, image transformations, CDN controls, advanced asset
-  governance, full-text file-content search, or bulk media editing.
-- Deletion controls are not required on this route. If a future iteration adds
-  them, they must be gated by `capabilities.media.delete` and must use the media
-  mutation contracts in SPEC-010.
+  governance, full-text file-content search, or bulk media metadata editing.
 - Point-of-use copy must identify the basic library limits: filename search
   only, simple metadata filters only, and no advanced organization features.
 
@@ -315,9 +337,9 @@ Normative behavior:
 - Client-side validation rejects blank, zero, negative, fractional, unsafe, or
   non-numeric explicit values before submitting. The inline validation message
   must identify that the value must be a positive whole number of bytes.
-- User-facing copy must state that MDCMS does not enforce a file-type allowlist
-  and that the configured limit applies only to uploads whose MIME type starts
-  with `image/`.
+- The panel explains only the image byte-limit setting and infrastructure/proxy
+  caveat. It must not display a general file-type allowlist disclaimer in the
+  document editor or content canvas.
 - Save controls are disabled while loading, while the current form is invalid,
   while the form is unchanged, and while a save request is in flight.
 - A failed load renders a deterministic error state with a retry affordance. A
@@ -764,6 +786,16 @@ Normative behavior:
   not ship hard-coded per-type property forms for routed document editing.
 - Every property row shows an always-visible compact type label derived from
   the resolved schema for the active environment.
+- Schema file fields render in the Properties panel as media picker controls.
+  The control stores the selected media asset id in frontmatter, never a URL or
+  Markdown string. It uses media read capability for browsing/replacing and
+  media upload capability for upload-new. Images render thumbnails, videos
+  render inline playback, and other files render a compact file placeholder.
+  Studio document editing requests `fileFields=raw` so the editor round-trips
+  raw frontmatter values.
+  Optional file fields expose a clear/remove action that stores the field as
+  unset. Required file fields allow replacement but cannot be saved empty; an
+  empty required file field shows an inline required-field validation message.
 - MVP editable field support is intentionally narrow:
   - `string` fields render as single-line text inputs
   - `number` fields render as numeric inputs
@@ -797,6 +829,12 @@ Normative behavior:
   anchored to the corresponding property control when the failure can be mapped
   to a named frontmatter field; otherwise Studio falls back to the route-level
   mutation error banner.
+- File-field validation messages are file-specific and use
+  `details.reason` from write validation failures. `MEDIA_REQUIRED` explains
+  that a required media field is empty. `MEDIA_NOT_FOUND` explains that the
+  selected media asset no longer exists. `MEDIA_TYPE_MISMATCH` explains that the
+  selected asset type is not accepted by the field and, when available, includes
+  the expected MIME preset or `accept` values.
 
 ### Theme Preference Persistence
 

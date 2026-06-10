@@ -24,12 +24,14 @@ import MediaPage, {
   createMediaLibraryQueryKey,
   createMediaLibraryTargetKey,
   resolveMediaLibraryEffectiveOffset,
+  triggerMediaAssetDownload,
   type MediaLibraryPageState,
 } from "./media-page.js";
 import type {
   MediaLibraryFilters,
   MediaLibrarySortOption,
 } from "./media-library-model.js";
+import type { UserWithGrants } from "../../../users-api.js";
 
 const API_BASE_URL = "https://api.example.com";
 
@@ -73,6 +75,25 @@ const audioAsset: MediaAsset = {
   uploadedBy: "user_456",
   uploadedAt: "2026-06-05T12:10:00.000Z",
 };
+
+const mediaUsers: UserWithGrants[] = [
+  {
+    id: "user_123",
+    name: "Maciej K.",
+    email: "maciej@example.com",
+    image: null,
+    createdAt: "2026-06-01T12:00:00.000Z",
+    grants: [],
+  },
+  {
+    id: "user_456",
+    name: "Ada P.",
+    email: "ada@example.com",
+    image: null,
+    createdAt: "2026-06-01T12:00:00.000Z",
+    grants: [],
+  },
+];
 
 type FetchSpy = typeof fetch & {
   calls: Array<{ input: Parameters<typeof fetch>[0]; init?: RequestInit }>;
@@ -288,7 +309,45 @@ test("MediaPage renders empty state without active filters from a cached list re
 
   assert.match(markup, /data-mdcms-media-library-state="empty"/);
   assert.match(markup, /No media yet/);
-  assert.match(markup, /Uploaded media assets will appear here/);
+  assert.match(markup, /Drop files here or use Upload media to add assets/);
+});
+
+test("MediaPage renders known media uploaders with user display names", () => {
+  const queryClient = createQueryClient();
+  queryClient.setQueryData(
+    createMediaLibraryQueryKey({
+      project: "marketing-site",
+      environment: "production",
+      serverUrl: API_BASE_URL,
+      authMode: "cookie",
+      authCacheKey: null,
+      filters: defaultFilters,
+      sort: "newest",
+      offset: 0,
+    }),
+    {
+      data: [heroAsset, audioAsset],
+      pagination: {
+        total: 2,
+        limit: MEDIA_LIBRARY_PAGE_SIZE,
+        offset: 0,
+        hasMore: false,
+      },
+    },
+  );
+  queryClient.setQueryData(["users", API_BASE_URL], mediaUsers);
+
+  const markup = renderWithProviders({
+    queryClient,
+    capabilities: { canManageUsers: true },
+  });
+
+  assert.match(markup, /Maciej K\./);
+  assert.match(markup, /Ada P\./);
+  assert.match(markup, /MK/);
+  assert.match(markup, /AP/);
+  assert.doesNotMatch(markup, />user_123</);
+  assert.doesNotMatch(markup, />user_456</);
 });
 
 test("media library query helpers scope token auth and reset stale target offsets", () => {
@@ -400,7 +459,7 @@ test("MediaPage renders error state with retry action for media list failures", 
   assert.match(markup, />Retry</);
 });
 
-test("MediaLibraryPageView renders ready controls, uploads, inline previews, safe URL actions, and basic-library limits", () => {
+test("MediaLibraryPageView renders the locked gallery layout, collapsed filters, sort, inline previews, and asset details", () => {
   const markup = renderView({
     state: {
       status: "ready",
@@ -415,13 +474,18 @@ test("MediaLibraryPageView renders ready controls, uploads, inline previews, saf
   });
 
   assert.match(markup, /data-mdcms-media-library-state="ready"/);
+  assert.match(markup, /data-mdcms-media-library-layout="gallery"/);
   assert.doesNotMatch(markup, /Read-only/);
-  assert.match(markup, /Search filenames/);
-  assert.match(markup, /Filter by media category/);
-  assert.match(markup, /Filter by uploader/);
-  assert.match(markup, /Uploaded from/);
-  assert.match(markup, /Uploaded to/);
-  assert.match(markup, /Sort media/);
+  assert.match(markup, /Search media/);
+  assert.match(markup, /3 assets/);
+  assert.match(markup, />Filters</);
+  assert.match(markup, /Sort: Recent/);
+  assert.doesNotMatch(markup, /Filter by media category/);
+  assert.doesNotMatch(markup, /Filter by uploader/);
+  assert.doesNotMatch(markup, /Uploaded from/);
+  assert.doesNotMatch(markup, /Uploaded to/);
+  assert.doesNotMatch(markup, /GRID/);
+  assert.doesNotMatch(markup, /LIST/);
   assert.doesNotMatch(markup, /Upload media/);
   assert.match(markup, /hero\.png/);
   assert.match(markup, /image\/png/);
@@ -445,9 +509,17 @@ test("MediaLibraryPageView renders ready controls, uploads, inline previews, saf
   assert.match(markup, /Jun 5, 2026/);
   assert.match(markup, /Open asset hero\.png/);
   assert.match(markup, /Copy asset URL for hero\.png/);
-  assert.match(markup, /filename search only/);
-  assert.match(markup, /simple metadata filters only/);
-  assert.match(markup, /no advanced organization features/);
+  assert.match(markup, /aria-label="Asset details"/);
+  assert.match(markup, /Asset details/);
+  assert.match(markup, /asset_hero/);
+  assert.doesNotMatch(markup, /filename search only/);
+  assert.doesNotMatch(markup, /simple metadata filters only/);
+  assert.doesNotMatch(markup, /no advanced organization features/);
+  assert.doesNotMatch(markup, /Storage/);
+  assert.doesNotMatch(markup, /Images<\/span>.*Videos<\/span>/s);
+  assert.doesNotMatch(markup, /Used in/);
+  assert.doesNotMatch(markup, /Alt text/);
+  assert.doesNotMatch(markup, /Tags/);
   assert.doesNotMatch(markup, />Delete</);
   assert.doesNotMatch(markup, />Bulk</);
 });
@@ -488,11 +560,133 @@ test("MediaLibraryPageView renders upload controls and progress when media uploa
     ),
   );
 
-  assert.match(markup, /Upload media/);
+  assert.match(markup, />Upload</);
+  assert.match(markup, /data-mdcms-media-upload-progress="docked"/);
   assert.match(markup, /Uploading media 1 of 2/);
   assert.match(markup, /role="progressbar"/);
   assert.match(markup, /aria-valuemax="2"/);
   assert.match(markup, /aria-valuenow="1"/);
+});
+
+test("MediaLibraryPageView renders per-file rows in the docked upload panel", () => {
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      null,
+      createElement(MediaLibraryPageView, {
+        state: {
+          status: "ready",
+          assets: [heroAsset],
+          pagination: {
+            total: 1,
+            limit: MEDIA_LIBRARY_PAGE_SIZE,
+            offset: 0,
+            hasMore: false,
+          },
+        },
+        canUploadMedia: true,
+        uploadState: {
+          status: "uploading",
+          completedFiles: 1,
+          totalFiles: 2,
+          files: [
+            { name: "hero.png", status: "done", percent: 100 },
+            { name: "promo-clip.mp4", status: "uploading", percent: 40 },
+          ],
+        },
+        filters: defaultFilters,
+        searchInput: defaultFilters.q,
+        sort: "newest",
+        onUploadFiles: () => {},
+        onSearchInputChange: () => {},
+        onFilterChange: () => {},
+        onSortChange: () => {},
+        onPageChange: () => {},
+        onRetry: () => {},
+        onCopyUrl: () => {},
+      }),
+    ),
+  );
+
+  // Aggregate hooks remain for the batch summary.
+  assert.match(markup, /data-mdcms-media-upload-progress="docked"/);
+  assert.match(markup, /Uploading media 1 of 2/);
+  assert.match(markup, /aria-valuemax="2"/);
+  // Per-file rows surface each file's name and status.
+  assert.match(markup, /promo-clip\.mp4/);
+  assert.match(markup, /40%/);
+  assert.match(markup, />Done</);
+});
+
+test("MediaLibraryPageView exposes per-asset selection only when media delete is allowed", () => {
+  const baseProps = {
+    state: {
+      status: "ready" as const,
+      assets: [heroAsset, videoAsset],
+      pagination: {
+        total: 2,
+        limit: MEDIA_LIBRARY_PAGE_SIZE,
+        offset: 0,
+        hasMore: false,
+      },
+    },
+    canUploadMedia: false,
+    uploadState: { status: "idle" as const },
+    filters: defaultFilters,
+    searchInput: defaultFilters.q,
+    sort: "newest" as MediaLibrarySortOption,
+    onUploadFiles: () => {},
+    onSearchInputChange: () => {},
+    onFilterChange: () => {},
+    onSortChange: () => {},
+    onPageChange: () => {},
+    onRetry: () => {},
+    onCopyUrl: () => {},
+  };
+
+  const withoutDelete = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      null,
+      createElement(MediaLibraryPageView, baseProps),
+    ),
+  );
+  assert.doesNotMatch(withoutDelete, /Select hero\.png for bulk actions/);
+  assert.doesNotMatch(withoutDelete, /role="checkbox"/);
+
+  const withDelete = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      null,
+      createElement(MediaLibraryPageView, {
+        ...baseProps,
+        canDeleteMedia: true,
+        onDeleteAssets: () => {},
+      }),
+    ),
+  );
+  assert.match(withDelete, /Select hero\.png for bulk actions/);
+  assert.match(withDelete, /role="checkbox"/);
+  // The bulk action bar only appears once a selection exists.
+  assert.doesNotMatch(withDelete, /data-mdcms-media-bulk-bar/);
+});
+
+test("MediaLibraryPageView renders a dismissible asset details drawer", () => {
+  const markup = renderView({
+    state: {
+      status: "ready",
+      assets: [heroAsset],
+      pagination: {
+        total: 1,
+        limit: MEDIA_LIBRARY_PAGE_SIZE,
+        offset: 0,
+        hasMore: false,
+      },
+    },
+  });
+
+  assert.match(markup, /aria-label="Asset details"/);
+  assert.match(markup, /aria-label="Close asset details"/);
 });
 
 test("MediaLibraryPageView renders pagination actions as buttons", () => {
@@ -575,4 +769,120 @@ test("copyMediaAssetUrlToClipboard falls back when Clipboard API is unavailable"
   }
 
   assert.deepEqual(copied, ["https://cdn.example.com/hero.png"]);
+});
+
+test("triggerMediaAssetDownload downloads via a same-origin blob URL", async () => {
+  const created: Array<{ href: string; download: string }> = [];
+  const clicks: string[] = [];
+  const revoked: string[] = [];
+  const originalFetch = globalThis.fetch;
+  const originalDocument = Object.getOwnPropertyDescriptor(
+    globalThis,
+    "document",
+  );
+  const originalCreate = URL.createObjectURL;
+  const originalRevoke = URL.revokeObjectURL;
+
+  globalThis.fetch = (async () =>
+    new Response("file-bytes", { status: 200 })) as typeof fetch;
+  URL.createObjectURL = (() => "blob:mock-url") as typeof URL.createObjectURL;
+  URL.revokeObjectURL = ((url: string) => {
+    revoked.push(url);
+  }) as typeof URL.revokeObjectURL;
+  Object.defineProperty(globalThis, "document", {
+    configurable: true,
+    value: {
+      body: { appendChild() {}, removeChild() {} },
+      createElement(tagName: string) {
+        assert.equal(tagName, "a");
+        const anchor = {
+          href: "",
+          download: "",
+          rel: "",
+          style: {} as Record<string, string>,
+          click() {
+            clicks.push(this.href);
+          },
+        };
+        created.push(anchor);
+        return anchor;
+      },
+    },
+  });
+
+  try {
+    await triggerMediaAssetDownload({
+      url: "https://cdn.example.com/media/hero.png",
+      filename: "hero.png",
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalDocument) {
+      Object.defineProperty(globalThis, "document", originalDocument);
+    } else {
+      Reflect.deleteProperty(globalThis, "document");
+    }
+    URL.createObjectURL = originalCreate;
+    URL.revokeObjectURL = originalRevoke;
+  }
+
+  assert.equal(created.length, 1);
+  assert.equal(created[0]?.href, "blob:mock-url");
+  assert.equal(created[0]?.download, "hero.png");
+  assert.deepEqual(clicks, ["blob:mock-url"]);
+  assert.deepEqual(revoked, ["blob:mock-url"]);
+});
+
+test("triggerMediaAssetDownload opens a new tab when the cross-origin fetch is blocked", async () => {
+  const opened: Array<{ url: string; target: string }> = [];
+  const originalFetch = globalThis.fetch;
+  const originalDocument = Object.getOwnPropertyDescriptor(
+    globalThis,
+    "document",
+  );
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+
+  globalThis.fetch = (async () => {
+    throw new TypeError("Failed to fetch");
+  }) as typeof fetch;
+  Object.defineProperty(globalThis, "document", {
+    configurable: true,
+    value: {
+      body: { appendChild() {}, removeChild() {} },
+      createElement() {
+        return { style: {} as Record<string, string>, click() {} };
+      },
+    },
+  });
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      open(url: string, target: string) {
+        opened.push({ url, target });
+      },
+    },
+  });
+
+  try {
+    await triggerMediaAssetDownload({
+      url: "https://cdn.example.com/media/hero.png",
+      filename: "hero.png",
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalDocument) {
+      Object.defineProperty(globalThis, "document", originalDocument);
+    } else {
+      Reflect.deleteProperty(globalThis, "document");
+    }
+    if (originalWindow) {
+      Object.defineProperty(globalThis, "window", originalWindow);
+    } else {
+      Reflect.deleteProperty(globalThis, "window");
+    }
+  }
+
+  assert.equal(opened.length, 1);
+  assert.equal(opened[0]?.url, "https://cdn.example.com/media/hero.png");
+  assert.equal(opened[0]?.target, "_blank");
 });

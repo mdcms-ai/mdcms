@@ -15,6 +15,11 @@ import {
   isStudioCookieAuth,
   type StudioRuntimeAuth,
 } from "./request-auth.js";
+import {
+  isMediaResolveErrorEntry,
+  isReferenceResolveErrorEntry,
+  isStringArray,
+} from "./resolve-error-validation.js";
 import { resolveStudioRelativeUrl } from "./url-resolution.js";
 
 export type StudioContentListConfig = Pick<
@@ -86,10 +91,6 @@ function isBoolean(value: unknown): value is boolean {
 
 function isContentFormat(value: unknown): value is "md" | "mdx" {
   return value === "md" || value === "mdx";
-}
-
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every(isString);
 }
 
 async function readResponsePayload(response: Response): Promise<unknown> {
@@ -182,9 +183,7 @@ function isResolveErrorsMap(
     }
 
     return (
-      isRecord(entry.ref) &&
-      isString(entry.ref.documentId) &&
-      isString(entry.ref.type)
+      isReferenceResolveErrorEntry(entry) || isMediaResolveErrorEntry(entry)
     );
   });
 }

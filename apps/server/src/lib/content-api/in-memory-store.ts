@@ -30,6 +30,7 @@ import {
   parseSortOrder,
 } from "./parsing.js";
 import { groupDocumentsByTranslationGroup } from "./grouped-list.js";
+import { validateMediaFieldIdentities } from "./media-field-validation.js";
 import { validateReferenceFieldIdentities } from "./reference-validation.js";
 import { matchesDeletedListVisibility } from "./visibility.js";
 
@@ -40,6 +41,7 @@ function toScopeKey(project: string, environment: string): string {
 export function createInMemoryContentStore(
   options: CreateInMemoryContentStoreOptions = {},
 ): ContentStore {
+  const { lookupMediaAsset } = options;
   const scopedDocs = new Map<string, Map<string, ContentDocument>>();
   const scopedPublishedSnapshots = new Map<
     string,
@@ -322,6 +324,13 @@ export function createInMemoryContentStore(
           };
         },
       });
+      const { frontmatter: normalizedFrontmatter } =
+        await validateMediaFieldIdentities({
+          schema,
+          frontmatter,
+          scope,
+          lookupMediaAsset,
+        });
 
       const conflict = findPathConflict(store, { path, locale });
 
@@ -376,7 +385,7 @@ export function createInMemoryContentStore(
         version: 0,
         publishedVersion: null,
         draftRevision: 1,
-        frontmatter,
+        frontmatter: normalizedFrontmatter,
         body,
         createdBy: actor,
         createdAt: now,
@@ -665,6 +674,13 @@ export function createInMemoryContentStore(
           };
         },
       });
+      const { frontmatter: normalizedFrontmatter } =
+        await validateMediaFieldIdentities({
+          schema,
+          frontmatter: nextFrontmatter,
+          scope,
+          lookupMediaAsset,
+        });
 
       const nextPath =
         payload.path !== undefined
@@ -724,7 +740,7 @@ export function createInMemoryContentStore(
           payload.format !== undefined
             ? parseContentFormat(payload.format)
             : existing.format,
-        frontmatter: nextFrontmatter,
+        frontmatter: normalizedFrontmatter,
         body:
           payload.body !== undefined
             ? assertRequiredString(payload.body, "body", { allowEmpty: true })

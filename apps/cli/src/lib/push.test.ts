@@ -133,6 +133,10 @@ function isSchemaGetRequest(
   );
 }
 
+function parseRequestUrl(input: string | URL | Request): URL {
+  return new URL(String(input));
+}
+
 function setTTY(value: boolean): () => void {
   const previous = process.stdin.isTTY;
   Object.defineProperty(process.stdin, "isTTY", {
@@ -216,7 +220,10 @@ test("push updates an existing manifest-tracked document via PUT", async () => {
           return createSchemaListResponse(BLOG_POST_CONFIG, "staging");
         }
         requestCount += 1;
-        assert.equal(String(input).endsWith("/api/v1/content/doc-1"), true);
+        assert.equal(
+          String(input),
+          "http://localhost:4000/api/v1/content/doc-1?fileFields=raw",
+        );
         assert.equal(init?.method, "PUT");
 
         const headers = new Headers(init?.headers as Record<string, string>);
@@ -319,9 +326,12 @@ test("push falls back to POST and rewrites manifest key when PUT target is missi
         }
         const url = String(input);
 
-        if (url.endsWith("/api/v1/content/doc-missing")) {
+        const requestUrl = parseRequestUrl(url);
+
+        if (requestUrl.pathname === "/api/v1/content/doc-missing") {
           putCalls += 1;
           assert.equal(init?.method, "PUT");
+          assert.equal(requestUrl.searchParams.get("fileFields"), "raw");
           return new Response(
             JSON.stringify({
               code: "NOT_FOUND",
@@ -334,7 +344,10 @@ test("push falls back to POST and rewrites manifest key when PUT target is missi
           );
         }
 
-        assert.equal(url.endsWith("/api/v1/content"), true);
+        assert.equal(
+          url,
+          "http://localhost:4000/api/v1/content?fileFields=raw",
+        );
         postCalls += 1;
         assert.equal(init?.method, "POST");
 
@@ -459,7 +472,7 @@ test("push sends only changed documents and skips unchanged manifest entries", a
         }
         requestCount += 1;
         assert.equal(
-          String(input).endsWith("/api/v1/content/doc-changed"),
+          String(input).endsWith("/api/v1/content/doc-changed?fileFields=raw"),
           true,
         );
         assert.equal(init?.method, "PUT");
@@ -833,8 +846,10 @@ test("push reports stale document as failed and continues pushing remaining docu
         }
         requestCount += 1;
         const url = String(input);
+        const requestUrl = parseRequestUrl(url);
 
-        if (url.endsWith("/api/v1/content/doc-stale")) {
+        if (requestUrl.pathname === "/api/v1/content/doc-stale") {
+          assert.equal(requestUrl.searchParams.get("fileFields"), "raw");
           return new Response(
             JSON.stringify({
               code: "STALE_DRAFT_REVISION",
@@ -957,8 +972,10 @@ test("push reports schema-mismatch document as failed and continues pushing rema
         }
         requestCount += 1;
         const url = String(input);
+        const requestUrl = parseRequestUrl(url);
 
-        if (url.endsWith("/api/v1/content/doc-mismatch")) {
+        if (requestUrl.pathname === "/api/v1/content/doc-mismatch") {
+          assert.equal(requestUrl.searchParams.get("fileFields"), "raw");
           return new Response(
             JSON.stringify({
               code: "SCHEMA_HASH_MISMATCH",
@@ -1131,7 +1148,10 @@ test("push --force auto-selects all new files and creates them via POST", async 
           return createSchemaListResponse(BLOG_POST_CONFIG, "staging");
         }
         const url = String(input);
-        assert.ok(url.endsWith("/api/v1/content"));
+        assert.equal(
+          url,
+          "http://localhost:4000/api/v1/content?fileFields=raw",
+        );
         assert.equal(init?.method, "POST");
         postCalls += 1;
 
@@ -1327,8 +1347,13 @@ test("push --force handles mixed changed + new + deleted documents in one run", 
         }
         const url = String(input);
         const method = init?.method;
+        const requestUrl = parseRequestUrl(url);
 
-        if (method === "PUT" && url.endsWith("/api/v1/content/doc-changed")) {
+        if (
+          method === "PUT" &&
+          requestUrl.pathname === "/api/v1/content/doc-changed"
+        ) {
+          assert.equal(requestUrl.searchParams.get("fileFields"), "raw");
           putCalls += 1;
           return createSuccessResponse({
             documentId: "doc-changed",
@@ -1341,7 +1366,8 @@ test("push --force handles mixed changed + new + deleted documents in one run", 
           });
         }
 
-        if (method === "POST" && url.endsWith("/api/v1/content")) {
+        if (method === "POST" && requestUrl.pathname === "/api/v1/content") {
+          assert.equal(requestUrl.searchParams.get("fileFields"), "raw");
           postCalls += 1;
           return createSuccessResponse({
             documentId: "doc-brand-new",

@@ -12,8 +12,8 @@ import {
 import {
   defineConfig,
   defineType,
+  fieldTypes,
   parseMdcmsConfig,
-  reference,
 } from "@mdcms/shared";
 import { buildSchemaSyncPayload } from "@mdcms/shared/server";
 
@@ -46,15 +46,15 @@ function createAuthoredConfig() {
       defineType("Author", {
         directory: "content/authors",
         fields: {
-          name: reference("Author"),
-          bio: reference("Author"),
+          name: fieldTypes.reference("Author"),
+          bio: fieldTypes.reference("Author"),
         },
       }),
       defineType("Article", {
         directory: "content/articles",
         fields: {
-          body: reference("Article"),
-          title: reference("Article"),
+          body: fieldTypes.reference("Article"),
+          title: fieldTypes.reference("Article"),
         },
       }),
     ],
@@ -65,12 +65,12 @@ function createAuthoredConfig() {
         types: {
           Article: {
             add: {
-              summary: reference("Article"),
+              summary: fieldTypes.reference("Article"),
             },
           },
           Author: {
             modify: {
-              bio: reference("Author"),
+              bio: fieldTypes.reference("Author"),
             },
           },
         },
@@ -208,15 +208,15 @@ test("equivalent authored config data yields the same schema hash", async () => 
           defineType("Article", {
             directory: "content/articles",
             fields: {
-              title: reference("Article"),
-              body: reference("Article"),
+              title: fieldTypes.reference("Article"),
+              body: fieldTypes.reference("Article"),
             },
           }),
           defineType("Author", {
             directory: "content/authors",
             fields: {
-              bio: reference("Author"),
-              name: reference("Author"),
+              bio: fieldTypes.reference("Author"),
+              name: fieldTypes.reference("Author"),
             },
           }),
         ],
@@ -226,12 +226,12 @@ test("equivalent authored config data yields the same schema hash", async () => 
             types: {
               Author: {
                 modify: {
-                  bio: reference("Author"),
+                  bio: fieldTypes.reference("Author"),
                 },
               },
               Article: {
                 add: {
-                  summary: reference("Article"),
+                  summary: fieldTypes.reference("Article"),
                 },
               },
             },

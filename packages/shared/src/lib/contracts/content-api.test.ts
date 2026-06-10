@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "bun:test";
 
-import { ContentBulkOperationInputSchema } from "./content-api.js";
+import {
+  ContentBulkOperationInputSchema,
+  type ContentMediaResolveError,
+  type ContentResolveError,
+} from "./content-api.js";
 
 test("ContentBulkOperationInputSchema accepts valid bulk operation shapes", () => {
   const parsed = ContentBulkOperationInputSchema.parse({
@@ -45,5 +49,35 @@ test("ContentBulkOperationInputSchema rejects malformed bulk operation fields", 
       },
     }).success,
     false,
+  );
+});
+
+test("ContentResolveError accepts reference and media resolve errors", () => {
+  const mediaError = {
+    code: "MEDIA_TYPE_MISMATCH",
+    message: "Media asset MIME type does not match the schema file field.",
+    media: {
+      assetId: "asset-1",
+      expectedMime: ["image/*"],
+      actualMimeType: "application/pdf",
+    },
+  } satisfies ContentMediaResolveError;
+
+  const errors: Record<string, ContentResolveError> = {
+    "frontmatter.author": {
+      code: "REFERENCE_NOT_FOUND",
+      message: "Reference not found.",
+      ref: {
+        documentId: "author-1",
+        type: "Author",
+      },
+    },
+    "frontmatter.heroImage": mediaError,
+  };
+
+  assert.equal(errors["frontmatter.heroImage"]?.code, "MEDIA_TYPE_MISMATCH");
+  assert.deepEqual(
+    (errors["frontmatter.heroImage"] as ContentMediaResolveError).media,
+    mediaError.media,
   );
 });

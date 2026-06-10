@@ -1,8 +1,12 @@
 import {
+  assertMediaAssetResponse,
   assertMediaAssetListResponse,
+  assertMediaDeleteResponse,
   RuntimeError,
+  type MediaAsset,
   type MediaAssetCategory,
   type MediaAssetListResponse,
+  type MediaDeleteResponse,
 } from "@mdcms/shared";
 
 import {
@@ -19,6 +23,7 @@ export type StudioMediaLibraryApiConfig = {
 
 export type StudioMediaLibraryApiOptions = {
   auth?: StudioRuntimeAuth;
+  csrfToken?: string | null;
   fetcher?: typeof fetch;
 };
 
@@ -42,6 +47,8 @@ export type StudioMediaLibraryApi = {
   list: (
     query?: StudioMediaLibraryListQuery,
   ) => Promise<MediaAssetListResponse>;
+  get: (id: string) => Promise<MediaAsset>;
+  delete: (id: string) => Promise<MediaDeleteResponse["data"]>;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -94,11 +101,43 @@ function toInvalidResponseError(
 
 function createScopedHeaders(
   config: StudioMediaLibraryApiConfig,
+  extra?: Record<string, string | undefined>,
 ): Record<string, string> {
-  return {
+  const headers: Record<string, string> = {
     "x-mdcms-project": config.project,
     "x-mdcms-environment": config.environment,
   };
+
+  for (const [name, value] of Object.entries(extra ?? {})) {
+    if (typeof value === "string" && value.length > 0) {
+      headers[name] = value;
+    }
+  }
+
+  return headers;
+}
+
+function createMissingCsrfError(): RuntimeError {
+  return new RuntimeError({
+    code: "CSRF_TOKEN_MISSING",
+    message: "CSRF token is not available. You must be authenticated.",
+    statusCode: 0,
+  });
+}
+
+function requireMutationCsrfToken(
+  options: StudioMediaLibraryApiOptions,
+): string | undefined {
+  if (options.auth?.mode === "token") {
+    return undefined;
+  }
+
+  const csrfToken = options.csrfToken?.trim();
+  if (!csrfToken) {
+    throw createMissingCsrfError();
+  }
+
+  return csrfToken;
 }
 
 function appendQueryParam(
@@ -176,6 +215,75 @@ export function createStudioMediaLibraryApi(
       }
 
       return payload;
+    },
+
+    async get(id) {
+      const operation = `GET /api/v1/media/${id}`;
+      const url = resolveStudioRelativeUrl(
+        `/api/v1/media/${encodeURIComponent(id)}`,
+        config.serverUrl,
+      );
+      const response = await fetcher(
+        url,
+        applyStudioAuthToRequestInit(options.auth, {
+          method: "GET",
+          headers: createScopedHeaders(config),
+        }),
+      );
+      const payload = await readResponsePayload(response);
+
+      if (!response.ok) {
+        throw toRouteFailureError(
+          operation,
+          response,
+          payload,
+          "Media asset request failed.",
+        );
+      }
+
+      try {
+        assertMediaAssetResponse(payload);
+      } catch {
+        throw toInvalidResponseError(operation, payload);
+      }
+
+      return payload.data;
+    },
+
+    async delete(id) {
+      const operation = `DELETE /api/v1/media/${id}`;
+      const csrfToken = requireMutationCsrfToken(options);
+      const url = resolveStudioRelativeUrl(
+        `/api/v1/media/${encodeURIComponent(id)}`,
+        config.serverUrl,
+      );
+      const response = await fetcher(
+        url,
+        applyStudioAuthToRequestInit(options.auth, {
+          method: "DELETE",
+          headers: createScopedHeaders(config, {
+            "x-mdcms-csrf-token": csrfToken,
+          }),
+        }),
+      );
+      const payload = await readResponsePayload(response);
+
+      if (!response.ok) {
+        throw toRouteFailureError(
+          operation,
+          response,
+          payload,
+          "Media delete request failed.",
+        );
+      }
+
+      try {
+        assertMediaDeleteResponse(payload);
+      } catch {
+        throw toInvalidResponseError(operation, payload);
+      }
+
+      return payload.data;
     },
   };
 }

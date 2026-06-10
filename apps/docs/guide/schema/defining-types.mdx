@@ -246,7 +246,7 @@ Fields with `.env()` are only included in the specified environments. This is sy
 A full configuration with multiple types, localization, validation, references, and environment overlays:
 
 ```typescript mdcms.config.ts
-import { defineConfig, defineType, reference } from "@mdcms/cli";
+import { defineConfig, defineType, fieldTypes } from "@mdcms/cli";
 import { z } from "zod";
 
 const Author = defineType("Author", {
@@ -264,7 +264,7 @@ const BlogPost = defineType("BlogPost", {
   fields: {
     title: z.string().min(1).max(200),
     slug: z.string().regex(/^[a-z0-9-]+$/),
-    author: reference("Author"),
+    author: fieldTypes.reference("Author"),
     publishedAt: z.coerce.date(),
     tags: z.array(z.string()).default([]),
     excerpt: z.string().max(300).optional(),

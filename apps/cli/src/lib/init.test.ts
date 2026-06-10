@@ -207,6 +207,79 @@ test("full init wizard creates config, schema state, and manifest", async () => 
   });
 });
 
+test("init schema sync preserves reference metadata for inferred reference fields", async () => {
+  await withTempDir(async (cwd) => {
+    await mkdir(join(cwd, "content", "posts"), { recursive: true });
+    await mkdir(join(cwd, "content", "authors"), { recursive: true });
+    await writeFile(
+      join(cwd, "content", "posts", "hello.md"),
+      "---\ntitle: Hello World\nauthor: jane-doe\n---\nBody content\n",
+    );
+    await writeFile(
+      join(cwd, "content", "authors", "jane.md"),
+      "---\nname: Jane Doe\n---\n",
+    );
+
+    let schemaRequestBody:
+      | {
+          resolvedSchema?: Record<string, { fields?: Record<string, unknown> }>;
+          schemaHash?: string;
+        }
+      | undefined;
+
+    const fetcher = createMockFetcher({
+      ...createDefaultFetchHandlers(),
+      "/api/v1/schema": (_url: string, init?: RequestInit) => {
+        schemaRequestBody = JSON.parse(
+          String(init?.body),
+        ) as typeof schemaRequestBody;
+
+        return new Response(
+          JSON.stringify({
+            data: {
+              schemaHash: schemaRequestBody?.schemaHash,
+              syncedAt: "2026-03-31T12:00:00.000Z",
+              affectedTypes: ["author", "post"],
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    });
+
+    const prompter = createMockPrompter({
+      text: ["http://localhost:4000", "my-project", "staging"],
+      select: [],
+      multiSelect: [["content/posts", "content/authors"]],
+      confirm: [true],
+    });
+
+    const command = createInitCommand({
+      prompter,
+      fetcher,
+      skipAuth: true,
+    });
+
+    const exitCode = await runMdcmsCli(["init", "--no-import"], {
+      cwd,
+      commands: [command],
+      stdout: { write: () => undefined },
+      stderr: { write: () => undefined },
+      fetcher,
+    });
+
+    assert.equal(exitCode, 0);
+    assert.deepEqual(schemaRequestBody?.resolvedSchema?.post?.fields?.author, {
+      kind: "string",
+      required: true,
+      nullable: false,
+      reference: {
+        targetType: "author",
+      },
+    });
+  });
+});
+
 test("init imports localized suffix files into one translation group", async () => {
   await withTempDir(async (cwd) => {
     await mkdir(join(cwd, "content", "campaigns"), { recursive: true });

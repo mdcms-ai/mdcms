@@ -134,7 +134,7 @@ test("deriveMediaLibraryEmptyState distinguishes empty library from no-match fil
   assert.deepEqual(deriveMediaLibraryEmptyState(false), {
     kind: "empty",
     title: "No media yet",
-    description: "Uploaded media assets will appear here.",
+    description: "Drop files here or use Upload media to add assets.",
   });
   assert.deepEqual(deriveMediaLibraryEmptyState(true), {
     kind: "no-match",

@@ -14,6 +14,10 @@ import {
   isStudioCookieAuth,
   type StudioRuntimeAuth,
 } from "./request-auth.js";
+import {
+  isMediaResolveErrorEntry,
+  isReferenceResolveErrorEntry,
+} from "./resolve-error-validation.js";
 import { resolveStudioRelativeUrl } from "./url-resolution.js";
 
 export type StudioDocumentRouteConfig = Pick<
@@ -211,9 +215,14 @@ function isResolveErrorsMap(value: unknown): value is Record<
   {
     code: string;
     message: string;
-    ref: {
+    ref?: {
       documentId: string;
       type: string;
+    };
+    media?: {
+      assetId: string;
+      expectedMime?: string[];
+      actualMimeType?: string;
     };
   }
 > {
@@ -227,9 +236,7 @@ function isResolveErrorsMap(value: unknown): value is Record<
     }
 
     return (
-      isRecord(entry.ref) &&
-      isString(entry.ref.documentId) &&
-      isString(entry.ref.type)
+      isReferenceResolveErrorEntry(entry) || isMediaResolveErrorEntry(entry)
     );
   });
 }
@@ -281,6 +288,15 @@ function buildUrl(
   }
 
   return url;
+}
+
+function authoringDocumentQuery(
+  query: Record<string, string | number | string[] | undefined> = {},
+): Record<string, string | number | string[] | undefined> {
+  return {
+    ...query,
+    fileFields: "raw",
+  };
 }
 
 async function readResponsePayload(response: Response): Promise<unknown> {
@@ -724,6 +740,7 @@ async function requestContentMutation(
   input: {
     method: "PUT" | "POST";
     path: string;
+    query?: Record<string, string | number | string[] | undefined>;
     locale?: string;
     payload: unknown;
     signal?: AbortSignal;
@@ -745,7 +762,7 @@ async function requestContentMutation(
 
   const payload = await requestContentRouteJson(
     options,
-    buildUrl(config, input.path),
+    buildUrl(config, input.path, input.query),
     {
       method: input.method,
       signal: input.signal,
@@ -771,6 +788,7 @@ async function requestContentDeletion(
   options: StudioDocumentRouteApiOptions,
   input: {
     path: string;
+    query?: Record<string, string | number | string[] | undefined>;
     locale?: string;
     signal?: AbortSignal;
   },
@@ -784,7 +802,7 @@ async function requestContentDeletion(
 
   const payload = await requestContentRouteJson(
     options,
-    buildUrl(config, input.path),
+    buildUrl(config, input.path, input.query),
     {
       method: "DELETE",
       signal: input.signal,
@@ -817,9 +835,9 @@ export function createStudioDocumentRouteApi(
         buildUrl(
           config,
           `/api/v1/content/${encodeURIComponent(input.documentId)}`,
-          {
+          authoringDocumentQuery({
             draft: "true",
-          },
+          }),
         ),
         {
           method: "GET",
@@ -873,6 +891,7 @@ export function createStudioDocumentRouteApi(
       const payload = await requestContentMutation(config, options, {
         method: "PUT",
         path: `/api/v1/content/${encodeURIComponent(input.documentId)}`,
+        query: authoringDocumentQuery(),
         locale: input.locale,
         signal: input.signal,
         payload: input.payload,
@@ -905,6 +924,7 @@ export function createStudioDocumentRouteApi(
       const payload = await requestContentMutation(config, options, {
         method: "POST",
         path: `/api/v1/content/${encodeURIComponent(input.documentId)}/publish`,
+        query: authoringDocumentQuery(),
         locale: input.locale,
         signal: input.signal,
         payload: {
@@ -986,6 +1006,7 @@ export function createStudioDocumentRouteApi(
       const payload = await requestContentMutation(config, options, {
         method: "POST",
         path: "/api/v1/content",
+        query: authoringDocumentQuery(),
         locale: input.locale,
         signal: input.signal,
         schemaHash: input.schemaHash,
@@ -1012,6 +1033,7 @@ export function createStudioDocumentRouteApi(
       const payload = await requestContentMutation(config, options, {
         method: "POST",
         path: `/api/v1/content/${encodeURIComponent(input.documentId)}/duplicate`,
+        query: authoringDocumentQuery(),
         locale: input.locale,
         signal: input.signal,
         payload: {},
@@ -1027,6 +1049,7 @@ export function createStudioDocumentRouteApi(
       const payload = await requestContentMutation(config, options, {
         method: "POST",
         path: `/api/v1/content/${encodeURIComponent(input.documentId)}/unpublish`,
+        query: authoringDocumentQuery(),
         locale: input.locale,
         signal: input.signal,
         payload: { actorId: input.actorId },
@@ -1041,6 +1064,7 @@ export function createStudioDocumentRouteApi(
     async softDelete(input) {
       const payload = await requestContentDeletion(config, options, {
         path: `/api/v1/content/${encodeURIComponent(input.documentId)}`,
+        query: authoringDocumentQuery(),
         locale: input.locale,
         signal: input.signal,
       });
@@ -1055,6 +1079,7 @@ export function createStudioDocumentRouteApi(
       const payload = await requestContentMutation(config, options, {
         method: "POST",
         path: `/api/v1/content/${encodeURIComponent(input.documentId)}/restore`,
+        query: authoringDocumentQuery(),
         locale: input.locale,
         signal: input.signal,
         payload: {},
@@ -1072,6 +1097,7 @@ export function createStudioDocumentRouteApi(
         path: `/api/v1/content/${encodeURIComponent(
           input.documentId,
         )}/versions/${encodeURIComponent(String(input.version))}/restore`,
+        query: authoringDocumentQuery(),
         locale: input.locale,
         signal: input.signal,
         payload: {

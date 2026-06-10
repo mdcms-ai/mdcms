@@ -14,6 +14,7 @@ import {
 import { extractMarkdownFromEditor } from "../../../markdown-pipeline.js";
 import {
   insertUploadedMediaFiles,
+  MediaImagePickerView,
   resolveMediaUploadFileEvent,
   TipTapEditor,
 } from "./tiptap-editor.js";
@@ -106,6 +107,40 @@ test("TipTapEditor disables the image toolbar control when media upload is unava
     markup,
     /<button(?=[^>]*aria-label="Upload media unavailable in this target\.")(?=[^>]*\sdisabled(?:=""|\s|>))[^>]*>/,
   );
+});
+
+test("MediaImagePickerView renders a library-first single-select image flow", () => {
+  const markup = renderToStaticMarkup(
+    createElement(MediaImagePickerView, {
+      id: "media-picker",
+      state: {
+        status: "ready",
+        assets: [
+          createMediaAsset({
+            id: "media_hero",
+            filename: "hero.png",
+            url: "https://cdn.example.com/hero.png",
+          }),
+        ],
+      },
+      canBrowse: true,
+      canUpload: true,
+      isUploading: false,
+      unavailableMessage: "Image library unavailable.",
+      onSelect: () => {},
+      onUpload: () => {},
+      onRetry: () => {},
+    }),
+  );
+
+  assert.match(markup, /Insert image/);
+  assert.match(markup, /Search image library/);
+  assert.match(markup, /aria-label="Select hero\.png"/);
+  assert.match(markup, /Select one image/);
+  assert.match(markup, />Insert</);
+  assert.doesNotMatch(markup, /Upload tab/);
+  assert.doesNotMatch(markup, /Library tab/);
+  assert.doesNotMatch(markup, /type="checkbox"/);
 });
 
 test("resolveMediaUploadFileEvent handles paste and drop files without filtering", () => {

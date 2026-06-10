@@ -250,7 +250,7 @@ Set up MDCMS content type definitions and sync them to the server.
 2. **Create or update `mdcms.config.ts`** at the project root:
 
    ```typescript
-   import { defineConfig, defineType, reference } from "@mdcms/shared";
+   import { defineConfig, defineType, fieldTypes } from "@mdcms/shared";
    import { z } from "zod";
 
    const Author = defineType("Author", {
@@ -268,7 +268,7 @@ Set up MDCMS content type definitions and sync them to the server.
      fields: {
        title: z.string().min(1).max(200),
        slug: z.string().regex(/^[a-z0-9-]+$/),
-       author: reference("Author"),
+       author: fieldTypes.reference("Author"),
        publishedAt: z.coerce.date(),
        tags: z.array(z.string()).default([]),
        excerpt: z.string().max(300).optional(),
@@ -302,7 +302,7 @@ Adapt the type definitions to match your content model. Each type needs:
 - `fields` — Zod schemas defining the frontmatter structure
 - `localized` (optional) — set to `true` for multilingual content
 
-Available field types: `z.string()`, `z.number()`, `z.boolean()`, `z.coerce.date()`, `z.enum([...])`, `z.array(...)`, `z.object({...})`, `reference("TypeName")`.
+Available field types: `z.string()`, `z.number()`, `z.boolean()`, `z.coerce.date()`, `z.enum([...])`, `z.array(...)`, `z.object({...})`, `fieldTypes.reference("TypeName")`.
 
 </Prompt>
 
