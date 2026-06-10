@@ -2,7 +2,7 @@
 
 ## What this is
 
-The contracts layer that every other package imports. This is where content types are defined (`defineConfig`, `defineType`, `reference`), where API response envelopes are typed, and where schema validation logic lives. If something needs to be understood by both the server and the CLI (or the SDK, or Studio), it belongs here.
+The contracts layer that every other package imports. This is where content types are defined (`defineConfig`, `defineType`, `fieldTypes`), where API response envelopes are typed, and where schema validation logic lives. If something needs to be understood by both the server and the CLI (or the SDK, or Studio), it belongs here.
 
 Zod is the validation layer. Content schemas use Standard Schema for interoperability.
 
