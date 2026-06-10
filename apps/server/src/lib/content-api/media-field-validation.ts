@@ -11,7 +11,8 @@ import type { ContentMediaAssetLookup, ContentScope } from "./types.js";
 type MediaFieldValidationReason =
   | "MEDIA_REQUIRED"
   | "MEDIA_NOT_FOUND"
-  | "MEDIA_TYPE_MISMATCH";
+  | "MEDIA_TYPE_MISMATCH"
+  | "MEDIA_CONTAINER_TYPE_MISMATCH";
 
 type NormalizedFieldValue =
   | {
@@ -263,14 +264,26 @@ async function normalizeFieldValue(input: {
         : { include: true, value: input.value };
     }
 
-    if (input.value === undefined || input.value === null) {
-      return input.value === undefined
-        ? { include: false }
-        : { include: true, value: input.value };
+    if (input.value === undefined) {
+      return { include: false };
+    }
+
+    if (input.value === null) {
+      if (input.field.nullable) {
+        return { include: true, value: null };
+      }
+
+      throw createMediaFieldValidationError({
+        fieldPath: input.fieldPath,
+        reason: "MEDIA_CONTAINER_TYPE_MISMATCH",
+      });
     }
 
     if (!isRecord(input.value)) {
-      return { include: true, value: input.value };
+      throw createMediaFieldValidationError({
+        fieldPath: input.fieldPath,
+        reason: "MEDIA_CONTAINER_TYPE_MISMATCH",
+      });
     }
 
     const normalizedObject: Record<string, unknown> = { ...input.value };
@@ -301,10 +314,26 @@ async function normalizeFieldValue(input: {
         : { include: true, value: input.value };
     }
 
+    if (input.value === undefined) {
+      return { include: false };
+    }
+
+    if (input.value === null) {
+      if (input.field.nullable) {
+        return { include: true, value: null };
+      }
+
+      throw createMediaFieldValidationError({
+        fieldPath: input.fieldPath,
+        reason: "MEDIA_CONTAINER_TYPE_MISMATCH",
+      });
+    }
+
     if (!Array.isArray(input.value)) {
-      return input.value === undefined
-        ? { include: false }
-        : { include: true, value: input.value };
+      throw createMediaFieldValidationError({
+        fieldPath: input.fieldPath,
+        reason: "MEDIA_CONTAINER_TYPE_MISMATCH",
+      });
     }
 
     const normalizedArray = [];

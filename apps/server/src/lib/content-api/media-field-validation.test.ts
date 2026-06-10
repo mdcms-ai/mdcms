@@ -178,6 +178,69 @@ test("optional file fields treat missing, null, and empty string as unset withou
   assert.deepEqual(calls, []);
 });
 
+test("object fields containing file fields reject present non-object values", async () => {
+  await assertRuntimeError(
+    () =>
+      validateMediaFieldIdentities({
+        schema: createSchema({
+          hero: {
+            kind: "object",
+            required: false,
+            nullable: false,
+            fields: {
+              image: primaryImageField(),
+            },
+          },
+        }),
+        frontmatter: { hero: "not-an-object" },
+        scope,
+        lookupMediaAsset: createLookup([imageAsset]),
+      }),
+    {
+      code: "INVALID_INPUT",
+      statusCode: 400,
+      details: {
+        field: "frontmatter.hero",
+        reason: "MEDIA_CONTAINER_TYPE_MISMATCH",
+      },
+    },
+  );
+});
+
+test("array fields containing file fields reject present non-array values", async () => {
+  await assertRuntimeError(
+    () =>
+      validateMediaFieldIdentities({
+        schema: createSchema({
+          gallery: {
+            kind: "array",
+            required: false,
+            nullable: false,
+            item: {
+              kind: "object",
+              required: true,
+              nullable: false,
+              fields: {
+                image: primaryImageField(),
+              },
+            },
+          },
+        }),
+        frontmatter: { gallery: "not-an-array" },
+        scope,
+        lookupMediaAsset: createLookup([imageAsset]),
+      }),
+    {
+      code: "INVALID_INPUT",
+      statusCode: 400,
+      details: {
+        field: "frontmatter.gallery",
+        reason: "MEDIA_CONTAINER_TYPE_MISMATCH",
+      },
+    },
+  );
+});
+
 test("missing media asset ids fail with machine-readable details", async () => {
   await assertRuntimeError(
     () =>
