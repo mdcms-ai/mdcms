@@ -116,12 +116,14 @@ test("listMatchingMediaAssets scans later pages until a matching accepted asset 
         return {
           data: [pdfAsset],
           pagination: { total: 25, limit: 24, offset: 24, hasMore: false },
+          storage: { objectStorageConfigured: true },
         };
       }
 
       return {
         data: [pngAsset],
         pagination: { total: 25, limit: 24, offset: 0, hasMore: true },
+        storage: { objectStorageConfigured: true },
       };
     },
   });

@@ -2713,6 +2713,7 @@ test("ContentDocumentPageView renders schema file field editors with writable me
       list: async () => ({
         data: [],
         pagination: { total: 0, limit: 12, offset: 0, hasMore: false },
+        storage: { objectStorageConfigured: true },
       }),
     },
     fileFieldMediaUploadApi: {
@@ -2789,6 +2790,7 @@ test("ContentDocumentPageView renders unset action only for optional set schema 
       list: async () => ({
         data: [],
         pagination: { total: 0, limit: 12, offset: 0, hasMore: false },
+        storage: { objectStorageConfigured: true },
       }),
     },
   } as any);

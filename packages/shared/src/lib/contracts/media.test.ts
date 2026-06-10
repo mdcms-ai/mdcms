@@ -105,7 +105,7 @@ test("deriveMediaAssetCategory maps supported MIME type groups", () => {
   );
 });
 
-test("assertMediaAssetListResponse accepts assets with pagination metadata", () => {
+test("assertMediaAssetListResponse accepts assets with pagination and storage metadata", () => {
   assert.doesNotThrow(() =>
     assertMediaAssetListResponse({
       data: [mediaAsset],
@@ -114,6 +114,9 @@ test("assertMediaAssetListResponse accepts assets with pagination metadata", () 
         limit: 30,
         offset: 0,
         hasMore: false,
+      },
+      storage: {
+        objectStorageConfigured: true,
       },
     }),
   );
@@ -129,6 +132,9 @@ test("assertMediaAssetListResponse rejects invalid pagination metadata", () => {
           limit: 30,
           offset: 0,
           hasMore: false,
+        },
+        storage: {
+          objectStorageConfigured: true,
         },
       }),
     (error: unknown) =>
@@ -153,6 +159,9 @@ test("assertMediaAssetListResponse rejects invalid asset rows", () => {
           limit: 30,
           offset: 0,
           hasMore: false,
+        },
+        storage: {
+          objectStorageConfigured: true,
         },
       }),
     (error: unknown) =>
