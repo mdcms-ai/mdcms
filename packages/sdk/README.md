@@ -60,6 +60,8 @@ List documents with filtering, pagination, and sorting. Supports `locale`, `reso
 
 Per-call `project` and `environment` override the client defaults for that request.
 
+Schema file fields are expanded to `MediaAsset` objects by default. Pass `fileFields: "raw"` to SDK read calls when an authoring workflow needs persisted raw media asset ids.
+
 ### React rendering
 
 `@mdcms/sdk/react` renders fetched document bodies to React nodes on the server.

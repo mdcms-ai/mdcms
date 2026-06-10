@@ -5,6 +5,7 @@ import type {
   ApiPaginatedEnvelope,
   ContentDocumentResponse,
   ErrorEnvelope,
+  MediaAsset,
 } from "@mdcms/shared";
 import {
   appendMdcmsPreviewTokenToUrl,
@@ -31,6 +32,43 @@ function createContentListResponse(
     },
   };
 }
+
+function createBlogPostDocument(
+  frontmatter: Record<string, unknown>,
+): ContentDocumentResponse {
+  return {
+    documentId: "11111111-1111-1111-1111-111111111111",
+    translationGroupId: "22222222-2222-2222-2222-222222222222",
+    project: "marketing-site",
+    environment: "production",
+    path: "blog/hello-world",
+    type: "BlogPost",
+    locale: "en",
+    format: "md",
+    isDeleted: false,
+    hasUnpublishedChanges: false,
+    version: 3,
+    publishedVersion: 3,
+    draftRevision: 5,
+    frontmatter,
+    body: "Hello world",
+    createdBy: "33333333-3333-3333-3333-333333333333",
+    createdAt: "2026-03-26T10:00:00.000Z",
+    updatedBy: "33333333-3333-3333-3333-333333333333",
+    updatedAt: "2026-03-26T12:00:00.000Z",
+  };
+}
+
+const expandedHeroImage: MediaAsset = {
+  id: "media-hero",
+  project: "marketing-site",
+  filename: "hero.jpg",
+  mimeType: "image/jpeg",
+  sizeBytes: 12345,
+  url: "https://cdn.example.com/media/hero.jpg",
+  uploadedBy: "33333333-3333-3333-3333-333333333333",
+  uploadedAt: "2026-06-09T12:00:00.000Z",
+};
 
 test("createClient list unwraps the paginated content envelope", async () => {
   const document: ContentDocumentResponse = {
@@ -100,6 +138,76 @@ test("createClient list unwraps the paginated content envelope", async () => {
   assert.equal(result.data[0]?.documentId, document.documentId);
   assert.equal(result.pagination.total, 1);
   assert.equal(result.pagination.hasMore, false);
+});
+
+test("createClient list defaults to expanded schema file fields", async () => {
+  const document = createBlogPostDocument({
+    title: "Hello World",
+    slug: "hello-world",
+    heroImage: expandedHeroImage,
+  });
+
+  const client = createClient({
+    serverUrl: "http://localhost:4000",
+    apiKey: "mdcms_key_test",
+    project: "marketing-site",
+    environment: "production",
+    fetch: async (input: string | URL | Request) => {
+      assert.equal(
+        String(input),
+        "http://localhost:4000/api/v1/content?type=BlogPost",
+      );
+
+      return new Response(
+        JSON.stringify(createContentListResponse([document])),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        },
+      );
+    },
+  });
+
+  const result = await client.list("BlogPost");
+
+  assert.deepEqual(result.data[0]?.frontmatter.heroImage, expandedHeroImage);
+});
+
+test("createClient list sends raw schema file fields when requested", async () => {
+  const document = createBlogPostDocument({
+    title: "Hello World",
+    slug: "hello-world",
+    heroImage: "media-hero",
+  });
+
+  const client = createClient({
+    serverUrl: "http://localhost:4000",
+    apiKey: "mdcms_key_test",
+    project: "marketing-site",
+    environment: "production",
+    fetch: async (input: string | URL | Request) => {
+      assert.equal(
+        String(input),
+        "http://localhost:4000/api/v1/content?type=BlogPost&fileFields=raw",
+      );
+
+      return new Response(
+        JSON.stringify(createContentListResponse([document])),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        },
+      );
+    },
+  });
+
+  const result = await client.list("BlogPost", { fileFields: "raw" });
+
+  assert.equal(result.data[0]?.frontmatter.heroImage, "media-hero");
 });
 
 test("createClient list throws MdcmsApiError for API error envelopes", async () => {
@@ -250,6 +358,75 @@ test("createClient get by id unwraps a single-document envelope", async () => {
   assert.equal(result.type, "BlogPost");
 });
 
+test("createClient get by id defaults to expanded schema file fields", async () => {
+  const document = createBlogPostDocument({
+    title: "Hello World",
+    slug: "hello-world",
+    heroImage: expandedHeroImage,
+  });
+
+  const client = createClient({
+    serverUrl: "http://localhost:4000",
+    apiKey: "mdcms_key_test",
+    project: "marketing-site",
+    environment: "production",
+    fetch: async (input: string | URL | Request) => {
+      assert.equal(
+        String(input),
+        "http://localhost:4000/api/v1/content/11111111-1111-1111-1111-111111111111",
+      );
+
+      return new Response(JSON.stringify({ data: document }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    },
+  });
+
+  const result = await client.get("BlogPost", {
+    id: "11111111-1111-1111-1111-111111111111",
+  });
+
+  assert.deepEqual(result.frontmatter.heroImage, expandedHeroImage);
+});
+
+test("createClient get by id sends raw schema file fields when requested", async () => {
+  const document = createBlogPostDocument({
+    title: "Hello World",
+    slug: "hello-world",
+    heroImage: "media-hero",
+  });
+
+  const client = createClient({
+    serverUrl: "http://localhost:4000",
+    apiKey: "mdcms_key_test",
+    project: "marketing-site",
+    environment: "production",
+    fetch: async (input: string | URL | Request) => {
+      assert.equal(
+        String(input),
+        "http://localhost:4000/api/v1/content/11111111-1111-1111-1111-111111111111?fileFields=raw",
+      );
+
+      return new Response(JSON.stringify({ data: document }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    },
+  });
+
+  const result = await client.get("BlogPost", {
+    id: "11111111-1111-1111-1111-111111111111",
+    fileFields: "raw",
+  });
+
+  assert.equal(result.frontmatter.heroImage, "media-hero");
+});
+
 test("createClient get by slug resolves a single typed list match", async () => {
   const document: ContentDocumentResponse = {
     documentId: "11111111-1111-1111-1111-111111111111",
@@ -302,6 +479,44 @@ test("createClient get by slug resolves a single typed list match", async () => 
   const result = await client.get("BlogPost", { slug: "hello-world" });
 
   assert.equal(result.documentId, document.documentId);
+});
+
+test("createClient get by slug sends raw schema file fields through list lookup", async () => {
+  const document = createBlogPostDocument({
+    title: "Hello World",
+    slug: "hello-world",
+    heroImage: "media-hero",
+  });
+
+  const client = createClient({
+    serverUrl: "http://localhost:4000",
+    apiKey: "mdcms_key_test",
+    project: "marketing-site",
+    environment: "production",
+    fetch: async (input: string | URL | Request) => {
+      assert.equal(
+        String(input),
+        "http://localhost:4000/api/v1/content?type=BlogPost&slug=hello-world&fileFields=raw",
+      );
+
+      return new Response(
+        JSON.stringify(createContentListResponse([document])),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        },
+      );
+    },
+  });
+
+  const result = await client.get("BlogPost", {
+    slug: "hello-world",
+    fileFields: "raw",
+  });
+
+  assert.equal(result.frontmatter.heroImage, "media-hero");
 });
 
 test("createClient get by slug throws MdcmsClientError when no documents match", async () => {

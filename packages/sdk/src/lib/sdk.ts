@@ -25,6 +25,7 @@ export type MdcmsListInput = {
   locale?: string;
   resolve?: string[];
   draft?: boolean;
+  fileFields?: "raw";
   path?: string;
   slug?: string;
   published?: boolean;
@@ -54,6 +55,7 @@ export type MdcmsGetInput = {
   locale?: string;
   resolve?: string[];
   draft?: boolean;
+  fileFields?: "raw";
 } & ({ id: string; slug?: never } | { slug: string; id?: never });
 
 export type MdcmsPreviewRequest = Request | URL | string;
@@ -332,6 +334,7 @@ export function createClient(options: MdcmsClientOptions): MdcmsClient {
     appendQueryParam(url.searchParams, "draft", input.draft);
     appendQueryParam(url.searchParams, "path", input.path);
     appendQueryParam(url.searchParams, "slug", input.slug);
+    appendQueryParam(url.searchParams, "fileFields", input.fileFields);
     appendQueryParam(url.searchParams, "published", input.published);
     appendQueryParam(url.searchParams, "isDeleted", input.isDeleted);
     appendQueryParam(
@@ -362,6 +365,7 @@ export function createClient(options: MdcmsClientOptions): MdcmsClient {
     appendQueryParam(url.searchParams, "locale", input.locale);
     appendRepeatedQueryParam(url.searchParams, "resolve", input.resolve);
     appendQueryParam(url.searchParams, "draft", input.draft);
+    appendQueryParam(url.searchParams, "fileFields", input.fileFields);
 
     const body = await requestJson(fetcher, url, options.apiKey, scope);
     assertDocumentEnvelope(body);
@@ -380,6 +384,7 @@ export function createClient(options: MdcmsClientOptions): MdcmsClient {
         resolve: input.resolve,
         draft: input.draft,
         slug: input.slug,
+        fileFields: input.fileFields,
       });
 
       if (result.data.length === 0) {
