@@ -46,27 +46,37 @@ function containsFileField(field: SchemaRegistryFieldSnapshot): boolean {
   return false;
 }
 
+function findFirstFileFieldPathInField(
+  field: SchemaRegistryFieldSnapshot,
+  fieldPath: string,
+): string | undefined {
+  if (field.file) {
+    return fieldPath;
+  }
+
+  if (field.kind === "object" && field.fields) {
+    return findFirstFileFieldPath(field.fields, fieldPath);
+  }
+
+  if (field.kind === "array" && field.item) {
+    return findFirstFileFieldPathInField(field.item, `${fieldPath}[0]`);
+  }
+
+  return undefined;
+}
+
 function findFirstFileFieldPath(
   fields: Record<string, SchemaRegistryFieldSnapshot>,
   basePath = "frontmatter",
 ): string | undefined {
   for (const [fieldName, field] of Object.entries(fields)) {
-    const fieldPath = `${basePath}.${fieldName}`;
+    const nestedPath = findFirstFileFieldPathInField(
+      field,
+      `${basePath}.${fieldName}`,
+    );
 
-    if (field.file) {
-      return fieldPath;
-    }
-
-    if (field.kind === "object" && field.fields) {
-      const nestedPath = findFirstFileFieldPath(field.fields, fieldPath);
-
-      if (nestedPath) {
-        return nestedPath;
-      }
-    }
-
-    if (field.kind === "array" && field.item && containsFileField(field.item)) {
-      return `${fieldPath}[0]`;
+    if (nestedPath) {
+      return nestedPath;
     }
   }
 
@@ -387,6 +397,8 @@ async function normalizeFieldValue(input: {
 
       if (normalized.include) {
         normalizedArray.push(normalized.value);
+      } else {
+        normalizedArray.push(null);
       }
     }
 

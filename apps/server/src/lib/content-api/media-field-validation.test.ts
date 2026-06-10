@@ -182,6 +182,40 @@ test("optional file fields treat missing, null, and empty string as unset withou
   assert.deepEqual(calls, []);
 });
 
+test("optional file array items preserve indexes with null unset placeholders", async () => {
+  const calls: string[] = [];
+  const schema = createSchema({
+    gallery: {
+      kind: "array",
+      required: true,
+      nullable: false,
+      item: primaryImageField({
+        required: false,
+        nullable: true,
+        file: {
+          preset: "image",
+          accept: [],
+          emptyStringAsUnset: true,
+        },
+      }),
+    },
+  });
+
+  const result = await validateMediaFieldIdentities({
+    schema,
+    frontmatter: {
+      gallery: [imageAsset.id, "", null, imageAsset.id],
+    },
+    scope,
+    lookupMediaAsset: createLookup([imageAsset], calls),
+  });
+
+  assert.deepEqual(result.frontmatter, {
+    gallery: [imageAsset.id, null, null, imageAsset.id],
+  });
+  assert.deepEqual(calls, [imageAsset.id, imageAsset.id]);
+});
+
 test("object fields containing file fields reject present non-object values", async () => {
   await assertRuntimeError(
     () =>
@@ -537,15 +571,29 @@ test("file fields fail fast when schema validation lacks a media lookup", async 
   await assertRuntimeError(
     () =>
       validateMediaFieldIdentities({
-        schema: createSchema({ primaryImage: primaryImageField() }),
-        frontmatter: { primaryImage: imageAsset.id },
+        schema: createSchema({
+          gallery: {
+            kind: "array",
+            required: true,
+            nullable: false,
+            item: {
+              kind: "object",
+              required: true,
+              nullable: false,
+              fields: {
+                image: primaryImageField(),
+              },
+            },
+          },
+        }),
+        frontmatter: { gallery: [{ image: imageAsset.id }] },
         scope,
       }),
     {
       code: "MEDIA_ASSET_LOOKUP_UNAVAILABLE",
       statusCode: 500,
       details: {
-        field: "frontmatter.primaryImage",
+        field: "frontmatter.gallery[0].image",
       },
     },
   );
