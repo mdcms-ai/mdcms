@@ -1,6 +1,7 @@
 import {
   RuntimeError,
   isRuntimeErrorLike,
+  type ContentMediaResolveError,
   type ResolveErrorsMap,
   type MdcmsFileFieldMetadata,
   type MediaAsset,
@@ -16,21 +17,34 @@ import type { ContentMediaAssetLookup, ContentScope } from "./types.js";
 
 export type FileFieldReadMode = "expanded" | "raw";
 
-type ContentMediaResolveError = {
-  code: "MEDIA_NOT_FOUND" | "MEDIA_TYPE_MISMATCH";
-  message: string;
-  media: {
-    assetId: string;
-    expectedMime?: string[];
-    actualMimeType?: string;
-  };
-};
-
 type ExpansionContext = {
   scope: ContentScope;
   lookupMediaAsset: ContentMediaAssetLookup;
   resolveErrors: ResolveErrorsMap;
 };
+
+export function createCachedMediaAssetLookup(
+  lookupMediaAsset: ContentMediaAssetLookup | undefined,
+): ContentMediaAssetLookup | undefined {
+  if (!lookupMediaAsset) {
+    return undefined;
+  }
+
+  const cache = new Map<string, Promise<MediaAsset | undefined>>();
+
+  return (scope, id) => {
+    const key = `${scope.project}\0${scope.environment}\0${id}`;
+    const cached = cache.get(key);
+
+    if (cached) {
+      return cached;
+    }
+
+    const lookup = lookupMediaAsset(scope, id);
+    cache.set(key, lookup);
+    return lookup;
+  };
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -143,14 +157,6 @@ function createMediaResolveError(input: {
   };
 }
 
-function setMediaResolveError(
-  resolveErrors: ResolveErrorsMap,
-  path: string,
-  error: ContentMediaResolveError,
-): void {
-  resolveErrors[path] = error as unknown as ResolveErrorsMap[string];
-}
-
 function isMalformedMediaIdLookupError(error: unknown): boolean {
   return (
     isRuntimeErrorLike(error) &&
@@ -181,7 +187,7 @@ function isUnsetFileFieldValue(
 
 async function lookupAsset(input: {
   value: string;
-  field: SchemaRegistryFieldSnapshot;
+  file: MdcmsFileFieldMetadata;
   path: string;
   context: ExpansionContext;
 }): Promise<MediaAsset | null> {
@@ -197,28 +203,20 @@ async function lookupAsset(input: {
   }
 
   if (!asset) {
-    setMediaResolveError(
-      input.context.resolveErrors,
-      input.path,
-      createMediaResolveError({
-        code: "MEDIA_NOT_FOUND",
-        assetId,
-      }),
-    );
+    input.context.resolveErrors[input.path] = createMediaResolveError({
+      code: "MEDIA_NOT_FOUND",
+      assetId,
+    });
     return null;
   }
 
-  if (!mediaAssetMatchesFileField(asset, input.field.file!)) {
-    setMediaResolveError(
-      input.context.resolveErrors,
-      input.path,
-      createMediaResolveError({
-        code: "MEDIA_TYPE_MISMATCH",
-        assetId,
-        expectedMime: expectedMimeForFileField(input.field.file!),
-        actualMimeType: normalizeMimeType(asset.mimeType),
-      }),
-    );
+  if (!mediaAssetMatchesFileField(asset, input.file)) {
+    input.context.resolveErrors[input.path] = createMediaResolveError({
+      code: "MEDIA_TYPE_MISMATCH",
+      assetId,
+      expectedMime: expectedMimeForFileField(input.file),
+      actualMimeType: normalizeMimeType(asset.mimeType),
+    });
     return null;
   }
 
@@ -228,6 +226,7 @@ async function lookupAsset(input: {
 async function expandFileField(input: {
   value: unknown;
   field: SchemaRegistryFieldSnapshot;
+  file: MdcmsFileFieldMetadata;
   path: string;
   context: ExpansionContext;
 }): Promise<unknown> {
@@ -236,20 +235,16 @@ async function expandFileField(input: {
   }
 
   if (typeof input.value !== "string" || input.value.trim().length === 0) {
-    setMediaResolveError(
-      input.context.resolveErrors,
-      input.path,
-      createMediaResolveError({
-        code: "MEDIA_NOT_FOUND",
-        assetId: typeof input.value === "string" ? input.value.trim() : "",
-      }),
-    );
+    input.context.resolveErrors[input.path] = createMediaResolveError({
+      code: "MEDIA_NOT_FOUND",
+      assetId: typeof input.value === "string" ? input.value.trim() : "",
+    });
     return null;
   }
 
   return lookupAsset({
     value: input.value,
-    field: input.field,
+    file: input.file,
     path: input.path,
     context: input.context,
   });
@@ -262,7 +257,10 @@ async function expandField(input: {
   context: ExpansionContext;
 }): Promise<unknown> {
   if (input.field.file) {
-    return expandFileField(input);
+    return expandFileField({
+      ...input,
+      file: input.field.file,
+    });
   }
 
   if (!fieldContainsFileField(input.field)) {

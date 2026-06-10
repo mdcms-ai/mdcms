@@ -35,6 +35,7 @@ import {
 } from "./resolve.js";
 import {
   applyMediaFieldExpansion,
+  createCachedMediaAssetLookup,
   type FileFieldReadMode,
 } from "./media-field-expansion.js";
 import { createContentLifecycleMutationCommitter } from "./lifecycle-events.js";
@@ -131,9 +132,27 @@ function parseOverviewTypes(request: Request): string[] {
 }
 
 function parseFileFieldReadMode(request: Request): FileFieldReadMode {
-  const value = new URL(request.url).searchParams.get("fileFields");
+  const values = new URL(request.url).searchParams.getAll("fileFields");
 
-  if (value === null || value === "expanded") {
+  if (values.length === 0) {
+    return "expanded";
+  }
+
+  if (values.length > 1) {
+    throw new RuntimeError({
+      code: "INVALID_QUERY_PARAM",
+      message: 'Query parameter "fileFields" must be specified at most once.',
+      statusCode: 400,
+      details: {
+        field: "fileFields",
+        value: values,
+      },
+    });
+  }
+
+  const [value] = values;
+
+  if (value === "expanded") {
     return "expanded";
   }
 
@@ -609,6 +628,9 @@ export function mountContentApiRoutes(
       const scope = pickScope(request);
       const typedQuery = query as ContentListQuery;
       const fileFieldMode = parseFileFieldReadMode(request);
+      const lookupMediaAsset = createCachedMediaAssetLookup(
+        options.lookupMediaAsset,
+      );
       const requestedPath = typedQuery.path?.trim();
       const requiredScope = resolveContentReadScope(typedQuery);
       const draft = requiredScope === "content:read:draft";
@@ -691,7 +713,7 @@ export function mountContentApiRoutes(
             schema: schemaCache.get(document.type),
             resolvePlan,
             fileFieldMode,
-            lookupMediaAsset: options.lookupMediaAsset,
+            lookupMediaAsset,
           });
         }),
       );
@@ -775,6 +797,9 @@ export function mountContentApiRoutes(
         const scope = pickScope(request);
         const typedQuery = query as ContentListQuery;
         const fileFieldMode = parseFileFieldReadMode(request);
+        const lookupMediaAsset = createCachedMediaAssetLookup(
+          options.lookupMediaAsset,
+        );
         const requiredScope = resolveContentReadScope(typedQuery);
         const draft = parseBoolean(typedQuery.draft, "draft") === true;
         const resolvePaths = parseRequestedResolvePaths({
@@ -833,7 +858,7 @@ export function mountContentApiRoutes(
             schema: typeSchema,
             resolvePlan,
             fileFieldMode,
-            lookupMediaAsset: options.lookupMediaAsset,
+            lookupMediaAsset,
           }),
         };
       });
@@ -975,6 +1000,9 @@ export function mountContentApiRoutes(
         const version = parsePathInt(params.version, "version");
         const typedQuery = query as ContentListQuery;
         const fileFieldMode = parseFileFieldReadMode(request);
+        const lookupMediaAsset = createCachedMediaAssetLookup(
+          options.lookupMediaAsset,
+        );
         const resolvePaths = parseRequestedResolvePaths({
           query: {
             ...typedQuery,
@@ -1050,7 +1078,7 @@ export function mountContentApiRoutes(
             schema: typeSchema,
             resolvePlan,
             fileFieldMode,
-            lookupMediaAsset: options.lookupMediaAsset,
+            lookupMediaAsset,
           }),
         };
       });
@@ -1061,6 +1089,9 @@ export function mountContentApiRoutes(
     return executeWithRuntimeErrorsHandled(request, async () => {
       const scope = pickScope(request);
       const fileFieldMode = parseFileFieldReadMode(request);
+      const lookupMediaAsset = createCachedMediaAssetLookup(
+        options.lookupMediaAsset,
+      );
       await options.requireCsrf(request);
       const payload = (body ?? {}) as ContentWritePayload;
       const requestedPath =
@@ -1098,7 +1129,7 @@ export function mountContentApiRoutes(
           document: toDocumentResponse(document),
           schema: await options.store.getSchema(scope, document.type),
           fileFieldMode,
-          lookupMediaAsset: options.lookupMediaAsset,
+          lookupMediaAsset,
         }),
       };
     });
@@ -1108,6 +1139,9 @@ export function mountContentApiRoutes(
     return executeWithRuntimeErrorsHandled(request, async () => {
       const scope = pickScope(request);
       const fileFieldMode = parseFileFieldReadMode(request);
+      const lookupMediaAsset = createCachedMediaAssetLookup(
+        options.lookupMediaAsset,
+      );
       await options.requireCsrf(request);
       const payload = parseContentBulkOperationInput(body);
       const requiredScope = getBulkRequiredScope(payload.action);
@@ -1215,7 +1249,7 @@ export function mountContentApiRoutes(
               document: toDocumentResponse(document),
               schema: await options.store.getSchema(scope, document.type),
               fileFieldMode,
-              lookupMediaAsset: options.lookupMediaAsset,
+              lookupMediaAsset,
             }),
           });
         } catch (error) {
@@ -1260,6 +1294,9 @@ export function mountContentApiRoutes(
       return executeWithRuntimeErrorsHandled(request, async () => {
         const scope = pickScope(request);
         const fileFieldMode = parseFileFieldReadMode(request);
+        const lookupMediaAsset = createCachedMediaAssetLookup(
+          options.lookupMediaAsset,
+        );
         await options.requireCsrf(request);
         const payload = (body ?? {}) as ContentWritePayload;
 
@@ -1336,7 +1373,7 @@ export function mountContentApiRoutes(
             document: toDocumentResponse(document),
             schema: await options.store.getSchema(scope, document.type),
             fileFieldMode,
-            lookupMediaAsset: options.lookupMediaAsset,
+            lookupMediaAsset,
           }),
         };
       });
@@ -1349,6 +1386,9 @@ export function mountContentApiRoutes(
       return executeWithRuntimeErrorsHandled(request, async () => {
         const scope = pickScope(request);
         const fileFieldMode = parseFileFieldReadMode(request);
+        const lookupMediaAsset = createCachedMediaAssetLookup(
+          options.lookupMediaAsset,
+        );
         await options.requireCsrf(request);
 
         const authorization = await options.authorize(request, {
@@ -1397,7 +1437,7 @@ export function mountContentApiRoutes(
             document: toDocumentResponse(document),
             schema: await options.store.getSchema(scope, document.type),
             fileFieldMode,
-            lookupMediaAsset: options.lookupMediaAsset,
+            lookupMediaAsset,
           }),
         };
       });
@@ -1410,6 +1450,9 @@ export function mountContentApiRoutes(
       return executeWithRuntimeErrorsHandled(request, async () => {
         const scope = pickScope(request);
         const fileFieldMode = parseFileFieldReadMode(request);
+        const lookupMediaAsset = createCachedMediaAssetLookup(
+          options.lookupMediaAsset,
+        );
         await options.requireCsrf(request);
         const payload = (body ?? {}) as ContentRestoreVersionPayload;
         const targetStatus = parseRestoreTargetStatus(payload.targetStatus);
@@ -1490,7 +1533,7 @@ export function mountContentApiRoutes(
             document: toDocumentResponse(document),
             schema: await options.store.getSchema(scope, document.type),
             fileFieldMode,
-            lookupMediaAsset: options.lookupMediaAsset,
+            lookupMediaAsset,
           }),
         };
       });
@@ -1503,6 +1546,9 @@ export function mountContentApiRoutes(
       return executeWithRuntimeErrorsHandled(request, async () => {
         const scope = pickScope(request);
         const fileFieldMode = parseFileFieldReadMode(request);
+        const lookupMediaAsset = createCachedMediaAssetLookup(
+          options.lookupMediaAsset,
+        );
         await options.requireCsrf(request);
         const authorization = await options.authorize(request, {
           requiredScope: "content:publish",
@@ -1559,7 +1605,7 @@ export function mountContentApiRoutes(
             document: toDocumentResponse(document),
             schema: await options.store.getSchema(scope, document.type),
             fileFieldMode,
-            lookupMediaAsset: options.lookupMediaAsset,
+            lookupMediaAsset,
           }),
         };
       });
@@ -1572,6 +1618,9 @@ export function mountContentApiRoutes(
       return executeWithRuntimeErrorsHandled(request, async () => {
         const scope = pickScope(request);
         const fileFieldMode = parseFileFieldReadMode(request);
+        const lookupMediaAsset = createCachedMediaAssetLookup(
+          options.lookupMediaAsset,
+        );
         await options.requireCsrf(request);
         const authorization = await options.authorize(request, {
           requiredScope: "content:publish",
@@ -1624,7 +1673,7 @@ export function mountContentApiRoutes(
             document: toDocumentResponse(document),
             schema: await options.store.getSchema(scope, document.type),
             fileFieldMode,
-            lookupMediaAsset: options.lookupMediaAsset,
+            lookupMediaAsset,
           }),
         };
       });
@@ -1637,6 +1686,9 @@ export function mountContentApiRoutes(
       return executeWithRuntimeErrorsHandled(request, async () => {
         const scope = pickScope(request);
         const fileFieldMode = parseFileFieldReadMode(request);
+        const lookupMediaAsset = createCachedMediaAssetLookup(
+          options.lookupMediaAsset,
+        );
         await options.requireCsrf(request);
         const authorization = await options.authorize(request, {
           requiredScope: "content:write",
@@ -1716,7 +1768,7 @@ export function mountContentApiRoutes(
                 document: toDocumentResponse(document),
                 schema: await options.store.getSchema(scope, document.type),
                 fileFieldMode,
-                lookupMediaAsset: options.lookupMediaAsset,
+                lookupMediaAsset,
               }),
             };
           } catch (error) {
@@ -1751,6 +1803,9 @@ export function mountContentApiRoutes(
       return executeWithRuntimeErrorsHandled(request, async () => {
         const scope = pickScope(request);
         const fileFieldMode = parseFileFieldReadMode(request);
+        const lookupMediaAsset = createCachedMediaAssetLookup(
+          options.lookupMediaAsset,
+        );
         await options.requireCsrf(request);
         const authorization = await options.authorize(request, {
           requiredScope: "content:delete",
@@ -1796,7 +1851,7 @@ export function mountContentApiRoutes(
             document: toDocumentResponse(document),
             schema: await options.store.getSchema(scope, document.type),
             fileFieldMode,
-            lookupMediaAsset: options.lookupMediaAsset,
+            lookupMediaAsset,
           }),
         };
       });

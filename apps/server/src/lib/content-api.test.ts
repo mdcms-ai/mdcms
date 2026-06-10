@@ -156,6 +156,7 @@ function mediaReadSchemas(): Record<string, SchemaRegistryTypeSnapshot> {
 function createMediaReadHandler(
   input: {
     assets?: MediaAsset[];
+    lookupCalls?: string[];
     getWriteSchemaSyncState?: () => Promise<{ schemaHash: string } | undefined>;
   } = {},
 ) {
@@ -184,7 +185,7 @@ function createMediaReadHandler(
             schemaHash: inMemorySchemaHash,
           })),
         lookupMediaAsset: async (scope, id) =>
-          createMediaLookup(assets)(scope, id),
+          createMediaLookup(assets, input.lookupCalls)(scope, id),
       });
     },
     now: () => new Date("2026-06-09T12:00:00.000Z"),
@@ -616,6 +617,22 @@ test("content API expands file fields by default and supports raw mode on reads"
   assert.equal(invalidResponse.status, 400);
   assert.equal(invalid.code, "INVALID_QUERY_PARAM");
 
+  const repeatedResponse = await handler(
+    new Request(
+      `http://localhost/api/v1/content/${article.documentId}?fileFields=raw&fileFields=banana`,
+      {
+        headers: scopeHeaders,
+      },
+    ),
+  );
+  const repeated = (await repeatedResponse.json()) as {
+    code: string;
+    details?: { field?: string };
+  };
+  assert.equal(repeatedResponse.status, 400);
+  assert.equal(repeated.code, "INVALID_QUERY_PARAM");
+  assert.equal(repeated.details?.field, "fileFields");
+
   const emptyResponse = await handler(
     new Request(
       `http://localhost/api/v1/content/${article.documentId}?fileFields=`,
@@ -631,6 +648,34 @@ test("content API expands file fields by default and supports raw mode on reads"
   assert.equal(emptyResponse.status, 400);
   assert.equal(empty.code, "INVALID_QUERY_PARAM");
   assert.equal(empty.details?.field, "fileFields");
+});
+
+test("content API caches duplicate media asset lookups within a list response", async () => {
+  const lookupCalls: string[] = [];
+  const { handler } = createMediaReadHandler({ lookupCalls });
+  const first = await createMediaArticle(handler, "cached-list-one");
+  const second = await createMediaArticle(handler, "cached-list-two");
+
+  for (const documentId of [first.documentId, second.documentId]) {
+    const publishResponse = await handler(
+      jsonContentRequest(
+        `/api/v1/content/${documentId}/publish?fileFields=raw`,
+        "POST",
+      ),
+    );
+    assert.equal(publishResponse.status, 200);
+  }
+
+  lookupCalls.length = 0;
+
+  const response = await handler(
+    new Request("http://localhost/api/v1/content?type=Article", {
+      headers: scopeHeaders,
+    }),
+  );
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(lookupCalls, [mediaFieldImageAsset.id]);
 });
 
 test("content API merges unresolved reference and media resolve errors", async () => {

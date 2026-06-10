@@ -203,6 +203,11 @@ async function validateConcreteFileField(input: {
   scope: ContentScope;
   lookupMediaAsset: ContentMediaAssetLookup;
 }): Promise<NormalizedFieldValue> {
+  const file = input.field.file;
+  if (!file) {
+    throw createLookupUnavailableError(input.fieldPath);
+  }
+
   let value = input.value;
 
   if (value === undefined && input.field.default !== undefined) {
@@ -267,12 +272,12 @@ async function validateConcreteFileField(input: {
     });
   }
 
-  if (!mediaAssetMatchesFileField(asset, input.field.file)) {
+  if (!mediaAssetMatchesFileField(asset, file)) {
     throw createMediaFieldValidationError({
       fieldPath: input.fieldPath,
       mediaAssetId,
       reason: "MEDIA_TYPE_MISMATCH",
-      expectedMime: expectedMimeForFileField(input.field.file),
+      expectedMime: expectedMimeForFileField(file),
       actualMimeType: normalizeMimeType(asset.mimeType),
     });
   }

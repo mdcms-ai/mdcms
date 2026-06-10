@@ -1,6 +1,6 @@
 import type {
   ContentDocumentResponse,
-  ContentResolveError,
+  ContentReferenceResolveError,
   ResolveErrorsMap,
   SchemaRegistryFieldSnapshot,
 } from "@mdcms/shared";
@@ -28,7 +28,7 @@ type ResolveResult =
     }
   | {
       kind: "unresolved";
-      error: ContentResolveError;
+      error: ContentReferenceResolveError;
     };
 
 type TargetSlot =
@@ -229,11 +229,11 @@ function setTargetSlotValue(
 }
 
 function createResolveError(
-  code: ContentResolveError["code"],
+  code: ContentReferenceResolveError["code"],
   documentId: string,
   type: string,
-): ContentResolveError {
-  const messageByCode: Record<ContentResolveError["code"], string> = {
+): ContentReferenceResolveError {
+  const messageByCode: Record<ContentReferenceResolveError["code"], string> = {
     REFERENCE_NOT_FOUND:
       "Referenced document could not be resolved in the target project/environment.",
     REFERENCE_DELETED:
@@ -292,7 +292,9 @@ async function resolveReferenceValue(input: {
   documentId: string;
   expectedType: string;
 }): Promise<ResolveResult> {
-  const unresolved = (code: ContentResolveError["code"]): ResolveResult => ({
+  const unresolved = (
+    code: ContentReferenceResolveError["code"],
+  ): ResolveResult => ({
     kind: "unresolved",
     error: createResolveError(code, input.documentId, input.expectedType),
   });
