@@ -324,6 +324,72 @@ function assertMediaAssetId(value: JsonValue, path: string): string {
   return value;
 }
 
+function assertSnapshotMediaAssetId(value: unknown, path: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    invalidInput(path, "must be a raw media asset id string.", { value });
+  }
+
+  if (
+    value.includes("://") ||
+    value.startsWith("/") ||
+    value.startsWith("./") ||
+    value.startsWith("../")
+  ) {
+    invalidInput(path, "must be a raw media asset id string.", { value });
+  }
+
+  return value;
+}
+
+function assertNormalizedFileAccept(
+  value: unknown,
+  path: string,
+): asserts value is string[] {
+  if (!Array.isArray(value)) {
+    invalidInput(path, "must be an array.", { value });
+  }
+
+  const normalized = [...value]
+    .map((entry, index) => {
+      if (typeof entry !== "string" || !MIME_ACCEPT_PATTERN.test(entry)) {
+        invalidInput(
+          `${path}[${index}]`,
+          "must be a valid MIME type or wildcard.",
+          { value: entry },
+        );
+      }
+
+      return entry;
+    })
+    .sort((left, right) => left.localeCompare(right));
+
+  if (normalized.length !== value.length) {
+    invalidInput(
+      path,
+      "must be normalized: lowercase, sorted, and deduplicated.",
+      { value },
+    );
+  }
+
+  for (let index = 0; index < value.length; index += 1) {
+    const current = value[index];
+    const expected = normalized[index];
+
+    if (
+      typeof current !== "string" ||
+      current !== current.toLowerCase() ||
+      current !== expected ||
+      (index > 0 && current === value[index - 1])
+    ) {
+      invalidInput(
+        path,
+        "must be normalized: lowercase, sorted, and deduplicated.",
+        { value },
+      );
+    }
+  }
+}
+
 function assertFieldSnapshot(
   value: unknown,
   path: string,
@@ -377,21 +443,7 @@ function assertFieldSnapshot(
       );
     }
 
-    if (!Array.isArray(value.file.accept)) {
-      invalidInput(`${path}.file.accept`, "must be an array.", {
-        value: value.file.accept,
-      });
-    }
-
-    value.file.accept.forEach((entry, index) => {
-      if (typeof entry !== "string" || !MIME_ACCEPT_PATTERN.test(entry)) {
-        invalidInput(
-          `${path}.file.accept[${index}]`,
-          "must be a valid MIME type or wildcard.",
-          { value: entry },
-        );
-      }
-    });
+    assertNormalizedFileAccept(value.file.accept, `${path}.file.accept`);
 
     if (typeof value.file.emptyStringAsUnset !== "boolean") {
       invalidInput(
@@ -438,6 +490,10 @@ function assertFieldSnapshot(
       `${path}.file`,
       'must not be provided when kind is not "string".',
     );
+  }
+
+  if (value.file !== undefined && value.default !== undefined) {
+    assertSnapshotMediaAssetId(value.default, `${path}.default`);
   }
 
   switch (value.kind) {

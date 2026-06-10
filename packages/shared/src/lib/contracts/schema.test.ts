@@ -513,6 +513,154 @@ test("assertSchemaRegistrySyncPayload rejects file metadata on non-string fields
   );
 });
 
+test("assertSchemaRegistrySyncPayload rejects invalid file snapshot defaults", () => {
+  expectInvalidInput(
+    () =>
+      assertSchemaRegistrySyncPayload({
+        rawConfigSnapshot: {},
+        resolvedSchema: {
+          Post: {
+            type: "Post",
+            directory: "content/posts",
+            localized: false,
+            fields: {
+              asset: {
+                kind: "string",
+                required: false,
+                nullable: false,
+                default: "https://cdn.example.com/a.png",
+                file: {
+                  preset: "image",
+                  accept: [],
+                  emptyStringAsUnset: false,
+                },
+              },
+            },
+          },
+        },
+        schemaHash: "hash",
+      }),
+    "payload.resolvedSchema.Post.fields.asset.default",
+  );
+
+  expectInvalidInput(
+    () =>
+      assertSchemaRegistrySyncPayload({
+        rawConfigSnapshot: {},
+        resolvedSchema: {
+          Post: {
+            type: "Post",
+            directory: "content/posts",
+            localized: false,
+            fields: {
+              asset: {
+                kind: "string",
+                required: false,
+                nullable: false,
+                default: {
+                  id: "6f6a8a6e-8d5b-4d5d-a4df-1b2a3c4d5e6f",
+                },
+                file: {
+                  preset: "file",
+                  accept: [],
+                  emptyStringAsUnset: false,
+                },
+              },
+            },
+          },
+        },
+        schemaHash: "hash",
+      } as never),
+    "payload.resolvedSchema.Post.fields.asset.default",
+  );
+});
+
+test("assertSchemaRegistrySyncPayload rejects non-normalized file accept arrays", () => {
+  expectInvalidInput(
+    () =>
+      assertSchemaRegistrySyncPayload({
+        rawConfigSnapshot: {},
+        resolvedSchema: {
+          Post: {
+            type: "Post",
+            directory: "content/posts",
+            localized: false,
+            fields: {
+              asset: {
+                kind: "string",
+                required: true,
+                nullable: false,
+                file: {
+                  preset: "video",
+                  accept: ["VIDEO/MP4", "video/mp4"],
+                  emptyStringAsUnset: false,
+                },
+              },
+            },
+          },
+        },
+        schemaHash: "hash",
+      }),
+    "payload.resolvedSchema.Post.fields.asset.file.accept",
+  );
+
+  expectInvalidInput(
+    () =>
+      assertSchemaRegistrySyncPayload({
+        rawConfigSnapshot: {},
+        resolvedSchema: {
+          Post: {
+            type: "Post",
+            directory: "content/posts",
+            localized: false,
+            fields: {
+              asset: {
+                kind: "string",
+                required: true,
+                nullable: false,
+                file: {
+                  preset: "video",
+                  accept: ["video/webm", "video/mp4"],
+                  emptyStringAsUnset: false,
+                },
+              },
+            },
+          },
+        },
+        schemaHash: "hash",
+      }),
+    "payload.resolvedSchema.Post.fields.asset.file.accept",
+  );
+
+  expectInvalidInput(
+    () =>
+      assertSchemaRegistrySyncPayload({
+        rawConfigSnapshot: {},
+        resolvedSchema: {
+          Post: {
+            type: "Post",
+            directory: "content/posts",
+            localized: false,
+            fields: {
+              asset: {
+                kind: "string",
+                required: true,
+                nullable: false,
+                file: {
+                  preset: "video",
+                  accept: ["video/mp4", "video/mp4"],
+                  emptyStringAsUnset: false,
+                },
+              },
+            },
+          },
+        },
+        schemaHash: "hash",
+      }),
+    "payload.resolvedSchema.Post.fields.asset.file.accept",
+  );
+});
+
 test("toRawConfigSnapshot includes project, omits deployment context, and omits implicit locales", () => {
   const parsed = parseMdcmsConfig(
     defineConfig({
