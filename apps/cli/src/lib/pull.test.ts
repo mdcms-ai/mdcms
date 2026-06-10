@@ -82,6 +82,7 @@ test("pull defaults to prompt-and-apply using draft reads", async () => {
         requests += 1;
         const url = String(input);
         assert.equal(url.includes("draft=true"), true);
+        assert.equal(url.includes("fileFields=raw"), true);
         return createContentListResponse({ rows: [document] });
       },
       confirm: async () => true,
@@ -138,6 +139,7 @@ test("pull --published fetches published snapshots", async () => {
       fetcher: async (input) => {
         const url = String(input);
         assert.equal(url.includes("draft=false"), true);
+        assert.equal(url.includes("fileFields=raw"), true);
         return createContentListResponse({
           rows: [],
         });
@@ -161,6 +163,64 @@ test("pull --published fetches published snapshots", async () => {
     });
 
     assert.equal(exitCode, 0);
+  });
+});
+
+test("pull preserves raw schema file field ids in local frontmatter", async () => {
+  await withTempDir(async (cwd) => {
+    const exitCode = await runMdcmsCli(["pull"], {
+      cwd,
+      env: {} as NodeJS.ProcessEnv,
+      fetcher: async (input) => {
+        assert.equal(String(input).includes("fileFields=raw"), true);
+        return createContentListResponse({
+          rows: [
+            {
+              documentId: "22222222-2222-2222-2222-222222222222",
+              type: "BlogPost",
+              locale: "en",
+              path: "content/blog/with-image",
+              format: "md",
+              frontmatter: {
+                title: "With Image",
+                primaryImage: "07ebb057-eeab-4849-94e4-2162cb921c8e",
+              },
+              body: "Image body",
+              draftRevision: 1,
+              publishedVersion: null,
+            },
+          ],
+        });
+      },
+      confirm: async () => true,
+      loadConfig: async () => ({
+        config: {
+          serverUrl: "http://localhost:4000",
+          project: "marketing-site",
+          environment: "staging",
+          types: [{ name: "BlogPost", localized: true }],
+        },
+        configPath: join(cwd, "mdcms.config.ts"),
+      }),
+      stdout: {
+        write: () => undefined,
+      },
+      stderr: {
+        write: () => undefined,
+      },
+    });
+
+    assert.equal(exitCode, 0);
+    const localContent = await readFile(
+      join(cwd, "content/blog/with-image.en.md"),
+      "utf8",
+    );
+    assert.equal(
+      localContent.includes(
+        "primaryImage: 07ebb057-eeab-4849-94e4-2162cb921c8e",
+      ),
+      true,
+    );
   });
 });
 

@@ -459,7 +459,7 @@ async function updateExistingDocument(
     }
 > {
   const response = await context.fetcher(
-    `${context.serverUrl}/api/v1/content/${candidate.documentId}`,
+    `${context.serverUrl}/api/v1/content/${candidate.documentId}?fileFields=raw`,
     {
       method: "PUT",
       headers: toRequestHeaders(context, schemaHash),
@@ -546,7 +546,7 @@ async function createDocumentFromLocalFile(
   });
 
   const response = await context.fetcher(
-    `${context.serverUrl}/api/v1/content`,
+    `${context.serverUrl}/api/v1/content?fileFields=raw`,
     {
       method: "POST",
       headers: toRequestHeaders(context, schemaHash),
@@ -608,7 +608,7 @@ async function createNewDocument(
   | { kind: "path_conflict"; code: string; message: string }
 > {
   const response = await context.fetcher(
-    `${context.serverUrl}/api/v1/content`,
+    `${context.serverUrl}/api/v1/content?fileFields=raw`,
     {
       method: "POST",
       headers: toRequestHeaders(context, schemaHash),
