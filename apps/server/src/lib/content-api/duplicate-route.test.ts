@@ -63,6 +63,7 @@ function createRequest(
   const headers: Record<string, string> = {
     "x-mdcms-project": "test-project",
     "x-mdcms-environment": "staging",
+    "x-mdcms-schema-hash": "test-hash",
     ...(overrides?.headers ?? {}),
   };
   return new Request("http://localhost:4000/api/v1/content/doc-1/duplicate", {

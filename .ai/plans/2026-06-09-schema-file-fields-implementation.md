@@ -12,7 +12,7 @@
 
 ## Pre-Flight
 
-Run from `/Users/karol/Desktop/mdcms`.
+Run from the repository root.
 
 Use repo-local plan location `.ai/plans/` despite the generic superpowers template naming `docs/plans/`; `AGENTS.md` explicitly makes `.ai/plans/` canonical for this repository.
 

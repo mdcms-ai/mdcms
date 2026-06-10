@@ -2,7 +2,7 @@
 status: live
 canonical: true
 created: 2026-03-11
-last_updated: 2026-06-06
+last_updated: 2026-06-10
 ---
 
 # SPEC-010 Media, Webhooks, Search, and Integrations

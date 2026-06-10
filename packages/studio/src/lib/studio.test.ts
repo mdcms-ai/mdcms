@@ -990,7 +990,7 @@ test("loadStudioDocumentShell fetches draft content with scoped headers", async 
       fetcher: async (input, init) => {
         assert.equal(
           String(input),
-          "http://localhost:4000/api/v1/content/11111111-1111-4111-8111-111111111111?draft=true",
+          "http://localhost:4000/api/v1/content/11111111-1111-4111-8111-111111111111?draft=true&fileFields=raw",
         );
         assert.equal(
           readFetchHeader(input, init, "x-mdcms-project"),

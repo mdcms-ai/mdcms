@@ -450,11 +450,9 @@ export function MediaFieldControl({
       }
     } finally {
       if (operationGuard.isCurrentUpload(uploadToken)) {
-        operationGuard.finishUpload(uploadToken);
         setUploadProgress(undefined);
-      } else {
-        operationGuard.finishUpload(uploadToken);
       }
+      operationGuard.finishUpload(uploadToken);
     }
   };
 

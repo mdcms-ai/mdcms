@@ -131,6 +131,8 @@ function parseOverviewTypes(request: Request): string[] {
   });
 }
 
+const FileFieldReadModeSchema = z.enum(["raw", "expanded"]);
+
 function parseFileFieldReadMode(request: Request): FileFieldReadMode {
   const values = new URL(request.url).searchParams.getAll("fileFields");
 
@@ -151,13 +153,10 @@ function parseFileFieldReadMode(request: Request): FileFieldReadMode {
   }
 
   const [value] = values;
+  const parsed = FileFieldReadModeSchema.safeParse(value);
 
-  if (value === "expanded") {
-    return "expanded";
-  }
-
-  if (value === "raw") {
-    return "raw";
+  if (parsed.success) {
+    return parsed.data;
   }
 
   throw new RuntimeError({
@@ -577,6 +576,21 @@ async function shapeContentDocumentResponse<
       input.schema,
     ),
   };
+  const resolvedSchemaCache = new Map<
+    string,
+    SchemaRegistryTypeSnapshot | undefined
+  >();
+  const getResolvedDocumentSchema = async (
+    type: string,
+  ): Promise<SchemaRegistryTypeSnapshot | undefined> => {
+    if (resolvedSchemaCache.has(type)) {
+      return resolvedSchemaCache.get(type);
+    }
+
+    const schema = await input.store.getSchema(input.scope, type);
+    resolvedSchemaCache.set(type, schema);
+    return schema;
+  };
   const resolvedDocument = await applyResolvePlan({
     authorize: input.authorize,
     document: strippedDocument,
@@ -592,7 +606,7 @@ async function shapeContentDocumentResponse<
       }
 
       return applyMediaFieldExpansion({
-        schema: await input.store.getSchema(input.scope, document.type),
+        schema: await getResolvedDocumentSchema(document.type),
         document,
         scope: input.scope,
         lookupMediaAsset: input.lookupMediaAsset,

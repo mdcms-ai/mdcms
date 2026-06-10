@@ -14,6 +14,10 @@ import {
   isStudioCookieAuth,
   type StudioRuntimeAuth,
 } from "./request-auth.js";
+import {
+  isMediaResolveErrorEntry,
+  isReferenceResolveErrorEntry,
+} from "./resolve-error-validation.js";
 import { resolveStudioRelativeUrl } from "./url-resolution.js";
 
 export type StudioDocumentRouteConfig = Pick<
@@ -204,40 +208,6 @@ function isFiniteNumber(value: unknown): value is number {
 
 function isContentFormat(value: unknown): value is "md" | "mdx" {
   return value === "md" || value === "mdx";
-}
-
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every(isString);
-}
-
-function isReferenceResolveErrorEntry(entry: Record<string, unknown>): boolean {
-  return (
-    (entry.code === "REFERENCE_NOT_FOUND" ||
-      entry.code === "REFERENCE_DELETED" ||
-      entry.code === "REFERENCE_TYPE_MISMATCH" ||
-      entry.code === "REFERENCE_FORBIDDEN") &&
-    isRecord(entry.ref) &&
-    isString(entry.ref.documentId) &&
-    isString(entry.ref.type)
-  );
-}
-
-function isMediaResolveErrorEntry(entry: Record<string, unknown>): boolean {
-  if (
-    (entry.code !== "MEDIA_NOT_FOUND" &&
-      entry.code !== "MEDIA_TYPE_MISMATCH") ||
-    !isRecord(entry.media) ||
-    !isString(entry.media.assetId)
-  ) {
-    return false;
-  }
-
-  return (
-    (entry.media.expectedMime === undefined ||
-      isStringArray(entry.media.expectedMime)) &&
-    (entry.media.actualMimeType === undefined ||
-      isString(entry.media.actualMimeType))
-  );
 }
 
 function isResolveErrorsMap(value: unknown): value is Record<
