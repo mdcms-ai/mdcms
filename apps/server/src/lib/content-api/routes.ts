@@ -586,6 +586,19 @@ async function shapeContentDocumentResponse<
     store: input.store,
     draft: input.draft,
     plan: input.resolvePlan ?? [],
+    shapeResolvedDocument: async ({ document }) => {
+      if (input.fileFieldMode === "raw") {
+        return document;
+      }
+
+      return applyMediaFieldExpansion({
+        schema: await input.store.getSchema(input.scope, document.type),
+        document,
+        scope: input.scope,
+        lookupMediaAsset: input.lookupMediaAsset,
+        mode: input.fileFieldMode,
+      });
+    },
   });
 
   return applyMediaFieldExpansion({

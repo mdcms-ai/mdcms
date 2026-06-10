@@ -31,6 +31,12 @@ type ResolveResult =
       error: ContentReferenceResolveError;
     };
 
+type ResolvedDocumentShaper = (input: {
+  document: ContentDocumentResponse;
+  fullPath: string;
+  targetType: string;
+}) => Promise<ContentDocumentResponse>;
+
 type TargetSlot =
   | {
       kind: "slot";
@@ -436,6 +442,7 @@ export async function applyResolvePlan<
   draft: boolean;
   document: TDocument;
   plan: ResolvePathPlan[];
+  shapeResolvedDocument?: ResolvedDocumentShaper;
 }): Promise<TDocument & { resolveErrors?: ResolveErrorsMap }> {
   if (input.plan.length === 0) {
     return input.document;
@@ -504,7 +511,13 @@ export async function applyResolvePlan<
     });
 
     if (result.kind === "resolved") {
-      slot.parent[slot.key] = result.document;
+      slot.parent[slot.key] = input.shapeResolvedDocument
+        ? await input.shapeResolvedDocument({
+            document: result.document,
+            fullPath: field.fullPath,
+            targetType: field.targetType,
+          })
+        : result.document;
       continue;
     }
 

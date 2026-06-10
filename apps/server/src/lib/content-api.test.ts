@@ -148,6 +148,7 @@ function mediaReadSchemas(): Record<string, SchemaRegistryTypeSnapshot> {
           required: true,
           nullable: false,
         },
+        avatar: optionalImageField(),
       },
     },
   };
@@ -735,6 +736,69 @@ test("content API merges unresolved reference and media resolve errors", async (
     body.data.resolveErrors?.["frontmatter.heroImage"]?.code,
     "MEDIA_NOT_FOUND",
   );
+});
+
+test("content API expands file fields inside resolved reference documents", async () => {
+  const { handler } = createMediaReadHandler();
+
+  const authorResponse = await handler(
+    jsonContentRequest("/api/v1/content?fileFields=raw", "POST", {
+      path: "authors/media-author",
+      type: "Author",
+      locale: "en",
+      format: "md",
+      frontmatter: {
+        slug: "media-author",
+        name: "Media Author",
+        avatar: mediaFieldImageAsset.id,
+      },
+      body: "author body",
+    }),
+  );
+  const author = (await authorResponse.json()) as {
+    data: { documentId: string };
+  };
+  assert.equal(authorResponse.status, 200);
+
+  const article = await createMediaArticle(handler, "resolved-media-author", {
+    author: author.data.documentId,
+  });
+
+  const response = await handler(
+    new Request(
+      `http://localhost/api/v1/content/${article.documentId}?draft=true&resolve=author`,
+      {
+        headers: scopeHeaders,
+      },
+    ),
+  );
+  const body = (await response.json()) as {
+    data: { frontmatter: Record<string, unknown> };
+  };
+
+  assert.equal(response.status, 200);
+  const resolvedAuthor = body.data.frontmatter.author as {
+    frontmatter: Record<string, unknown>;
+  };
+  assert.deepEqual(resolvedAuthor.frontmatter.avatar, mediaFieldImageAsset);
+
+  const rawResponse = await handler(
+    new Request(
+      `http://localhost/api/v1/content/${article.documentId}?draft=true&resolve=author&fileFields=raw`,
+      {
+        headers: scopeHeaders,
+      },
+    ),
+  );
+  const rawBody = (await rawResponse.json()) as {
+    data: { frontmatter: Record<string, unknown> };
+  };
+
+  assert.equal(rawResponse.status, 200);
+  const rawAuthor = rawBody.data.frontmatter.author as {
+    frontmatter: Record<string, unknown>;
+  };
+  assert.equal(rawAuthor.frontmatter.avatar, mediaFieldImageAsset.id);
 });
 
 test("content API expands file fields for typed and mixed list reads", async () => {
