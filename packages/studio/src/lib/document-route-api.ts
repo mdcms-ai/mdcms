@@ -219,7 +219,12 @@ function isReferenceResolveErrorEntry(entry: Record<string, unknown>): boolean {
 }
 
 function isMediaResolveErrorEntry(entry: Record<string, unknown>): boolean {
-  if (!isRecord(entry.media) || !isString(entry.media.assetId)) {
+  if (
+    (entry.code !== "MEDIA_NOT_FOUND" &&
+      entry.code !== "MEDIA_TYPE_MISMATCH") ||
+    !isRecord(entry.media) ||
+    !isString(entry.media.assetId)
+  ) {
     return false;
   }
 

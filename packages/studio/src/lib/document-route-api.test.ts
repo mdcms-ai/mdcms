@@ -595,6 +595,43 @@ test("loadDraft preserves raw unset file field values and accepts media resolve 
   );
 });
 
+test("loadDraft rejects media resolve errors with unsupported codes", async () => {
+  const api = createNewMethodsApi({
+    fetcher: async () =>
+      new Response(
+        JSON.stringify({
+          data: {
+            ...validDocumentResponse.data,
+            frontmatter: {
+              heroImage: null,
+            },
+            resolveErrors: {
+              "frontmatter.heroImage": {
+                code: "REFERENCE_NOT_FOUND",
+                message: "This is not a media resolve error code.",
+                media: {
+                  assetId: "07ebb057-eeab-4849-94e4-2162cb921c8e",
+                },
+              },
+            },
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+  });
+
+  await assert.rejects(
+    () =>
+      api.loadDraft({
+        type: "BlogPost",
+        documentId: "doc-1",
+      }),
+    (error: unknown) =>
+      error instanceof RuntimeError &&
+      error.code === "DOCUMENT_ROUTE_RESPONSE_INVALID",
+  );
+});
+
 test("updateDraft requests raw file fields and preserves raw unset values in request and response", async () => {
   const { fetcher, calls } = createMockFetcher([
     sessionResponse("csrf-abc"),

@@ -211,6 +211,61 @@ test("get fetches a routed media asset with project and environment headers", as
   );
 });
 
+test("get surfaces route error code, status, and payload details", async () => {
+  const payload = {
+    code: "NOT_FOUND",
+    message: "Media asset not found.",
+    details: { id: "07ebb057-eeab-4849-94e4-2162cb921c8e" },
+  };
+  const api = createApi({
+    auth: { mode: "token", token: "mdcms_key_test" },
+    fetcher: async () =>
+      new Response(JSON.stringify(payload), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      }),
+  });
+
+  await assert.rejects(
+    () => api.get("07ebb057-eeab-4849-94e4-2162cb921c8e"),
+    (error: unknown) => {
+      const details = error instanceof RuntimeError ? error.details : undefined;
+      return (
+        error instanceof RuntimeError &&
+        error.code === "NOT_FOUND" &&
+        error.message === "Media asset not found." &&
+        error.statusCode === 404 &&
+        details?.operation ===
+          "GET /api/v1/media/07ebb057-eeab-4849-94e4-2162cb921c8e" &&
+        details.status === 404 &&
+        JSON.stringify(details.payload) === JSON.stringify(payload)
+      );
+    },
+  );
+});
+
+test("get rejects invalid success responses", async () => {
+  const api = createApi({
+    auth: { mode: "token", token: "mdcms_key_test" },
+    fetcher: async () =>
+      new Response(
+        JSON.stringify({
+          data: {
+            ...asset,
+            mimeType: 42,
+          },
+        }),
+      ),
+  });
+
+  await assert.rejects(
+    () => api.get("07ebb057-eeab-4849-94e4-2162cb921c8e"),
+    (error: unknown) =>
+      error instanceof RuntimeError &&
+      error.code === "MEDIA_LIBRARY_RESPONSE_INVALID",
+  );
+});
+
 test("list surfaces route error code, status, and payload details", async () => {
   const payload = {
     code: "INVALID_QUERY_PARAM",
