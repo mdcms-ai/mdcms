@@ -13,9 +13,10 @@ import {
   IMPLICIT_DEFAULT_LOCALE,
   defineConfig,
   defineType,
+  fieldTypes,
   parseMdcmsConfig,
-  reference,
 } from "./config.js";
+import { serializeResolvedEnvironmentSchema } from "./schema.js";
 
 const TYPECHECK_TEST_TIMEOUT_MS = 15_000;
 
@@ -69,6 +70,50 @@ const standardStringSchema = {
     },
   },
 };
+
+function serializeFieldSnapshot(
+  field: z.ZodType,
+  fieldName = "asset",
+) {
+  const parsed = parseMdcmsConfig(
+    defineConfig({
+      project: "marketing-site",
+      serverUrl: "http://localhost:4000",
+      contentDirectories: ["content"],
+      types: [
+        defineType("Post", {
+          directory: "content/posts",
+          fields: {
+            [fieldName]: field,
+          },
+        }),
+      ],
+      environments: {
+        production: {},
+      },
+    }),
+  );
+
+  return serializeResolvedEnvironmentSchema(parsed, "production").Post?.fields[
+    fieldName
+  ];
+}
+
+function expectInvalidConfig(
+  fn: () => unknown,
+  message?: RegExp,
+) {
+  assert.throws(fn, (error: unknown) => {
+    assert.ok(error instanceof RuntimeError);
+    assert.equal(error.code, "INVALID_CONFIG");
+
+    if (message) {
+      assert.match(error.message, message);
+    }
+
+    return true;
+  });
+}
 
 test(
   "defineConfig accepts runtime-only component loader callbacks",
@@ -255,7 +300,7 @@ test("parseMdcmsConfig preserves content type preview URL resolvers", () => {
   );
 });
 
-test("defineConfig/defineType/reference produce a normalized shared config", () => {
+test("defineConfig/defineType/fieldTypes.reference produce a normalized shared config", () => {
   const author = defineType("Author", {
     directory: "content/authors",
     fields: {
@@ -267,8 +312,8 @@ test("defineConfig/defineType/reference produce a normalized shared config", () 
     localized: true,
     fields: {
       title: z.string().min(1),
-      author: reference("Author"),
-      relatedAuthor: reference("Author").optional(),
+      author: fieldTypes.reference("Author"),
+      relatedAuthor: fieldTypes.reference("Author").optional(),
       summary: standardStringSchema,
     },
   });
@@ -336,6 +381,237 @@ test("defineConfig/defineType/reference produce a normalized shared config", () 
       propsEditor: "@/components/mdx/Chart.editor",
     },
   ]);
+});
+
+test("fieldTypes.reference preserves current reference metadata behavior", () => {
+  const parsed = parseMdcmsConfig(
+    defineConfig({
+      project: "marketing-site",
+      serverUrl: "http://localhost:4000",
+      contentDirectories: ["content"],
+      types: [
+        defineType("Article", {
+          directory: "content/articles",
+          fields: {
+            author: fieldTypes.reference("Author"),
+          },
+        }),
+      ],
+      environments: {
+        production: {},
+      },
+    }),
+  );
+
+  assert.equal(parsed.types[0]?.referenceFields.author?.targetType, "Author");
+  assert.deepEqual(
+    serializeResolvedEnvironmentSchema(parsed, "production").Article?.fields
+      .author,
+    {
+      kind: "string",
+      required: true,
+      nullable: false,
+      reference: {
+        targetType: "Author",
+      },
+    },
+  );
+});
+
+test("fieldTypes.image/video/file use string validators and normalized file metadata", () => {
+  const imageField = fieldTypes.image();
+  const videoField = fieldTypes.video({
+    accept: [" video/webm ", "VIDEO/MP4", "video/webm"],
+  });
+  const fileField = fieldTypes.file({
+    accept: [" application/pdf ", "audio/*", "APPLICATION/PDF"],
+  });
+
+  assert.equal((imageField as z.ZodType).safeParse("asset-id").success, true);
+  assert.equal((videoField as z.ZodType).safeParse("asset-id").success, true);
+  assert.equal((fileField as z.ZodType).safeParse("asset-id").success, true);
+
+  assert.deepEqual(serializeFieldSnapshot(imageField, "image"), {
+    kind: "string",
+    required: true,
+    nullable: false,
+    file: {
+      preset: "image",
+      accept: [],
+      emptyStringAsUnset: false,
+    },
+  });
+  assert.deepEqual(serializeFieldSnapshot(videoField, "video"), {
+    kind: "string",
+    required: true,
+    nullable: false,
+    file: {
+      preset: "video",
+      accept: ["video/mp4", "video/webm"],
+      emptyStringAsUnset: false,
+    },
+  });
+  assert.deepEqual(serializeFieldSnapshot(fileField, "download"), {
+    kind: "string",
+    required: true,
+    nullable: false,
+    file: {
+      preset: "file",
+      accept: ["application/pdf", "audio/*"],
+      emptyStringAsUnset: false,
+    },
+  });
+});
+
+test("fieldTypes.file rejects category-like accept entries", () => {
+  expectInvalidConfig(
+    () => fieldTypes.file({ accept: ["image"] }),
+    /valid MIME type or wildcard/i,
+  );
+});
+
+test("fieldTypes.image and video reject incompatible accept entries", () => {
+  expectInvalidConfig(
+    () => fieldTypes.image({ accept: ["application/pdf"] }),
+    /image/i,
+  );
+  expectInvalidConfig(
+    () => fieldTypes.video({ accept: ["image/png"] }),
+    /video/i,
+  );
+
+  assert.doesNotThrow(() =>
+    fieldTypes.image({ accept: ["image/png", " image/jpeg "] }),
+  );
+  assert.doesNotThrow(() => fieldTypes.video({ accept: ["video/mp4"] }));
+});
+
+test("fieldTypes.file required false resolves to optional nullable snapshot and empty-string unset semantics", () => {
+  assert.deepEqual(serializeFieldSnapshot(fieldTypes.file({ required: false })), {
+    kind: "string",
+    required: false,
+    nullable: true,
+    file: {
+      preset: "file",
+      accept: [],
+      emptyStringAsUnset: true,
+    },
+  });
+});
+
+test("file helper wrappers preserve emptyStringAsUnset false without helper required false", () => {
+  assert.deepEqual(serializeFieldSnapshot(fieldTypes.file().optional()), {
+    kind: "string",
+    required: false,
+    nullable: false,
+    file: {
+      preset: "file",
+      accept: [],
+      emptyStringAsUnset: false,
+    },
+  });
+  assert.deepEqual(serializeFieldSnapshot(fieldTypes.file().nullable()), {
+    kind: "string",
+    required: true,
+    nullable: true,
+    file: {
+      preset: "file",
+      accept: [],
+      emptyStringAsUnset: false,
+    },
+  });
+  assert.deepEqual(
+    serializeFieldSnapshot(fieldTypes.file({ accept: ["application/pdf"] }).optional().nullable()),
+    {
+      kind: "string",
+      required: false,
+      nullable: true,
+      file: {
+        preset: "file",
+        accept: ["application/pdf"],
+        emptyStringAsUnset: false,
+      },
+    },
+  );
+});
+
+test("file helper defaults must be raw string ids and agree across helper and Zod default", () => {
+  assert.deepEqual(
+    serializeFieldSnapshot(
+      fieldTypes.video({
+        default: "6f6a8a6e-8d5b-4d5d-a4df-1b2a3c4d5e6f",
+      }),
+      "video",
+    ),
+    {
+      kind: "string",
+      required: false,
+      nullable: false,
+      default: "6f6a8a6e-8d5b-4d5d-a4df-1b2a3c4d5e6f",
+      file: {
+        preset: "video",
+        accept: [],
+        emptyStringAsUnset: false,
+      },
+    },
+  );
+
+  assert.deepEqual(
+    serializeFieldSnapshot(
+      fieldTypes.file({
+        default: "6f6a8a6e-8d5b-4d5d-a4df-1b2a3c4d5e6f",
+      }).default("6f6a8a6e-8d5b-4d5d-a4df-1b2a3c4d5e6f"),
+    ),
+    {
+      kind: "string",
+      required: false,
+      nullable: false,
+      default: "6f6a8a6e-8d5b-4d5d-a4df-1b2a3c4d5e6f",
+      file: {
+        preset: "file",
+        accept: [],
+        emptyStringAsUnset: false,
+      },
+    },
+  );
+
+  expectInvalidConfig(
+    () =>
+      serializeFieldSnapshot(
+        fieldTypes.file({
+          default: "6f6a8a6e-8d5b-4d5d-a4df-1b2a3c4d5e6f",
+        }).default("76dffb7f-4bc6-4479-b6ec-b4b1e0b6f8b0"),
+      ),
+    /must agree/i,
+  );
+  expectInvalidConfig(
+    () => fieldTypes.file({ default: "https://cdn.example.com/asset.png" }),
+    /raw media asset id string/i,
+  );
+  expectInvalidConfig(
+    () => fieldTypes.file({ default: "" }),
+    /must not be empty|raw media asset id string/i,
+  );
+});
+
+test("file helper required false cannot be combined with helper or Zod defaults", () => {
+  expectInvalidConfig(
+    () =>
+      fieldTypes.file({
+        required: false,
+        default: "6f6a8a6e-8d5b-4d5d-a4df-1b2a3c4d5e6f",
+      }),
+    /required:\s*false.*default/i,
+  );
+  expectInvalidConfig(
+    () =>
+      serializeFieldSnapshot(
+        fieldTypes.file({ required: false }).default(
+          "6f6a8a6e-8d5b-4d5d-a4df-1b2a3c4d5e6f",
+        ),
+      ),
+    /required:\s*false.*default/i,
+  );
 });
 
 test("parseMdcmsConfig resolves environment overlays and env sugar deterministically", () => {

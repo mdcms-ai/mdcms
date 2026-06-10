@@ -6,8 +6,8 @@ import { z } from "zod";
 import {
   defineConfig,
   defineType,
+  fieldTypes,
   parseMdcmsConfig,
-  reference,
 } from "./config.js";
 import { RuntimeError } from "../runtime/error.js";
 import {
@@ -250,10 +250,25 @@ test("serializeResolvedEnvironmentSchema produces stable descriptive snapshots f
     directory: "content/posts",
     fields: {
       title: z.string().min(1),
-      author: reference("Author"),
+      author: fieldTypes.reference("Author"),
       metadata: z.object({
-        nestedAuthor: reference("Author"),
-        reviewers: z.array(reference("Author")),
+        nestedAuthor: fieldTypes.reference("Author"),
+        reviewers: z.array(fieldTypes.reference("Author")),
+      }),
+      primaryImage: fieldTypes.image({ required: false }),
+      heroVideo: fieldTypes.video({ accept: ["video/mp4", "video/webm"] }),
+      attachment: fieldTypes.file({ accept: ["application/pdf"] }),
+      optionalAttachment: fieldTypes.file({
+        accept: ["application/pdf"],
+        required: false,
+      }),
+      optionalNullableAttachment: fieldTypes.file({
+        accept: ["application/pdf"],
+      })
+        .optional()
+        .nullable(),
+      defaultVideo: fieldTypes.video({
+        default: "6f6a8a6e-8d5b-4d5d-a4df-1b2a3c4d5e6f",
       }),
       tags: z.array(z.string()).default([]),
       featured: z.boolean().env("staging"),
@@ -279,12 +294,43 @@ test("serializeResolvedEnvironmentSchema produces stable descriptive snapshots f
       directory: "content/posts",
       localized: false,
       fields: {
+        attachment: {
+          kind: "string",
+          required: true,
+          nullable: false,
+          file: {
+            preset: "file",
+            accept: ["application/pdf"],
+            emptyStringAsUnset: false,
+          },
+        },
         author: {
           kind: "string",
           required: true,
           nullable: false,
           reference: {
             targetType: "Author",
+          },
+        },
+        defaultVideo: {
+          kind: "string",
+          required: false,
+          nullable: false,
+          default: "6f6a8a6e-8d5b-4d5d-a4df-1b2a3c4d5e6f",
+          file: {
+            preset: "video",
+            accept: [],
+            emptyStringAsUnset: false,
+          },
+        },
+        heroVideo: {
+          kind: "string",
+          required: true,
+          nullable: false,
+          file: {
+            preset: "video",
+            accept: ["video/mp4", "video/webm"],
+            emptyStringAsUnset: false,
           },
         },
         metadata: {
@@ -313,6 +359,36 @@ test("serializeResolvedEnvironmentSchema produces stable descriptive snapshots f
                 },
               },
             },
+          },
+        },
+        optionalAttachment: {
+          kind: "string",
+          required: false,
+          nullable: true,
+          file: {
+            preset: "file",
+            accept: ["application/pdf"],
+            emptyStringAsUnset: true,
+          },
+        },
+        optionalNullableAttachment: {
+          kind: "string",
+          required: false,
+          nullable: true,
+          file: {
+            preset: "file",
+            accept: ["application/pdf"],
+            emptyStringAsUnset: false,
+          },
+        },
+        primaryImage: {
+          kind: "string",
+          required: false,
+          nullable: true,
+          file: {
+            preset: "image",
+            accept: [],
+            emptyStringAsUnset: true,
           },
         },
         tags: {
@@ -375,6 +451,65 @@ test("serializeResolvedEnvironmentSchema rejects unsupported executable validato
     () => serializeResolvedEnvironmentSchema(parsed, "staging"),
     "resolvedEnvironments.staging.types.Post.fields.title.checks[0]",
     /unsupported executable validator feature/i,
+  );
+});
+
+test("assertSchemaRegistrySyncPayload rejects malformed file metadata", () => {
+  expectInvalidInput(
+    () =>
+      assertSchemaRegistrySyncPayload({
+        rawConfigSnapshot: {},
+        resolvedSchema: {
+          Post: {
+            type: "Post",
+            directory: "content/posts",
+            localized: false,
+            fields: {
+              asset: {
+                kind: "string",
+                required: true,
+                nullable: false,
+                file: {
+                  preset: "image",
+                  accept: ["image/png"],
+                },
+              },
+            },
+          },
+        },
+        schemaHash: "hash",
+      } as never),
+    "payload.resolvedSchema.Post.fields.asset.file.emptyStringAsUnset",
+  );
+});
+
+test("assertSchemaRegistrySyncPayload rejects file metadata on non-string fields", () => {
+  expectInvalidInput(
+    () =>
+      assertSchemaRegistrySyncPayload({
+        rawConfigSnapshot: {},
+        resolvedSchema: {
+          Post: {
+            type: "Post",
+            directory: "content/posts",
+            localized: false,
+            fields: {
+              asset: {
+                kind: "boolean",
+                required: true,
+                nullable: false,
+                file: {
+                  preset: "file",
+                  accept: [],
+                  emptyStringAsUnset: false,
+                },
+              },
+            },
+          },
+        },
+        schemaHash: "hash",
+      } as never),
+    "payload.resolvedSchema.Post.fields.asset.file",
   );
 });
 

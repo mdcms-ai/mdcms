@@ -1,9 +1,15 @@
 import {
+  type MdcmsFileFieldMetadata,
   type MdcmsFieldSchema,
   type ParsedMdcmsConfig,
   type ParsedMdcmsTypeDefinition,
 } from "./config.js";
 import { RuntimeError } from "../runtime/error.js";
+
+const FILE_METADATA_KEY = "mdcms:file";
+const FILE_HELPER_DEFAULT_METADATA_KEY = "mdcms:file-helper-default";
+const MIME_ACCEPT_PATTERN =
+  /^[a-z0-9][a-z0-9!#$&^_.+-]*\/(\*|[a-z0-9][a-z0-9!#$&^_.+-]*)$/i;
 
 type JsonPrimitive = string | number | boolean | null;
 
@@ -21,6 +27,7 @@ export type SchemaRegistryFieldSnapshot = {
   reference?: {
     targetType: string;
   };
+  file?: MdcmsFileFieldMetadata;
   checks?: JsonObject[];
   item?: SchemaRegistryFieldSnapshot;
   fields?: Record<string, SchemaRegistryFieldSnapshot>;
@@ -129,6 +136,22 @@ function invalidInput(
     statusCode: 400,
     details: {
       path,
+      ...(details ?? {}),
+    },
+  });
+}
+
+function invalidConfig(
+  field: string,
+  message: string,
+  details?: Record<string, unknown>,
+): never {
+  throw new RuntimeError({
+    code: "INVALID_CONFIG",
+    message: `Config field "${field}" ${message}`,
+    statusCode: 400,
+    details: {
+      field,
       ...(details ?? {}),
     },
   });
@@ -243,6 +266,64 @@ function readDirectReferenceMetadata(
   };
 }
 
+function readDirectFileMetadata(
+  schema: MdcmsFieldSchema,
+): MdcmsFileFieldMetadata | undefined {
+  const meta = readSchemaMetadata(schema as object);
+  const candidate = isRecord(meta) ? meta[FILE_METADATA_KEY] : undefined;
+
+  if (!isRecord(candidate)) {
+    return undefined;
+  }
+
+  const preset = candidate.preset;
+  const accept = candidate.accept;
+  const emptyStringAsUnset = candidate.emptyStringAsUnset;
+
+  if (
+    (preset !== "image" && preset !== "video" && preset !== "file") ||
+    !Array.isArray(accept) ||
+    !accept.every(
+      (entry) => typeof entry === "string" && MIME_ACCEPT_PATTERN.test(entry),
+    ) ||
+    typeof emptyStringAsUnset !== "boolean"
+  ) {
+    return undefined;
+  }
+
+  return {
+    preset,
+    accept: [...accept],
+    emptyStringAsUnset,
+  };
+}
+
+function readHelperFileDefaultMetadata(schema: MdcmsFieldSchema): string | undefined {
+  const meta = readSchemaMetadata(schema as object);
+  const candidate = isRecord(meta)
+    ? meta[FILE_HELPER_DEFAULT_METADATA_KEY]
+    : undefined;
+
+  return typeof candidate === "string" ? candidate : undefined;
+}
+
+function assertMediaAssetId(value: JsonValue, path: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    invalidConfig(path, "must be a raw media asset id string.");
+  }
+
+  if (
+    value.includes("://") ||
+    value.startsWith("/") ||
+    value.startsWith("./") ||
+    value.startsWith("../")
+  ) {
+    invalidConfig(path, "must be a raw media asset id string.");
+  }
+
+  return value;
+}
+
 function assertFieldSnapshot(
   value: unknown,
   path: string,
@@ -279,6 +360,48 @@ function assertFieldSnapshot(
     );
   }
 
+  if (value.file !== undefined) {
+    if (!isRecord(value.file)) {
+      invalidInput(`${path}.file`, "must be an object.");
+    }
+
+    if (
+      value.file.preset !== "image" &&
+      value.file.preset !== "video" &&
+      value.file.preset !== "file"
+    ) {
+      invalidInput(
+        `${path}.file.preset`,
+        'must be "image", "video", or "file".',
+        { value: value.file.preset },
+      );
+    }
+
+    if (!Array.isArray(value.file.accept)) {
+      invalidInput(`${path}.file.accept`, "must be an array.", {
+        value: value.file.accept,
+      });
+    }
+
+    value.file.accept.forEach((entry, index) => {
+      if (typeof entry !== "string" || !MIME_ACCEPT_PATTERN.test(entry)) {
+        invalidInput(
+          `${path}.file.accept[${index}]`,
+          "must be a valid MIME type or wildcard.",
+          { value: entry },
+        );
+      }
+    });
+
+    if (typeof value.file.emptyStringAsUnset !== "boolean") {
+      invalidInput(
+        `${path}.file.emptyStringAsUnset`,
+        "must be a boolean.",
+        { value: value.file.emptyStringAsUnset },
+      );
+    }
+  }
+
   if (value.checks !== undefined) {
     if (!Array.isArray(value.checks)) {
       invalidInput(`${path}.checks`, "must be an array when provided.");
@@ -307,6 +430,13 @@ function assertFieldSnapshot(
     }
     value.options.forEach((entry, index) =>
       assertJsonValue(entry, `${path}.options[${index}]`),
+    );
+  }
+
+  if (value.file !== undefined && value.kind !== "string") {
+    invalidInput(
+      `${path}.file`,
+      'must not be provided when kind is not "string".',
     );
   }
 
@@ -684,16 +814,42 @@ function serializeFieldSchema(
   }
 
   if (type === "default") {
+    const helperDefaultValue = readHelperFileDefaultMetadata(schema);
     return serializeFieldSchema(
       definition.innerType as MdcmsFieldSchema,
       path,
       {
         ...context,
         required: false,
-        defaultValue: readDefaultValue(
-          definition.defaultValue,
-          `${path}.default`,
-        ),
+        defaultValue: (() => {
+          const defaultValue = readDefaultValue(
+            definition.defaultValue,
+            `${path}.default`,
+          );
+
+          if (
+            helperDefaultValue !== undefined &&
+            defaultValue !== helperDefaultValue
+          ) {
+            invalidConfig(
+              path,
+              "helper and Zod defaults must agree on the same raw media asset id.",
+            );
+          }
+
+          if (
+            helperDefaultValue !== undefined &&
+            context.defaultValue !== undefined &&
+            context.defaultValue !== helperDefaultValue
+          ) {
+            invalidConfig(
+              path,
+              "helper and Zod defaults must agree on the same raw media asset id.",
+            );
+          }
+
+          return context.defaultValue ?? defaultValue;
+        })(),
       },
     );
   }
@@ -711,9 +867,32 @@ function serializeFieldSchema(
     type === "boolean" ||
     type === "date"
   ) {
+    const fileMetadata = readDirectFileMetadata(schema);
+
+    if (fileMetadata !== undefined) {
+      if (type !== "string") {
+        invalidConfig(path, 'must apply file helpers only to string fields.');
+      }
+
+      if (fileMetadata.emptyStringAsUnset && context.defaultValue !== undefined) {
+        invalidConfig(
+          path,
+          'must not combine `required: false` file helpers with helper or Zod defaults.',
+        );
+      }
+
+      if (context.defaultValue !== undefined) {
+        context = {
+          ...context,
+          defaultValue: assertMediaAssetId(context.defaultValue, `${path}.default`),
+        };
+      }
+    }
+
     return withFieldSnapshotBase(type, context, {
       checks: serializeChecks(definition.checks, `${path}.checks`),
       reference: readDirectReferenceMetadata(schema),
+      file: fileMetadata,
     });
   }
 
