@@ -71,10 +71,7 @@ const standardStringSchema = {
   },
 };
 
-function serializeFieldSnapshot(
-  field: z.ZodType,
-  fieldName = "asset",
-) {
+function serializeFieldSnapshot(field: z.ZodType, fieldName = "asset") {
   const parsed = parseMdcmsConfig(
     defineConfig({
       project: "marketing-site",
@@ -99,10 +96,7 @@ function serializeFieldSnapshot(
   ];
 }
 
-function expectInvalidConfig(
-  fn: () => unknown,
-  message?: RegExp,
-) {
+function expectInvalidConfig(fn: () => unknown, message?: RegExp) {
   assert.throws(fn, (error: unknown) => {
     assert.ok(error instanceof RuntimeError);
     assert.equal(error.code, "INVALID_CONFIG");
@@ -500,16 +494,19 @@ test("fieldTypes.image and video reject incompatible accept entries", () => {
 });
 
 test("fieldTypes.file required false resolves to optional nullable snapshot and empty-string unset semantics", () => {
-  assert.deepEqual(serializeFieldSnapshot(fieldTypes.file({ required: false })), {
-    kind: "string",
-    required: false,
-    nullable: true,
-    file: {
-      preset: "file",
-      accept: [],
-      emptyStringAsUnset: true,
+  assert.deepEqual(
+    serializeFieldSnapshot(fieldTypes.file({ required: false })),
+    {
+      kind: "string",
+      required: false,
+      nullable: true,
+      file: {
+        preset: "file",
+        accept: [],
+        emptyStringAsUnset: true,
+      },
     },
-  });
+  );
 });
 
 test("file helper wrappers preserve emptyStringAsUnset false without helper required false", () => {
@@ -534,7 +531,12 @@ test("file helper wrappers preserve emptyStringAsUnset false without helper requ
     },
   });
   assert.deepEqual(
-    serializeFieldSnapshot(fieldTypes.file({ accept: ["application/pdf"] }).optional().nullable()),
+    serializeFieldSnapshot(
+      fieldTypes
+        .file({ accept: ["application/pdf"] })
+        .optional()
+        .nullable(),
+    ),
     {
       kind: "string",
       required: false,
@@ -571,9 +573,11 @@ test("file helper defaults must be raw string ids and agree across helper and Zo
 
   assert.deepEqual(
     serializeFieldSnapshot(
-      fieldTypes.file({
-        default: "6f6a8a6e-8d5b-4d5d-a4df-1b2a3c4d5e6f",
-      }).default("6f6a8a6e-8d5b-4d5d-a4df-1b2a3c4d5e6f"),
+      fieldTypes
+        .file({
+          default: "6f6a8a6e-8d5b-4d5d-a4df-1b2a3c4d5e6f",
+        })
+        .default("6f6a8a6e-8d5b-4d5d-a4df-1b2a3c4d5e6f"),
     ),
     {
       kind: "string",
@@ -591,9 +595,11 @@ test("file helper defaults must be raw string ids and agree across helper and Zo
   expectInvalidConfig(
     () =>
       serializeFieldSnapshot(
-        fieldTypes.file({
-          default: "6f6a8a6e-8d5b-4d5d-a4df-1b2a3c4d5e6f",
-        }).default("76dffb7f-4bc6-4479-b6ec-b4b1e0b6f8b0"),
+        fieldTypes
+          .file({
+            default: "6f6a8a6e-8d5b-4d5d-a4df-1b2a3c4d5e6f",
+          })
+          .default("76dffb7f-4bc6-4479-b6ec-b4b1e0b6f8b0"),
       ),
     /must agree/i,
   );
@@ -619,9 +625,9 @@ test("file helper required false cannot be combined with helper or Zod defaults"
   expectInvalidConfig(
     () =>
       serializeFieldSnapshot(
-        fieldTypes.file({ required: false }).default(
-          "6f6a8a6e-8d5b-4d5d-a4df-1b2a3c4d5e6f",
-        ),
+        fieldTypes
+          .file({ required: false })
+          .default("6f6a8a6e-8d5b-4d5d-a4df-1b2a3c4d5e6f"),
       ),
     /required:\s*false.*default/i,
   );

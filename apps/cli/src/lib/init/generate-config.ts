@@ -12,9 +12,10 @@ export type GenerateConfigInput = {
 
 function hasReferences(types: InferredType[]): boolean {
   return types.some((t) =>
-    Object.values(t.fields).some((f) =>
-      f.zodType.startsWith("fieldTypes.reference(") ||
-      f.zodType.startsWith("reference("),
+    Object.values(t.fields).some(
+      (f) =>
+        f.zodType.startsWith("fieldTypes.reference(") ||
+        f.zodType.startsWith("reference("),
     ),
   );
 }

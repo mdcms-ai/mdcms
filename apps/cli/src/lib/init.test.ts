@@ -230,7 +230,9 @@ test("init schema sync preserves reference metadata for inferred reference field
     const fetcher = createMockFetcher({
       ...createDefaultFetchHandlers(),
       "/api/v1/schema": (_url: string, init?: RequestInit) => {
-        schemaRequestBody = JSON.parse(String(init?.body)) as typeof schemaRequestBody;
+        schemaRequestBody = JSON.parse(
+          String(init?.body),
+        ) as typeof schemaRequestBody;
 
         return new Response(
           JSON.stringify({
@@ -267,17 +269,14 @@ test("init schema sync preserves reference metadata for inferred reference field
     });
 
     assert.equal(exitCode, 0);
-    assert.deepEqual(
-      schemaRequestBody?.resolvedSchema?.post?.fields?.author,
-      {
-        kind: "string",
-        required: true,
-        nullable: false,
-        reference: {
-          targetType: "author",
-        },
+    assert.deepEqual(schemaRequestBody?.resolvedSchema?.post?.fields?.author, {
+      kind: "string",
+      required: true,
+      nullable: false,
+      reference: {
+        targetType: "author",
       },
-    );
+    });
   });
 });
 

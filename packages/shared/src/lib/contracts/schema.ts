@@ -298,7 +298,9 @@ function readDirectFileMetadata(
   };
 }
 
-function readHelperFileDefaultMetadata(schema: MdcmsFieldSchema): string | undefined {
+function readHelperFileDefaultMetadata(
+  schema: MdcmsFieldSchema,
+): string | undefined {
   const meta = readSchemaMetadata(schema as object);
   const candidate = isRecord(meta)
     ? meta[FILE_HELPER_DEFAULT_METADATA_KEY]
@@ -361,11 +363,9 @@ function assertNormalizedFileAccept(
       }
 
       if (preset !== "file" && !entry.startsWith(`${preset}/`)) {
-        invalidInput(
-          path,
-          `must stay within the ${preset}/* MIME family.`,
-          { value },
-        );
+        invalidInput(path, `must stay within the ${preset}/* MIME family.`, {
+          value,
+        });
       }
 
       return entry;
@@ -459,11 +459,9 @@ function assertFieldSnapshot(
     );
 
     if (typeof value.file.emptyStringAsUnset !== "boolean") {
-      invalidInput(
-        `${path}.file.emptyStringAsUnset`,
-        "must be a boolean.",
-        { value: value.file.emptyStringAsUnset },
-      );
+      invalidInput(`${path}.file.emptyStringAsUnset`, "must be a boolean.", {
+        value: value.file.emptyStringAsUnset,
+      });
     }
   }
 
@@ -940,20 +938,26 @@ function serializeFieldSchema(
 
     if (fileMetadata !== undefined) {
       if (type !== "string") {
-        invalidConfig(path, 'must apply file helpers only to string fields.');
+        invalidConfig(path, "must apply file helpers only to string fields.");
       }
 
-      if (fileMetadata.emptyStringAsUnset && context.defaultValue !== undefined) {
+      if (
+        fileMetadata.emptyStringAsUnset &&
+        context.defaultValue !== undefined
+      ) {
         invalidConfig(
           path,
-          'must not combine `required: false` file helpers with helper or Zod defaults.',
+          "must not combine `required: false` file helpers with helper or Zod defaults.",
         );
       }
 
       if (context.defaultValue !== undefined) {
         context = {
           ...context,
-          defaultValue: assertMediaAssetId(context.defaultValue, `${path}.default`),
+          defaultValue: assertMediaAssetId(
+            context.defaultValue,
+            `${path}.default`,
+          ),
         };
       }
     }

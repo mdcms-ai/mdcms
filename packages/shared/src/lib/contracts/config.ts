@@ -251,15 +251,12 @@ function createFileField(
   const helperDefault =
     options.default === undefined
       ? undefined
-      : parseMediaAssetId(
-          options.default,
-          `fieldTypes.${preset}.default`,
-        );
+      : parseMediaAssetId(options.default, `fieldTypes.${preset}.default`);
 
   if (!required && helperDefault !== undefined) {
     throw invalidConfig(
       `fieldTypes.${preset}`,
-      'must not combine `required: false` with a helper default.',
+      "must not combine `required: false` with a helper default.",
     );
   }
 
@@ -1211,8 +1208,10 @@ function normalizeAccept(
   const seen = new Set<string>();
 
   value.forEach((entry, index) => {
-    const acceptValue = parseRequiredString(entry, `${field}[${index}]`)
-      .toLowerCase();
+    const acceptValue = parseRequiredString(
+      entry,
+      `${field}[${index}]`,
+    ).toLowerCase();
 
     if (!MIME_ACCEPT_PATTERN.test(acceptValue)) {
       throw invalidConfig(

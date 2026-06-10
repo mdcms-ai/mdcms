@@ -262,9 +262,10 @@ test("serializeResolvedEnvironmentSchema produces stable descriptive snapshots f
         accept: ["application/pdf"],
         required: false,
       }),
-      optionalNullableAttachment: fieldTypes.file({
-        accept: ["application/pdf"],
-      })
+      optionalNullableAttachment: fieldTypes
+        .file({
+          accept: ["application/pdf"],
+        })
         .optional()
         .nullable(),
       defaultVideo: fieldTypes.video({
