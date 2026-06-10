@@ -14,6 +14,7 @@ import {
   defineConfig,
   defineType,
   fieldTypes,
+  type MdcmsFileFieldOptions,
   parseMdcmsConfig,
 } from "./config.js";
 import { serializeResolvedEnvironmentSchema } from "./schema.js";
@@ -95,6 +96,10 @@ function serializeFieldSnapshot(field: z.ZodType, fieldName = "asset") {
     fieldName
   ];
 }
+
+const createRuntimeFileField = fieldTypes.file as unknown as (
+  options: MdcmsFileFieldOptions,
+) => z.ZodType;
 
 function expectInvalidConfig(fn: () => unknown, message?: RegExp) {
   assert.throws(fn, (error: unknown) => {
@@ -616,7 +621,7 @@ test("file helper defaults must be raw string ids and agree across helper and Zo
 test("file helper required false cannot be combined with helper or Zod defaults", () => {
   expectInvalidConfig(
     () =>
-      fieldTypes.file({
+      createRuntimeFileField({
         required: false,
         default: "6f6a8a6e-8d5b-4d5d-a4df-1b2a3c4d5e6f",
       }),
