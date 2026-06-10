@@ -92,6 +92,27 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every(isString);
 }
 
+function isReferenceResolveErrorEntry(entry: Record<string, unknown>): boolean {
+  return (
+    isRecord(entry.ref) &&
+    isString(entry.ref.documentId) &&
+    isString(entry.ref.type)
+  );
+}
+
+function isMediaResolveErrorEntry(entry: Record<string, unknown>): boolean {
+  if (!isRecord(entry.media) || !isString(entry.media.assetId)) {
+    return false;
+  }
+
+  return (
+    (entry.media.expectedMime === undefined ||
+      isStringArray(entry.media.expectedMime)) &&
+    (entry.media.actualMimeType === undefined ||
+      isString(entry.media.actualMimeType))
+  );
+}
+
 async function readResponsePayload(response: Response): Promise<unknown> {
   try {
     return await response.json();
@@ -182,9 +203,7 @@ function isResolveErrorsMap(
     }
 
     return (
-      isRecord(entry.ref) &&
-      isString(entry.ref.documentId) &&
-      isString(entry.ref.type)
+      isReferenceResolveErrorEntry(entry) || isMediaResolveErrorEntry(entry)
     );
   });
 }

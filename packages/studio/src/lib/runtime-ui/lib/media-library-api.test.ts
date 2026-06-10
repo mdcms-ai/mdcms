@@ -181,6 +181,36 @@ test("list without query sends the bare media route", async () => {
   assert.equal(String(calls[0]?.input), "http://localhost:4000/api/v1/media");
 });
 
+test("get fetches a routed media asset with project and environment headers", async () => {
+  const calls: Array<{ input: string | URL | Request; init?: RequestInit }> =
+    [];
+  const api = createApi({
+    auth: { mode: "token", token: "mdcms_key_test" },
+    fetcher: async (input, init) => {
+      calls.push({ input, init });
+      return new Response(JSON.stringify({ data: asset }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    },
+  });
+
+  const result = await api.get("07ebb057-eeab-4849-94e4-2162cb921c8e");
+
+  assert.deepEqual(result, asset);
+  assert.equal(
+    String(calls[0]?.input),
+    "http://localhost:4000/api/v1/media/07ebb057-eeab-4849-94e4-2162cb921c8e",
+  );
+  assert.equal(calls[0]?.init?.method, "GET");
+  assert.equal(readHeader(calls[0]?.init, "x-mdcms-project"), "marketing-site");
+  assert.equal(readHeader(calls[0]?.init, "x-mdcms-environment"), "production");
+  assert.equal(
+    readHeader(calls[0]?.init, "authorization"),
+    "Bearer mdcms_key_test",
+  );
+});
+
 test("list surfaces route error code, status, and payload details", async () => {
   const payload = {
     code: "INVALID_QUERY_PARAM",

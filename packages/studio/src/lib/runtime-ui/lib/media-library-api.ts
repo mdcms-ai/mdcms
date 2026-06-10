@@ -1,7 +1,9 @@
 import {
+  assertMediaAssetResponse,
   assertMediaAssetListResponse,
   assertMediaDeleteResponse,
   RuntimeError,
+  type MediaAsset,
   type MediaAssetCategory,
   type MediaAssetListResponse,
   type MediaDeleteResponse,
@@ -45,6 +47,7 @@ export type StudioMediaLibraryApi = {
   list: (
     query?: StudioMediaLibraryListQuery,
   ) => Promise<MediaAssetListResponse>;
+  get: (id: string) => Promise<MediaAsset>;
   delete: (id: string) => Promise<MediaDeleteResponse["data"]>;
 };
 
@@ -212,6 +215,39 @@ export function createStudioMediaLibraryApi(
       }
 
       return payload;
+    },
+
+    async get(id) {
+      const operation = `GET /api/v1/media/${id}`;
+      const url = resolveStudioRelativeUrl(
+        `/api/v1/media/${encodeURIComponent(id)}`,
+        config.serverUrl,
+      );
+      const response = await fetcher(
+        url,
+        applyStudioAuthToRequestInit(options.auth, {
+          method: "GET",
+          headers: createScopedHeaders(config),
+        }),
+      );
+      const payload = await readResponsePayload(response);
+
+      if (!response.ok) {
+        throw toRouteFailureError(
+          operation,
+          response,
+          payload,
+          "Media asset request failed.",
+        );
+      }
+
+      try {
+        assertMediaAssetResponse(payload);
+      } catch {
+        throw toInvalidResponseError(operation, payload);
+      }
+
+      return payload.data;
     },
 
     async delete(id) {
