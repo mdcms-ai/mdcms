@@ -1,6 +1,10 @@
 import bunAdapter, { type BunAdapter } from "crossws/adapters/bun";
 import type { Message, Peer, PeerContext } from "crossws";
-import type { WebSocketLike } from "@hocuspocus/server";
+import {
+  IncomingMessage,
+  MessageType,
+  type WebSocketLike,
+} from "@hocuspocus/server";
 import { RuntimeError } from "@mdcms/shared";
 
 import type {
@@ -50,17 +54,12 @@ export type CollaborationWebSocketTransport = {
 };
 
 const COLLABORATION_PATHNAME = "/api/v1/collaboration";
+const COLLABORATION_SESSION_INVALID_REASON =
+  "Collaboration session is no longer valid.";
+const COLLABORATION_WRITE_FORBIDDEN_REASON =
+  "Collaboration write access is no longer allowed.";
 
 const peerConnections = new WeakMap<Peer, HocuspocusClientConnection>();
-
-function isUpgradeToken(value: string | null): boolean {
-  return (
-    value
-      ?.split(",")
-      .map((token) => token.trim().toLowerCase())
-      .includes("upgrade") === true
-  );
-}
 
 export function isCollaborationWebSocketUpgradeRequest(
   request: Request,
@@ -68,8 +67,7 @@ export function isCollaborationWebSocketUpgradeRequest(
   return (
     request.method.toUpperCase() === "GET" &&
     resolvePathname(request) === COLLABORATION_PATHNAME &&
-    request.headers.get("upgrade")?.toLowerCase() === "websocket" &&
-    isUpgradeToken(request.headers.get("connection"))
+    request.headers.get("upgrade")?.toLowerCase() === "websocket"
   );
 }
 
@@ -124,6 +122,33 @@ function createRuntimeContext(
   };
 }
 
+function resolveCloseEventFromOutgoingMessage(
+  data: string | ArrayBufferLike | Blob | ArrayBufferView,
+): { code: CollaborationCloseCode; reason: string } | undefined {
+  if (!(data instanceof Uint8Array)) {
+    return undefined;
+  }
+
+  const message = new IncomingMessage(data);
+  message.readVarString();
+
+  if (message.readVarUint() !== MessageType.CLOSE) {
+    return undefined;
+  }
+
+  const reason = message.readVarString();
+
+  if (reason === COLLABORATION_SESSION_INVALID_REASON) {
+    return { code: 4401, reason };
+  }
+
+  if (reason === COLLABORATION_WRITE_FORBIDDEN_REASON) {
+    return { code: 4403, reason };
+  }
+
+  return undefined;
+}
+
 export function createCollaborationWebSocketTransport(
   options: CreateCollaborationWebSocketTransportOptions,
 ): CollaborationWebSocketTransport {
@@ -166,8 +191,24 @@ export function createCollaborationWebSocketTransport(
           return;
         }
 
+        const websocket: WebSocketLike = {
+          get readyState() {
+            return peer.websocket.readyState ?? 3;
+          },
+          send(data) {
+            peer.send(data);
+            const closeEvent = resolveCloseEventFromOutgoingMessage(data);
+
+            if (closeEvent) {
+              peer.close(closeEvent.code, closeEvent.reason);
+            }
+          },
+          close(code, reason) {
+            peer.close(code, reason);
+          },
+        };
         const connection = options.runtime.server.handleConnection(
-          peer.websocket as WebSocketLike,
+          websocket,
           peer.request,
           createRuntimeContext(peer.request, context),
         );

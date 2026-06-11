@@ -109,7 +109,7 @@ test("collaboration transport detects only websocket upgrades for the collaborat
         headers: { upgrade: "websocket" },
       }),
     ),
-    false,
+    true,
   );
   assert.equal(
     isCollaborationWebSocketUpgradeRequest(
