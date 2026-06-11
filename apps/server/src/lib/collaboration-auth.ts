@@ -311,6 +311,7 @@ export type MountCollaborationRoutesOptions = {
   authService: AuthService;
   resolveDocument: CollaborationDocumentLocator;
   env?: NodeJS.ProcessEnv;
+  authGuard?: ReturnType<typeof createCollaborationAuthGuard>;
 };
 
 type CollaborationRouteApp = {
@@ -322,13 +323,15 @@ export function mountCollaborationRoutes(
   options: MountCollaborationRoutesOptions,
 ): void {
   const collabApp = app as CollaborationRouteApp;
-  const guard = createCollaborationAuthGuard({
-    authService: options.authService,
-    resolveDocument: options.resolveDocument,
-    allowedOrigins: resolveCollaborationAllowedOrigins(
-      options.env ?? process.env,
-    ),
-  });
+  const guard =
+    options.authGuard ??
+    createCollaborationAuthGuard({
+      authService: options.authService,
+      resolveDocument: options.resolveDocument,
+      allowedOrigins: resolveCollaborationAllowedOrigins(
+        options.env ?? process.env,
+      ),
+    });
 
   collabApp.get?.("/api/v1/collaboration", async ({ request }: any) => {
     const result = await guard.authorizeHandshake(request);

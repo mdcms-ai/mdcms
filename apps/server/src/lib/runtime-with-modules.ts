@@ -24,6 +24,17 @@ import { createCollaborationRedisDependency } from "./collaboration/redis-client
 import { createDocumentCollaborationActiveError } from "./collaboration/errors.js";
 import { createCollaborationRedisStore } from "./collaboration/redis-store.js";
 import {
+  createCollaborationRuntime,
+  type CollaborationRuntimeRedisStore,
+} from "./collaboration/runtime.js";
+import {
+  createCollaborationWebSocketTransport,
+  isCollaborationWebSocketUpgradeRequest,
+  type BunUpgradeServer,
+  type CollaborationWebSocketHandler,
+  type CollaborationWebSocketTransport,
+} from "./collaboration/transport.js";
+import {
   createDatabaseSchemaStore,
   mountSchemaApiRoutes,
 } from "./schema-api.js";
@@ -33,7 +44,12 @@ import {
   resolveStartupOidcProviders,
 } from "./auth.js";
 import { createEmailService } from "./email.js";
-import { mountCollaborationRoutes } from "./collaboration-auth.js";
+import {
+  createCollaborationAuthGuard,
+  mountCollaborationRoutes,
+  resolveCollaborationAllowedOrigins,
+  type CollaborationDocumentLocator,
+} from "./collaboration-auth.js";
 import {
   createDatabaseEnvironmentStore,
   mountEnvironmentApiRoutes,
@@ -80,10 +96,16 @@ export type CreateServerRequestHandlerWithModulesOptions = {
   moduleDeps?: ServerModuleAppDeps;
   moduleLoadReport?: ServerModuleLoadReport;
   activeCollaboration?: ContentActiveCollaborationChecker;
+  collaborationRedisStore?: RuntimeCollaborationRedisStore;
+  collaborationUnavailableDetails?: Record<string, unknown>;
   serverOptions?: Omit<
     CreateServerRequestHandlerOptions,
     "env" | "logger" | "actions" | "configureApp"
   >;
+};
+
+type RuntimeCollaborationRedisStore = CollaborationRuntimeRedisStore & {
+  isActive: (documentId: string) => Promise<boolean>;
 };
 
 export type PrepareServerRequestHandlerWithModulesOptions =
@@ -93,6 +115,12 @@ export type PrepareServerRequestHandlerWithModulesOptions =
 
 export type ServerRequestHandlerWithModulesResult = {
   handler: ServerRequestHandler;
+  handleRequest: (
+    request: Request,
+    server?: BunUpgradeServer,
+  ) => Promise<Response | undefined>;
+  collaborationWebSocket: CollaborationWebSocketHandler;
+  collaborationWebSocketTransport: CollaborationWebSocketTransport;
   moduleLoadReport: ServerModuleLoadReport;
   dbConnection: DatabaseConnection;
   dal: ContentDAL;
@@ -217,6 +245,54 @@ export function createServerRequestHandlerWithModules(
     logger,
   });
   const actions = collectServerModuleActions(moduleLoadReport);
+  const collaborationRedisStore = options.collaborationRedisStore;
+  const activeCollaboration =
+    options.activeCollaboration ??
+    (collaborationRedisStore
+      ? {
+          isDocumentActive: (documentId: string) =>
+            collaborationRedisStore.isActive(documentId),
+        }
+      : undefined);
+  const resolveCollaborationDocument: CollaborationDocumentLocator = async ({
+    project,
+    environment,
+    documentId,
+  }) => {
+    const document = await contentStore.getById(
+      { project, environment },
+      documentId,
+      { draft: true },
+    );
+
+    if (!document || document.isDeleted) {
+      return undefined;
+    }
+
+    return {
+      path: document.path,
+    };
+  };
+  const collaborationAuthGuard = createCollaborationAuthGuard({
+    authService,
+    resolveDocument: resolveCollaborationDocument,
+    allowedOrigins: resolveCollaborationAllowedOrigins(rawEnv),
+  });
+  const collaborationRuntime = collaborationRedisStore
+    ? createCollaborationRuntime({
+        contentStore,
+        redisStore: collaborationRedisStore,
+        authGuard: collaborationAuthGuard,
+        lifecycleEvents: webhookRuntime.dispatcher,
+      })
+    : undefined;
+  const collaborationWebSocketTransport = createCollaborationWebSocketTransport(
+    {
+      authGuard: collaborationAuthGuard,
+      runtime: collaborationRuntime,
+      unavailableDetails: options.collaborationUnavailableDetails,
+    },
+  );
 
   const lookupSchemaHashForScope = async (scope: {
     project: string;
@@ -456,7 +532,7 @@ export function createServerRequestHandlerWithModules(
           contentStore.softDelete(scope, documentId),
         restore: (scope, documentId) => contentStore.restore(scope, documentId),
       },
-      options.activeCollaboration,
+      activeCollaboration,
     ),
     contextResolver: {
       loadDraftContext: async ({
@@ -591,7 +667,7 @@ export function createServerRequestHandlerWithModules(
           return map;
         },
         lifecycleEvents: webhookRuntime.dispatcher,
-        activeCollaboration: options.activeCollaboration,
+        activeCollaboration,
         previewTokenSecret: env.MDCMS_PREVIEW_TOKEN_SECRET,
       });
       mountSchemaApiRoutes(app, {
@@ -650,21 +726,8 @@ export function createServerRequestHandlerWithModules(
       mountCollaborationRoutes(app, {
         authService,
         env: rawEnv,
-        resolveDocument: async ({ project, environment, documentId }) => {
-          const document = await contentStore.getById(
-            { project, environment },
-            documentId,
-            { draft: true },
-          );
-
-          if (!document || document.isDeleted) {
-            return undefined;
-          }
-
-          return {
-            path: document.path,
-          };
-        },
+        resolveDocument: resolveCollaborationDocument,
+        authGuard: collaborationAuthGuard,
       });
       mountMediaApiRoutes(app, {
         store: mediaStore,
@@ -682,9 +745,25 @@ export function createServerRequestHandlerWithModules(
       mountLoadedServerModules(app, moduleDeps, moduleLoadReport);
     },
   });
+  const handleRequest = async (
+    request: Request,
+    server?: BunUpgradeServer,
+  ): Promise<Response | undefined> => {
+    if (server && isCollaborationWebSocketUpgradeRequest(request)) {
+      return collaborationWebSocketTransport.handleFetchUpgrade(
+        request,
+        server,
+      );
+    }
+
+    return handler(request);
+  };
 
   return {
     handler,
+    handleRequest,
+    collaborationWebSocket: collaborationWebSocketTransport.websocket,
+    collaborationWebSocketTransport,
     moduleLoadReport,
     dbConnection,
     dal,
@@ -756,6 +835,15 @@ export async function prepareServerRequestHandlerWithModules(
             collaborationRedisStore.isActive(documentId),
         }
       : undefined);
+  const collaborationUnavailableDetails =
+    collaborationRedisDependency?.status === "unavailable"
+      ? {
+          reason: collaborationRedisDependency.reason,
+          ...(collaborationRedisDependency.error instanceof Error
+            ? { errorMessage: collaborationRedisDependency.error.message }
+            : {}),
+        }
+      : undefined;
 
   const runtime = createServerRequestHandlerWithModules({
     ...options,
@@ -763,6 +851,8 @@ export async function prepareServerRequestHandlerWithModules(
     logger,
     moduleLoadReport,
     activeCollaboration,
+    collaborationRedisStore,
+    collaborationUnavailableDetails,
     serverOptions: {
       ...(options.serverOptions ?? {}),
       studioRuntimePublication,

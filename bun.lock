@@ -49,6 +49,7 @@
         "@mdcms/shared": "workspace:*",
         "@mdcms/studio": "workspace:*",
         "better-auth": "^1.5.1",
+        "crossws": "0.4.6",
         "drizzle-orm": "^0.45.1",
         "elysia": "^1.4.25",
         "ioredis": "^5.11.1",
