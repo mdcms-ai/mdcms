@@ -147,7 +147,7 @@ Studio draft persistence depends on the active editor mode:
 
 - **Single-user draft auto-save** serializes the current editor state to markdown/MDX and persists it to the `documents` row (for example, after the last change or on editor blur).
 - **Collaborative editing** stores active Yjs state in Redis and persists to PostgreSQL only on the last-disconnect final save. Periodic/debounced PostgreSQL autosave from active collaboration rooms is deferred.
-- Auto-save is a silent `UPDATE` — it never creates version rows and never pollutes history.
+- Single-user HTTP draft auto-save and collaboration final-save DB writes are silent draft `UPDATE`s — they never create version rows and never pollute history.
 - If Redis is lost (crash, flush), the last saved draft in PostgreSQL is the recovery point.
 
 ### Soft Delete

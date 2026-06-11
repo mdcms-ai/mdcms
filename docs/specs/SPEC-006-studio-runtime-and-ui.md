@@ -685,15 +685,16 @@ Normative behavior:
   `Desktop` viewport preset is selected by default. The
   open-in-new-tab link is always available when a route is resolved so editors
   have a fallback when browser framing policy blocks embedding.
-- Refreshing the real-app preview first runs the active draft persistence path
-  when local body or frontmatter edits are unsaved, then reloads the iframe only
-  after persistence succeeds. In non-collaborative operation this is the HTTP
-  draft write path. In an active collaboration document room, Studio must not
-  bypass the active collaboration lock with HTTP `PUT`; preview refresh can use
-  only the collaboration-backed persisted state available after collaboration
-  final save. Route resolution uses the latest persisted draft snapshot; local
-  unsaved frontmatter changes must not navigate the iframe before the canonical
-  draft row is updated.
+- Refreshing the real-app preview in non-collaborative operation first runs the
+  HTTP draft write path when local body or frontmatter edits are unsaved, then
+  reloads the iframe after persistence succeeds. In an active collaboration
+  document room, manual preview refresh must not force an HTTP draft save or
+  bypass the active collaboration lock; it refreshes against the latest
+  persisted state, and unsaved Yjs changes become visible to backend-backed
+  preview only after the collaboration save contract persists them. Route
+  resolution uses the latest persisted draft snapshot; local unsaved
+  frontmatter changes must not navigate the iframe before the canonical draft
+  row is updated.
 - When route resolution returns a URL, Studio requests a signed preview token
   from `POST /api/v1/content/:documentId/preview-token` before loading the
   iframe. Studio sends the resolved URL as `previewUrl` when available, appends

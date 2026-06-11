@@ -110,7 +110,7 @@ Presence indicators belong in the content list and editor only after the presenc
 
 There are two distinct save operations:
 
-**Auto-save (draft):**
+**Single-user HTTP auto-save (draft):**
 
 - Debounced: triggers ~5 seconds after the last change, or on editor blur/disconnect.
 - Serializes the current TipTap document state to markdown together with the
@@ -120,6 +120,10 @@ There are two distinct save operations:
 - Does not depend on Redis, WebSocket sessions, or webhook fan-out in single-user editing mode.
 - Frontmatter-only edits and body-only edits use the same draft-save pipeline
   and the same unsaved/saving/saved state machine.
+
+Active collaboration document rooms use the collaboration final-save behavior
+documented above. Periodic/debounced PostgreSQL autosave from active
+collaboration rooms remains deferred.
 
 **Publish (versioned):**
 
