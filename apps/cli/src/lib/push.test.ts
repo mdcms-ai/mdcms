@@ -913,6 +913,125 @@ test("push reports stale document as failed and continues pushing remaining docu
   });
 });
 
+test("push reports collaboration-active document as failed and continues pushing remaining documents", async () => {
+  await withTempDir(async (cwd) => {
+    const manifestPath = join(
+      cwd,
+      ".mdcms",
+      "manifests",
+      "marketing-site.staging.json",
+    );
+    await mkdir(join(cwd, ".mdcms", "manifests"), { recursive: true });
+    await writeSchemaStateFile(cwd, "marketing-site", "staging");
+    await writeFile(
+      manifestPath,
+      JSON.stringify(
+        {
+          "doc-locked": {
+            path: "content/blog/locked-post.en.md",
+            format: "md",
+            draftRevision: 1,
+            publishedVersion: null,
+            hash: "old-hash-1",
+          },
+          "doc-open": {
+            path: "content/blog/open-post.en.md",
+            format: "md",
+            draftRevision: 3,
+            publishedVersion: 2,
+            hash: "old-hash-2",
+          },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    await mkdir(join(cwd, "content", "blog"), { recursive: true });
+    await writeFile(
+      join(cwd, "content/blog/locked-post.en.md"),
+      '---\ntitle: "Locked"\n---\nlocked body\n',
+      "utf8",
+    );
+    await writeFile(
+      join(cwd, "content/blog/open-post.en.md"),
+      '---\ntitle: "Open"\n---\nopen body\n',
+      "utf8",
+    );
+
+    const stdoutChunks: string[] = [];
+    let requestCount = 0;
+
+    const exitCode = await runMdcmsCli(["push", "--force"], {
+      cwd,
+      env: {} as NodeJS.ProcessEnv,
+      fetcher: async (input, init) => {
+        if (isSchemaGetRequest(input, init)) {
+          return createSchemaListResponse(BLOG_POST_CONFIG, "staging");
+        }
+        requestCount += 1;
+        const url = String(input);
+        const requestUrl = parseRequestUrl(url);
+
+        if (requestUrl.pathname === "/api/v1/content/doc-locked") {
+          assert.equal(requestUrl.searchParams.get("fileFields"), "raw");
+          return new Response(
+            JSON.stringify({
+              code: "DOCUMENT_COLLABORATION_ACTIVE",
+              message: "Document has an active collaboration session.",
+              statusCode: 409,
+              details: { documentId: "doc-locked" },
+            }),
+            { status: 409, headers: { "content-type": "application/json" } },
+          );
+        }
+
+        return createSuccessResponse({
+          documentId: "doc-open",
+          type: "BlogPost",
+          locale: "en",
+          path: "content/blog/open-post",
+          format: "md",
+          draftRevision: 4,
+          publishedVersion: 2,
+        });
+      },
+      loadConfig: async () => ({
+        config: BLOG_POST_CONFIG,
+        configPath: join(cwd, "mdcms.config.ts"),
+      }),
+      stdout: {
+        write: (chunk: string) => {
+          stdoutChunks.push(chunk);
+        },
+      },
+      stderr: { write: () => undefined },
+      confirm: async () => true,
+    });
+
+    assert.equal(exitCode, 1);
+    assert.equal(requestCount, 2);
+
+    const output = stdoutChunks.join("");
+
+    assert.ok(output.includes("[FAILED]"));
+    assert.ok(output.includes("doc-locked"));
+    assert.ok(output.includes("collaboration_active"));
+    assert.ok(output.includes("active Studio collaboration session"));
+    assert.ok(output.includes("[UPDATED]"));
+    assert.ok(output.includes("doc-open"));
+
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as Record<
+      string,
+      { draftRevision: number; hash: string }
+    >;
+    assert.equal(manifest["doc-open"]?.draftRevision, 4);
+    assert.equal(manifest["doc-locked"]?.draftRevision, 1);
+    assert.equal(manifest["doc-locked"]?.hash, "old-hash-1");
+  });
+});
+
 test("push reports schema-mismatch document as failed and continues pushing remaining documents", async () => {
   await withTempDir(async (cwd) => {
     const manifestPath = join(
@@ -1275,6 +1394,111 @@ test("push --force deletes locally-missing files via DELETE and removes from man
       unknown
     >;
     assert.equal(manifest["doc-to-delete"], undefined);
+  });
+});
+
+test("push --force reports collaboration-active delete as failed and continues deleting remaining documents", async () => {
+  await withTempDir(async (cwd) => {
+    const manifestPath = join(
+      cwd,
+      ".mdcms",
+      "manifests",
+      "marketing-site.staging.json",
+    );
+    await mkdir(join(cwd, ".mdcms", "manifests"), { recursive: true });
+    await writeSchemaStateFile(cwd, "marketing-site", "staging");
+
+    await writeFile(
+      manifestPath,
+      JSON.stringify(
+        {
+          "doc-delete-locked": {
+            path: "content/blog/delete-locked.en.md",
+            format: "md",
+            draftRevision: 5,
+            publishedVersion: 3,
+            hash: "locked-hash",
+          },
+          "doc-delete-open": {
+            path: "content/blog/delete-open.en.md",
+            format: "md",
+            draftRevision: 2,
+            publishedVersion: null,
+            hash: "open-hash",
+          },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    await mkdir(join(cwd, "content", "blog"), { recursive: true });
+
+    let deleteCalls = 0;
+    let stdout = "";
+    const exitCode = await runMdcmsCli(["push", "--force"], {
+      cwd,
+      env: {} as NodeJS.ProcessEnv,
+      fetcher: async (input, init) => {
+        if (isSchemaGetRequest(input, init)) {
+          return createSchemaListResponse(BLOG_POST_CONFIG, "staging");
+        }
+        const url = String(input);
+        const requestUrl = parseRequestUrl(url);
+        assert.equal(init?.method, "DELETE");
+        deleteCalls += 1;
+
+        if (requestUrl.pathname === "/api/v1/content/doc-delete-locked") {
+          return new Response(
+            JSON.stringify({
+              code: "DOCUMENT_COLLABORATION_ACTIVE",
+              message: "Document has an active collaboration session.",
+              statusCode: 409,
+              details: { documentId: "doc-delete-locked" },
+            }),
+            { status: 409, headers: { "content-type": "application/json" } },
+          );
+        }
+
+        assert.equal(requestUrl.pathname, "/api/v1/content/doc-delete-open");
+        return createSuccessResponse({
+          documentId: "doc-delete-open",
+          type: "BlogPost",
+          locale: "en",
+          path: "content/blog/delete-open",
+          format: "md",
+          draftRevision: 2,
+          publishedVersion: null,
+        });
+      },
+      loadConfig: async () => ({
+        config: BLOG_POST_CONFIG,
+        configPath: join(cwd, "mdcms.config.ts"),
+      }),
+      stdout: {
+        write: (chunk: string) => {
+          stdout += chunk;
+        },
+      },
+      stderr: { write: () => undefined },
+      confirm: async () => true,
+    });
+
+    assert.equal(exitCode, 1);
+    assert.equal(deleteCalls, 2);
+    assert.ok(stdout.includes("[FAILED]"));
+    assert.ok(stdout.includes("doc-delete-locked"));
+    assert.ok(stdout.includes("collaboration_active"));
+    assert.ok(stdout.includes("active Studio collaboration session"));
+    assert.ok(stdout.includes("[DELETED]"));
+    assert.ok(stdout.includes("doc-delete-open"));
+
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    assert.ok(manifest["doc-delete-locked"]);
+    assert.equal(manifest["doc-delete-open"], undefined);
   });
 });
 

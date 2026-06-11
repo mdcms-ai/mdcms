@@ -18,7 +18,11 @@ import type { ContentDAL } from "./dal/types.js";
 import {
   createDatabaseContentStore,
   mountContentApiRoutes,
+  type ContentActiveCollaborationChecker,
 } from "./content-api.js";
+import { createCollaborationRedisDependency } from "./collaboration/redis-client.js";
+import { createDocumentCollaborationActiveError } from "./collaboration/errors.js";
+import { createCollaborationRedisStore } from "./collaboration/redis-store.js";
 import {
   createDatabaseSchemaStore,
   mountSchemaApiRoutes,
@@ -63,6 +67,7 @@ import {
   createAiOrchestratorFromEnv,
   createInMemoryAiProposalStore,
   createSchemaAwareProposalValidator,
+  type AiContentStore,
   type CoreAiServerDeps,
 } from "@mdcms/modules";
 
@@ -74,6 +79,7 @@ export type CreateServerRequestHandlerWithModulesOptions = {
   cwd?: string;
   moduleDeps?: ServerModuleAppDeps;
   moduleLoadReport?: ServerModuleLoadReport;
+  activeCollaboration?: ContentActiveCollaborationChecker;
   serverOptions?: Omit<
     CreateServerRequestHandlerOptions,
     "env" | "logger" | "actions" | "configureApp"
@@ -122,6 +128,44 @@ export function createRuntimeMediaObjectStore(
     bucket: env.S3_BUCKET,
     publicBaseUrl: env.S3_PUBLIC_BASE_URL,
   });
+}
+
+async function assertNoActiveCollaboration(
+  activeCollaboration: ContentActiveCollaborationChecker | undefined,
+  documentId: string,
+): Promise<void> {
+  if (!(await activeCollaboration?.isDocumentActive(documentId))) {
+    return;
+  }
+
+  throw createDocumentCollaborationActiveError(documentId);
+}
+
+export function createCollaborationGuardedAiContentStore(
+  store: AiContentStore,
+  activeCollaboration: ContentActiveCollaborationChecker | undefined,
+): AiContentStore {
+  const restore = store.restore;
+
+  return {
+    getById: (scope, documentId, opts) =>
+      store.getById(scope, documentId, opts),
+    create: (scope, payload, opts) => store.create(scope, payload, opts),
+    update: async (scope, documentId, payload, opts) => {
+      await assertNoActiveCollaboration(activeCollaboration, documentId);
+      return store.update(scope, documentId, payload, opts);
+    },
+    softDelete: async (scope, documentId) => {
+      await assertNoActiveCollaboration(activeCollaboration, documentId);
+      return store.softDelete(scope, documentId);
+    },
+    restore: restore
+      ? async (scope, documentId) => {
+          await assertNoActiveCollaboration(activeCollaboration, documentId);
+          return restore(scope, documentId);
+        }
+      : undefined,
+  };
 }
 
 /**
@@ -400,17 +444,20 @@ export function createServerRequestHandlerWithModules(
   const aiModuleDeps: CoreAiServerDeps = {
     orchestrator: aiOrchestrator,
     proposalStore: aiProposalStore,
-    contentStore: {
-      getById: (scope, documentId, opts) =>
-        contentStore.getById(scope, documentId, opts),
-      update: (scope, documentId, payload, opts) =>
-        contentStore.update(scope, documentId, payload, opts),
-      create: (scope, payload, opts) =>
-        contentStore.create(scope, payload, opts),
-      softDelete: (scope, documentId) =>
-        contentStore.softDelete(scope, documentId),
-      restore: (scope, documentId) => contentStore.restore(scope, documentId),
-    },
+    contentStore: createCollaborationGuardedAiContentStore(
+      {
+        getById: (scope, documentId, opts) =>
+          contentStore.getById(scope, documentId, opts),
+        update: (scope, documentId, payload, opts) =>
+          contentStore.update(scope, documentId, payload, opts),
+        create: (scope, payload, opts) =>
+          contentStore.create(scope, payload, opts),
+        softDelete: (scope, documentId) =>
+          contentStore.softDelete(scope, documentId),
+        restore: (scope, documentId) => contentStore.restore(scope, documentId),
+      },
+      options.activeCollaboration,
+    ),
     contextResolver: {
       loadDraftContext: async ({
         request,
@@ -544,6 +591,7 @@ export function createServerRequestHandlerWithModules(
           return map;
         },
         lifecycleEvents: webhookRuntime.dispatcher,
+        activeCollaboration: options.activeCollaboration,
         previewTokenSecret: env.MDCMS_PREVIEW_TOKEN_SECRET,
       });
       mountSchemaApiRoutes(app, {
@@ -691,15 +739,53 @@ export async function prepareServerRequestHandlerWithModules(
               (rawEnv.APP_VERSION?.trim() || "0.0.0"),
           }),
         } as const));
+  const collaborationRedisDependency = options.activeCollaboration
+    ? undefined
+    : await createCollaborationRedisDependency({
+        redisUrl: env.REDIS_URL,
+      });
+  const collaborationRedisStore =
+    collaborationRedisDependency?.status === "available"
+      ? createCollaborationRedisStore(collaborationRedisDependency)
+      : undefined;
+  const activeCollaboration =
+    options.activeCollaboration ??
+    (collaborationRedisStore
+      ? {
+          isDocumentActive: (documentId: string) =>
+            collaborationRedisStore.isActive(documentId),
+        }
+      : undefined);
 
-  return createServerRequestHandlerWithModules({
+  const runtime = createServerRequestHandlerWithModules({
     ...options,
     env: resolvedEnv,
     logger,
     moduleLoadReport,
+    activeCollaboration,
     serverOptions: {
       ...(options.serverOptions ?? {}),
       studioRuntimePublication,
     },
   });
+
+  if (collaborationRedisDependency?.status !== "available") {
+    return runtime;
+  }
+
+  const closeDatabaseConnection = runtime.dbConnection.close;
+
+  return {
+    ...runtime,
+    dbConnection: {
+      ...runtime.dbConnection,
+      close: async () => {
+        try {
+          await closeDatabaseConnection();
+        } finally {
+          await collaborationRedisDependency.close?.();
+        }
+      },
+    },
+  };
 }

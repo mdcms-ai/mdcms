@@ -1721,6 +1721,217 @@ test("content API bulk publish returns per-document partial results", async () =
   assert.equal(body.data.results[1]?.error?.code, "NOT_FOUND");
 });
 
+test("content API update rejects an active collaboration document", async () => {
+  const activeDocumentIds = new Set<string>();
+  const handler = createHandler({
+    activeCollaboration: {
+      isDocumentActive: async (documentId) => activeDocumentIds.has(documentId),
+    },
+  });
+  const created = await createContentDocument(
+    handler,
+    (headers = {}) => headers,
+    scopeHeaders,
+    {
+      path: "blog/collaboration-locked-update",
+      type: "BlogPost",
+      locale: "en",
+      format: "md",
+      frontmatter: { slug: "collaboration-locked-update" },
+      body: "before",
+    },
+  );
+
+  activeDocumentIds.add(String(created.documentId));
+
+  const response = await handler(
+    new Request(`http://localhost/api/v1/content/${created.documentId}`, {
+      method: "PUT",
+      headers: { ...scopeHeaders, "content-type": "application/json" },
+      body: JSON.stringify({
+        frontmatter: { slug: "collaboration-locked-update" },
+        body: "after",
+      }),
+    }),
+  );
+  const body = (await response.json()) as {
+    code: string;
+    details?: { documentId?: string };
+  };
+
+  assert.equal(response.status, 409);
+  assert.equal(body.code, "DOCUMENT_COLLABORATION_ACTIVE");
+  assert.equal(body.details?.documentId, created.documentId);
+
+  const draftResponse = await handler(
+    new Request(
+      `http://localhost/api/v1/content/${created.documentId}?draft=true`,
+      { headers: scopeHeaders },
+    ),
+  );
+  const draft = (await draftResponse.json()) as { data: { body: string } };
+
+  assert.equal(draft.data.body, "before");
+});
+
+test("content API create remains allowed while another document is active", async () => {
+  const handler = createHandler({
+    activeCollaboration: {
+      isDocumentActive: async (documentId) => documentId === "locked-document",
+    },
+  });
+
+  const response = await handler(
+    new Request("http://localhost/api/v1/content", {
+      method: "POST",
+      headers: { ...scopeHeaders, "content-type": "application/json" },
+      body: JSON.stringify({
+        path: "blog/create-while-collaboration-active",
+        type: "BlogPost",
+        locale: "en",
+        format: "md",
+        frontmatter: { slug: "create-while-collaboration-active" },
+        body: "new document",
+      }),
+    }),
+  );
+  const body = (await response.json()) as {
+    data: { documentId: string; body: string };
+  };
+
+  assert.equal(response.status, 200);
+  assert.equal(body.data.body, "new document");
+});
+
+test("content API bulk delete reports active collaboration per document and continues", async () => {
+  const activeDocumentIds = new Set<string>();
+  const handler = createHandler({
+    activeCollaboration: {
+      isDocumentActive: async (documentId) => activeDocumentIds.has(documentId),
+    },
+  });
+  const locked = await createContentDocument(
+    handler,
+    (headers = {}) => headers,
+    scopeHeaders,
+    {
+      path: "blog/bulk-collaboration-locked",
+      type: "BlogPost",
+      locale: "en",
+      format: "md",
+      frontmatter: { slug: "bulk-collaboration-locked" },
+      body: "locked",
+    },
+  );
+  const unlocked = await createContentDocument(
+    handler,
+    (headers = {}) => headers,
+    scopeHeaders,
+    {
+      path: "blog/bulk-collaboration-unlocked",
+      type: "BlogPost",
+      locale: "en",
+      format: "md",
+      frontmatter: { slug: "bulk-collaboration-unlocked" },
+      body: "unlocked",
+    },
+  );
+
+  activeDocumentIds.add(String(locked.documentId));
+
+  const response = await handler(
+    new Request("http://localhost/api/v1/content/bulk", {
+      method: "POST",
+      headers: { ...scopeHeaders, "content-type": "application/json" },
+      body: JSON.stringify({
+        action: "delete",
+        documentIds: [locked.documentId, unlocked.documentId],
+      }),
+    }),
+  );
+  const body = (await response.json()) as {
+    data: {
+      requested: number;
+      succeeded: number;
+      failed: number;
+      results: Array<{
+        documentId: string;
+        status: string;
+        document?: { documentId: string; isDeleted: boolean };
+        error?: { code: string; details?: { documentId?: string } };
+      }>;
+    };
+  };
+
+  assert.equal(response.status, 200);
+  assert.equal(body.data.requested, 2);
+  assert.equal(body.data.succeeded, 1);
+  assert.equal(body.data.failed, 1);
+  assert.equal(body.data.results[0]?.documentId, locked.documentId);
+  assert.equal(body.data.results[0]?.status, "failed");
+  assert.equal(
+    body.data.results[0]?.error?.code,
+    "DOCUMENT_COLLABORATION_ACTIVE",
+  );
+  assert.equal(
+    body.data.results[0]?.error?.details?.documentId,
+    locked.documentId,
+  );
+  assert.equal(body.data.results[1]?.documentId, unlocked.documentId);
+  assert.equal(body.data.results[1]?.status, "succeeded");
+  assert.equal(body.data.results[1]?.document?.isDeleted, true);
+});
+
+test("content API restore rejects an active collaboration document", async () => {
+  const activeDocumentIds = new Set<string>();
+  const handler = createHandler({
+    activeCollaboration: {
+      isDocumentActive: async (documentId) => activeDocumentIds.has(documentId),
+    },
+  });
+  const created = await createContentDocument(
+    handler,
+    (headers = {}) => headers,
+    scopeHeaders,
+    {
+      path: "blog/collaboration-locked-restore",
+      type: "BlogPost",
+      locale: "en",
+      format: "md",
+      frontmatter: { slug: "collaboration-locked-restore" },
+      body: "restore me",
+    },
+  );
+
+  const deleteResponse = await handler(
+    new Request(`http://localhost/api/v1/content/${created.documentId}`, {
+      method: "DELETE",
+      headers: scopeHeaders,
+    }),
+  );
+
+  assert.equal(deleteResponse.status, 200);
+  activeDocumentIds.add(String(created.documentId));
+
+  const response = await handler(
+    new Request(
+      `http://localhost/api/v1/content/${created.documentId}/restore`,
+      {
+        method: "POST",
+        headers: scopeHeaders,
+      },
+    ),
+  );
+  const body = (await response.json()) as {
+    code: string;
+    details?: { documentId?: string };
+  };
+
+  assert.equal(response.status, 409);
+  assert.equal(body.code, "DOCUMENT_COLLABORATION_ACTIVE");
+  assert.equal(body.details?.documentId, created.documentId);
+});
+
 test("content API bulk rejects duplicate document IDs", async () => {
   const handler = createHandler();
 
