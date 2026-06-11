@@ -15,6 +15,7 @@ import {
   RuntimeError,
   type MediaAsset,
   type MediaAssetCategory,
+  type MediaStorageStatus,
 } from "@mdcms/shared";
 import {
   AlertCircle,
@@ -130,12 +131,14 @@ export type MediaLibraryEmptyPageState = {
   status: "empty" | "no-match";
   assets: MediaAsset[];
   pagination: MediaLibraryPaginationData;
+  storage: MediaStorageStatus;
 };
 
 export type MediaLibraryReadyPageState = {
   status: "ready";
   assets: MediaAsset[];
   pagination: MediaLibraryPaginationData;
+  storage: MediaStorageStatus;
 };
 
 export type MediaLibraryPageState =
@@ -182,6 +185,9 @@ const categoryOptions: Array<{
   { value: "archive", label: "Archives" },
   { value: "other", label: "Other" },
 ];
+
+const MEDIA_OBJECT_STORAGE_UNCONFIGURED_MESSAGE =
+  "Media object storage is not configured.";
 
 const sortOptions: Array<{ value: MediaLibrarySortOption; label: string }> = [
   { value: "newest", label: "Recent" },
@@ -511,6 +517,20 @@ function MediaLibraryTopbar({
           uploadState={uploadState}
           onUploadFiles={onUploadFiles}
         />
+      </div>
+    </div>
+  );
+}
+
+function MediaLibraryStorageUnavailableBanner() {
+  return (
+    <div className="border-b border-border bg-card px-6 py-3 lg:px-8">
+      <div
+        role="alert"
+        className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+      >
+        <AlertCircle className="mt-0.5 size-4 shrink-0" />
+        <span>{MEDIA_OBJECT_STORAGE_UNCONFIGURED_MESSAGE}</span>
       </div>
     </div>
   );
@@ -920,15 +940,21 @@ function MediaLibraryEmptyPanel({
   state,
   isDragActive = false,
   canUploadMedia = false,
+  storageUnavailable = false,
   onUploadFiles,
 }: {
   state: MediaLibraryEmptyPageState;
   isDragActive?: boolean;
   canUploadMedia?: boolean;
+  storageUnavailable?: boolean;
   onUploadFiles?: (files: File[]) => void;
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const emptyState = deriveMediaLibraryEmptyState(state.status === "no-match");
+  const description =
+    storageUnavailable && state.status === "empty"
+      ? "Existing assets will appear here after object storage is configured."
+      : emptyState.description;
 
   if (state.status === "no-match") {
     return (
@@ -942,9 +968,7 @@ function MediaLibraryEmptyPanel({
         <h3 className="mb-1.5 font-heading text-xl font-bold text-foreground">
           {emptyState.title}
         </h3>
-        <p className="max-w-sm text-sm text-foreground-muted">
-          {emptyState.description}
-        </p>
+        <p className="max-w-sm text-sm text-foreground-muted">{description}</p>
       </section>
     );
   }
@@ -990,7 +1014,7 @@ function MediaLibraryEmptyPanel({
           {emptyState.title}
         </h3>
         <p className="mt-3 max-w-sm text-sm leading-relaxed text-foreground-muted">
-          {emptyState.description}
+          {description}
         </p>
         {canUploadMedia && onUploadFiles ? (
           <>
@@ -1687,6 +1711,14 @@ export function MediaLibraryPageView({
     readyAssets.find((asset) => asset.id === selectedAssetId) ??
     readyAssets[0] ??
     null;
+  const objectStorageConfigured =
+    state.status === "ready" ||
+    state.status === "empty" ||
+    state.status === "no-match"
+      ? state.storage.objectStorageConfigured
+      : true;
+  const storageUnavailable = canUploadMedia && !objectStorageConfigured;
+  const canStartMediaUpload = canUploadMedia && objectStorageConfigured;
   const isSelectable = canDeleteMedia;
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [isDeleting, setIsDeleting] = useState(false);
@@ -1767,7 +1799,8 @@ export function MediaLibraryPageView({
   }, [onDeleteAssets, bulkSelectedAssets]);
 
   const [isDragActive, setIsDragActive] = useState(false);
-  const canDropUpload = canUploadMedia && uploadState.status !== "uploading";
+  const canDropUpload =
+    canStartMediaUpload && uploadState.status !== "uploading";
   const handleDragOver = useCallback(
     (event: ReactDragEvent<HTMLDivElement>) => {
       if (!canDropUpload || !hasMediaLibraryFileDrag(event)) {
@@ -1819,12 +1852,14 @@ export function MediaLibraryPageView({
         onDrop={handleDrop}
       >
         <MediaLibraryTopbar
-          canUploadMedia={canUploadMedia}
+          canUploadMedia={canStartMediaUpload}
           uploadState={uploadState}
           searchInput={searchInput}
           onUploadFiles={onUploadFiles}
           onSearchInputChange={onSearchInputChange}
         />
+
+        {storageUnavailable ? <MediaLibraryStorageUnavailableBanner /> : null}
 
         {state.status === "unavailable" ||
         state.status === "forbidden" ||
@@ -1841,7 +1876,9 @@ export function MediaLibraryPageView({
               </h1>
               <p className="mt-1.5 font-mono text-xs text-foreground-muted">
                 {state.pagination.total} assets
-                {state.status === "empty" ? " · drop files to begin" : ""}
+                {state.status === "empty" && canStartMediaUpload
+                  ? " · drop files to begin"
+                  : ""}
               </p>
             </div>
             {state.status === "no-match" ? (
@@ -1859,7 +1896,8 @@ export function MediaLibraryPageView({
               <MediaLibraryEmptyPanel
                 state={state}
                 isDragActive={isDragActive}
-                canUploadMedia={canUploadMedia}
+                canUploadMedia={canStartMediaUpload}
+                storageUnavailable={storageUnavailable}
                 onUploadFiles={onUploadFiles}
               />
             </div>
@@ -2174,6 +2212,7 @@ export default function MediaPage() {
         status: hasActiveMediaLibraryFilters(filters) ? "no-match" : "empty",
         assets: [],
         pagination: query.data.pagination,
+        storage: query.data.storage,
       };
     }
 
@@ -2181,6 +2220,7 @@ export default function MediaPage() {
       status: "ready",
       assets: query.data.data,
       pagination: query.data.pagination,
+      storage: query.data.storage,
     };
   }, [
     canReadMedia,
@@ -2208,9 +2248,23 @@ export default function MediaPage() {
   const handleCopyUrl = (url: string) => {
     void copyMediaAssetUrlToClipboard(url).catch(() => undefined);
   };
+  const objectStorageConfigured =
+    pageState.status === "ready" ||
+    pageState.status === "empty" ||
+    pageState.status === "no-match"
+      ? pageState.storage.objectStorageConfigured
+      : true;
   const handleUploadFiles = useCallback(
     (files: File[]) => {
       if (files.length === 0) {
+        return;
+      }
+
+      if (!objectStorageConfigured) {
+        setUploadState({
+          status: "error",
+          message: MEDIA_OBJECT_STORAGE_UNCONFIGURED_MESSAGE,
+        });
         return;
       }
 
@@ -2277,7 +2331,7 @@ export default function MediaPage() {
         await query.refetch();
       })();
     },
-    [canUploadMedia, mediaUploadApi, query],
+    [canUploadMedia, mediaUploadApi, objectStorageConfigured, query],
   );
   const handleDeleteAssets = useCallback(
     async (assets: MediaAsset[]) => {

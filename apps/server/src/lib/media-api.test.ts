@@ -676,6 +676,7 @@ test("media list returns asset metadata, requires media read authorization, and 
   const body = (await response.json()) as {
     data: MediaAsset[];
     pagination: MediaAssetListResult["pagination"];
+    storage: { objectStorageConfigured: boolean };
   };
 
   assert.equal(response.status, 200);
@@ -701,6 +702,9 @@ test("media list returns asset metadata, requires media read authorization, and 
       limit: 30,
       offset: 0,
       hasMore: false,
+    },
+    storage: {
+      objectStorageConfigured: false,
     },
   });
 });
