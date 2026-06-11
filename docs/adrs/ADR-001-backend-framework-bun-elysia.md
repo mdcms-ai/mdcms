@@ -11,7 +11,7 @@ This is the live canonical document under `docs/`.
 
 ## Context
 
-The backend framework decision had to satisfy Bun-native performance goals, Elysia compatibility, better-auth integration, PostgreSQL/Drizzle support, and a viable path for post-MVP collaboration transport.
+The backend framework decision had to satisfy Bun-native performance goals, Elysia compatibility, better-auth integration, PostgreSQL/Drizzle support, and a viable path for the in-process collaboration transport.
 
 ## Decision
 
