@@ -142,6 +142,7 @@ class FakeRedisStore implements CollaborationRuntimeRedisStore {
   acquireActiveLockResult = true;
   heartbeatActiveLockResult = true;
   finalizeInactiveRoomResult = true;
+  clearInactiveCacheTtlError: unknown;
   readonly calls: Array<{
     method: string;
     documentId: string;
@@ -186,6 +187,10 @@ class FakeRedisStore implements CollaborationRuntimeRedisStore {
 
   async clearInactiveCacheTtl(documentId: string): Promise<void> {
     this.calls.push({ method: "clearInactiveCacheTtl", documentId });
+
+    if (this.clearInactiveCacheTtlError) {
+      throw this.clearInactiveCacheTtlError;
+    }
   }
 
   async acquireActiveLock(
@@ -202,6 +207,14 @@ class FakeRedisStore implements CollaborationRuntimeRedisStore {
   ): Promise<boolean> {
     this.calls.push({ method: "heartbeatActiveLock", documentId, leaseValue });
     return this.heartbeatActiveLockResult;
+  }
+
+  async releaseActiveLock(
+    documentId: string,
+    leaseValue: string,
+  ): Promise<boolean> {
+    this.calls.push({ method: "releaseActiveLock", documentId, leaseValue });
+    return true;
   }
 
   async finalizeInactiveRoom(
@@ -278,11 +291,48 @@ class FakeHeartbeatScheduler {
   }
 }
 
+class FakeTimeoutScheduler {
+  private nextHandle = 1;
+  readonly timeouts: Array<{
+    callback: () => void;
+    cleared: boolean;
+    handle: number;
+    timeoutMs: number;
+  }> = [];
+
+  set = (callback: () => void, timeoutMs: number): number => {
+    const handle = this.nextHandle++;
+    this.timeouts.push({
+      callback,
+      cleared: false,
+      handle,
+      timeoutMs,
+    });
+    return handle;
+  };
+
+  clear = (handle: unknown): void => {
+    const timeout = this.timeouts.find((entry) => entry.handle === handle);
+
+    if (timeout) {
+      timeout.cleared = true;
+    }
+  };
+
+  fire(index = 0): void {
+    const timeout = this.timeouts[index];
+    assert.ok(timeout);
+    timeout.callback();
+  }
+}
+
 function createHarness(
   document: ContentDocument = createDocument(),
   options: {
     closeRoom?: (documentName: string) => void | Promise<void>;
+    finalizedRoomLeaseTtlMs?: number;
     heartbeatScheduler?: FakeHeartbeatScheduler;
+    timeoutScheduler?: FakeTimeoutScheduler;
   } = {},
 ) {
   const contentStore = new FakeContentStore(document);
@@ -291,6 +341,8 @@ function createHarness(
   const lifecycleEvents = new FakeLifecycleEvents();
   const heartbeatScheduler =
     options.heartbeatScheduler ?? new FakeHeartbeatScheduler();
+  const timeoutScheduler =
+    options.timeoutScheduler ?? new FakeTimeoutScheduler();
   const closedRooms: string[] = [];
   const hooks = createCollaborationRuntimeHooks({
     contentStore,
@@ -300,6 +352,9 @@ function createHarness(
     createRoomLeaseValue: () => "lease-1",
     setActiveLockHeartbeat: heartbeatScheduler.set,
     clearActiveLockHeartbeat: heartbeatScheduler.clear,
+    finalizedRoomLeaseTtlMs: options.finalizedRoomLeaseTtlMs,
+    setFinalizedRoomLeaseTimeout: timeoutScheduler.set,
+    clearFinalizedRoomLeaseTimeout: timeoutScheduler.clear,
     closeRoom: async (documentName) => {
       closedRooms.push(documentName);
       await options.closeRoom?.(documentName);
@@ -314,6 +369,7 @@ function createHarness(
     hooks,
     lifecycleEvents,
     redisStore,
+    timeoutScheduler,
   };
 }
 
@@ -388,6 +444,32 @@ test("onLoadDocument falls back to PostgreSQL and seeds Redis when cache is miss
     computeCollaborationBodyHash(document.body),
   );
   assert.equal(context.roomLeaseValue, "lease-1");
+});
+
+test("onLoadDocument releases active lock when post-acquire setup fails", async () => {
+  const { hooks, heartbeatScheduler, redisStore } = createHarness();
+  const context = createContext();
+  const setupError = new Error("ttl cleanup failed");
+  redisStore.clearInactiveCacheTtlError = setupError;
+
+  await assert.rejects(
+    hooks.onLoadDocument({ context, documentName: DOCUMENT_ID }),
+    setupError,
+  );
+
+  assert.equal(heartbeatScheduler.intervals.length, 0);
+  assert.equal(context.roomLeaseValue, undefined);
+  assert.deepEqual(
+    redisStore.calls
+      .filter((call) =>
+        ["acquireActiveLock", "releaseActiveLock"].includes(call.method),
+      )
+      .map((call) => [call.method, call.leaseValue]),
+    [
+      ["acquireActiveLock", "lease-1"],
+      ["releaseActiveLock", "lease-1"],
+    ],
+  );
 });
 
 test("onLoadDocument schedules active-lock heartbeat for idle loaded rooms", async () => {
@@ -598,6 +680,37 @@ test("onStoreDocument writes Redis state and metadata only", async () => {
   assert.equal(contentStore.document.body, document.body);
 });
 
+test("onStoreDocument fails closed before cache writes when active lock is lost", async () => {
+  const document = createDocument({ body: "# Stored", draftRevision: 4 });
+  const { hooks, redisStore } = createHarness(document);
+  const context = createContext();
+  const ydoc = markdownToYDoc("# Stored\n\nChanged in Yjs.");
+
+  await hooks.onLoadDocument({ context, documentName: DOCUMENT_ID });
+  const callsBeforeStore = redisStore.calls.length;
+  redisStore.heartbeatActiveLockResult = false;
+
+  await assert.rejects(
+    hooks.onStoreDocument({
+      document: ydoc,
+      documentName: DOCUMENT_ID,
+      lastContext: createContext({
+        loadedDraftRevision: context.loadedDraftRevision,
+        loadedBodyHash: context.loadedBodyHash,
+        roomLeaseValue: context.roomLeaseValue,
+      }),
+    }),
+    (error: unknown) =>
+      error instanceof RuntimeError &&
+      error.code === "COLLABORATION_ACTIVE_LOCK_LOST",
+  );
+
+  assert.deepEqual(
+    redisStore.calls.slice(callsBeforeStore).map((call) => call.method),
+    ["heartbeatActiveLock"],
+  );
+});
+
 test("onDisconnect with clients still connected does not final-save", async () => {
   const { hooks, contentStore, redisStore } = createHarness();
 
@@ -651,6 +764,52 @@ test("last disconnect skips no-op PostgreSQL save but finalizes TTL and lock", a
       ["setYjsMetadata", undefined],
       ["finalizeInactiveRoom", "lease-1"],
     ],
+  );
+});
+
+test("finalized room lease entries expire for rooms that are never reopened", async () => {
+  const document = createDocument({
+    body: "# No-op\n\nSame body.",
+    draftRevision: 5,
+  });
+  const { hooks, redisStore, timeoutScheduler } = createHarness(document, {
+    finalizedRoomLeaseTtlMs: 25,
+  });
+  const context = createContext();
+
+  await hooks.onLoadDocument({ context, documentName: DOCUMENT_ID });
+  await hooks.onDisconnect({
+    clientsCount: 0,
+    context,
+    document: markdownToYDoc(document.body),
+    documentName: DOCUMENT_ID,
+  });
+
+  assert.equal(timeoutScheduler.timeouts.length, 1);
+  assert.equal(timeoutScheduler.timeouts[0]?.timeoutMs, 25);
+
+  const callsBeforeLateStore = redisStore.calls.length;
+  redisStore.heartbeatActiveLockResult = false;
+
+  await hooks.onStoreDocument({
+    document: markdownToYDoc(document.body),
+    documentName: DOCUMENT_ID,
+    lastContext: context,
+  });
+
+  assert.deepEqual(redisStore.calls.slice(callsBeforeLateStore), []);
+
+  timeoutScheduler.fire();
+
+  await assert.rejects(
+    hooks.onStoreDocument({
+      document: markdownToYDoc(document.body),
+      documentName: DOCUMENT_ID,
+      lastContext: context,
+    }),
+    (error: unknown) =>
+      error instanceof RuntimeError &&
+      error.code === "COLLABORATION_ACTIVE_LOCK_LOST",
   );
 });
 

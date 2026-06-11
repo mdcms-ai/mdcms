@@ -26,6 +26,7 @@ import {
 } from "./errors.js";
 import {
   COLLABORATION_ACTIVE_LOCK_LEASE_SECONDS,
+  COLLABORATION_INACTIVE_CACHE_TTL_SECONDS,
   createCollaborationRedisStore,
   type CollaborationRedisDependency,
   type CollaborationYjsMetadata,
@@ -37,6 +38,8 @@ export const COLLABORATION_HOCUSPOCUS_MAX_DEBOUNCE_MS = 10000;
 export const COLLABORATION_ACTIVE_LOCK_HEARTBEAT_INTERVAL_MS = Math.floor(
   (COLLABORATION_ACTIVE_LOCK_LEASE_SECONDS * 1000) / 3,
 );
+export const COLLABORATION_FINALIZED_ROOM_LEASE_TTL_MS =
+  COLLABORATION_INACTIVE_CACHE_TTL_SECONDS * 1000;
 export const COLLABORATION_YJS_FIELD_NAME = "default";
 
 export type CollaborationRuntimeLastWriter = {
@@ -94,6 +97,10 @@ export type CollaborationRuntimeRedisStore = {
     documentId: string,
     leaseValue: string,
   ) => Promise<boolean>;
+  releaseActiveLock: (
+    documentId: string,
+    leaseValue: string,
+  ) => Promise<boolean>;
   finalizeInactiveRoom: (
     documentId: string,
     leaseValue: string,
@@ -113,6 +120,12 @@ type RoomState = {
   activeLockLost?: boolean;
 };
 
+type FinalizedRoomLease = {
+  expiresAt: number;
+  leaseValue: string;
+  timeout?: unknown;
+};
+
 export type CreateCollaborationRuntimeHooksOptions = {
   contentStore: CollaborationRuntimeContentStore;
   redisStore: CollaborationRuntimeRedisStore;
@@ -124,6 +137,12 @@ export type CreateCollaborationRuntimeHooksOptions = {
     intervalMs: number,
   ) => unknown;
   clearActiveLockHeartbeat?: (timer: unknown) => void;
+  finalizedRoomLeaseTtlMs?: number;
+  setFinalizedRoomLeaseTimeout?: (
+    callback: () => void,
+    timeoutMs: number,
+  ) => unknown;
+  clearFinalizedRoomLeaseTimeout?: (timer: unknown) => void;
   closeRoom?: (documentName: string) => Promise<void> | void;
   createRoomLeaseValue?: () => string;
   convertMarkdownToYjsUpdate?: (markdown: string) => Uint8Array;
@@ -482,10 +501,13 @@ export function createCollaborationRuntimeHooks(
   options: CreateCollaborationRuntimeHooksOptions,
 ) {
   const roomStates = new Map<string, RoomState>();
-  const finalizedRoomLeases = new Map<string, string>();
+  const finalizedRoomLeases = new Map<string, FinalizedRoomLease>();
   const activeLockHeartbeatIntervalMs =
     options.activeLockHeartbeatIntervalMs ??
     COLLABORATION_ACTIVE_LOCK_HEARTBEAT_INTERVAL_MS;
+  const finalizedRoomLeaseTtlMs =
+    options.finalizedRoomLeaseTtlMs ??
+    COLLABORATION_FINALIZED_ROOM_LEASE_TTL_MS;
   const setActiveLockHeartbeat =
     options.setActiveLockHeartbeat ??
     ((callback: () => Promise<void> | void, intervalMs: number): unknown =>
@@ -497,10 +519,64 @@ export function createCollaborationRuntimeHooks(
     ((timer: unknown): void => {
       clearInterval(timer as ReturnType<typeof setInterval>);
     });
+  const setFinalizedRoomLeaseTimeout =
+    options.setFinalizedRoomLeaseTimeout ??
+    ((callback: () => void, timeoutMs: number): unknown => {
+      const timer = setTimeout(callback, timeoutMs);
+      const maybeUnref = timer as { unref?: () => void };
+      maybeUnref.unref?.();
+      return timer;
+    });
+  const clearFinalizedRoomLeaseTimeout =
+    options.clearFinalizedRoomLeaseTimeout ??
+    ((timer: unknown): void => {
+      clearTimeout(timer as ReturnType<typeof setTimeout>);
+    });
   const createRoomLeaseValue =
     options.createRoomLeaseValue ?? (() => randomUUID());
   const convertMarkdownToYjsUpdate =
     options.convertMarkdownToYjsUpdate ?? markdownToYjsUpdate;
+
+  function deleteFinalizedRoomLease(key: string): void {
+    const lease = finalizedRoomLeases.get(key);
+
+    if (lease?.timeout !== undefined) {
+      clearFinalizedRoomLeaseTimeout(lease.timeout);
+    }
+
+    finalizedRoomLeases.delete(key);
+  }
+
+  function getFinalizedRoomLeaseValue(key: string): string | undefined {
+    const lease = finalizedRoomLeases.get(key);
+
+    if (!lease) {
+      return undefined;
+    }
+
+    if (lease.expiresAt <= Date.now()) {
+      deleteFinalizedRoomLease(key);
+      return undefined;
+    }
+
+    return lease.leaseValue;
+  }
+
+  function setFinalizedRoomLease(key: string, leaseValue: string): void {
+    deleteFinalizedRoomLease(key);
+
+    const lease: FinalizedRoomLease = {
+      expiresAt: Date.now() + finalizedRoomLeaseTtlMs,
+      leaseValue,
+    };
+    lease.timeout = setFinalizedRoomLeaseTimeout(() => {
+      if (finalizedRoomLeases.get(key) === lease) {
+        finalizedRoomLeases.delete(key);
+      }
+    }, finalizedRoomLeaseTtlMs);
+
+    finalizedRoomLeases.set(key, lease);
+  }
 
   function stopActiveLockHeartbeat(state: RoomState | undefined): void {
     if (state?.activeLockHeartbeatTimer === undefined) {
@@ -630,11 +706,6 @@ export function createCollaborationRuntimeHooks(
         throw createDocumentCollaborationActiveError(context.documentId);
       }
 
-      if (!cached) {
-        await options.redisStore.setYjsState(context.documentId, state);
-        await options.redisStore.setYjsMetadata(context.documentId, draftHead);
-      }
-
       const loadedState: RoomState = {
         documentId: context.documentId,
         documentName: payload.documentName,
@@ -644,11 +715,34 @@ export function createCollaborationRuntimeHooks(
         roomLeaseValue,
       };
       const key = roomKey(context);
-      finalizedRoomLeases.delete(key);
+
+      try {
+        if (!cached) {
+          await options.redisStore.setYjsState(context.documentId, state);
+          await options.redisStore.setYjsMetadata(
+            context.documentId,
+            draftHead,
+          );
+        }
+
+        await options.redisStore.clearInactiveCacheTtl(context.documentId);
+      } catch (error) {
+        try {
+          await options.redisStore.releaseActiveLock(
+            context.documentId,
+            roomLeaseValue,
+          );
+        } catch {
+          // Preserve the original load failure; the active lock is lease-owned
+          // and will expire even if the best-effort release fails.
+        }
+
+        throw error;
+      }
+
+      deleteFinalizedRoomLease(key);
       roomStates.set(key, loadedState);
       assignLoadedRoomState(context, loadedState);
-
-      await options.redisStore.clearInactiveCacheTtl(context.documentId);
       startActiveLockHeartbeat(key, loadedState);
 
       return state;
@@ -677,7 +771,7 @@ export function createCollaborationRuntimeHooks(
 
       if (
         contextLeaseValue &&
-        finalizedRoomLeases.get(key) === contextLeaseValue
+        getFinalizedRoomLeaseValue(key) === contextLeaseValue
       ) {
         return;
       }
@@ -709,12 +803,12 @@ export function createCollaborationRuntimeHooks(
 
       if (
         contextLeaseValue &&
-        finalizedRoomLeases.get(key) === contextLeaseValue
+        getFinalizedRoomLeaseValue(key) === contextLeaseValue
       ) {
         return;
       }
 
-      if (!state && finalizedRoomLeases.has(key)) {
+      if (!state && getFinalizedRoomLeaseValue(key) !== undefined) {
         return;
       }
 
@@ -749,20 +843,23 @@ export function createCollaborationRuntimeHooks(
         });
       }
 
+      const leaseValue = state?.roomLeaseValue ?? context.roomLeaseValue;
+
+      if (leaseValue) {
+        await verifyActiveLockOwnership({
+          documentId: context.documentId,
+          documentName: payload.documentName,
+          key,
+          leaseValue,
+          state,
+        });
+      }
+
       await options.redisStore.setYjsState(
         context.documentId,
         encodeYDocState(document),
       );
       await options.redisStore.setYjsMetadata(context.documentId, metadata);
-
-      const leaseValue = state?.roomLeaseValue ?? context.roomLeaseValue;
-
-      if (leaseValue) {
-        await options.redisStore.heartbeatActiveLock(
-          context.documentId,
-          leaseValue,
-        );
-      }
 
       updateLastWriter(roomStates, context);
     },
@@ -889,7 +986,7 @@ export function createCollaborationRuntimeHooks(
           )
         ) {
           stopActiveLockHeartbeat(state);
-          finalizedRoomLeases.set(key, leaseValue);
+          setFinalizedRoomLease(key, leaseValue);
           roomStates.delete(key);
         } else {
           if (state) {

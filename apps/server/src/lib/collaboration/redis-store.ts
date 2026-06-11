@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 import { createCollaborationUnavailableError } from "./errors.js";
 
 export const COLLABORATION_INACTIVE_CACHE_TTL_SECONDS = 30 * 60;
@@ -7,6 +9,11 @@ export type CollaborationYjsMetadata = {
   draftRevision: number;
   bodyHash: string;
 };
+
+const CollaborationYjsMetadataSchema = z.object({
+  draftRevision: z.number().int().nonnegative(),
+  bodyHash: z.string().min(1),
+});
 
 export type CollaborationDraftHead = {
   draftRevision: number;
@@ -144,27 +151,8 @@ function parseYjsMetadata(raw: string | null): CollaborationYjsMetadata | null {
     return null;
   }
 
-  if (typeof parsed !== "object" || parsed === null) {
-    return null;
-  }
-
-  const candidate = parsed as Record<string, unknown>;
-  const draftRevision = candidate.draftRevision;
-  const bodyHash = candidate.bodyHash;
-
-  if (
-    typeof draftRevision !== "number" ||
-    !Number.isInteger(draftRevision) ||
-    typeof bodyHash !== "string" ||
-    bodyHash.length === 0
-  ) {
-    return null;
-  }
-
-  return {
-    draftRevision,
-    bodyHash,
-  };
+  const result = CollaborationYjsMetadataSchema.safeParse(parsed);
+  return result.success ? result.data : null;
 }
 
 const HEARTBEAT_ACTIVE_LOCK_SCRIPT = `

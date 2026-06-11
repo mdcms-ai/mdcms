@@ -129,12 +129,13 @@ test("parseServerEnv rejects invalid REDIS_URL values", () => {
   assert.throws(
     () =>
       parseServerEnv({
-        REDIS_URL: "not-a-url",
+        REDIS_URL: "redis://user:password@/0",
       } as NodeJS.ProcessEnv),
     (error: unknown) =>
       error instanceof RuntimeError &&
       error.code === "INVALID_ENV" &&
-      error.details?.key === "REDIS_URL",
+      error.details?.key === "REDIS_URL" &&
+      error.details?.value === "<redacted>",
   );
 });
 

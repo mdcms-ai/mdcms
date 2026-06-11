@@ -349,7 +349,7 @@ function createRedisInvalidEnvError(
     message,
     details: {
       key: "REDIS_URL",
-      value,
+      value: value === undefined ? undefined : "<redacted>",
     },
   });
 }

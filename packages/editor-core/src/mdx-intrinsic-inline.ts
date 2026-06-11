@@ -1,4 +1,4 @@
-const MDX_INTRINSIC_INLINE_ELEMENTS = new Set([
+export const MDX_INTRINSIC_INLINE_ELEMENTS = new Set([
   "abbr",
   "b",
   "cite",

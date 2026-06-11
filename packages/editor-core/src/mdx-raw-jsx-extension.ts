@@ -137,8 +137,11 @@ const RAW_PREVIEW_ALLOWED_ELEMENTS = new Set([
 ]);
 
 const RAW_PREVIEW_DROPPED_ELEMENTS = new Set(["script", "style"]);
+// URL-bearing attributes are stripped from raw MDX previews. `object` is not
+// currently allowed, but `data` stays here defensively if that changes later.
 const RAW_PREVIEW_URL_ATTRIBUTES = new Set([
   "action",
+  "data",
   "formaction",
   "href",
   "poster",
@@ -189,14 +192,26 @@ function normalizeCssPropertyName(value: string): string | null {
 }
 
 function isSafeCssValue(value: string): boolean {
-  const normalized = value.replace(/\/\*[\s\S]*?\*\//g, "").trim();
+  // Editor preview CSS is a convenience renderer, not a sanitizer for
+  // untrusted public content. Keep it conservative and drop values with URL,
+  // script, legacy IE, or vendor-function escape hatches.
+  const withoutComments = value
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/[^\n\r]*/g, " ");
+  const normalized = withoutComments.replace(/\s+/g, " ").trim().toLowerCase();
+  const compact = normalized.replace(/[\s\u0000-\u001f\u007f]+/g, "");
 
-  if (/[<>]/.test(normalized)) {
+  if (/[<>]/.test(withoutComments)) {
     return false;
   }
 
-  return !/(?:@import|expression\s*\(|javascript\s*:|url\s*\(|behavior\s*:|-moz-binding)/i.test(
-    normalized,
+  return !(
+    compact.includes("@import") ||
+    compact.includes("expression(") ||
+    compact.includes("javascript:") ||
+    compact.includes("url(") ||
+    compact.includes("calc(") ||
+    /-(?:moz|webkit|ms|o)-/.test(compact)
   );
 }
 

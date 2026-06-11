@@ -268,6 +268,30 @@ test("fresh cached state is returned only when metadata matches current draft he
   );
 });
 
+test("fresh cached state rejects invalid metadata shape", async () => {
+  const documentId = "47da3502-6ce2-4320-95a7-974b17a29f25";
+  const { client, store } = createStore();
+  const state = new Uint8Array([1, 2, 3]);
+
+  await store.setYjsState(documentId, state);
+
+  client.values.set(
+    buildCollaborationYjsMetaKey(documentId),
+    JSON.stringify({
+      draftRevision: -1,
+      bodyHash: "",
+    }),
+  );
+
+  assert.equal(
+    await store.getFreshYjsState(documentId, {
+      draftRevision: -1,
+      bodyHash: "",
+    }),
+    null,
+  );
+});
+
 test("active-room lifecycle clears inactive TTLs then expires cache after final cleanup", async () => {
   const documentId = "aa7bb3be-6fd7-4e3f-a81f-cf2616b3667c";
   const { client, store } = createStore();

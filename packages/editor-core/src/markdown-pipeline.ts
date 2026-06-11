@@ -27,6 +27,11 @@ function assertMarkdownString(markdown: unknown, source: string): string {
 }
 
 export function extractMarkdownFromEditor(editor: Editor): string {
+  // TipTap v3 has exposed markdown serialization through both
+  // `editor.getMarkdown()` and `editor.storage.markdown.getMarkdown()`.
+  // The double cast keeps this duck-typing local, while the RuntimeError
+  // fallback makes a future API move fail explicitly instead of serializing
+  // an empty draft.
   const maybeGetMarkdown = (editor as unknown as { getMarkdown?: () => string })
     .getMarkdown;
 

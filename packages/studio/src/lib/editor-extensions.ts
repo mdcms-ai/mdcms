@@ -1,5 +1,8 @@
 import { Extension } from "@tiptap/core";
 import type { Extensions } from "@tiptap/core";
+// Keep these empty type imports: TipTap packages register TypeScript module
+// augmentations through their declarations, so cleanup tools must not remove
+// them as unused imports.
 import type {} from "@tiptap/extension-code-block-lowlight";
 import type {} from "@tiptap/extension-highlight";
 import type {} from "@tiptap/extension-link";

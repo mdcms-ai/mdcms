@@ -220,6 +220,18 @@ class IntegrationRedisStore implements CollaborationRuntimeRedisStore {
     return this.activeLeaseValue === leaseValue;
   }
 
+  async releaseActiveLock(
+    _documentId: string,
+    leaseValue: string,
+  ): Promise<boolean> {
+    if (this.activeLeaseValue !== leaseValue) {
+      return false;
+    }
+
+    this.activeLeaseValue = null;
+    return true;
+  }
+
   async finalizeInactiveRoom(
     documentId: string,
     leaseValue: string,
