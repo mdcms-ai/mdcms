@@ -252,8 +252,8 @@ Normative behavior:
   - Uploaded-by choices submit the exact `uploadedBy` actor id, but Studio shows
     a resolved user name and initials when that actor id matches a known user.
     Unresolved actor ids fall back to the raw id.
-  - Upload date range query parameters remain `uploadedFrom` and `uploadedTo`;
-    the gallery surface does not expose date controls.
+  - Upload date range controls submit the `uploadedFrom` and `uploadedTo` query
+    parameters.
 - Sort controls map to the media list contract and expose uploaded date, name,
   and size in both directions. The default view is uploaded date descending.
 - Pagination is server-side with `limit` and `offset`. The Studio page size is

@@ -21,6 +21,7 @@ import MediaPage, {
   MediaLibraryPageView,
   copyMediaAssetUrlToClipboard,
   createMediaLibraryAuthCacheKey,
+  createMediaLibraryListQuery,
   createMediaLibraryQueryKey,
   createMediaLibraryTargetKey,
   resolveMediaLibraryEffectiveOffset,
@@ -409,6 +410,33 @@ test("media library query helpers scope token auth and reset stale target offset
   );
 });
 
+test("createMediaLibraryListQuery forwards upload date range filters", () => {
+  assert.deepEqual(
+    createMediaLibraryListQuery({
+      filters: {
+        q: " hero ",
+        category: "image",
+        uploadedBy: " user_123 ",
+        uploadedFrom: " 2026-06-01 ",
+        uploadedTo: " 2026-06-30 ",
+      },
+      sort: "oldest",
+      offset: 30,
+    }),
+    {
+      q: "hero",
+      category: "image",
+      uploadedBy: "user_123",
+      uploadedFrom: "2026-06-01",
+      uploadedTo: "2026-06-30",
+      sort: "uploadedAt",
+      order: "asc",
+      limit: MEDIA_LIBRARY_PAGE_SIZE,
+      offset: 30,
+    },
+  );
+});
+
 test("MediaLibraryPageView renders no-match state with active filters", () => {
   const markup = renderView({
     filters: { ...defaultFilters, q: "hero" },
@@ -480,10 +508,11 @@ test("MediaLibraryPageView renders the locked gallery layout, collapsed filters,
   assert.match(markup, /3 assets/);
   assert.match(markup, />Filters</);
   assert.match(markup, /Sort: Recent/);
-  assert.doesNotMatch(markup, /Filter by media category/);
-  assert.doesNotMatch(markup, /Filter by uploader/);
-  assert.doesNotMatch(markup, /Uploaded from/);
-  assert.doesNotMatch(markup, /Uploaded to/);
+  assert.match(markup, /Uploaded from/);
+  assert.match(markup, /Uploaded to/);
+  assert.match(markup, /Exact uploader actor id/);
+  assert.match(markup, /aria-pressed="true"[^>]*>All types/);
+  assert.match(markup, /aria-pressed="true"[^>]*>Anyone/);
   assert.doesNotMatch(markup, /GRID/);
   assert.doesNotMatch(markup, /LIST/);
   assert.doesNotMatch(markup, /Upload media/);
@@ -512,9 +541,9 @@ test("MediaLibraryPageView renders the locked gallery layout, collapsed filters,
   assert.match(markup, /aria-label="Asset details"/);
   assert.match(markup, /Asset details/);
   assert.match(markup, /asset_hero/);
-  assert.doesNotMatch(markup, /filename search only/);
-  assert.doesNotMatch(markup, /simple metadata filters only/);
-  assert.doesNotMatch(markup, /no advanced organization features/);
+  assert.match(markup, /filename search only/);
+  assert.match(markup, /simple metadata filters only/);
+  assert.match(markup, /no advanced organization/);
   assert.doesNotMatch(markup, /Storage/);
   assert.doesNotMatch(markup, /Images<\/span>.*Videos<\/span>/s);
   assert.doesNotMatch(markup, /Used in/);
@@ -522,6 +551,72 @@ test("MediaLibraryPageView renders the locked gallery layout, collapsed filters,
   assert.doesNotMatch(markup, /Tags/);
   assert.doesNotMatch(markup, />Delete</);
   assert.doesNotMatch(markup, />Bulk</);
+});
+
+test("MediaLibraryPageView renders date controls and exact raw uploader id input", () => {
+  const markup = renderView({
+    filters: {
+      ...defaultFilters,
+      category: "image",
+      uploadedBy: "user_not_on_current_page",
+      uploadedFrom: "2026-06-01",
+      uploadedTo: "2026-06-30",
+    },
+    state: {
+      status: "ready",
+      assets: [heroAsset],
+      pagination: {
+        total: 1,
+        limit: MEDIA_LIBRARY_PAGE_SIZE,
+        offset: 0,
+        hasMore: false,
+      },
+    },
+  });
+
+  assert.match(markup, /Uploaded from/);
+  assert.match(markup, /aria-label="Uploaded from"/);
+  assert.match(markup, /type="date"/);
+  assert.match(markup, /value="2026-06-01"/);
+  assert.match(markup, /Uploaded to/);
+  assert.match(markup, /aria-label="Uploaded to"/);
+  assert.match(markup, /value="2026-06-30"/);
+  assert.match(markup, /Exact uploader actor id/);
+  assert.match(markup, /aria-label="Exact uploader actor id"/);
+  assert.match(markup, /value="user_not_on_current_page"/);
+  assert.match(markup, /aria-pressed="true"[^>]*>Images/);
+  assert.match(
+    markup,
+    /<button(?=[^>]*aria-pressed="true")[^>]*>(?:(?!<\/button>)[\s\S])*user_not_on_current_page(?:(?!<\/button>)[\s\S])*<\/button>/,
+  );
+});
+
+test("MediaLibraryPageView shows MIME type and upload date on every media card", () => {
+  const markup = renderView({
+    state: {
+      status: "ready",
+      assets: [heroAsset, videoAsset, audioAsset],
+      pagination: {
+        total: 3,
+        limit: MEDIA_LIBRARY_PAGE_SIZE,
+        offset: 0,
+        hasMore: false,
+      },
+    },
+  });
+
+  assert.match(
+    markup,
+    /aria-label="Metadata for hero\.png"[\s\S]*image\/png[\s\S]*Jun 5, 2026/,
+  );
+  assert.match(
+    markup,
+    /aria-label="Metadata for demo\.mp4"[\s\S]*video\/mp4[\s\S]*Jun 5, 2026/,
+  );
+  assert.match(
+    markup,
+    /aria-label="Metadata for theme\.mp3"[\s\S]*audio\/mpeg[\s\S]*Jun 5, 2026/,
+  );
 });
 
 test("MediaLibraryPageView renders upload controls and progress when media upload is allowed", () => {

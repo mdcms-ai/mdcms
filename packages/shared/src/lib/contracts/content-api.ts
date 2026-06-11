@@ -79,17 +79,65 @@ export const ContentBulkActionSchema = z.enum([
 
 export type ContentBulkAction = z.infer<typeof ContentBulkActionSchema>;
 
-export const ContentBulkOperationInputSchema = z.object({
-  action: ContentBulkActionSchema,
-  documentIds: z.array(z.string()),
-  changeSummary: z.string().optional(),
-  actorId: z.string().optional(),
-  move: z
+const ContentBulkDocumentIdsSchema = z
+  .array(z.string().trim().min(1))
+  .min(1)
+  .max(100)
+  .refine((documentIds) => new Set(documentIds).size === documentIds.length, {
+    message: "documentIds must be unique",
+  });
+
+const ContentBulkMoveTargetDirectorySchema = z
+  .string()
+  .trim()
+  .refine(
+    (targetDirectory) =>
+      targetDirectory === "" ||
+      (!targetDirectory.startsWith("/") &&
+        !targetDirectory.endsWith("/") &&
+        !targetDirectory.split("/").includes("..")),
+    {
+      message:
+        "targetDirectory must be empty or a relative path without traversal segments",
+    },
+  );
+
+const ContentBulkMoveInputSchema = z
+  .object({
+    targetDirectory: ContentBulkMoveTargetDirectorySchema,
+  })
+  .strict();
+
+export const ContentBulkOperationInputSchema = z.discriminatedUnion("action", [
+  z
     .object({
-      targetDirectory: z.string(),
+      action: z.literal("publish"),
+      documentIds: ContentBulkDocumentIdsSchema,
+      changeSummary: z.string().optional(),
+      actorId: z.string().optional(),
     })
-    .optional(),
-});
+    .strict(),
+  z
+    .object({
+      action: z.literal("unpublish"),
+      documentIds: ContentBulkDocumentIdsSchema,
+      actorId: z.string().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal("delete"),
+      documentIds: ContentBulkDocumentIdsSchema,
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal("move"),
+      documentIds: ContentBulkDocumentIdsSchema,
+      move: ContentBulkMoveInputSchema,
+    })
+    .strict(),
+]);
 
 export type ContentBulkOperationInput = z.infer<
   typeof ContentBulkOperationInputSchema

@@ -7,7 +7,7 @@ import type {
   SchemaRegistryTypeSnapshot,
 } from "@mdcms/shared";
 import {
-  ContentBulkOperationInputSchema,
+  ContentBulkActionSchema,
   RuntimeError,
   isRuntimeErrorLike,
   signMdcmsPreviewToken,
@@ -222,7 +222,7 @@ function hasInputField(input: Record<string, unknown>, field: string): boolean {
 
 const BulkActionInputSchema = z.preprocess(
   (value) => (typeof value === "string" ? value.trim() : value),
-  ContentBulkOperationInputSchema.shape.action,
+  ContentBulkActionSchema,
 );
 
 const BulkOptionalStringInputSchema = z.preprocess((value) => {
@@ -303,9 +303,11 @@ const BulkMoveTargetDirectoryInputSchema = z
     }
   });
 
-const BulkMoveInputSchema = z.object({
-  targetDirectory: BulkMoveTargetDirectoryInputSchema,
-});
+const BulkMoveInputSchema = z
+  .object({
+    targetDirectory: BulkMoveTargetDirectoryInputSchema,
+  })
+  .strict();
 
 const ContentBulkOperationRouteInputSchema = z
   .object({
@@ -315,6 +317,7 @@ const ContentBulkOperationRouteInputSchema = z
     actorId: z.unknown().optional(),
     move: z.unknown().optional(),
   })
+  .strict()
   .superRefine((input, ctx) => {
     if (hasInputField(input, "changeSummary") && input.action !== "publish") {
       ctx.addIssue({
@@ -375,24 +378,41 @@ const ContentBulkOperationRouteInputSchema = z
     }
   })
   .transform((input): ContentBulkOperationInput => {
-    const changeSummary =
-      input.action === "publish"
-        ? BulkOptionalStringInputSchema.parse(input.changeSummary)
-        : undefined;
-    const actorId =
-      input.action === "publish" || input.action === "unpublish"
-        ? BulkOptionalStringInputSchema.parse(input.actorId)
-        : undefined;
+    switch (input.action) {
+      case "publish": {
+        const changeSummary = BulkOptionalStringInputSchema.parse(
+          input.changeSummary,
+        );
+        const actorId = BulkOptionalStringInputSchema.parse(input.actorId);
 
-    return {
-      action: input.action,
-      documentIds: input.documentIds,
-      ...(changeSummary ? { changeSummary } : undefined),
-      ...(actorId ? { actorId } : undefined),
-      ...(input.action === "move"
-        ? { move: BulkMoveInputSchema.parse(input.move) }
-        : undefined),
-    };
+        return {
+          action: "publish",
+          documentIds: input.documentIds,
+          ...(changeSummary ? { changeSummary } : undefined),
+          ...(actorId ? { actorId } : undefined),
+        };
+      }
+      case "unpublish": {
+        const actorId = BulkOptionalStringInputSchema.parse(input.actorId);
+
+        return {
+          action: "unpublish",
+          documentIds: input.documentIds,
+          ...(actorId ? { actorId } : undefined),
+        };
+      }
+      case "delete":
+        return {
+          action: "delete",
+          documentIds: input.documentIds,
+        };
+      case "move":
+        return {
+          action: "move",
+          documentIds: input.documentIds,
+          move: BulkMoveInputSchema.parse(input.move),
+        };
+    }
   });
 
 type BulkSafeParseResult =

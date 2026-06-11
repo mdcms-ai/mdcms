@@ -48,10 +48,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "../../components/ui/dropdown-menu.js";
 import { Avatar, AvatarFallback } from "../../components/ui/avatar.js";
@@ -233,7 +229,7 @@ export function resolveMediaLibraryEffectiveOffset(
     : 0;
 }
 
-function createMediaLibraryListQuery(input: {
+export function createMediaLibraryListQuery(input: {
   filters: MediaLibraryFilters;
   sort: MediaLibrarySortOption;
   offset: number;
@@ -550,31 +546,28 @@ function MediaLibraryControlsBar({
         {countLabel}
       </span>
       <div className="ml-auto flex flex-wrap items-center gap-2">
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className={[
-                "h-8 gap-2 rounded border-border bg-card font-mono text-xs",
-                activeFilterCount > 0 ? "border-primary text-primary" : "",
-              ].join(" ")}
-            >
-              <span>Filters</span>
-              {activeFilterCount > 0 ? (
-                <span className="inline-flex min-w-4 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold leading-none text-primary-foreground">
-                  {activeFilterCount}
-                </span>
-              ) : null}
-              <ChevronDown className="size-3.5 opacity-70" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-72 p-2">
-            <DropdownMenuLabel className="font-mono text-[10px] uppercase tracking-wide text-foreground-muted">
+        <details className="group relative">
+          <summary
+            className={[
+              "inline-flex h-8 cursor-pointer list-none items-center justify-center gap-2 rounded border px-3 font-mono text-xs font-medium transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 [&::-webkit-details-marker]:hidden",
+              activeFilterCount > 0
+                ? "border-primary bg-card text-primary"
+                : "border-border bg-card text-foreground",
+            ].join(" ")}
+          >
+            <span>Filters</span>
+            {activeFilterCount > 0 ? (
+              <span className="inline-flex min-w-4 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold leading-none text-primary-foreground">
+                {activeFilterCount}
+              </span>
+            ) : null}
+            <ChevronDown className="size-3.5 opacity-70 transition-transform group-open:rotate-180" />
+          </summary>
+          <div className="absolute right-0 z-50 mt-2 w-80 rounded-lg border border-border bg-popover p-3 text-popover-foreground shadow-md">
+            <p className="px-1 font-mono text-[10px] uppercase tracking-wide text-foreground-muted">
               Type
-            </DropdownMenuLabel>
-            <div className="flex flex-wrap gap-1.5 px-2 pb-2">
+            </p>
+            <div className="mt-2 flex flex-wrap gap-1.5">
               {categoryOptions.map((option) => {
                 const selected = filters.category === option.value;
 
@@ -582,6 +575,7 @@ function MediaLibraryControlsBar({
                   <button
                     key={option.value}
                     type="button"
+                    aria-pressed={selected}
                     className={[
                       "rounded border px-2.5 py-1.5 font-mono text-[11px] transition-colors",
                       selected
@@ -595,48 +589,120 @@ function MediaLibraryControlsBar({
                 );
               })}
             </div>
-            <DropdownMenuSeparator />
-            <DropdownMenuLabel className="font-mono text-[10px] uppercase tracking-wide text-foreground-muted">
-              Uploaded by
-            </DropdownMenuLabel>
-            <DropdownMenuRadioGroup
-              value={selectedUploader}
-              onValueChange={(value) =>
-                onFilterChange({
-                  uploadedBy: value === "__anyone" ? "" : value,
-                })
-              }
+
+            <div className="my-3 h-px bg-border" />
+
+            <label
+              htmlFor="mdcms-media-uploaded-by-filter"
+              className="block px-1 font-mono text-[10px] uppercase tracking-wide text-foreground-muted"
             >
-              <DropdownMenuRadioItem value="__anyone">
+              Exact uploader actor id
+            </label>
+            <Input
+              id="mdcms-media-uploaded-by-filter"
+              type="text"
+              aria-label="Exact uploader actor id"
+              className="mt-2 h-8 font-mono text-xs"
+              placeholder="user_123"
+              value={filters.uploadedBy}
+              onChange={(event) =>
+                onFilterChange({ uploadedBy: event.target.value })
+              }
+            />
+            <div className="mt-2 space-y-1">
+              <button
+                type="button"
+                aria-pressed={selectedUploader === "__anyone"}
+                className={[
+                  "flex w-full items-center rounded px-2 py-1.5 text-left text-xs transition-colors hover:bg-muted",
+                  selectedUploader === "__anyone"
+                    ? "text-primary"
+                    : "text-foreground-muted",
+                ].join(" ")}
+                onClick={() => onFilterChange({ uploadedBy: "" })}
+              >
                 Anyone
-              </DropdownMenuRadioItem>
+              </button>
               {uploaderOptions.map((uploader) => (
-                <DropdownMenuRadioItem key={uploader.id} value={uploader.id}>
+                <button
+                  key={uploader.id}
+                  type="button"
+                  aria-pressed={selectedUploader === uploader.id}
+                  className={[
+                    "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors hover:bg-muted",
+                    selectedUploader === uploader.id
+                      ? "text-primary"
+                      : "text-foreground-muted",
+                  ].join(" ")}
+                  onClick={() => onFilterChange({ uploadedBy: uploader.id })}
+                >
                   <Avatar className="size-5">
                     <AvatarFallback className="font-mono text-[10px]">
                       {uploader.initials}
                     </AvatarFallback>
                   </Avatar>
-                  <span className="truncate">{uploader.label}</span>
-                </DropdownMenuRadioItem>
+                  <span className="min-w-0 flex-1 truncate">
+                    {uploader.label}
+                  </span>
+                </button>
               ))}
-            </DropdownMenuRadioGroup>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              className="justify-end font-mono text-xs text-primary"
-              onSelect={() =>
-                onFilterChange({
-                  category: "all",
-                  uploadedBy: "",
-                  uploadedFrom: "",
-                  uploadedTo: "",
-                })
-              }
-            >
-              Clear all
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+            </div>
+
+            <div className="my-3 h-px bg-border" />
+
+            <div className="grid gap-2 sm:grid-cols-2">
+              <label
+                htmlFor="mdcms-media-uploaded-from-filter"
+                className="font-mono text-[10px] uppercase tracking-wide text-foreground-muted"
+              >
+                Uploaded from
+                <Input
+                  id="mdcms-media-uploaded-from-filter"
+                  type="date"
+                  aria-label="Uploaded from"
+                  className="mt-1 h-8 font-mono text-xs"
+                  value={filters.uploadedFrom}
+                  onChange={(event) =>
+                    onFilterChange({ uploadedFrom: event.target.value })
+                  }
+                />
+              </label>
+              <label
+                htmlFor="mdcms-media-uploaded-to-filter"
+                className="font-mono text-[10px] uppercase tracking-wide text-foreground-muted"
+              >
+                Uploaded to
+                <Input
+                  id="mdcms-media-uploaded-to-filter"
+                  type="date"
+                  aria-label="Uploaded to"
+                  className="mt-1 h-8 font-mono text-xs"
+                  value={filters.uploadedTo}
+                  onChange={(event) =>
+                    onFilterChange({ uploadedTo: event.target.value })
+                  }
+                />
+              </label>
+            </div>
+
+            <div className="mt-3 flex justify-end">
+              <button
+                type="button"
+                className="rounded px-2 py-1 font-mono text-xs text-primary hover:bg-primary/10"
+                onClick={() =>
+                  onFilterChange({
+                    category: "all",
+                    uploadedBy: "",
+                    uploadedFrom: "",
+                    uploadedTo: "",
+                  })
+                }
+              >
+                Clear all
+              </button>
+            </div>
+          </div>
+        </details>
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -1282,6 +1348,19 @@ function MediaAssetCard({
             {asset.filename}
           </span>
         </button>
+        <dl
+          aria-label={`Metadata for ${asset.filename}`}
+          className="mt-1.5 grid gap-1 font-mono text-[10px] text-foreground-muted"
+        >
+          <div className="flex min-w-0 items-center justify-between gap-2">
+            <dt className="sr-only">MIME type</dt>
+            <dd className="min-w-0 truncate">{asset.mimeType}</dd>
+            <dt className="sr-only">Upload date</dt>
+            <dd className="shrink-0">
+              {formatMediaAssetDate(asset.uploadedAt, "en-US")}
+            </dd>
+          </div>
+        </dl>
         <div className="mt-1.5 flex items-center gap-2 font-mono text-[10px] text-foreground-muted">
           <MediaKindChip category={category} />
           <span>{formatMediaAssetBytes(asset.sizeBytes)}</span>
@@ -1839,6 +1918,10 @@ export function MediaLibraryPageView({
               <h1 className="font-heading text-[36px] font-bold leading-[1.05] text-foreground">
                 Media
               </h1>
+              <p className="mt-2 max-w-2xl font-mono text-[11px] leading-relaxed text-foreground-muted">
+                Basic library: filename search only; simple metadata filters
+                only; no advanced organization.
+              </p>
               <p className="mt-1.5 font-mono text-xs text-foreground-muted">
                 {state.pagination.total} assets
                 {state.status === "empty" ? " · drop files to begin" : ""}
@@ -1874,6 +1957,10 @@ export function MediaLibraryPageView({
                 <h1 className="font-heading text-[36px] font-bold leading-[1.05] text-foreground">
                   Media
                 </h1>
+                <p className="mt-2 max-w-2xl font-mono text-[11px] leading-relaxed text-foreground-muted">
+                  Basic library: filename search only; simple metadata filters
+                  only; no advanced organization.
+                </p>
               </div>
               <MediaLibraryControlsBar
                 state={state}

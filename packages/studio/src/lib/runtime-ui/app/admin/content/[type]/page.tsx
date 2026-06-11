@@ -1,7 +1,10 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import type { ContentBulkAction } from "@mdcms/shared";
+import type {
+  ContentBulkAction,
+  ContentBulkOperationResponse,
+} from "@mdcms/shared";
 import { useParams, useRouter } from "../../../../adapters/next-navigation.js";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -75,7 +78,10 @@ import {
 } from "../../../../hooks/use-content-type-list.js";
 import { useCreateDocument } from "../../../../hooks/use-create-document.js";
 import { CreateDocumentDialog } from "../../../../components/create-document-dialog.js";
-import { createStudioContentListApi } from "../../../../../content-list-api.js";
+import {
+  createStudioContentListApi,
+  type StudioContentBulkOperationInput,
+} from "../../../../../content-list-api.js";
 import { createStudioSchemaRouteApi } from "../../../../../schema-route-api.js";
 import { createStudioDocumentRouteApi } from "../../../../../document-route-api.js";
 import { useToast } from "../../../../components/toast.js";
@@ -135,7 +141,14 @@ type BulkConfirmationText = {
   confirmLabel: string;
 };
 
-type BulkOperationFailureBanner = {
+type CreateBulkOperationRequestInput = {
+  action: ContentBulkAction;
+  selectedDocuments: MappedContentDocument[];
+  targetDirectory?: string;
+  schemaHash?: string | null;
+};
+
+export type BulkOperationFailureBanner = {
   succeeded: number;
   failed: number;
   message: string;
@@ -209,6 +222,65 @@ export function getBulkConfirmationText({
         confirmLabel: "Move to Trash",
       };
   }
+}
+
+export function createBulkOperationRequest({
+  action,
+  selectedDocuments,
+  targetDirectory,
+  schemaHash,
+}: CreateBulkOperationRequestInput): StudioContentBulkOperationInput {
+  const targets = getBulkOperationTargets(action, selectedDocuments);
+  if (targets.length === 0) {
+    throw new Error("No eligible documents selected.");
+  }
+
+  const documentIds = targets.map((document) => document.documentId);
+
+  switch (action) {
+    case "publish":
+      return { action, documentIds };
+    case "unpublish":
+      return { action, documentIds };
+    case "delete":
+      return { action, documentIds };
+    case "move":
+      return {
+        action,
+        documentIds,
+        move: {
+          targetDirectory: targetDirectory ?? "",
+        },
+        ...(schemaHash ? { schemaHash } : {}),
+      };
+  }
+}
+
+export function createBulkOperationFailureBanner(
+  result: ContentBulkOperationResponse,
+): BulkOperationFailureBanner | null {
+  if (result.failed === 0) {
+    return null;
+  }
+
+  const firstFailure = result.results.find((item) => item.status === "failed");
+
+  return {
+    succeeded: result.succeeded,
+    failed: result.failed,
+    message:
+      firstFailure?.status === "failed"
+        ? firstFailure.error.message
+        : "Bulk operation failed for one or more documents.",
+  };
+}
+
+export function formatBulkOperationFailureBanner({
+  succeeded,
+  failed,
+  message,
+}: BulkOperationFailureBanner): string {
+  return `${succeeded} succeeded, ${failed} failed. First failure: ${message}`;
 }
 
 export function TranslationCoverageSummary({
@@ -1051,26 +1123,17 @@ function useContentTypePageController() {
     }) => {
       if (!contentListApi) throw new Error("Content list API not available.");
 
-      const targets = getBulkOperationTargets(action, selectedDocuments);
-      if (targets.length === 0) {
-        throw new Error("No eligible documents selected.");
-      }
-
       setRowActionError(null);
       setBulkOperationBanner(null);
 
-      return contentListApi.bulkOperation({
-        action,
-        documentIds: targets.map((document) => document.documentId),
-        ...(action === "move"
-          ? {
-              move: {
-                targetDirectory: targetDirectory ?? "",
-              },
-              schemaHash: schemaEntry?.schemaHash,
-            }
-          : {}),
-      });
+      return contentListApi.bulkOperation(
+        createBulkOperationRequest({
+          action,
+          selectedDocuments,
+          targetDirectory,
+          schemaHash: schemaEntry?.schemaHash,
+        }),
+      );
     },
     onSuccess: (result) => {
       void queryClient.invalidateQueries({ queryKey: contentListQueryKey });
@@ -1087,17 +1150,7 @@ function useContentTypePageController() {
         return;
       }
 
-      const firstFailure = result.results.find(
-        (item) => item.status === "failed",
-      );
-      setBulkOperationBanner({
-        succeeded: result.succeeded,
-        failed: result.failed,
-        message:
-          firstFailure?.status === "failed"
-            ? firstFailure.error.message
-            : "Bulk operation failed for one or more documents.",
-      });
+      setBulkOperationBanner(createBulkOperationFailureBanner(result));
     },
     onError: (error) => {
       setBulkOperationBanner(null);
@@ -1411,9 +1464,7 @@ function ContentTypePageView({
         {bulkOperationBanner && (
           <div className="flex items-center justify-between gap-4 rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3">
             <p className="text-sm text-destructive">
-              {bulkOperationBanner.succeeded} succeeded,{" "}
-              {bulkOperationBanner.failed} failed. First failure:{" "}
-              {bulkOperationBanner.message}
+              {formatBulkOperationFailureBanner(bulkOperationBanner)}
             </p>
             <Button
               variant="ghost"
