@@ -15,6 +15,7 @@ import {
 import { z } from "zod";
 
 import type { ApiKeyOperationScope } from "../auth.js";
+import { createDocumentCollaborationActiveError } from "../collaboration/errors.js";
 import { executeWithRuntimeErrorsHandled } from "../http-utils.js";
 
 import {
@@ -522,6 +523,17 @@ function createDocumentNotFoundError(documentId: string): RuntimeError {
       documentId,
     },
   });
+}
+
+async function assertNoActiveCollaboration(
+  activeCollaboration: MountContentApiRoutesOptions["activeCollaboration"],
+  documentId: string,
+): Promise<void> {
+  if (!(await activeCollaboration?.isDocumentActive(documentId))) {
+    return;
+  }
+
+  throw createDocumentCollaborationActiveError(documentId);
 }
 
 const BULK_REQUEST_LEVEL_ERROR_CODES = new Set([
@@ -1204,6 +1216,25 @@ export function mountContentApiRoutes(
             documentPath: existing.path,
           });
 
+          let nextPath: string | undefined;
+
+          if (payload.action === "move") {
+            const targetDirectory = payload.move?.targetDirectory ?? "";
+            nextPath = buildBulkMovePath(existing, targetDirectory);
+
+            await options.authorize(request, {
+              requiredScope: "content:write",
+              project: scope.project,
+              environment: scope.environment,
+              documentPath: nextPath,
+            });
+          }
+
+          await assertNoActiveCollaboration(
+            options.activeCollaboration,
+            documentId,
+          );
+
           let document: ContentDocument;
 
           if (payload.action === "publish") {
@@ -1235,16 +1266,6 @@ export function mountContentApiRoutes(
               () => options.store.softDelete(scope, documentId),
             );
           } else {
-            const targetDirectory = payload.move?.targetDirectory ?? "";
-            const nextPath = buildBulkMovePath(existing, targetDirectory);
-
-            await options.authorize(request, {
-              requiredScope: "content:write",
-              project: scope.project,
-              environment: scope.environment,
-              documentPath: nextPath,
-            });
-
             document = await commitMutation(
               getBulkLifecycleEvent(payload.action),
               scope,
@@ -1378,6 +1399,11 @@ export function mountContentApiRoutes(
             ? payload.draftRevision
             : undefined;
 
+        await assertNoActiveCollaboration(
+          options.activeCollaboration,
+          params.documentId,
+        );
+
         const document = await commitMutation(
           "content.updated",
           scope,
@@ -1445,6 +1471,11 @@ export function mountContentApiRoutes(
           environment: scope.environment,
           documentPath: existing.path,
         });
+
+        await assertNoActiveCollaboration(
+          options.activeCollaboration,
+          params.documentId,
+        );
 
         const document = await commitMutation(
           "content.restored",
@@ -1535,6 +1566,12 @@ export function mountContentApiRoutes(
           "changeSummary",
         );
         const actorId = parseOptionalString(payload.actorId, "actorId");
+
+        await assertNoActiveCollaboration(
+          options.activeCollaboration,
+          params.documentId,
+        );
+
         const document = await commitMutation(
           targetStatus === "published"
             ? "content.published"
@@ -1610,6 +1647,12 @@ export function mountContentApiRoutes(
           "changeSummary",
         );
         const actorId = parseOptionalString(payload.actorId, "actorId");
+
+        await assertNoActiveCollaboration(
+          options.activeCollaboration,
+          params.documentId,
+        );
+
         const document = await commitMutation(
           "content.published",
           scope,
@@ -1679,6 +1722,12 @@ export function mountContentApiRoutes(
 
         const payload = (body ?? {}) as ContentPublishPayload;
         const actorId = parseOptionalString(payload.actorId, "actorId");
+
+        await assertNoActiveCollaboration(
+          options.activeCollaboration,
+          params.documentId,
+        );
+
         const document = await commitMutation(
           "content.unpublished",
           scope,
@@ -1860,6 +1909,12 @@ export function mountContentApiRoutes(
           environment: scope.environment,
           documentPath: existing.path,
         });
+
+        await assertNoActiveCollaboration(
+          options.activeCollaboration,
+          params.documentId,
+        );
+
         const document = await commitMutation(
           "content.deleted",
           scope,

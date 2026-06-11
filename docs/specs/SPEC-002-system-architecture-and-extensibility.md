@@ -2,7 +2,7 @@
 status: live
 canonical: true
 created: 2026-03-11
-last_updated: 2026-03-25
+last_updated: 2026-06-11
 ---
 
 # SPEC-002 System Architecture and Extensibility
@@ -15,7 +15,7 @@ This is the live canonical document under `docs/`.
 
 MDCMS consists of two deployable units:
 
-1. **Backend Server** — A standalone, self-hosted server process. Provides the REST API, Studio runtime delivery, module/action surfaces, and all business logic. Runs as a Docker Compose stack alongside PostgreSQL, Redis, and S3-compatible object storage. Post-MVP, the same deployment may also host collaboration/presence WebSocket services.
+1. **Backend Server** — A standalone, self-hosted server process. Provides the REST API, Studio runtime delivery, module/action surfaces, the in-process Hocuspocus collaboration socket runtime through a Bun-compatible `crossws` bridge, and all business logic. Runs as a Docker Compose stack alongside PostgreSQL, Redis, and S3-compatible object storage. Presence and advanced collaboration features remain future extensions of the same deployment shape.
 
 2. **Studio UI (Approach C)** — A React component (`<Studio />`) from `@mdcms/studio`, embedded in the user's app at a catch-all route (for example `/admin/*`). The component acts as a thin loader shell: it fetches a backend-served Studio runtime bundle, verifies compatibility and integrity, provides the host bridge plus `basePath`, and executes the remote Studio app in-process through the module runtime contract. Host app integration remains required for MDX custom component preview. Cross-origin embedding is a first-class path; the backend is not required to share the host app origin.
 
@@ -329,19 +329,20 @@ flowchart LR
 
 ## Tech Stack
 
-| Layer                 | Technology                       | Notes                                                                                   |
-| --------------------- | -------------------------------- | --------------------------------------------------------------------------------------- |
-| **Backend Runtime**   | Bun                              | Fast, Node.js-compatible. Final choice: Bun.                                            |
-| **Backend Framework** | Elysia                           | Lightweight, Bun-native. Final choice: Elysia.                                          |
-| **Database**          | PostgreSQL                       | Primary data store. Append-only content storage.                                        |
-| **Cache / Buffer**    | Redis                            | Session management, short-lived caches, and future collaboration buffering.             |
-| **Object Storage**    | S3-compatible (MinIO for dev)    | Media files (any file type).                                                            |
-| **Auth**              | better-auth                      | Email/password + OIDC + SAML.                                                           |
-| **Studio UI**         | React + Shadcn/ui + Tailwind CSS | `@mdcms/studio` embedded in host app; runtime bundle served by backend (Approach C).    |
-| **Editor**            | TipTap                           | Rich text editing with Markdown/MDX serialization. Real-time collaboration is Post-MVP. |
-| **Schema Validation** | Standard Schema (Zod primary)    | Developer-facing schema definitions.                                                    |
-| **Monorepo**          | Nx                               | Build system, caching, package management.                                              |
-| **Email (dev)**       | Mailhog                          | Local email testing for auth flows.                                                     |
+| Layer                 | Technology                       | Notes                                                                                |
+| --------------------- | -------------------------------- | ------------------------------------------------------------------------------------ |
+| **Backend Runtime**   | Bun                              | Fast, Node.js-compatible. Final choice: Bun.                                         |
+| **Backend Framework** | Elysia                           | Lightweight, Bun-native. Final choice: Elysia.                                       |
+| **Database**          | PostgreSQL                       | Primary data store. Append-only content storage.                                     |
+| **Cache / Buffer**    | Redis                            | Session management, short-lived caches, and collaboration Yjs state buffering.       |
+| **Object Storage**    | S3-compatible (MinIO for dev)    | Media files (any file type).                                                         |
+| **Auth**              | better-auth                      | Email/password + OIDC + SAML.                                                        |
+| **Studio UI**         | React + Shadcn/ui + Tailwind CSS | `@mdcms/studio` embedded in host app; runtime bundle served by backend (Approach C). |
+| **Editor**            | TipTap                           | Rich text editing with Markdown/MDX serialization and Yjs-backed document rooms.     |
+| **Collaboration**     | Hocuspocus + `crossws`           | In-process collaboration socket runtime with Bun-compatible WebSocket handling.      |
+| **Schema Validation** | Standard Schema (Zod primary)    | Developer-facing schema definitions.                                                 |
+| **Monorepo**          | Nx                               | Build system, caching, package management.                                           |
+| **Email (dev)**       | Mailhog                          | Local email testing for auth flows.                                                  |
 
 ### Package Structure
 

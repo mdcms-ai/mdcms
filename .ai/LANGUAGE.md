@@ -17,6 +17,15 @@ Use these terms exactly. Do not coin synonyms. If a needed concept is missing, a
 | **Module**       | A first-party or third-party extension that mounts server, CLI, or Studio surfaces | plugin, addon, extension    |
 | **Manifest**     | A module's declaration file (`manifest.ts`)                                        | descriptor, config          |
 
+## Collaboration
+
+| Term                          | Meaning                                                                                 | Don't say                       |
+| ----------------------------- | --------------------------------------------------------------------------------------- | ------------------------------- |
+| **Collaboration socket**      | Session-authenticated WebSocket connection to `/api/v1/collaboration`                   | transport channel, realtime API |
+| **Document room**             | Server-side collaboration room for one explicit `(project, environment, documentId)`    | channel, session, doc room      |
+| **Yjs state**                 | Binary CRDT document state stored ephemerally in Redis for a document room              | ydoc blob, editor cache         |
+| **Active collaboration lock** | Redis heartbeat lease showing collaborators are connected and existing writes are gated | edit lock, presence lock        |
+
 ## Operations
 
 | Term            | Meaning                                                              | Don't say                        |

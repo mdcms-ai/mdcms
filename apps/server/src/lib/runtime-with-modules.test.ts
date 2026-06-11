@@ -8,15 +8,18 @@ import {
   RuntimeError,
   assertStudioBootstrapManifest,
   createConsoleLogger,
+  type ContentDocumentResponse,
   type MdcmsModulePackage,
   type StudioBootstrapReadyResponse,
 } from "@mdcms/shared";
 
 import { buildServerModuleLoadReport } from "./module-loader.js";
 import {
+  createCollaborationGuardedAiContentStore,
   createRuntimeMediaObjectStore,
   createServerRequestHandlerWithModules,
   prepareServerRequestHandlerWithModules,
+  shutdownServerRuntime,
 } from "./runtime-with-modules.js";
 
 const env = {
@@ -180,6 +183,108 @@ test("createRuntimeMediaObjectStore uses endpoint-derived public URLs when publi
     store?.publicUrlForKey("projects/marketing-site/media/id/hero.png"),
     "http://localhost:9000/mdcms-media/projects/marketing-site/media/id/hero.png",
   );
+});
+
+test("createCollaborationGuardedAiContentStore blocks existing-document writes while active", async () => {
+  const calls: string[] = [];
+  const scope = { project: "marketing-site", environment: "staging" };
+  const document: ContentDocumentResponse = {
+    documentId: "active-document",
+    translationGroupId: "translation-group-1",
+    project: "marketing-site",
+    environment: "staging",
+    path: "content/blog/active",
+    type: "BlogPost",
+    locale: "en",
+    format: "md",
+    frontmatter: {},
+    body: "body",
+    version: 0,
+    publishedVersion: null,
+    hasUnpublishedChanges: true,
+    isDeleted: false,
+    createdAt: "2026-06-11T00:00:00.000Z",
+    createdBy: "user-1",
+    updatedAt: "2026-06-11T00:00:00.000Z",
+    updatedBy: "user-1",
+    draftRevision: 1,
+  };
+  const store = createCollaborationGuardedAiContentStore(
+    {
+      async getById() {
+        calls.push("getById");
+        return document;
+      },
+      async update() {
+        calls.push("update");
+        return document;
+      },
+      async create() {
+        calls.push("create");
+        return document;
+      },
+      async softDelete() {
+        calls.push("softDelete");
+        return { ...document, isDeleted: true };
+      },
+      async restore() {
+        calls.push("restore");
+        return document;
+      },
+    },
+    {
+      isDocumentActive: async (documentId) => documentId === "active-document",
+    },
+  );
+
+  await assert.rejects(
+    () =>
+      store.update(
+        scope,
+        "active-document",
+        { body: "next" },
+        {
+          expectedSchemaHash: "schema-hash",
+        },
+      ),
+    (error) =>
+      error instanceof RuntimeError &&
+      error.code === "DOCUMENT_COLLABORATION_ACTIVE" &&
+      error.statusCode === 409 &&
+      error.details?.documentId === "active-document",
+  );
+  await assert.rejects(
+    () => store.softDelete(scope, "active-document"),
+    (error) =>
+      error instanceof RuntimeError &&
+      error.code === "DOCUMENT_COLLABORATION_ACTIVE",
+  );
+  const restore = store.restore;
+  assert.ok(restore);
+  await assert.rejects(
+    () => restore(scope, "active-document"),
+    (error) =>
+      error instanceof RuntimeError &&
+      error.code === "DOCUMENT_COLLABORATION_ACTIVE",
+  );
+
+  assert.deepEqual(calls, []);
+
+  await store.getById(scope, "active-document", { draft: true });
+  await store.create(
+    scope,
+    {
+      type: "BlogPost",
+      path: "content/blog/new",
+      locale: "en",
+      format: "md",
+      frontmatter: {},
+      body: "new",
+    },
+    { expectedSchemaHash: "schema-hash" },
+  );
+
+  assert.deepEqual(calls, ["getById", "create"]);
 });
 
 test("createServerRequestHandlerWithModules loads bundled modules when APP_VERSION is unset", async () => {
@@ -366,4 +471,86 @@ test("prepareServerRequestHandlerWithModules publishes module actions and studio
       await dbConnection.close();
     }
   });
+});
+
+test("prepared server handleRequest preserves HTTP handler calls and maps unavailable collaboration upgrades to 503", async () => {
+  await withTempDir(
+    "runtime-with-modules-collaboration-",
+    async (directory) => {
+      const sourceFile = join(directory, "remote.ts");
+      const outDir = join(directory, "studio-dist");
+      await writeFile(
+        sourceFile,
+        "export const mount = (_container: unknown, _ctx: unknown) => () => {};\n",
+        "utf8",
+      );
+
+      const { handler, handleRequest, dbConnection } =
+        await prepareServerRequestHandlerWithModules({
+          env: {
+            ...env,
+            REDIS_URL: "",
+          },
+          logger,
+          studioRuntimeOptions: {
+            sourceFile,
+            outDir,
+            studioVersion: "1.0.0",
+          },
+        });
+
+      try {
+        const healthResponse = await handler(
+          new Request("http://localhost/healthz"),
+        );
+        assert.equal(healthResponse.status, 200);
+
+        const calls: Array<{ request: Request; options: unknown }> = [];
+        const upgradeResponse = await handleRequest(
+          new Request(
+            "http://localhost/api/v1/collaboration?project=marketing&environment=staging&documentId=11111111-1111-4111-8111-111111111111",
+            {
+              headers: {
+                connection: "Upgrade",
+                upgrade: "websocket",
+                origin: "http://localhost:4173",
+              },
+            },
+          ),
+          {
+            upgrade(request: Request, options: unknown) {
+              calls.push({ request, options });
+              return true;
+            },
+          } as never,
+        );
+        const body = (await upgradeResponse?.json()) as { code: string };
+
+        assert.equal(upgradeResponse?.status, 503);
+        assert.equal(body.code, "COLLABORATION_UNAVAILABLE");
+        assert.deepEqual(calls, []);
+      } finally {
+        await dbConnection.close();
+      }
+    },
+  );
+});
+
+test("shutdownServerRuntime drains collaboration before closing database", async () => {
+  const calls: string[] = [];
+
+  await shutdownServerRuntime({
+    collaborationWebSocketTransport: {
+      async shutdown() {
+        calls.push("collaboration:shutdown");
+      },
+    },
+    dbConnection: {
+      async close() {
+        calls.push("db:close");
+      },
+    },
+  });
+
+  assert.deepEqual(calls, ["collaboration:shutdown", "db:close"]);
 });

@@ -23,6 +23,9 @@
     },
     {
       "path": "./packages/shared"
+    },
+    {
+      "path": "./packages/editor-core"
     }
   ]
 }

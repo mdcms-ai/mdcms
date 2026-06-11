@@ -457,6 +457,11 @@ async function updateExistingDocument(
       code: string;
       message: string;
     }
+  | {
+      kind: "collaboration_active";
+      code: "collaboration_active";
+      message: string;
+    }
 > {
   const response = await context.fetcher(
     `${context.serverUrl}/api/v1/content/${candidate.documentId}?fileFields=raw`,
@@ -509,6 +514,17 @@ async function updateExistingDocument(
       kind: "path_conflict",
       code: remoteError.code,
       message: `Path conflict for "${candidate.manifestEntry.path}". The manifest references a stale document ID. Run 'cms pull' to re-sync.`,
+    };
+  }
+
+  if (
+    response.status === 409 &&
+    remoteError.code === "DOCUMENT_COLLABORATION_ACTIVE"
+  ) {
+    return {
+      kind: "collaboration_active",
+      code: "collaboration_active",
+      message: remoteError.message,
     };
   }
 
@@ -666,7 +682,14 @@ async function deleteDocument(
   candidate: DeletionCandidate,
   schemaHash: string,
 ): Promise<
-  { kind: "deleted" } | { kind: "already_gone" } | { kind: "conflict" }
+  | { kind: "deleted" }
+  | { kind: "already_gone" }
+  | { kind: "conflict" }
+  | {
+      kind: "collaboration_active";
+      code: "collaboration_active";
+      message: string;
+    }
 > {
   const headers = toRequestHeaders(context, schemaHash);
   headers.set("x-mdcms-draft-revision", String(candidate.draftRevision));
@@ -692,12 +715,20 @@ async function deleteDocument(
     return { kind: "already_gone" };
   }
 
-  if (response.status === 409) {
-    return { kind: "conflict" };
-  }
-
   const body = (await response.json().catch(() => undefined)) as unknown;
   const remoteError = parseRemoteError(body, response.status);
+
+  if (response.status === 409) {
+    if (remoteError.code === "DOCUMENT_COLLABORATION_ACTIVE") {
+      return {
+        kind: "collaboration_active",
+        code: "collaboration_active",
+        message: remoteError.message,
+      };
+    }
+
+    return { kind: "conflict" };
+  }
 
   throw new RuntimeError({
     code: remoteError.code,
@@ -823,6 +854,16 @@ function printPushResults(
   if (pathConflictCount > 0) {
     context.stdout.write(
       `\nSome documents were rejected due to path conflicts. Run 'cms pull' to sync with server, then resolve duplicates.\n`,
+    );
+  }
+
+  const collaborationActiveCount = results.filter(
+    (r) => r.reasonCode === "collaboration_active",
+  ).length;
+
+  if (collaborationActiveCount > 0) {
+    context.stdout.write(
+      `\nSome documents were rejected because an active Studio collaboration session is editing them. Wait for the active Studio collaboration session to close, then retry the locked document(s).\n`,
     );
   }
 }
@@ -1040,6 +1081,18 @@ async function applyPush(
         continue;
       }
 
+      if (updateResult.kind === "collaboration_active") {
+        failures += 1;
+        results.push({
+          status: "failed",
+          documentId: candidate.documentId,
+          path: candidate.manifestEntry.path,
+          message: `${updateResult.code}: ${updateResult.message}`,
+          reasonCode: updateResult.code,
+        });
+        continue;
+      }
+
       const createResult = await createDocumentFromLocalFile(
         context,
         candidate,
@@ -1180,6 +1233,18 @@ async function applyPush(
           path: candidate.path,
           message:
             "Conflict: document was modified on the server since last pull. Run `mdcms pull` first.",
+        });
+        continue;
+      }
+
+      if (deleteResult.kind === "collaboration_active") {
+        failures += 1;
+        results.push({
+          status: "failed",
+          documentId: candidate.documentId,
+          path: candidate.path,
+          message: `${deleteResult.code}: ${deleteResult.message}`,
+          reasonCode: deleteResult.code,
         });
         continue;
       }

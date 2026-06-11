@@ -170,6 +170,10 @@ function sha256Hex(input: string | Uint8Array): string {
   return createHash("sha256").update(input).digest("hex");
 }
 
+function bytesAsBodyInit(input: Uint8Array): BodyInit {
+  return input as unknown as BodyInit;
+}
+
 function hmacSha256(key: string | Buffer, input: string): Buffer {
   return createHmac("sha256", key).update(input).digest();
 }
@@ -342,7 +346,7 @@ export function createS3CompatibleMediaObjectStore(
     return fetcher(url.toString(), {
       method: input.method,
       headers,
-      body: input.method === "PUT" ? input.payload : undefined,
+      body: input.method === "PUT" ? bytesAsBodyInit(input.payload) : undefined,
     });
   }
 

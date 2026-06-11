@@ -256,6 +256,16 @@ async function formDataFromRequest(request: Request): Promise<FormData> {
   }
 }
 
+function formDataEntries(
+  formData: FormData,
+): IterableIterator<[string, unknown]> {
+  return (
+    formData as FormData & {
+      entries: () => IterableIterator<[string, unknown]>;
+    }
+  ).entries();
+}
+
 async function parseUploadParts(
   request: Request,
   body: unknown,
@@ -267,7 +277,7 @@ async function parseUploadParts(
   };
 
   if (body instanceof FormData) {
-    for (const [name, value] of body.entries()) {
+    for (const [name, value] of formDataEntries(body)) {
       collectUploadPart(state, name, value);
     }
   } else if (
@@ -281,7 +291,7 @@ async function parseUploadParts(
   } else {
     const formData = await formDataFromRequest(request);
 
-    for (const [name, value] of formData.entries()) {
+    for (const [name, value] of formDataEntries(formData)) {
       collectUploadPart(state, name, value);
     }
   }

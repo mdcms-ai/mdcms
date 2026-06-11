@@ -9,6 +9,7 @@ import postgres from "postgres";
 import type {
   ContentMediaAssetLookup,
   ContentWritePayload,
+  MountContentApiRoutesOptions,
 } from "./content-api/types.js";
 import type { DrizzleDatabase } from "./db.js";
 import {
@@ -238,7 +239,10 @@ function wrapHandlerWithAutoSchemaHash(
 export { wrapHandlerWithAutoSchemaHash };
 
 export function createHandler(
-  options: { lookupMediaAsset?: ContentMediaAssetLookup } = {},
+  options: {
+    lookupMediaAsset?: ContentMediaAssetLookup;
+    activeCollaboration?: MountContentApiRoutesOptions["activeCollaboration"];
+  } = {},
 ) {
   const store = createInMemoryContentStore({
     lookupMediaAsset: options.lookupMediaAsset,
@@ -261,6 +265,7 @@ export function createHandler(
           schemaHash: inMemorySchemaHash,
         }),
         lookupMediaAsset: options.lookupMediaAsset,
+        activeCollaboration: options.activeCollaboration,
       });
     },
     now: () => new Date("2026-03-02T10:00:00.000Z"),

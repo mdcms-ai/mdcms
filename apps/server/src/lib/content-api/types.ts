@@ -285,6 +285,10 @@ export type ContentUserSummaryLookup = (
   userIds: string[],
 ) => Promise<Record<string, { name: string; email: string }>>;
 
+export type ContentActiveCollaborationChecker = {
+  isDocumentActive: (documentId: string) => Promise<boolean>;
+};
+
 export const CONTENT_LIFECYCLE_EVENTS = [
   "content.created",
   "content.updated",
@@ -315,6 +319,7 @@ export type MountContentApiRoutesOptions = {
   lookupMediaAsset?: ContentMediaAssetLookup;
   resolveUsers?: ContentUserSummaryLookup;
   lifecycleEvents?: ContentLifecycleEventSink;
+  activeCollaboration?: ContentActiveCollaborationChecker;
   previewTokenSecret?: string;
   previewTokenTtlSeconds?: number;
 };
