@@ -22,6 +22,8 @@ class FakeRedisClient implements CollaborationRedisClient {
     keys?: string[];
     seconds?: number;
     value?: Buffer | string;
+    condition?: "NX";
+    args?: string[];
   }> = [];
 
   async get(key: string): Promise<string | null> {
@@ -51,10 +53,17 @@ class FakeRedisClient implements CollaborationRedisClient {
     value: Buffer | string,
     mode?: "EX",
     seconds?: number,
-  ): Promise<"OK"> {
-    this.calls.push({ method: "set", key, value, seconds });
-    this.values.set(key, Buffer.isBuffer(value) ? Buffer.from(value) : value);
+    condition?: "NX",
+  ): Promise<"OK" | null> {
+    this.calls.push({ method: "set", key, value, seconds, condition });
     assert.equal(mode === undefined || mode === "EX", true);
+    assert.equal(condition === undefined || condition === "NX", true);
+
+    if (condition === "NX" && this.values.has(key)) {
+      return null;
+    }
+
+    this.values.set(key, Buffer.isBuffer(value) ? Buffer.from(value) : value);
     return "OK";
   }
 
@@ -84,6 +93,62 @@ class FakeRedisClient implements CollaborationRedisClient {
   async exists(key: string): Promise<number> {
     this.calls.push({ method: "exists", key });
     return this.values.has(key) ? 1 : 0;
+  }
+
+  async eval(
+    script: string,
+    numberOfKeys: number,
+    ...args: string[]
+  ): Promise<number> {
+    const keys = args.slice(0, numberOfKeys);
+    const scriptArgs = args.slice(numberOfKeys);
+    const leaseValue = scriptArgs[0];
+    const seconds = scriptArgs[1];
+    const activeKey = numberOfKeys === 3 ? keys[2] : keys[0];
+
+    if (typeof activeKey !== "string" || typeof leaseValue !== "string") {
+      throw new Error("Invalid fake Redis eval invocation.");
+    }
+
+    const call: (typeof this.calls)[number] = {
+      method: "eval",
+      args: [leaseValue],
+    };
+
+    if (numberOfKeys === 1) {
+      call.key = activeKey;
+    } else {
+      call.keys = keys;
+    }
+
+    if (seconds !== undefined) {
+      call.seconds = Number(seconds);
+    }
+
+    this.calls.push(call);
+    assert.equal(numberOfKeys === 1 || numberOfKeys === 3, true);
+
+    if (this.values.get(activeKey) !== leaseValue) {
+      return 0;
+    }
+
+    if (numberOfKeys === 3 && script.includes("KEYS[3]")) {
+      assert.equal(typeof seconds, "string");
+      this.values.delete(activeKey);
+      return 1;
+    }
+
+    if (script.includes("EXPIRE")) {
+      assert.equal(typeof seconds, "string");
+      return 1;
+    }
+
+    if (script.includes("DEL")) {
+      this.values.delete(activeKey);
+      return 1;
+    }
+
+    throw new Error("Unsupported fake Redis eval script.");
   }
 }
 
@@ -237,40 +302,69 @@ test("active-room lifecycle clears inactive TTLs then expires cache after final 
   );
 });
 
-test("active collaboration lock acquire heartbeat isActive and release use the active key", async () => {
+test("active collaboration lock acquire heartbeat isActive and release are owner guarded", async () => {
   const documentId = "45c51e1f-8649-4c03-ac54-0e949a71e5f8";
   const { client, store } = createStore();
+  const activeKey = buildCollaborationActiveKey(documentId);
 
-  await store.acquireActiveLock(documentId, "room-1");
+  assert.equal(await store.acquireActiveLock(documentId, "room-1"), true);
+  assert.equal(await store.acquireActiveLock(documentId, "room-2"), false);
+  assert.equal(client.values.get(activeKey), "room-1");
   assert.equal(await store.isActive(documentId), true);
-  await store.heartbeatActiveLock(documentId, "room-1");
-  await store.releaseActiveLock(documentId);
+
+  assert.equal(await store.heartbeatActiveLock(documentId, "room-2"), false);
+  assert.equal(client.values.get(activeKey), "room-1");
+  assert.equal(await store.heartbeatActiveLock(documentId, "room-1"), true);
+
+  assert.equal(await store.releaseActiveLock(documentId, "room-2"), false);
+  assert.equal(client.values.get(activeKey), "room-1");
+  assert.equal(await store.releaseActiveLock(documentId, "room-1"), true);
   assert.equal(await store.isActive(documentId), false);
 
   assert.deepEqual(client.calls, [
     {
       method: "set",
-      key: buildCollaborationActiveKey(documentId),
+      key: activeKey,
       value: "room-1",
       seconds: COLLABORATION_ACTIVE_LOCK_LEASE_SECONDS,
-    },
-    {
-      method: "exists",
-      key: buildCollaborationActiveKey(documentId),
+      condition: "NX",
     },
     {
       method: "set",
-      key: buildCollaborationActiveKey(documentId),
-      value: "room-1",
+      key: activeKey,
+      value: "room-2",
       seconds: COLLABORATION_ACTIVE_LOCK_LEASE_SECONDS,
-    },
-    {
-      method: "del",
-      keys: [buildCollaborationActiveKey(documentId)],
+      condition: "NX",
     },
     {
       method: "exists",
-      key: buildCollaborationActiveKey(documentId),
+      key: activeKey,
+    },
+    {
+      method: "eval",
+      key: activeKey,
+      seconds: COLLABORATION_ACTIVE_LOCK_LEASE_SECONDS,
+      args: ["room-2"],
+    },
+    {
+      method: "eval",
+      key: activeKey,
+      seconds: COLLABORATION_ACTIVE_LOCK_LEASE_SECONDS,
+      args: ["room-1"],
+    },
+    {
+      method: "eval",
+      key: activeKey,
+      args: ["room-2"],
+    },
+    {
+      method: "eval",
+      key: activeKey,
+      args: ["room-1"],
+    },
+    {
+      method: "exists",
+      key: activeKey,
     },
   ]);
 });
@@ -278,23 +372,44 @@ test("active collaboration lock acquire heartbeat isActive and release use the a
 test("final cleanup expires state and metadata then releases the active lock", async () => {
   const documentId = "d615b389-fdd1-45ba-b1dd-05a2bdac3814";
   const { client, store } = createStore();
+  await store.acquireActiveLock(documentId, "room-1");
+  client.calls.length = 0;
 
-  await store.finalizeInactiveRoom(documentId);
+  assert.equal(await store.finalizeInactiveRoom(documentId, "room-1"), true);
 
   assert.deepEqual(client.calls, [
     {
-      method: "expire",
-      key: buildCollaborationYjsStateKey(documentId),
+      method: "eval",
+      keys: [
+        buildCollaborationYjsStateKey(documentId),
+        buildCollaborationYjsMetaKey(documentId),
+        buildCollaborationActiveKey(documentId),
+      ],
+      args: ["room-1"],
       seconds: COLLABORATION_INACTIVE_CACHE_TTL_SECONDS,
     },
+  ]);
+});
+
+test("final cleanup does not expire cache or release the active lock for non-owners", async () => {
+  const documentId = "d615b389-fdd1-45ba-b1dd-05a2bdac3814";
+  const { client, store } = createStore();
+  const activeKey = buildCollaborationActiveKey(documentId);
+  await store.acquireActiveLock(documentId, "room-1");
+  client.calls.length = 0;
+
+  assert.equal(await store.finalizeInactiveRoom(documentId, "room-2"), false);
+  assert.equal(client.values.get(activeKey), "room-1");
+  assert.deepEqual(client.calls, [
     {
-      method: "expire",
-      key: buildCollaborationYjsMetaKey(documentId),
+      method: "eval",
+      keys: [
+        buildCollaborationYjsStateKey(documentId),
+        buildCollaborationYjsMetaKey(documentId),
+        activeKey,
+      ],
+      args: ["room-2"],
       seconds: COLLABORATION_INACTIVE_CACHE_TTL_SECONDS,
-    },
-    {
-      method: "del",
-      keys: [buildCollaborationActiveKey(documentId)],
     },
   ]);
 });
@@ -312,4 +427,48 @@ test("unavailable Redis dependency throws future HTTP-compatible collaboration e
       error.statusCode === 503 &&
       error.details?.reason === "missing_redis_url",
   );
+});
+
+test("unavailable Redis dependency omits raw non-serializable error objects", async () => {
+  const circular: { self?: unknown } = {};
+  circular.self = circular;
+  const store = createCollaborationRedisStore(
+    createUnavailableCollaborationRedisDependency(
+      "connection_failed",
+      circular,
+    ),
+  );
+
+  await assert.rejects(
+    () => store.isActive("9a967d50-39e6-43a2-baf9-4982335d61d3"),
+    (error: unknown) =>
+      error instanceof RuntimeError &&
+      error.code === "COLLABORATION_UNAVAILABLE" &&
+      error.statusCode === 503 &&
+      error.details?.reason === "connection_failed" &&
+      !("error" in error.details) &&
+      !("errorMessage" in error.details),
+  );
+});
+
+test("unavailable Redis dependency reports stable error messages for Error and string failures", async () => {
+  for (const failure of [new Error("connection refused"), "socket closed"]) {
+    const store = createCollaborationRedisStore(
+      createUnavailableCollaborationRedisDependency(
+        "connection_failed",
+        failure,
+      ),
+    );
+
+    await assert.rejects(
+      () => store.isActive("9a967d50-39e6-43a2-baf9-4982335d61d3"),
+      (error: unknown) =>
+        error instanceof RuntimeError &&
+        error.code === "COLLABORATION_UNAVAILABLE" &&
+        error.statusCode === 503 &&
+        error.details?.reason === "connection_failed" &&
+        error.details?.errorMessage ===
+          (failure instanceof Error ? failure.message : failure),
+    );
+  }
 });

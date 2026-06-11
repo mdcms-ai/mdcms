@@ -28,10 +28,22 @@ export type CollaborationRedisClient = {
     mode: "EX",
     seconds: number,
   ): Promise<unknown>;
+  set(
+    key: string,
+    value: string | Buffer,
+    mode: "EX",
+    seconds: number,
+    condition: "NX",
+  ): Promise<"OK" | null>;
   del(...keys: string[]): Promise<number>;
   expire(key: string, seconds: number): Promise<number>;
   persist(key: string): Promise<number>;
   exists(key: string): Promise<number>;
+  eval(
+    script: string,
+    numberOfKeys: number,
+    ...args: string[]
+  ): Promise<unknown>;
 };
 
 export type CollaborationRedisUnavailableReason =
@@ -77,6 +89,25 @@ export function createUnavailableCollaborationRedisDependency(
   };
 }
 
+function createUnavailableErrorDetails(
+  dependency: UnavailableCollaborationRedisDependency,
+): Record<string, unknown> {
+  const details: Record<string, unknown> = {
+    reason: dependency.reason,
+  };
+
+  if (dependency.error instanceof Error && dependency.error.message) {
+    details.errorMessage = dependency.error.message;
+  } else if (
+    typeof dependency.error === "string" &&
+    dependency.error.length > 0
+  ) {
+    details.errorMessage = dependency.error;
+  }
+
+  return details;
+}
+
 function requireCollaborationRedisClient(
   dependency: CollaborationRedisDependency,
 ): CollaborationRedisClient {
@@ -84,13 +115,9 @@ function requireCollaborationRedisClient(
     return dependency.client;
   }
 
-  throw createCollaborationUnavailableError({
-    reason: dependency.reason,
-    error:
-      dependency.error instanceof Error
-        ? dependency.error.message
-        : dependency.error,
-  });
+  throw createCollaborationUnavailableError(
+    createUnavailableErrorDetails(dependency),
+  );
 }
 
 function metadataMatchesDraftHead(
@@ -138,6 +165,33 @@ function parseYjsMetadata(raw: string | null): CollaborationYjsMetadata | null {
     draftRevision,
     bodyHash,
   };
+}
+
+const HEARTBEAT_ACTIVE_LOCK_SCRIPT = `
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+  return redis.call("EXPIRE", KEYS[1], tonumber(ARGV[2]))
+end
+return 0
+`;
+
+const RELEASE_ACTIVE_LOCK_SCRIPT = `
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+  return redis.call("DEL", KEYS[1])
+end
+return 0
+`;
+
+const FINALIZE_INACTIVE_ROOM_SCRIPT = `
+if redis.call("GET", KEYS[3]) == ARGV[1] then
+  redis.call("EXPIRE", KEYS[1], tonumber(ARGV[2]))
+  redis.call("EXPIRE", KEYS[2], tonumber(ARGV[2]))
+  return redis.call("DEL", KEYS[3])
+end
+return 0
+`;
+
+function redisBooleanResult(result: unknown): boolean {
+  return result === 1 || result === "1";
 }
 
 export function createCollaborationRedisStore(
@@ -265,45 +319,64 @@ export function createCollaborationRedisStore(
     async acquireActiveLock(
       documentId: string,
       leaseValue: string,
-    ): Promise<void> {
-      await requireCollaborationRedisClient(dependency).set(
+    ): Promise<boolean> {
+      const result = await requireCollaborationRedisClient(dependency).set(
         buildCollaborationActiveKey(documentId),
         leaseValue,
         "EX",
         activeLockLeaseSeconds,
+        "NX",
       );
+
+      return result === "OK";
     },
 
     async heartbeatActiveLock(
       documentId: string,
       leaseValue: string,
-    ): Promise<void> {
-      await requireCollaborationRedisClient(dependency).set(
+    ): Promise<boolean> {
+      const result = await requireCollaborationRedisClient(dependency).eval(
+        HEARTBEAT_ACTIVE_LOCK_SCRIPT,
+        1,
         buildCollaborationActiveKey(documentId),
         leaseValue,
-        "EX",
-        activeLockLeaseSeconds,
+        String(activeLockLeaseSeconds),
       );
+
+      return redisBooleanResult(result);
     },
 
-    async releaseActiveLock(documentId: string): Promise<void> {
-      await requireCollaborationRedisClient(dependency).del(
+    async releaseActiveLock(
+      documentId: string,
+      leaseValue: string,
+    ): Promise<boolean> {
+      const result = await requireCollaborationRedisClient(dependency).eval(
+        RELEASE_ACTIVE_LOCK_SCRIPT,
+        1,
         buildCollaborationActiveKey(documentId),
+        leaseValue,
       );
+
+      return redisBooleanResult(result);
     },
 
-    async finalizeInactiveRoom(documentId: string): Promise<void> {
+    async finalizeInactiveRoom(
+      documentId: string,
+      leaseValue: string,
+    ): Promise<boolean> {
       const client = requireCollaborationRedisClient(dependency);
 
-      await client.expire(
+      const result = await client.eval(
+        FINALIZE_INACTIVE_ROOM_SCRIPT,
+        3,
         buildCollaborationYjsStateKey(documentId),
-        inactiveCacheTtlSeconds,
-      );
-      await client.expire(
         buildCollaborationYjsMetaKey(documentId),
-        inactiveCacheTtlSeconds,
+        buildCollaborationActiveKey(documentId),
+        leaseValue,
+        String(inactiveCacheTtlSeconds),
       );
-      await client.del(buildCollaborationActiveKey(documentId));
+
+      return redisBooleanResult(result);
     },
   };
 }

@@ -523,6 +523,13 @@ function parseRedisUrl(rawValue: string | undefined): string | undefined {
     );
   }
 
+  if (!url.hostname) {
+    throw createRedisInvalidEnvError(
+      rawValue,
+      "REDIS_URL must include a hostname.",
+    );
+  }
+
   return url.toString();
 }
 

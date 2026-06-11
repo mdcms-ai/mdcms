@@ -56,6 +56,10 @@ class FakeConnectableRedisClient
   async exists(): Promise<number> {
     return 0;
   }
+
+  async eval(): Promise<number> {
+    return 0;
+  }
 }
 
 test("createCollaborationRedisDependency is unavailable when REDIS_URL is missing", async () => {

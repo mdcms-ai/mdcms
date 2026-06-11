@@ -138,6 +138,21 @@ test("parseServerEnv rejects invalid REDIS_URL values", () => {
   );
 });
 
+test("parseServerEnv rejects REDIS_URL values without a hostname", () => {
+  for (const redisUrl of ["redis://", "redis:///0", "rediss:///0"]) {
+    assert.throws(
+      () =>
+        parseServerEnv({
+          REDIS_URL: redisUrl,
+        } as NodeJS.ProcessEnv),
+      (error: unknown) =>
+        error instanceof RuntimeError &&
+        error.code === "INVALID_ENV" &&
+        error.details?.key === "REDIS_URL",
+    );
+  }
+});
+
 test("parseServerEnv parses S3 media storage settings", () => {
   const env = parseServerEnv({
     S3_ENDPOINT: " http://localhost:9000/ ",
