@@ -2,7 +2,7 @@
 status: live
 canonical: true
 created: 2026-03-11
-last_updated: 2026-06-05
+last_updated: 2026-06-11
 ---
 
 # SPEC-005 Auth, Authorization, and Request Routing
@@ -35,7 +35,7 @@ MDCMS supports two auth modes:
 
 - **Studio/browser clients:** session authentication (better-auth) by default. Embedded Studio may also use bearer API key authentication when the host selects Studio token mode.
 - **SDK/CLI/machine clients:** API key authentication.
-- **Post-MVP collaboration WebSocket:** Studio session authentication only (API keys are not accepted).
+- **Collaboration socket:** Studio session authentication only. API keys are not accepted.
 
 API key format:
 
@@ -53,7 +53,7 @@ API keys are access-control objects, not routing objects. Each key stores an all
 
 ### Explicit Target Routing
 
-All environment-scoped requests (content, schema, environments, migrations, and any future search/webhook/collaboration routes) must explicitly include both target project and target environment. Project-scoped management requests (e.g., create/list environments) must include explicit project target.
+All environment-scoped requests (content, schema, environments, migrations, collaboration sockets, and any future search/webhook routes) must explicitly include both target project and target environment. Project-scoped management requests (e.g., create/list environments) must include explicit project target.
 
 Media assets are project-scoped (reusable across environments), and any future media API requests still carry explicit `(project, environment)` routing for authorization and request consistency.
 
@@ -73,7 +73,7 @@ Deterministic routing errors:
 - `MISSING_TARGET_ROUTING` (`400`) means the required project/environment routing context was not provided.
 - `TARGET_ROUTING_MISMATCH` (`400`) means routing context was provided, but it does not match the caller's authorized `(project, environment)` allowlist or the resolved target resource.
 
-For post-MVP collaboration WebSocket connections, use query parameters on connect:
+Collaboration socket connections use query parameters on connect:
 
 ```
 wss://<host>/api/v1/collaboration?project=marketing-site&environment=staging&documentId=<uuid>
@@ -407,16 +407,19 @@ MDCMS rejects sign-in with `AUTH_SAML_REQUIRED_ATTRIBUTE_MISSING` (`401`) when:
 - Public auth flows are exempt: `/api/v1/auth/login`, `/api/v1/auth/sign-up/email`, `/api/v1/auth/sign-in/email`, and `/api/v1/auth/cli/login/*`.
 - CSRF validation failures return `FORBIDDEN` (`403`) with message `Valid CSRF token is required for session-authenticated state-changing requests.`
 
-#### Collaboration Socket Authentication (Post-MVP)
+#### Collaboration Socket Authentication
 
-Collaboration sockets are deferred to Post-MVP. When implemented, they are authenticated with the same Studio session cookie (not API keys):
+Collaboration sockets are authenticated with the same Studio session cookie as the Studio runtime. API keys are rejected for this endpoint even when a key has content scopes:
 
 - Connect URL: `/api/v1/collaboration?project=...&environment=...&documentId=...`
 - `Origin` must match the configured Studio allowlist.
 - Session cookie is validated through better-auth during the WebSocket handshake.
+- `project`, `environment`, and `documentId` are required query parameters.
 - Target document must belong to the requested `(project, environment)` scope.
 - Folder/path RBAC (`documents.path`) is evaluated before subscribing the socket to the document room.
 - Revoked/expired sessions are disconnected immediately with `4401`; authorization failures return `4403`.
+
+Presence indicators and periodic/debounced PostgreSQL autosave from active collaboration rooms are not part of this authentication contract.
 
 ### API Authentication
 
