@@ -787,11 +787,11 @@ for host routing or fetch page-level data.
 
 Draft propagation to the real-app preview is staged:
 
-- The first slice uses the existing draft-save pipeline. Studio persists the
-  current body/frontmatter through the normal draft update path, then refreshes
-  the iframe when the editor chooses to refresh the preview. This keeps the
-  route preview aligned with the canonical draft row and avoids a second draft
-  transport.
+- In single-user HTTP editing, Studio may persist the current body/frontmatter
+  through the normal draft update path before refreshing the iframe. In an
+  active collaboration document room, preview refresh uses collaboration-backed
+  persisted state according to the collaboration save contract and must not
+  bypass the active collaboration lock.
 - Lower-latency live injection may be added later through a host-adapter
   `postMessage` protocol, but it must preserve the same serialization contract
   and must never write published content.
