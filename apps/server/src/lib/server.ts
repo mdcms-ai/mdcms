@@ -267,6 +267,10 @@ const STUDIO_ASSET_COMPRESS_MIN_BYTES = 1024;
 const STUDIO_ASSET_CACHE_MAX_ENTRIES = 32;
 const STUDIO_ASSET_CACHE_MAX_TOTAL_BYTES = 64 * 1024 * 1024;
 
+function bytesAsBodyInit(input: Uint8Array): BodyInit {
+  return input as unknown as BodyInit;
+}
+
 type StudioAssetEncoding = "br" | "gzip" | "identity";
 type StudioAssetCompressionEncoding = Exclude<StudioAssetEncoding, "identity">;
 
@@ -436,7 +440,10 @@ async function buildStudioAssetResponse(input: {
       : undefined;
 
   if (!encoding) {
-    return new Response(input.body, { status: 200, headers: baseHeaders });
+    return new Response(bytesAsBodyInit(input.body), {
+      status: 200,
+      headers: baseHeaders,
+    });
   }
 
   const cacheKey = `${input.buildId}:${input.assetPath}:${encoding}`;
@@ -447,7 +454,7 @@ async function buildStudioAssetResponse(input: {
     encoding,
   );
 
-  return new Response(compressed, {
+  return new Response(bytesAsBodyInit(compressed), {
     status: 200,
     headers: {
       ...baseHeaders,

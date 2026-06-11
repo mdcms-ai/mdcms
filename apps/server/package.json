@@ -30,6 +30,9 @@
   },
   "dependencies": {
     "@better-auth/sso": "1.5.1",
+    "@hocuspocus/server": "^4",
+    "@hocuspocus/transformer": "^4",
+    "@mdcms/editor-core": "workspace:*",
     "@mdcms/modules": "workspace:*",
     "@mdcms/shared": "workspace:*",
     "@mdcms/studio": "workspace:*",
@@ -40,6 +43,7 @@
     "nodemailer": "^8.0.5",
     "postgres": "^3.4.8",
     "tslib": "^2.3.0",
+    "yjs": "^13.6.31",
     "zod": "^4.3.6"
   },
   "license": "MIT",
