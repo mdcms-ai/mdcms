@@ -70,6 +70,7 @@ function createContext(
 
 class FakeContentStore implements CollaborationRuntimeContentStore {
   document: ContentDocument;
+  updateError: unknown;
   readonly updates: Array<{
     scope: ContentScope;
     documentId: string;
@@ -102,6 +103,10 @@ class FakeContentStore implements CollaborationRuntimeContentStore {
     options?: { expectedDraftRevision?: number },
   ): Promise<ContentDocument> {
     this.updates.push({ scope, documentId, payload, options });
+
+    if (this.updateError) {
+      throw this.updateError;
+    }
 
     if (
       options?.expectedDraftRevision !== undefined &&
@@ -672,6 +677,87 @@ test("last disconnect fails closed when final cleanup no longer owns active lock
       error.code === "COLLABORATION_ACTIVE_LOCK_LOST",
   );
   assert.deepEqual(closedRooms, [DOCUMENT_ID]);
+});
+
+test("changed-body final disconnect verifies active-lock ownership before persistence", async () => {
+  const document = createDocument({
+    body: "# Original\n\nBody.",
+    draftRevision: 6,
+  });
+  const { hooks, contentStore, heartbeatScheduler, redisStore, closedRooms } =
+    createHarness(document);
+  const context = createContext();
+  redisStore.heartbeatActiveLockResult = false;
+
+  await hooks.onLoadDocument({ context, documentName: DOCUMENT_ID });
+  const callsBeforeDisconnect = redisStore.calls.length;
+
+  await assert.rejects(
+    hooks.onDisconnect({
+      clientsCount: 0,
+      context,
+      document: markdownToYDoc("# Changed\n\nBody."),
+      documentName: DOCUMENT_ID,
+    }),
+    (error: unknown) =>
+      error instanceof RuntimeError &&
+      error.code === "COLLABORATION_ACTIVE_LOCK_LOST",
+  );
+
+  assert.equal(contentStore.updates.length, 0);
+  assert.deepEqual(
+    redisStore.calls.slice(callsBeforeDisconnect).map((call) => call.method),
+    ["heartbeatActiveLock"],
+  );
+  assert.equal(heartbeatScheduler.intervals[0]?.cleared, true);
+  assert.deepEqual(closedRooms, [DOCUMENT_ID]);
+});
+
+test("final-save error clears heartbeat without finalizing the room", async () => {
+  const document = createDocument({
+    body: "# Original\n\nBody.",
+    draftRevision: 7,
+  });
+  const { hooks, contentStore, heartbeatScheduler, redisStore } =
+    createHarness(document);
+  const context = createContext();
+  const updateError = new Error("database unavailable");
+  contentStore.updateError = updateError;
+
+  await hooks.onLoadDocument({ context, documentName: DOCUMENT_ID });
+
+  await assert.rejects(
+    hooks.onDisconnect({
+      clientsCount: 0,
+      context,
+      document: markdownToYDoc("# Changed\n\nBody."),
+      documentName: DOCUMENT_ID,
+    }),
+    updateError,
+  );
+
+  assert.equal(heartbeatScheduler.intervals[0]?.cleared, true);
+  assert.equal(
+    redisStore.calls.some((call) => call.method === "finalizeInactiveRoom"),
+    false,
+  );
+
+  const callsAfterError = redisStore.calls.length;
+
+  await assert.rejects(
+    hooks.onStoreDocument({
+      document: markdownToYDoc("# Changed\n\nBody."),
+      documentName: DOCUMENT_ID,
+      lastContext: context,
+    }),
+    (error: unknown) =>
+      error instanceof RuntimeError &&
+      error.code === "COLLABORATION_ACTIVE_LOCK_LOST",
+  );
+  assert.deepEqual(
+    redisStore.calls.slice(callsAfterError).map((call) => call.method),
+    [],
+  );
 });
 
 test("last disconnect skips no-op PostgreSQL save when serialization normalizes source markdown", async () => {

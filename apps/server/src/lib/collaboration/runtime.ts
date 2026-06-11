@@ -566,6 +566,43 @@ export function createCollaborationRuntimeHooks(
     );
   }
 
+  async function verifyActiveLockOwnership(input: {
+    documentId: string;
+    documentName: string;
+    key: string;
+    leaseValue: string;
+    state?: RoomState;
+  }): Promise<void> {
+    assertActiveLockHeld(input.state);
+
+    let ownsActiveLock = false;
+
+    try {
+      ownsActiveLock = await options.redisStore.heartbeatActiveLock(
+        input.documentId,
+        input.leaseValue,
+      );
+    } catch {
+      ownsActiveLock = false;
+    }
+
+    if (ownsActiveLock) {
+      return;
+    }
+
+    if (input.state) {
+      await markActiveLockLost(input.key, input.state);
+    } else {
+      try {
+        await options.closeRoom?.(input.documentName);
+      } catch {
+        // The caller will throw a fail-closed active-lock error below.
+      }
+    }
+
+    throw createActiveLockLostError(input.documentId);
+  }
+
   return {
     async onLoadDocument(payload: RuntimeHookPayload): Promise<Uint8Array> {
       const context = requireRuntimeContext(payload);
@@ -764,45 +801,16 @@ export function createCollaborationRuntimeHooks(
         });
       }
 
-      const nextState = encodeYDocState(document);
-      const nextBody = yDocToMarkdown(document);
-      const loadedCanonicalBody =
-        state?.loadedCanonicalBody ?? context.loadedCanonicalBody;
+      try {
+        const nextState = encodeYDocState(document);
+        const nextBody = yDocToMarkdown(document);
+        const loadedCanonicalBody =
+          state?.loadedCanonicalBody ?? context.loadedCanonicalBody;
 
-      if (typeof loadedCanonicalBody !== "string") {
-        throw new RuntimeError({
-          code: "INVALID_COLLABORATION_CONTEXT",
-          message: "Collaboration room is missing loaded canonical body.",
-          statusCode: 500,
-          details: {
-            documentId: context.documentId,
-          },
-        });
-      }
-
-      const currentDraft = await loadDraftDocument(
-        options.contentStore,
-        context,
-      );
-      let metadata: CollaborationYjsMetadata = {
-        draftRevision: currentDraft.draftRevision,
-        bodyHash: computeCollaborationBodyHash(currentDraft.body),
-      };
-
-      if (nextBody !== loadedCanonicalBody) {
-        const writer = state?.lastWriter ??
-          context.lastWriter ?? {
-            userId: context.userId,
-            ...(context.userEmail ? { email: context.userEmail } : {}),
-          };
-        const expectedDraftRevision =
-          state?.loadedDraftRevision ?? context.loadedDraftRevision;
-
-        if (typeof expectedDraftRevision !== "number") {
+        if (typeof loadedCanonicalBody !== "string") {
           throw new RuntimeError({
             code: "INVALID_COLLABORATION_CONTEXT",
-            message:
-              "Collaboration final save is missing expected draft revision.",
+            message: "Collaboration room is missing loaded canonical body.",
             statusCode: 500,
             details: {
               documentId: context.documentId,
@@ -810,47 +818,94 @@ export function createCollaborationRuntimeHooks(
           });
         }
 
-        const updated = await options.contentStore.update(
-          scopeFromContext(context),
-          context.documentId,
-          {
-            body: nextBody,
-            updatedBy: writer.userId,
-          },
-          { expectedDraftRevision },
-        );
+        await verifyActiveLockOwnership({
+          documentId: context.documentId,
+          documentName: payload.documentName,
+          key,
+          leaseValue,
+          state,
+        });
 
-        metadata = {
-          draftRevision: updated.draftRevision,
-          bodyHash: computeCollaborationBodyHash(updated.body),
+        const currentDraft = await loadDraftDocument(
+          options.contentStore,
+          context,
+        );
+        let metadata: CollaborationYjsMetadata = {
+          draftRevision: currentDraft.draftRevision,
+          bodyHash: computeCollaborationBodyHash(currentDraft.body),
         };
 
-        await options.lifecycleEvents?.emitContentEvent({
-          event: "content.updated",
-          scope: scopeFromContext(context),
-          document: updated,
-          actor: createLifecycleActor(writer),
-        });
-      }
+        if (nextBody !== loadedCanonicalBody) {
+          const writer = state?.lastWriter ??
+            context.lastWriter ?? {
+              userId: context.userId,
+              ...(context.userEmail ? { email: context.userEmail } : {}),
+            };
+          const expectedDraftRevision =
+            state?.loadedDraftRevision ?? context.loadedDraftRevision;
 
-      await options.redisStore.setYjsState(context.documentId, nextState);
-      await options.redisStore.setYjsMetadata(context.documentId, metadata);
+          if (typeof expectedDraftRevision !== "number") {
+            throw new RuntimeError({
+              code: "INVALID_COLLABORATION_CONTEXT",
+              message:
+                "Collaboration final save is missing expected draft revision.",
+              statusCode: 500,
+              details: {
+                documentId: context.documentId,
+              },
+            });
+          }
 
-      if (
-        await options.redisStore.finalizeInactiveRoom(
-          context.documentId,
-          leaseValue,
-        )
-      ) {
-        stopActiveLockHeartbeat(state);
-        finalizedRoomLeases.set(key, leaseValue);
-        roomStates.delete(key);
-      } else {
-        if (state) {
-          await markActiveLockLost(key, state);
+          const updated = await options.contentStore.update(
+            scopeFromContext(context),
+            context.documentId,
+            {
+              body: nextBody,
+              updatedBy: writer.userId,
+            },
+            { expectedDraftRevision },
+          );
+
+          metadata = {
+            draftRevision: updated.draftRevision,
+            bodyHash: computeCollaborationBodyHash(updated.body),
+          };
+
+          await options.lifecycleEvents?.emitContentEvent({
+            event: "content.updated",
+            scope: scopeFromContext(context),
+            document: updated,
+            actor: createLifecycleActor(writer),
+          });
         }
 
-        throw createActiveLockLostError(context.documentId);
+        await options.redisStore.setYjsState(context.documentId, nextState);
+        await options.redisStore.setYjsMetadata(context.documentId, metadata);
+
+        if (
+          await options.redisStore.finalizeInactiveRoom(
+            context.documentId,
+            leaseValue,
+          )
+        ) {
+          stopActiveLockHeartbeat(state);
+          finalizedRoomLeases.set(key, leaseValue);
+          roomStates.delete(key);
+        } else {
+          if (state) {
+            await markActiveLockLost(key, state);
+          }
+
+          throw createActiveLockLostError(context.documentId);
+        }
+      } catch (error) {
+        if (state) {
+          await markActiveLockLost(key, state);
+        } else {
+          stopActiveLockHeartbeat(state);
+        }
+
+        throw error;
       }
     },
   };
