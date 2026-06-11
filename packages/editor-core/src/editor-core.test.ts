@@ -7,7 +7,7 @@ import {
   MdxComponentExtension,
   MdxIntrinsicElementExtension,
   MdxRawJsxExtension,
-  StudioImageExtension,
+  EditorImageExtension,
   createEditorCoreExtensions,
   extractMarkdownFromEditor,
   parseMarkdownToDocument,
@@ -44,6 +44,12 @@ test("editor core preserves MDX components and native images", () => {
   assert.match(markdown, /<\/Callout>/);
 });
 
+test("editor core exposes a neutral image extension name", async () => {
+  const core = (await import("@mdcms/editor-core")) as Record<string, unknown>;
+
+  assert.ok(core.EditorImageExtension);
+});
+
 test("editor core exposes the MDX parser helper", () => {
   const document = parseMdxMarkdownToTipTapDocument('<Hero title="Launch" />');
 
@@ -75,7 +81,7 @@ test("editor core extensions support headless markdown extraction", () => {
 
 test("editor core extension factory accepts node extension overrides", () => {
   const customCodeBlock = Extension.create({ name: "codeBlock" });
-  const customImage = StudioImageExtension.extend({});
+  const customImage = EditorImageExtension.extend({});
   const customComponent = MdxComponentExtension.extend({});
   const customIntrinsicElement = MdxIntrinsicElementExtension.extend({});
   const customRawJsx = MdxRawJsxExtension.extend({});

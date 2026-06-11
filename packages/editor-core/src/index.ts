@@ -35,5 +35,5 @@ export {
   tokenizeMdxRawJsxBlock,
 } from "./mdx-raw-jsx-extension.js";
 export { parseMdxMarkdownToTipTapDocument } from "./mdx-markdown-parser.js";
-export { StudioImageExtension } from "./studio-image-extension.js";
+export { EditorImageExtension } from "./studio-image-extension.js";
 export { HTML_VOID_ELEMENTS } from "./html-void-elements.js";

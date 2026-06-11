@@ -36,7 +36,7 @@ function renderMarkdownImage(node: JSONContent): string {
   return `![${label}](${destination}${title})`;
 }
 
-export const StudioImageExtension = Node.create({
+export const EditorImageExtension = Node.create({
   name: "image",
   group: "block",
   atom: true,
