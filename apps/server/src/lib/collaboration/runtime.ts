@@ -41,8 +41,10 @@ export type CollaborationRuntimeLastWriter = {
 };
 
 export type CollaborationRuntimeContext = CollaborationSessionContext & {
+  userEmail?: string;
   loadedDraftRevision?: number;
   loadedBodyHash?: string;
+  loadedCanonicalBody?: string;
   roomLeaseValue?: string;
   lastWriter?: CollaborationRuntimeLastWriter;
   request?: Request;
@@ -97,6 +99,7 @@ export type CollaborationRuntimeRedisStore = {
 type RoomState = {
   loadedDraftRevision: number;
   loadedBodyHash: string;
+  loadedCanonicalBody: string;
   roomLeaseValue: string;
   lastWriter?: CollaborationRuntimeLastWriter;
 };
@@ -179,6 +182,10 @@ export function yjsUpdateToMarkdown(update: Uint8Array): string {
   return yDocToMarkdown(yjsUpdateToYDoc(update));
 }
 
+function canonicalizeMarkdownUpdate(update: Uint8Array): string {
+  return yjsUpdateToMarkdown(update);
+}
+
 export function createCollaborationDocumentName(input: {
   project: string;
   environment: string;
@@ -219,7 +226,6 @@ function requireRuntimeContext(
   payload: RuntimeHookPayload,
 ): CollaborationRuntimeContext {
   const context = payload.context ?? payload.lastContext;
-  const room = parseCollaborationDocumentName(payload.documentName);
 
   if (!context) {
     throw new RuntimeError({
@@ -232,16 +238,41 @@ function requireRuntimeContext(
     });
   }
 
-  if (room.project && context.project !== room.project) {
-    context.project = room.project;
+  const room = parseCollaborationDocumentName(payload.documentName);
+  const mismatches: Record<string, { expected: string; actual: string }> = {};
+
+  if (room.project && room.project !== context.project) {
+    mismatches.project = {
+      expected: context.project,
+      actual: room.project,
+    };
   }
 
-  if (room.environment && context.environment !== room.environment) {
-    context.environment = room.environment;
+  if (room.environment && room.environment !== context.environment) {
+    mismatches.environment = {
+      expected: context.environment,
+      actual: room.environment,
+    };
   }
 
-  if (room.documentId && context.documentId !== room.documentId) {
-    context.documentId = room.documentId;
+  if (room.documentId && room.documentId !== context.documentId) {
+    mismatches.documentId = {
+      expected: context.documentId,
+      actual: room.documentId,
+    };
+  }
+
+  if (Object.keys(mismatches).length > 0) {
+    throw new RuntimeError({
+      code: "COLLABORATION_ROOM_MISMATCH",
+      message:
+        "Collaboration room name does not match the authenticated context.",
+      statusCode: 403,
+      details: {
+        documentName: payload.documentName,
+        mismatches,
+      },
+    });
   }
 
   return context;
@@ -292,6 +323,7 @@ function assignLoadedRoomState(
 ): void {
   context.loadedDraftRevision = state.loadedDraftRevision;
   context.loadedBodyHash = state.loadedBodyHash;
+  context.loadedCanonicalBody = state.loadedCanonicalBody;
   context.roomLeaseValue = state.roomLeaseValue;
   context.lastWriter = state.lastWriter;
 }
@@ -363,6 +395,7 @@ function updateLastWriter(
 ): void {
   const writer = {
     userId: context.userId,
+    ...(context.userEmail ? { email: context.userEmail } : {}),
   };
   const state = roomStates.get(roomKey(context));
 
@@ -371,6 +404,19 @@ function updateLastWriter(
   }
 
   context.lastWriter = writer;
+}
+
+function createLifecycleActor(writer: CollaborationRuntimeLastWriter): {
+  id: string;
+  email: string;
+} {
+  return {
+    id: writer.userId,
+    // The lifecycle sink type requires an email string. Collaboration
+    // handshake context may only carry userId, so keep the value neutral
+    // instead of fabricating an address when email is not available.
+    email: writer.email ?? "",
+  };
 }
 
 function metadataFromContextOrState(
@@ -422,6 +468,7 @@ export function createCollaborationRuntimeHooks(
       );
 
       const state = cached?.state ?? convertMarkdownToYjsUpdate(draft.body);
+      const loadedCanonicalBody = canonicalizeMarkdownUpdate(state);
 
       const roomLeaseValue = createRoomLeaseValue();
       const acquired = await options.redisStore.acquireActiveLock(
@@ -441,6 +488,7 @@ export function createCollaborationRuntimeHooks(
       const loadedState: RoomState = {
         loadedDraftRevision: draftHead.draftRevision,
         loadedBodyHash: draftHead.bodyHash,
+        loadedCanonicalBody,
         roomLeaseValue,
       };
       roomStates.set(roomKey(context), loadedState);
@@ -461,8 +509,6 @@ export function createCollaborationRuntimeHooks(
       if (!result.ok) {
         throw createCloseEvent(result.closeCode);
       }
-
-      updateLastWriter(roomStates, context);
     },
 
     async onStoreDocument(payload: RuntimeHookPayload): Promise<void> {
@@ -500,10 +546,12 @@ export function createCollaborationRuntimeHooks(
       );
       await options.redisStore.setYjsMetadata(context.documentId, metadata);
 
-      if (context.roomLeaseValue) {
+      const leaseValue = state?.roomLeaseValue ?? context.roomLeaseValue;
+
+      if (leaseValue) {
         await options.redisStore.heartbeatActiveLock(
           context.documentId,
-          context.roomLeaseValue,
+          leaseValue,
         );
       }
 
@@ -531,13 +579,58 @@ export function createCollaborationRuntimeHooks(
         });
       }
 
-      try {
-        const document = payload.document;
+      const document = payload.document;
 
-        if (!document) {
+      if (!document) {
+        throw new RuntimeError({
+          code: "INVALID_COLLABORATION_CONTEXT",
+          message: "Collaboration disconnect hook is missing a Yjs document.",
+          statusCode: 500,
+          details: {
+            documentId: context.documentId,
+          },
+        });
+      }
+
+      const nextState = encodeYDocState(document);
+      const nextBody = yDocToMarkdown(document);
+      const loadedCanonicalBody =
+        state?.loadedCanonicalBody ?? context.loadedCanonicalBody;
+
+      if (typeof loadedCanonicalBody !== "string") {
+        throw new RuntimeError({
+          code: "INVALID_COLLABORATION_CONTEXT",
+          message: "Collaboration room is missing loaded canonical body.",
+          statusCode: 500,
+          details: {
+            documentId: context.documentId,
+          },
+        });
+      }
+
+      const currentDraft = await loadDraftDocument(
+        options.contentStore,
+        context,
+      );
+      let metadata: CollaborationYjsMetadata = {
+        draftRevision: currentDraft.draftRevision,
+        bodyHash: computeCollaborationBodyHash(currentDraft.body),
+      };
+
+      if (nextBody !== loadedCanonicalBody) {
+        const writer = state?.lastWriter ??
+          context.lastWriter ?? {
+            userId: context.userId,
+            ...(context.userEmail ? { email: context.userEmail } : {}),
+          };
+        const expectedDraftRevision =
+          state?.loadedDraftRevision ?? context.loadedDraftRevision;
+
+        if (typeof expectedDraftRevision !== "number") {
           throw new RuntimeError({
             code: "INVALID_COLLABORATION_CONTEXT",
-            message: "Collaboration disconnect hook is missing a Yjs document.",
+            message:
+              "Collaboration final save is missing expected draft revision.",
             statusCode: 500,
             details: {
               documentId: context.documentId,
@@ -545,70 +638,38 @@ export function createCollaborationRuntimeHooks(
           });
         }
 
-        const nextState = encodeYDocState(document);
-        const nextBody = yDocToMarkdown(document);
-        const currentDraft = await loadDraftDocument(
-          options.contentStore,
-          context,
+        const updated = await options.contentStore.update(
+          scopeFromContext(context),
+          context.documentId,
+          {
+            body: nextBody,
+            updatedBy: writer.userId,
+          },
+          { expectedDraftRevision },
         );
-        let metadata: CollaborationYjsMetadata = {
-          draftRevision: currentDraft.draftRevision,
-          bodyHash: computeCollaborationBodyHash(currentDraft.body),
+
+        metadata = {
+          draftRevision: updated.draftRevision,
+          bodyHash: computeCollaborationBodyHash(updated.body),
         };
 
-        if (nextBody !== currentDraft.body) {
-          const writer = state?.lastWriter ??
-            context.lastWriter ?? {
-              userId: context.userId,
-            };
-          const expectedDraftRevision =
-            state?.loadedDraftRevision ?? context.loadedDraftRevision;
+        await options.lifecycleEvents?.emitContentEvent({
+          event: "content.updated",
+          scope: scopeFromContext(context),
+          document: updated,
+          actor: createLifecycleActor(writer),
+        });
+      }
 
-          if (typeof expectedDraftRevision !== "number") {
-            throw new RuntimeError({
-              code: "INVALID_COLLABORATION_CONTEXT",
-              message:
-                "Collaboration final save is missing expected draft revision.",
-              statusCode: 500,
-              details: {
-                documentId: context.documentId,
-              },
-            });
-          }
+      await options.redisStore.setYjsState(context.documentId, nextState);
+      await options.redisStore.setYjsMetadata(context.documentId, metadata);
 
-          const updated = await options.contentStore.update(
-            scopeFromContext(context),
-            context.documentId,
-            {
-              body: nextBody,
-              updatedBy: writer.userId,
-            },
-            { expectedDraftRevision },
-          );
-
-          metadata = {
-            draftRevision: updated.draftRevision,
-            bodyHash: computeCollaborationBodyHash(updated.body),
-          };
-
-          await options.lifecycleEvents?.emitContentEvent({
-            event: "content.updated",
-            scope: scopeFromContext(context),
-            document: updated,
-            actor: {
-              id: writer.userId,
-              email: writer.email ?? writer.userId,
-            },
-          });
-        }
-
-        await options.redisStore.setYjsState(context.documentId, nextState);
-        await options.redisStore.setYjsMetadata(context.documentId, metadata);
-      } finally {
+      if (
         await options.redisStore.finalizeInactiveRoom(
           context.documentId,
           leaseValue,
-        );
+        )
+      ) {
         roomStates.delete(key);
       }
     },

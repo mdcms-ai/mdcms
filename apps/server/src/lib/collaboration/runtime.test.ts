@@ -15,6 +15,7 @@ import {
   computeCollaborationBodyHash,
   createCollaborationRuntime,
   createCollaborationRuntimeHooks,
+  encodeYDocState,
   markdownToYDoc,
   yDocToMarkdown,
   type CollaborationRuntimeAuthGuard,
@@ -329,13 +330,37 @@ test("onLoadDocument falls back to PostgreSQL and seeds Redis when cache is miss
   assert.equal(context.roomLeaseValue, "lease-1");
 });
 
+test("onLoadDocument rejects documentName mismatches without mutating authenticated context", async () => {
+  const otherDocumentId = "1e747170-3fb2-4386-93da-d7211e57c77dd";
+  const document = createDocument({
+    documentId: otherDocumentId,
+    project: "other-project",
+    environment: "preview",
+  });
+  const { hooks } = createHarness(document);
+  const context = createContext();
+
+  await assert.rejects(
+    hooks.onLoadDocument({
+      context,
+      documentName: `other-project:preview:${otherDocumentId}`,
+    }),
+    (error: unknown) =>
+      error instanceof RuntimeError &&
+      error.code === "COLLABORATION_ROOM_MISMATCH",
+  );
+  assert.equal(context.project, "marketing");
+  assert.equal(context.environment, "draft");
+  assert.equal(context.documentId, DOCUMENT_ID);
+});
+
 test("onLoadDocument returns Redis cached binary when metadata matches", async () => {
   const document = createDocument({
     body: "# Cached draft",
     draftRevision: 12,
   });
   const { hooks, redisStore } = createHarness(document);
-  const cached = new Uint8Array([1, 2, 3, 4]);
+  const cached = encodeYDocState(markdownToYDoc(document.body));
   redisStore.state = cached;
   redisStore.metadata = {
     draftRevision: 12,
@@ -417,7 +442,7 @@ test("beforeHandleMessage allows valid write revalidation", async () => {
   });
 
   assert.equal(authGuard.calls.length, 1);
-  assert.equal(context.lastWriter?.userId, context.userId);
+  assert.equal(context.lastWriter, undefined);
 });
 
 test("beforeHandleMessage rejects revoked sessions and lost write permission with close codes", async () => {
@@ -520,6 +545,31 @@ test("last disconnect skips no-op PostgreSQL save but finalizes TTL and lock", a
   );
 });
 
+test("last disconnect skips no-op PostgreSQL save when serialization normalizes source markdown", async () => {
+  const document = createDocument({
+    body: "# H\nBody",
+    draftRevision: 6,
+  });
+  const { hooks, contentStore, lifecycleEvents, redisStore } =
+    createHarness(document);
+  const context = createContext();
+
+  await hooks.onLoadDocument({ context, documentName: DOCUMENT_ID });
+  await hooks.onDisconnect({
+    clientsCount: 0,
+    context,
+    document: markdownToYDoc(document.body),
+    documentName: DOCUMENT_ID,
+  });
+
+  assert.equal(contentStore.updates.length, 0);
+  assert.equal(lifecycleEvents.events.length, 0);
+  assert.equal(
+    redisStore.calls.some((call) => call.method === "finalizeInactiveRoom"),
+    true,
+  );
+});
+
 test("last disconnect changed body saves once with expected revision, last writer, and lifecycle event", async () => {
   const document = createDocument({
     body: "# Original\n\nBody.",
@@ -535,12 +585,16 @@ test("last disconnect changed body saves once with expected revision, last write
     documentName: DOCUMENT_ID,
     lastContext: createContext({
       userId: "writer-2",
+      userEmail: "writer-2@example.com",
       loadedDraftRevision: context.loadedDraftRevision,
       loadedBodyHash: context.loadedBodyHash,
       roomLeaseValue: context.roomLeaseValue,
     }),
   });
-  context.lastWriter = { userId: "writer-2" };
+  await hooks.beforeHandleMessage({
+    context: createContext({ userId: "reader-after-store" }),
+    documentName: DOCUMENT_ID,
+  });
 
   await hooks.onDisconnect({
     clientsCount: 0,
@@ -556,13 +610,45 @@ test("last disconnect changed body saves once with expected revision, last write
   assert.equal(lifecycleEvents.events.length, 1);
   assert.equal(lifecycleEvents.events[0]?.event, "content.updated");
   assert.equal(lifecycleEvents.events[0]?.actor.id, "writer-2");
+  assert.equal(lifecycleEvents.events[0]?.actor.email, "writer-2@example.com");
   assert.deepEqual(redisStore.metadata, {
     draftRevision: 9,
     bodyHash: computeCollaborationBodyHash(contentStore.document.body),
   });
 });
 
-test("stale draft revision failure does not overwrite and still finalizes room cleanup", async () => {
+test("last disconnect uses neutral lifecycle email when writer email is unavailable", async () => {
+  const document = createDocument({
+    body: "# Original\n\nBody.",
+    draftRevision: 11,
+  });
+  const { hooks, lifecycleEvents } = createHarness(document);
+  const context = createContext();
+
+  await hooks.onLoadDocument({ context, documentName: DOCUMENT_ID });
+  await hooks.onStoreDocument({
+    document: markdownToYDoc("# Changed\n\nWithout email."),
+    documentName: DOCUMENT_ID,
+    lastContext: createContext({
+      userId: "writer-without-email",
+      loadedDraftRevision: context.loadedDraftRevision,
+      loadedBodyHash: context.loadedBodyHash,
+      roomLeaseValue: context.roomLeaseValue,
+    }),
+  });
+
+  await hooks.onDisconnect({
+    clientsCount: 0,
+    context,
+    document: markdownToYDoc("# Changed\n\nWithout email."),
+    documentName: DOCUMENT_ID,
+  });
+
+  assert.equal(lifecycleEvents.events[0]?.actor.id, "writer-without-email");
+  assert.equal(lifecycleEvents.events[0]?.actor.email, "");
+});
+
+test("stale draft revision failure does not overwrite or release active lock", async () => {
   const document = createDocument({
     body: "# Original\n\nBody.",
     draftRevision: 3,
@@ -591,6 +677,6 @@ test("stale draft revision failure does not overwrite and still finalizes room c
   assert.equal(contentStore.document.body, "# External change");
   assert.equal(
     redisStore.calls.some((call) => call.method === "finalizeInactiveRoom"),
-    true,
+    false,
   );
 });
