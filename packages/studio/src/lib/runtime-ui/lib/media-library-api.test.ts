@@ -54,6 +54,9 @@ const listResponse: MediaAssetListResponse = {
     offset: 0,
     hasMore: false,
   },
+  storage: {
+    objectStorageConfigured: true,
+  },
 };
 
 test("list fetches routed media assets with cookie auth and provided query params", async () => {

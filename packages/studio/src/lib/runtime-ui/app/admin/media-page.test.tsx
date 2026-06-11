@@ -76,6 +76,9 @@ const audioAsset: MediaAsset = {
   uploadedAt: "2026-06-05T12:10:00.000Z",
 };
 
+const configuredStorage = { objectStorageConfigured: true } as const;
+const unconfiguredStorage = { objectStorageConfigured: false } as const;
+
 const mediaUsers: UserWithGrants[] = [
   {
     id: "user_123",
@@ -302,6 +305,7 @@ test("MediaPage renders empty state without active filters from a cached list re
         offset: 0,
         hasMore: false,
       },
+      storage: configuredStorage,
     },
   );
 
@@ -310,6 +314,42 @@ test("MediaPage renders empty state without active filters from a cached list re
   assert.match(markup, /data-mdcms-media-library-state="empty"/);
   assert.match(markup, /No media yet/);
   assert.match(markup, /Drop files here or use Upload media to add assets/);
+});
+
+test("MediaPage warns immediately when object storage is not configured", () => {
+  const queryClient = createQueryClient();
+  queryClient.setQueryData(
+    createMediaLibraryQueryKey({
+      project: "marketing-site",
+      environment: "production",
+      serverUrl: API_BASE_URL,
+      authMode: "cookie",
+      authCacheKey: null,
+      filters: defaultFilters,
+      sort: "newest",
+      offset: 0,
+    }),
+    {
+      data: [],
+      pagination: {
+        total: 0,
+        limit: MEDIA_LIBRARY_PAGE_SIZE,
+        offset: 0,
+        hasMore: false,
+      },
+      storage: unconfiguredStorage,
+    },
+  );
+
+  const markup = renderWithProviders({
+    queryClient,
+    capabilities: { canUploadMedia: true },
+  });
+
+  assert.match(markup, /Media object storage is not configured\./);
+  assert.match(markup, /role="alert"/);
+  assert.doesNotMatch(markup, />Upload</);
+  assert.doesNotMatch(markup, /Drop files here or use Upload media/);
 });
 
 test("MediaPage renders known media uploaders with user display names", () => {
@@ -333,6 +373,7 @@ test("MediaPage renders known media uploaders with user display names", () => {
         offset: 0,
         hasMore: false,
       },
+      storage: configuredStorage,
     },
   );
   queryClient.setQueryData(["users", API_BASE_URL], mediaUsers);
@@ -421,6 +462,7 @@ test("MediaLibraryPageView renders no-match state with active filters", () => {
         offset: 0,
         hasMore: false,
       },
+      storage: configuredStorage,
     },
   });
 
@@ -470,6 +512,7 @@ test("MediaLibraryPageView renders the locked gallery layout, collapsed filters,
         offset: 0,
         hasMore: false,
       },
+      storage: configuredStorage,
     },
   });
 
@@ -539,6 +582,7 @@ test("MediaLibraryPageView renders upload controls and progress when media uploa
             offset: 0,
             hasMore: false,
           },
+          storage: configuredStorage,
         },
         canUploadMedia: true,
         uploadState: {
@@ -583,6 +627,7 @@ test("MediaLibraryPageView renders per-file rows in the docked upload panel", ()
             offset: 0,
             hasMore: false,
           },
+          storage: configuredStorage,
         },
         canUploadMedia: true,
         uploadState: {
@@ -629,6 +674,7 @@ test("MediaLibraryPageView exposes per-asset selection only when media delete is
         offset: 0,
         hasMore: false,
       },
+      storage: configuredStorage,
     },
     canUploadMedia: false,
     uploadState: { status: "idle" as const },
@@ -682,6 +728,7 @@ test("MediaLibraryPageView renders a dismissible asset details drawer", () => {
         offset: 0,
         hasMore: false,
       },
+      storage: configuredStorage,
     },
   });
 
@@ -700,6 +747,7 @@ test("MediaLibraryPageView renders pagination actions as buttons", () => {
         offset: 30,
         hasMore: true,
       },
+      storage: configuredStorage,
     },
   });
 

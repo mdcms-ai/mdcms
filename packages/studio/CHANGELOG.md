@@ -1,5 +1,28 @@
 # @mdcms/studio
 
+## 0.5.0
+
+### Minor Changes
+
+- eb598b2: Add schema file field types under fieldTypes, move references to fieldTypes.reference, and expand file fields to media assets on reads.
+
+### Patch Changes
+
+- e873553: Add media asset listing contracts and Studio media library.
+- e873553: Add Studio media upload settings UI.
+- e873553: Add media settings and media asset API contracts.
+- e873553: Add Studio editor media upload insertion.
+- e873553: Add bulk content operations API and Studio controls
+- e873553: Add bulk operation input schema and Zod capability validation.
+- Updated dependencies [e873553]
+- Updated dependencies [e873553]
+- Updated dependencies [15fdaee]
+- Updated dependencies [e873553]
+- Updated dependencies [e873553]
+- Updated dependencies [eb598b2]
+- Updated dependencies [8d8feb9]
+  - @mdcms/shared@0.5.0
+
 ## 0.4.0
 
 ### Minor Changes

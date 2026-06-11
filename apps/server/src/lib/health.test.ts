@@ -537,6 +537,38 @@ test("GET /api/v1/actions rejects disallowed Studio origins", async () => {
   assert.equal(body.code, "FORBIDDEN_ORIGIN");
 });
 
+test("GET /api/v1/auth/cli/login/authorize is not governed by Studio origins", async () => {
+  const handler = createServerRequestHandler({
+    env: {
+      ...baseEnv,
+      MDCMS_STUDIO_ALLOWED_ORIGINS: "http://localhost:4173",
+    },
+    now: () => new Date("2026-02-20T00:00:10.000Z"),
+    configureApp: (app) => {
+      const serverApp = app as {
+        get?: (path: string, handler: () => Response) => unknown;
+      };
+
+      serverApp.get?.(
+        "/api/v1/auth/cli/login/authorize",
+        () => new Response("cli authorize", { status: 200 }),
+      );
+    },
+  });
+
+  const response = await handler(
+    new Request("http://localhost/api/v1/auth/cli/login/authorize", {
+      headers: {
+        origin: "http://localhost:9999",
+      },
+    }),
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(await response.text(), "cli authorize");
+  assert.equal(response.headers.get("access-control-allow-origin"), null);
+});
+
 test("GET /api/v1/studio/assets/:buildId/* returns runtime asset when present", async () => {
   const encoder = new TextEncoder();
   const handler = createServerRequestHandler({

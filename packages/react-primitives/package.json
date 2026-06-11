@@ -1,6 +1,6 @@
 {
   "name": "@mdcms/react-primitives",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Internal React primitives for MDCMS MDX rendering",
   "private": true,
   "type": "module",
