@@ -28,10 +28,13 @@ type BunRuntime = {
 declare const Bun: BunRuntime;
 
 const env = parseServerEnv(process.env);
-const { dbConnection, handleRequest, collaborationWebSocket } =
-  await prepareServerRequestHandlerWithModules({
-    env: process.env,
-  });
+const {
+  handleRequest,
+  collaborationWebSocket,
+  shutdown: shutdownRuntime,
+} = await prepareServerRequestHandlerWithModules({
+  env: process.env,
+});
 
 const server = Bun.serve({
   port: env.PORT,
@@ -50,7 +53,8 @@ async function shutdown(signal: NodeJS.Signals): Promise<void> {
   isShuttingDown = true;
   console.info(`[server] received ${signal}, shutting down`);
   try {
-    await dbConnection.close();
+    server.stop(false);
+    await shutdownRuntime();
   } finally {
     server.stop(true);
   }

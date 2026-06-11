@@ -124,6 +124,7 @@ export type ServerRequestHandlerWithModulesResult = {
   moduleLoadReport: ServerModuleLoadReport;
   dbConnection: DatabaseConnection;
   dal: ContentDAL;
+  shutdown: () => Promise<void>;
 };
 
 type RuntimeMediaObjectStoreEnv = Partial<
@@ -193,6 +194,53 @@ export function createCollaborationGuardedAiContentStore(
           return restore(scope, documentId);
         }
       : undefined,
+  };
+}
+
+export async function shutdownServerRuntime({
+  collaborationWebSocketTransport,
+  dbConnection,
+}: {
+  collaborationWebSocketTransport: Pick<
+    CollaborationWebSocketTransport,
+    "shutdown"
+  >;
+  dbConnection: Pick<DatabaseConnection, "close">;
+}): Promise<void> {
+  let collaborationDrainError: unknown;
+
+  try {
+    await collaborationWebSocketTransport.shutdown();
+  } catch (error) {
+    collaborationDrainError = error;
+  }
+
+  await dbConnection.close();
+
+  if (collaborationDrainError) {
+    throw collaborationDrainError;
+  }
+}
+
+function createServerRuntimeShutdown({
+  collaborationWebSocketTransport,
+  dbConnection,
+}: {
+  collaborationWebSocketTransport: Pick<
+    CollaborationWebSocketTransport,
+    "shutdown"
+  >;
+  dbConnection: Pick<DatabaseConnection, "close">;
+}): () => Promise<void> {
+  let shutdownPromise: Promise<void> | undefined;
+
+  return () => {
+    shutdownPromise ??= shutdownServerRuntime({
+      collaborationWebSocketTransport,
+      dbConnection,
+    });
+
+    return shutdownPromise;
   };
 }
 
@@ -767,6 +815,10 @@ export function createServerRequestHandlerWithModules(
     moduleLoadReport,
     dbConnection,
     dal,
+    shutdown: createServerRuntimeShutdown({
+      collaborationWebSocketTransport,
+      dbConnection,
+    }),
   };
 }
 
@@ -864,18 +916,23 @@ export async function prepareServerRequestHandlerWithModules(
   }
 
   const closeDatabaseConnection = runtime.dbConnection.close;
+  const dbConnection = {
+    ...runtime.dbConnection,
+    close: async () => {
+      try {
+        await closeDatabaseConnection();
+      } finally {
+        await collaborationRedisDependency.close?.();
+      }
+    },
+  };
 
   return {
     ...runtime,
-    dbConnection: {
-      ...runtime.dbConnection,
-      close: async () => {
-        try {
-          await closeDatabaseConnection();
-        } finally {
-          await collaborationRedisDependency.close?.();
-        }
-      },
-    },
+    dbConnection,
+    shutdown: createServerRuntimeShutdown({
+      collaborationWebSocketTransport: runtime.collaborationWebSocketTransport,
+      dbConnection,
+    }),
   };
 }

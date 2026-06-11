@@ -31,6 +31,9 @@ type HocuspocusConnectionServer = {
     request: Request,
     defaultContext: CollaborationRuntimeContext,
   ) => HocuspocusClientConnection;
+  closeConnections?: (documentName?: string) => void;
+  flushPendingStores?: () => void;
+  getDocumentsCount?: () => number;
 };
 
 export type CollaborationAuthHandshakeGuard = {
@@ -51,6 +54,7 @@ export type CollaborationWebSocketTransport = {
     server: BunUpgradeServer,
   ) => Promise<Response | undefined>;
   websocket: CollaborationWebSocketHandler;
+  shutdown: () => Promise<void>;
 };
 
 const COLLABORATION_PATHNAME = "/api/v1/collaboration";
@@ -58,8 +62,10 @@ const COLLABORATION_SESSION_INVALID_REASON =
   "Collaboration session is no longer valid.";
 const COLLABORATION_WRITE_FORBIDDEN_REASON =
   "Collaboration write access is no longer allowed.";
-
-const peerConnections = new WeakMap<Peer, HocuspocusClientConnection>();
+const COLLABORATION_SHUTDOWN_CLOSE_CODE = 1001;
+const COLLABORATION_SHUTDOWN_CLOSE_REASON = "Server shutting down.";
+const COLLABORATION_DRAIN_POLL_INTERVAL_MS = 10;
+const COLLABORATION_DRAIN_TIMEOUT_MS = 10_000;
 
 export function isCollaborationWebSocketUpgradeRequest(
   request: Request,
@@ -149,9 +155,35 @@ function resolveCloseEventFromOutgoingMessage(
   return undefined;
 }
 
+async function waitForCollaborationDocumentsToUnload(
+  server: HocuspocusConnectionServer | undefined,
+): Promise<void> {
+  if (!server?.getDocumentsCount) {
+    return;
+  }
+
+  const startedAt = Date.now();
+
+  while (server.getDocumentsCount() > 0) {
+    if (Date.now() - startedAt > COLLABORATION_DRAIN_TIMEOUT_MS) {
+      throw new RuntimeError({
+        code: "COLLABORATION_SHUTDOWN_TIMEOUT",
+        message: "Timed out waiting for collaboration documents to unload.",
+        statusCode: 500,
+      });
+    }
+
+    await new Promise((resolve) =>
+      setTimeout(resolve, COLLABORATION_DRAIN_POLL_INTERVAL_MS),
+    );
+  }
+}
+
 export function createCollaborationWebSocketTransport(
   options: CreateCollaborationWebSocketTransportOptions,
 ): CollaborationWebSocketTransport {
+  const peerConnections = new WeakMap<Peer, HocuspocusClientConnection>();
+  const openPeers = new Set<Peer>();
   const adapter = bunAdapter({
     hooks: {
       upgrade: async (request) => {
@@ -184,6 +216,7 @@ export function createCollaborationWebSocketTransport(
         };
       },
       open: (peer) => {
+        openPeers.add(peer);
         const context = collaborationContextFromPeer(peer);
 
         if (!context || !options.runtime) {
@@ -221,6 +254,7 @@ export function createCollaborationWebSocketTransport(
       close: (peer, event) => {
         const connection = peerConnections.get(peer);
         peerConnections.delete(peer);
+        openPeers.delete(peer);
         connection?.handleClose(
           event.code === undefined && event.reason === undefined
             ? undefined
@@ -242,5 +276,21 @@ export function createCollaborationWebSocketTransport(
       return adapter.handleUpgrade(request, server);
     },
     websocket: adapter.websocket,
+    shutdown: async () => {
+      const server = options.runtime?.server;
+
+      server?.closeConnections?.();
+
+      for (const peer of Array.from(openPeers)) {
+        peer.close(
+          COLLABORATION_SHUTDOWN_CLOSE_CODE,
+          COLLABORATION_SHUTDOWN_CLOSE_REASON,
+        );
+      }
+
+      server?.flushPendingStores?.();
+      await waitForCollaborationDocumentsToUnload(server);
+      openPeers.clear();
+    },
   };
 }

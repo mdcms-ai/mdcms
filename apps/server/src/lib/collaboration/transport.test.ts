@@ -285,3 +285,64 @@ test("collaboration transport upgrades and delegates open, message, and close to
     "close:1000:done",
   ]);
 });
+
+test("collaboration transport shutdown closes peers and waits for documents to unload", async () => {
+  const context = createContext({ userId: "editor-1" });
+  const { calls, server } = createBunServerStub();
+  const events: string[] = [];
+  let documentCount = 1;
+  const transport = createCollaborationWebSocketTransport({
+    authGuard: createAuthGuard({ ok: true, context }),
+    runtime: {
+      server: {
+        handleConnection() {
+          events.push("handleConnection");
+
+          return {
+            handleMessage() {
+              events.push("handleMessage");
+            },
+            handleClose() {
+              events.push("handleClose");
+            },
+          };
+        },
+        closeConnections() {
+          events.push("closeConnections");
+        },
+        flushPendingStores() {
+          events.push("flushPendingStores");
+          queueMicrotask(() => {
+            events.push("unloaded");
+            documentCount = 0;
+          });
+        },
+        getDocumentsCount() {
+          events.push(`getDocumentsCount:${documentCount}`);
+          return documentCount;
+        },
+      },
+    },
+  });
+
+  await transport.handleFetchUpgrade(createUpgradeRequest(), server as never);
+
+  assert.equal(calls.length, 1);
+
+  const { socket, events: socketEvents } = createBunSocketStub(
+    calls[0]!.options.data,
+  );
+
+  transport.websocket.open(socket as never);
+  await transport.shutdown();
+
+  assert.deepEqual(events, [
+    "handleConnection",
+    "closeConnections",
+    "flushPendingStores",
+    "getDocumentsCount:1",
+    "unloaded",
+    "getDocumentsCount:0",
+  ]);
+  assert.deepEqual(socketEvents, ["close:1001:Server shutting down."]);
+});

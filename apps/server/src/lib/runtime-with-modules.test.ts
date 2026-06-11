@@ -19,6 +19,7 @@ import {
   createRuntimeMediaObjectStore,
   createServerRequestHandlerWithModules,
   prepareServerRequestHandlerWithModules,
+  shutdownServerRuntime,
 } from "./runtime-with-modules.js";
 
 const env = {
@@ -533,4 +534,23 @@ test("prepared server handleRequest preserves HTTP handler calls and maps unavai
       }
     },
   );
+});
+
+test("shutdownServerRuntime drains collaboration before closing database", async () => {
+  const calls: string[] = [];
+
+  await shutdownServerRuntime({
+    collaborationWebSocketTransport: {
+      async shutdown() {
+        calls.push("collaboration:shutdown");
+      },
+    },
+    dbConnection: {
+      async close() {
+        calls.push("db:close");
+      },
+    },
+  });
+
+  assert.deepEqual(calls, ["collaboration:shutdown", "db:close"]);
 });
