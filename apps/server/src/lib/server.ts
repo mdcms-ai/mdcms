@@ -75,6 +75,7 @@ const STUDIO_BROWSER_ROUTE_PREFIXES = [
   "/api/v1/webhooks",
   "/api/v1/ai",
 ] as const;
+const CLI_LOGIN_ROUTE_PREFIX = "/api/v1/auth/cli/login";
 
 function matchesScopedPathPrefix(pathname: string, prefix: string): boolean {
   if (!pathname.startsWith(prefix)) {
@@ -89,6 +90,10 @@ function matchesScopedPathPrefix(pathname: string, prefix: string): boolean {
 }
 
 function isStudioBrowserRoute(pathname: string): boolean {
+  if (matchesScopedPathPrefix(pathname, CLI_LOGIN_ROUTE_PREFIX)) {
+    return false;
+  }
+
   return STUDIO_BROWSER_ROUTE_PREFIXES.some((prefix) =>
     matchesScopedPathPrefix(pathname, prefix),
   );
