@@ -221,6 +221,7 @@ export type SamlProviderConfig = {
 export type ServerEnv = CoreEnv & {
   PORT: number;
   SERVICE_NAME: string;
+  REDIS_URL?: string;
   S3_ENDPOINT?: string;
   S3_ACCESS_KEY?: string;
   S3_SECRET_KEY?: string;
@@ -334,6 +335,20 @@ function createS3InvalidEnvError(
     message,
     details: {
       key,
+      value,
+    },
+  });
+}
+
+function createRedisInvalidEnvError(
+  value: unknown,
+  message: string,
+): RuntimeError {
+  return new RuntimeError({
+    code: "INVALID_ENV",
+    message,
+    details: {
+      key: "REDIS_URL",
       value,
     },
   });
@@ -481,6 +496,34 @@ function parseS3PublicBaseUrl(
       "S3_PUBLIC_BASE_URL must be an absolute http(s) URL without query or hash.",
     );
   }
+}
+
+function parseRedisUrl(rawValue: string | undefined): string | undefined {
+  const value = parseOptionalTrimmedEnvString(rawValue);
+
+  if (!value) {
+    return undefined;
+  }
+
+  let url: URL;
+
+  try {
+    url = new URL(value);
+  } catch {
+    throw createRedisInvalidEnvError(
+      rawValue,
+      "REDIS_URL must be an absolute redis:// or rediss:// URL.",
+    );
+  }
+
+  if (url.protocol !== "redis:" && url.protocol !== "rediss:") {
+    throw createRedisInvalidEnvError(
+      rawValue,
+      "REDIS_URL must use redis or rediss protocol.",
+    );
+  }
+
+  return url.toString();
 }
 
 function readIssueValue(
@@ -956,10 +999,12 @@ export function parseServerEnv(rawEnv: NodeJS.ProcessEnv): ServerEnv {
   const s3SecretKey = parseOptionalTrimmedEnvString(rawEnv.S3_SECRET_KEY);
   const s3Bucket = parseOptionalTrimmedEnvString(rawEnv.S3_BUCKET);
   const s3PublicBaseUrl = parseS3PublicBaseUrl(rawEnv.S3_PUBLIC_BASE_URL);
+  const redisUrl = parseRedisUrl(rawEnv.REDIS_URL);
   assertUniqueSsoProviderIds(oidcProviders, samlProviders);
 
   return extendEnv(core, () => ({
     ...parsedExtension.data,
+    REDIS_URL: redisUrl,
     S3_ENDPOINT: s3Endpoint,
     S3_ACCESS_KEY: s3AccessKey,
     S3_SECRET_KEY: s3SecretKey,

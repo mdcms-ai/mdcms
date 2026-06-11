@@ -36,6 +36,7 @@
     "better-auth": "^1.5.1",
     "drizzle-orm": "^0.45.1",
     "elysia": "^1.4.25",
+    "ioredis": "^5.11.1",
     "nodemailer": "^8.0.5",
     "postgres": "^3.4.8",
     "tslib": "^2.3.0",

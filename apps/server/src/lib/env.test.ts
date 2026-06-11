@@ -109,6 +109,35 @@ test("parseServerEnv leaves preview token secret undefined when absent", () => {
   assert.equal(env.MDCMS_PREVIEW_TOKEN_SECRET, undefined);
 });
 
+test("parseServerEnv parses optional REDIS_URL", () => {
+  const env = parseServerEnv({
+    REDIS_URL: " redis://localhost:6379/0 ",
+  } as NodeJS.ProcessEnv);
+
+  assert.equal(env.REDIS_URL, "redis://localhost:6379/0");
+});
+
+test("parseServerEnv leaves REDIS_URL undefined when absent or blank", () => {
+  assert.equal(parseServerEnv({} as NodeJS.ProcessEnv).REDIS_URL, undefined);
+  assert.equal(
+    parseServerEnv({ REDIS_URL: "   " } as NodeJS.ProcessEnv).REDIS_URL,
+    undefined,
+  );
+});
+
+test("parseServerEnv rejects invalid REDIS_URL values", () => {
+  assert.throws(
+    () =>
+      parseServerEnv({
+        REDIS_URL: "not-a-url",
+      } as NodeJS.ProcessEnv),
+    (error: unknown) =>
+      error instanceof RuntimeError &&
+      error.code === "INVALID_ENV" &&
+      error.details?.key === "REDIS_URL",
+  );
+});
+
 test("parseServerEnv parses S3 media storage settings", () => {
   const env = parseServerEnv({
     S3_ENDPOINT: " http://localhost:9000/ ",
