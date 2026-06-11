@@ -2,18 +2,18 @@
 status: live
 canonical: true
 created: 2026-03-11
-last_updated: 2026-06-02
+last_updated: 2026-06-11
 ---
 
 # SPEC-007 Editor, MDX, and Collaboration
 
 This is the live canonical document under `docs/`.
 
-## Editor & Post-MVP Real-Time Collaboration
+## Editor & Collaboration
 
 ### Editor Engine
 
-The content editor is built on **TipTap**. MVP ships a single-user editor with Markdown/MDX serialization, draft autosave, and explicit publish/version-history flows. **Yjs/Hocuspocus-based multi-user collaboration is intentionally deferred to Post-MVP.**
+The content editor is built on **TipTap**. MDCMS supports Markdown/MDX serialization, explicit publish/version-history flows, and a Hocuspocus-backed collaboration runtime for active Studio document rooms. Presence indicators and periodic/debounced PostgreSQL autosave from active collaboration rooms remain deferred.
 
 > **TipTap & ProseMirror:** TipTap is a framework built on top of ProseMirror (the low-level editing engine by Marijn Haverbeke). TipTap provides the extension system, React integration, NodeViews, and developer-friendly APIs — but under the hood, every TipTap document is a ProseMirror document. When this spec refers to "ProseMirror document model," "node types," or "schema," it means TipTap's internal data structures inherited from ProseMirror. You interact with them through TipTap's API; direct ProseMirror imports are only needed for advanced custom extensions.
 
@@ -32,29 +32,33 @@ If the parser implementation changes again, it must be swapped behind the same a
 
 **Round-trip idempotency requirement:** The serialization pipeline must satisfy `serialize(parse(markdown)) === markdown` for all content the schema produces. This prevents phantom diffs, where a cold-start load/save cycle produces byte-different but semantically identical content and causes unnecessary `draft_revision` churn. The CI suite must include round-trip fidelity tests for each schema type.
 
-### Post-MVP Collaboration Architecture
-
-The following subsection is a **future design target**, not an MVP transport contract.
+### Collaboration Architecture
 
 ```mermaid
 flowchart LR
-  EA["Editor A"] -->|"WebSocket + session cookie"| API["API Server (Elysia HTTP + Hocuspocus WS in-process)"]
+  EA["Editor A"] -->|"WebSocket + session cookie"| API["API Server (Elysia HTTP + Hocuspocus via crossws bridge)"]
   EB["Editor B"] -->|"WebSocket + session cookie"| API
   API --> REDIS["Redis (Yjs state)"]
-  API -->|"On auto-save / publish"| PG["PostgreSQL (mutable heads + version rows)"]
+  API -->|"Last-disconnect final save / publish"| PG["PostgreSQL (mutable heads + version rows)"]
 ```
 
-Post-MVP design target:
+Active collaboration transport contract:
 
 - WebSocket endpoint: `/api/v1/collaboration`.
-- Clients authenticate to WebSocket using the same Studio session (cookie-based) with strict `Origin` checking.
-- Collaboration runs in the same Bun process as the API server via Hocuspocus + `ws` polyfill.
-- Connection target is explicit via query params: `project`, `environment`, `documentId`.
-- API keys are rejected for collaboration sockets.
+- Clients authenticate to the collaboration socket using the same Studio Session cookie with strict `Origin` checking.
+- Collaboration runs in the same Bun process as the API server via Hocuspocus through a Bun-compatible `crossws` bridge.
+- Connection target is explicit via query params: `project`, `environment`, and `documentId`. All three are required.
+- API keys are rejected for collaboration sockets; the endpoint accepts session-cookie auth only.
+- Redis stores active Yjs state and room metadata under namespaced keys:
+  - `mdcms:collaboration:yjs:{documentId}` — binary Yjs state
+  - `mdcms:collaboration:yjs-meta:{documentId}` — source draft metadata, including the source `draftRevision` and body hash
+  - `mdcms:collaboration:active:{documentId}` — active-room heartbeat lease
+- The active-room key is a heartbeat lease held only while collaborators are connected. It is distinct from the inactive Yjs cache, which may remain for 30 minutes after the last disconnect.
+- If Redis is unavailable, collaboration upgrade requests fail before upgrade with `503` and error code `COLLABORATION_UNAVAILABLE`; the rest of the HTTP API can still boot and serve non-collaboration traffic.
 
-#### Post-MVP Collaboration Authorization Flow
+#### Collaboration Authorization Flow
 
-When the collaboration transport is implemented, WebSocket connect (`/api/v1/collaboration?project=...&environment=...&documentId=...`) must:
+WebSocket connect (`/api/v1/collaboration?project=...&environment=...&documentId=...`) must:
 
 1. Validate `Origin` against the configured Studio allowlist (reject if mismatch).
 2. Validate Studio session cookie with better-auth (reject unauthorized).
@@ -62,13 +66,13 @@ When the collaboration transport is implemented, WebSocket connect (`/api/v1/col
 4. Load target `documentId` and assert it belongs to `(project, environment)`.
 5. Evaluate folder/path RBAC for that document (`documents.path`) and require draft read/write access for collaboration.
 6. Attach `{userId, sessionId, project, environment, documentId, role}` to the socket context.
-7. On each write path (`onStoreDocument`, publish) re-check session validity; close socket (`4401`) if revoked/expired, or (`4403`) if permissions no longer allow access.
+7. On each write path, including pre-apply message handling and `onStoreDocument`, re-check session validity and permissions; close the socket with `4401` if the Session is revoked or expired, or `4403` if permissions no longer allow write access.
 
 ### State Management
 
-**MVP source of truth hierarchy:** PostgreSQL `body` (markdown/MDX) is the canonical source of truth. The editor loads content from `documents.body`, maintains local TipTap state in the browser, and persists debounced draft saves back to PostgreSQL. Redis is not part of the MVP editor data path.
+**Source of truth hierarchy:** PostgreSQL `body` (markdown/MDX) is the canonical durable source of truth. During an active document room, Redis holds ephemeral Yjs state for real-time editing and PostgreSQL is updated only by the final save after the last collaborator disconnects. Publish flows read from PostgreSQL and remain blocked while the active collaboration lock exists.
 
-**MVP document load/save cycle:**
+**Single-user document load/save cycle:**
 
 ```
 1. Load `body` from documents in PostgreSQL.
@@ -77,17 +81,30 @@ When the collaboration transport is implemented, WebSocket connect (`/api/v1/col
 4. UPDATE documents SET body = $1, draft_revision = draft_revision + 1, has_unpublished_changes = TRUE.
 ```
 
-**Post-MVP collaboration cache design:** When multi-user editing is reprioritized, Redis-backed Yjs state remains ephemeral and PostgreSQL remains canonical. The Yjs binary is never stored in PostgreSQL, and `onLoadDocument`/`onStoreDocument` must continue to rebuild from or flush back to canonical markdown/MDX text.
+**Collaboration cache design:** Redis-backed Yjs state is ephemeral and PostgreSQL remains canonical. The Yjs binary is never stored in PostgreSQL.
+
+- `onLoadDocument` may use Redis Yjs state only when `mdcms:collaboration:yjs-meta:{documentId}` matches the current PostgreSQL draft head. Metadata must match the current draft revision and body hash. If metadata is missing or stale, the room is rebuilt from PostgreSQL markdown/MDX and Redis state/metadata are replaced.
+- `onStoreDocument` persists only binary Yjs state and matching metadata to Redis. It must never persist Yjs binary to PostgreSQL.
+- While a room is active, the server clears inactive-cache TTLs on the Yjs state/meta keys and maintains `mdcms:collaboration:active:{documentId}` as a heartbeat lease.
+- After the last collaborator disconnects, the server serializes the current Y.Doc to markdown/MDX and performs a final draft save only when the serialized body differs from the current PostgreSQL draft body. A no-op final save must not increment `draft_revision`.
+- Final saves are attributed to the last actual writer in the room, not merely the last disconnecting user.
+- Final saves use the expected draft revision from room load/save metadata and fail closed on stale revision instead of overwriting newer PostgreSQL content.
+- If a final save updates the database, it emits the existing `content.updated` lifecycle event.
+- After last-disconnect cleanup, the server sets a 30-minute TTL on `mdcms:collaboration:yjs:{documentId}` and `mdcms:collaboration:yjs-meta:{documentId}`, then removes `mdcms:collaboration:active:{documentId}`.
+
+#### Active Collaboration Lock
+
+Existing-document mutations must fail while `mdcms:collaboration:active:{documentId}` exists. The lock applies to update, move, restore, restore-version, publish, unpublish, delete, bulk equivalents, and server content-store writes from AI or module surfaces. Reads and new document creation remain allowed. The content API error contract is defined in SPEC-003.
 
 ### Presence Awareness (Post-MVP)
 
-Presence awareness is deferred to Post-MVP. When implemented, the server will track:
+Presence awareness is deferred. When implemented, the server will track:
 
 - Which users are online
 - Which document each user is currently viewing or editing
 - Cursor positions and selections within collaborative editing sessions
 
-Presence indicators belong in the content list and editor only after the collaboration transport exists.
+Presence indicators belong in the content list and editor only after the presence contract exists.
 
 ### Saving
 
@@ -100,7 +117,7 @@ There are two distinct save operations:
   current frontmatter draft state from the schema-driven `Properties` tab.
 - `UPDATE`s the `documents` row in place, sets `has_unpublished_changes = TRUE`, and increments `draft_revision`. No version history is created.
 - Silent — no UI indication beyond a subtle "Saved" indicator.
-- Does not depend on Redis, WebSocket sessions, or webhook fan-out in MVP.
+- Does not depend on Redis, WebSocket sessions, or webhook fan-out in single-user editing mode.
 - Frontmatter-only edits and body-only edits use the same draft-save pipeline
   and the same unsaved/saving/saved state machine.
 
@@ -817,8 +834,8 @@ controls derived from `catalog.components[*].extractedProps`.
 
 ## Collaboration Endpoints
 
-These routes are **Post-MVP**. They are intentionally omitted from the canonical MVP endpoint appendix in §24.
+The collaboration transport is a WebSocket upgrade route mounted under the versioned API prefix. It is session-cookie only and rejects API-key authentication.
 
-| Method | Endpoint                                                    | Description                                                                 |
-| ------ | ----------------------------------------------------------- | --------------------------------------------------------------------------- |
-| `WS`   | `/collaboration?project=...&environment=...&documentId=...` | Open real-time collaboration socket (session cookie required, no API keys). |
+| Method | Endpoint                                                           | Description                                                                                                      |
+| ------ | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| `WS`   | `/api/v1/collaboration?project=...&environment=...&documentId=...` | Open real-time collaboration socket (Session cookie required, API keys rejected, explicit document room target). |

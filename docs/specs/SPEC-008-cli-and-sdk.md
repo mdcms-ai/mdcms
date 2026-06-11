@@ -2,7 +2,7 @@
 status: live
 canonical: true
 created: 2026-03-11
-last_updated: 2026-06-09
+last_updated: 2026-06-11
 ---
 
 # SPEC-008 CLI and SDK
@@ -382,6 +382,7 @@ The manifest is flushed atomically (via `writeScopedManifestAtomic`) after each 
 - **Schema hash requirement:** Before sending content mutation requests whose endpoint contract requires schema validation, `cms push` reads the schema hash from `.mdcms/schema/<project>.<environment>.json` (see SPEC-004 "Local Schema State File"). The common validated mutations are create requests, update requests, and bulk `move` operations that modify content paths; the server endpoint contract determines the final required set. If the file does not exist, the same interactive/non-interactive flow as schema drift applies: in TTY mode push prompts once to sync schema from the server; in non-interactive mode push fails closed unless `--sync-schema` is supplied. If sync succeeds the local state file is created and push continues; if sync fails or is declined, push exits 1 with zero content writes. The hash is sent as `x-mdcms-schema-hash` on create/update requests and on any bulk `move` operations that `cms push` performs.
 - **Schema mismatch handling:** With preflight active, the per-doc `SCHEMA_HASH_MISMATCH` (`409`) path covers race conditions only — a concurrent sync changed the server hash between preflight and content writes. Failed documents are reported with reason code `schema_hash_mismatch`; the exit summary directs the developer to re-run `cms push` rather than `cms schema sync`, since the local state may already be fresh. Other documents in the same push run continue (partial success).
 - **Path conflict handling:** If the server returns `CONTENT_PATH_CONFLICT` (`409`) for a document (update, create, or new-file), that document is reported as failed with reason code `content_path_conflict`. The exit summary directs the developer to run `cms pull` to re-sync the manifest.
+- **Active collaboration handling:** If the server returns `DOCUMENT_COLLABORATION_ACTIVE` (`409`) for a known document, that document is reported as failed with reason code `collaboration_active`. Other documents in the same push run continue. The exit summary tells the developer to wait for the active Studio collaboration session to close before retrying the locked document.
 - **Draft optimistic concurrency:** If the server's current `draft_revision` differs from the base draft revision in the manifest, the push is **rejected** for that document with reason code `stale_draft_revision`. The developer must `cms pull` first, then re-apply their changes.
 - On success, the server updates `documents`, increments `draft_revision`, and does not create new `document_versions` rows.
 - Optional `--validate` flag runs schema validation locally before pushing. Validation covers both changed and selected new documents. Because preflight has already normalized local vs server schema state (or aborted), the old "local schema differs from last synced" warning inside `--validate` is no longer needed.

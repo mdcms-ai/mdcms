@@ -2,7 +2,7 @@
 status: live
 canonical: true
 created: 2026-03-11
-last_updated: 2026-06-05
+last_updated: 2026-06-11
 ---
 
 # SPEC-011 Local Development and Operations
@@ -196,5 +196,17 @@ bundle automatically and make the new bundle available without restarting the
 compose stack or the long-running `dev` service.
 
 This seed key is intended for local demo UX only and does not replace normal CLI login/logout flows.
+
+### Collaboration Redis Operations
+
+The collaboration runtime requires `REDIS_URL`. If Redis is not configured or cannot initialize, the server can still boot for non-collaboration HTTP traffic, but collaboration upgrade requests fail with `COLLABORATION_UNAVAILABLE`.
+
+Collaboration uses three namespaced Redis keys per document:
+
+- `mdcms:collaboration:yjs:{documentId}` stores the binary Yjs state.
+- `mdcms:collaboration:yjs-meta:{documentId}` stores cache metadata for the PostgreSQL draft head used to build or last save the Yjs state.
+- `mdcms:collaboration:active:{documentId}` stores the active-room heartbeat lease while collaborators are connected.
+
+The active-room lock is distinct from the inactive Yjs cache. The active lock exists only while a document room has connected collaborators and blocks existing-document mutations. The Yjs state and metadata keys may remain after disconnect so a recently closed room can reopen quickly; after the last collaborator disconnects, both inactive cache keys receive a 30-minute TTL and the active-room lock is removed.
 
 ---
