@@ -135,6 +135,8 @@ class FakeRedisStore implements CollaborationRuntimeRedisStore {
   state: Uint8Array | null = null;
   metadata: { draftRevision: number; bodyHash: string } | null = null;
   acquireActiveLockResult = true;
+  heartbeatActiveLockResult = true;
+  finalizeInactiveRoomResult = true;
   readonly calls: Array<{
     method: string;
     documentId: string;
@@ -194,7 +196,7 @@ class FakeRedisStore implements CollaborationRuntimeRedisStore {
     leaseValue: string,
   ): Promise<boolean> {
     this.calls.push({ method: "heartbeatActiveLock", documentId, leaseValue });
-    return true;
+    return this.heartbeatActiveLockResult;
   }
 
   async finalizeInactiveRoom(
@@ -202,7 +204,7 @@ class FakeRedisStore implements CollaborationRuntimeRedisStore {
     leaseValue: string,
   ): Promise<boolean> {
     this.calls.push({ method: "finalizeInactiveRoom", documentId, leaseValue });
-    return true;
+    return this.finalizeInactiveRoomResult;
   }
 }
 
@@ -236,22 +238,74 @@ class FakeLifecycleEvents implements ContentLifecycleEventSink {
   }
 }
 
-function createHarness(document: ContentDocument = createDocument()) {
+class FakeHeartbeatScheduler {
+  private nextHandle = 1;
+  readonly intervals: Array<{
+    callback: () => Promise<void> | void;
+    handle: number;
+    intervalMs: number;
+    cleared: boolean;
+  }> = [];
+
+  set = (callback: () => Promise<void> | void, intervalMs: number): number => {
+    const handle = this.nextHandle++;
+    this.intervals.push({
+      callback,
+      handle,
+      intervalMs,
+      cleared: false,
+    });
+    return handle;
+  };
+
+  clear = (handle: unknown): void => {
+    const interval = this.intervals.find((entry) => entry.handle === handle);
+
+    if (interval) {
+      interval.cleared = true;
+    }
+  };
+
+  async tick(index = 0): Promise<void> {
+    const interval = this.intervals[index];
+    assert.ok(interval);
+    await interval.callback();
+  }
+}
+
+function createHarness(
+  document: ContentDocument = createDocument(),
+  options: {
+    closeRoom?: (documentName: string) => void | Promise<void>;
+    heartbeatScheduler?: FakeHeartbeatScheduler;
+  } = {},
+) {
   const contentStore = new FakeContentStore(document);
   const redisStore = new FakeRedisStore();
   const authGuard = new FakeAuthGuard();
   const lifecycleEvents = new FakeLifecycleEvents();
+  const heartbeatScheduler =
+    options.heartbeatScheduler ?? new FakeHeartbeatScheduler();
+  const closedRooms: string[] = [];
   const hooks = createCollaborationRuntimeHooks({
     contentStore,
     redisStore,
     authGuard,
     lifecycleEvents,
     createRoomLeaseValue: () => "lease-1",
+    setActiveLockHeartbeat: heartbeatScheduler.set,
+    clearActiveLockHeartbeat: heartbeatScheduler.clear,
+    closeRoom: async (documentName) => {
+      closedRooms.push(documentName);
+      await options.closeRoom?.(documentName);
+    },
   });
 
   return {
     authGuard,
+    closedRooms,
     contentStore,
+    heartbeatScheduler,
     hooks,
     lifecycleEvents,
     redisStore,
@@ -329,6 +383,55 @@ test("onLoadDocument falls back to PostgreSQL and seeds Redis when cache is miss
     computeCollaborationBodyHash(document.body),
   );
   assert.equal(context.roomLeaseValue, "lease-1");
+});
+
+test("onLoadDocument schedules active-lock heartbeat for idle loaded rooms", async () => {
+  const { hooks, heartbeatScheduler, redisStore } = createHarness();
+  const context = createContext();
+
+  await hooks.onLoadDocument({ context, documentName: DOCUMENT_ID });
+
+  assert.equal(heartbeatScheduler.intervals.length, 1);
+  assert.equal(heartbeatScheduler.intervals[0]?.intervalMs, 10_000);
+
+  await heartbeatScheduler.tick();
+
+  assert.deepEqual(
+    redisStore.calls
+      .filter((call) => call.method === "heartbeatActiveLock")
+      .map((call) => [call.documentId, call.leaseValue]),
+    [[DOCUMENT_ID, "lease-1"]],
+  );
+
+  await hooks.onDisconnect({
+    clientsCount: 0,
+    context,
+    document: markdownToYDoc("# Launch\n\nDraft body."),
+    documentName: DOCUMENT_ID,
+  });
+
+  assert.equal(heartbeatScheduler.intervals[0]?.cleared, true);
+});
+
+test("active-lock heartbeat loss closes the room and rejects continued collaboration", async () => {
+  const { hooks, heartbeatScheduler, redisStore, closedRooms } =
+    createHarness();
+  const context = createContext();
+  redisStore.heartbeatActiveLockResult = false;
+
+  await hooks.onLoadDocument({ context, documentName: DOCUMENT_ID });
+  await heartbeatScheduler.tick();
+
+  assert.deepEqual(closedRooms, [DOCUMENT_ID]);
+  await assert.rejects(
+    hooks.beforeHandleMessage({
+      context,
+      documentName: DOCUMENT_ID,
+    }),
+    (error: unknown) =>
+      error instanceof RuntimeError &&
+      error.code === "COLLABORATION_ACTIVE_LOCK_LOST",
+  );
 });
 
 test("onLoadDocument rejects documentName mismatches without mutating authenticated context", async () => {
@@ -544,6 +647,31 @@ test("last disconnect skips no-op PostgreSQL save but finalizes TTL and lock", a
       ["finalizeInactiveRoom", "lease-1"],
     ],
   );
+});
+
+test("last disconnect fails closed when final cleanup no longer owns active lock", async () => {
+  const document = createDocument({
+    body: "# No-op\n\nSame body.",
+    draftRevision: 5,
+  });
+  const { hooks, redisStore, closedRooms } = createHarness(document);
+  const context = createContext();
+  redisStore.finalizeInactiveRoomResult = false;
+
+  await hooks.onLoadDocument({ context, documentName: DOCUMENT_ID });
+
+  await assert.rejects(
+    hooks.onDisconnect({
+      clientsCount: 0,
+      context,
+      document: markdownToYDoc(document.body),
+      documentName: DOCUMENT_ID,
+    }),
+    (error: unknown) =>
+      error instanceof RuntimeError &&
+      error.code === "COLLABORATION_ACTIVE_LOCK_LOST",
+  );
+  assert.deepEqual(closedRooms, [DOCUMENT_ID]);
 });
 
 test("last disconnect skips no-op PostgreSQL save when serialization normalizes source markdown", async () => {

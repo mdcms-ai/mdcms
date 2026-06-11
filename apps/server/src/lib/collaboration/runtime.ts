@@ -25,6 +25,7 @@ import {
   createDocumentCollaborationActiveError,
 } from "./errors.js";
 import {
+  COLLABORATION_ACTIVE_LOCK_LEASE_SECONDS,
   createCollaborationRedisStore,
   type CollaborationRedisDependency,
   type CollaborationYjsMetadata,
@@ -33,6 +34,9 @@ import {
 
 export const COLLABORATION_HOCUSPOCUS_DEBOUNCE_MS = 2000;
 export const COLLABORATION_HOCUSPOCUS_MAX_DEBOUNCE_MS = 10000;
+export const COLLABORATION_ACTIVE_LOCK_HEARTBEAT_INTERVAL_MS = Math.floor(
+  (COLLABORATION_ACTIVE_LOCK_LEASE_SECONDS * 1000) / 3,
+);
 export const COLLABORATION_YJS_FIELD_NAME = "default";
 
 export type CollaborationRuntimeLastWriter = {
@@ -97,11 +101,16 @@ export type CollaborationRuntimeRedisStore = {
 };
 
 type RoomState = {
+  documentId: string;
+  documentName: string;
   loadedDraftRevision: number;
   loadedBodyHash: string;
   loadedCanonicalBody: string;
   roomLeaseValue: string;
   lastWriter?: CollaborationRuntimeLastWriter;
+  activeLockHeartbeatInFlight?: boolean;
+  activeLockHeartbeatTimer?: unknown;
+  activeLockLost?: boolean;
 };
 
 export type CreateCollaborationRuntimeHooksOptions = {
@@ -109,6 +118,13 @@ export type CreateCollaborationRuntimeHooksOptions = {
   redisStore: CollaborationRuntimeRedisStore;
   authGuard: CollaborationRuntimeAuthGuard;
   lifecycleEvents?: ContentLifecycleEventSink;
+  activeLockHeartbeatIntervalMs?: number;
+  setActiveLockHeartbeat?: (
+    callback: () => Promise<void> | void,
+    intervalMs: number,
+  ) => unknown;
+  clearActiveLockHeartbeat?: (timer: unknown) => void;
+  closeRoom?: (documentName: string) => Promise<void> | void;
   createRoomLeaseValue?: () => string;
   convertMarkdownToYjsUpdate?: (markdown: string) => Uint8Array;
 };
@@ -420,6 +436,23 @@ function createLifecycleActor(writer: CollaborationRuntimeLastWriter): {
   };
 }
 
+function createActiveLockLostError(documentId: string): RuntimeError {
+  return new RuntimeError({
+    code: "COLLABORATION_ACTIVE_LOCK_LOST",
+    message: "Collaboration active lock is no longer owned by this room.",
+    statusCode: 409,
+    details: {
+      documentId,
+    },
+  });
+}
+
+function assertActiveLockHeld(state: RoomState | undefined): void {
+  if (state?.activeLockLost) {
+    throw createActiveLockLostError(state.documentId);
+  }
+}
+
 function metadataFromContextOrState(
   context: CollaborationRuntimeContext,
   state?: RoomState,
@@ -450,10 +483,88 @@ export function createCollaborationRuntimeHooks(
 ) {
   const roomStates = new Map<string, RoomState>();
   const finalizedRoomLeases = new Map<string, string>();
+  const activeLockHeartbeatIntervalMs =
+    options.activeLockHeartbeatIntervalMs ??
+    COLLABORATION_ACTIVE_LOCK_HEARTBEAT_INTERVAL_MS;
+  const setActiveLockHeartbeat =
+    options.setActiveLockHeartbeat ??
+    ((callback: () => Promise<void> | void, intervalMs: number): unknown =>
+      setInterval(() => {
+        void callback();
+      }, intervalMs));
+  const clearActiveLockHeartbeat =
+    options.clearActiveLockHeartbeat ??
+    ((timer: unknown): void => {
+      clearInterval(timer as ReturnType<typeof setInterval>);
+    });
   const createRoomLeaseValue =
     options.createRoomLeaseValue ?? (() => randomUUID());
   const convertMarkdownToYjsUpdate =
     options.convertMarkdownToYjsUpdate ?? markdownToYjsUpdate;
+
+  function stopActiveLockHeartbeat(state: RoomState | undefined): void {
+    if (state?.activeLockHeartbeatTimer === undefined) {
+      return;
+    }
+
+    clearActiveLockHeartbeat(state.activeLockHeartbeatTimer);
+    state.activeLockHeartbeatTimer = undefined;
+  }
+
+  async function markActiveLockLost(
+    key: string,
+    state: RoomState,
+  ): Promise<void> {
+    if (state.activeLockLost) {
+      return;
+    }
+
+    state.activeLockLost = true;
+    stopActiveLockHeartbeat(state);
+
+    try {
+      await options.closeRoom?.(state.documentName);
+    } catch {
+      // The room is already marked fail-closed; hook entrypoints reject any
+      // further edits even if the transport cannot close immediately.
+    }
+
+    roomStates.set(key, state);
+  }
+
+  async function heartbeatActiveRoom(
+    key: string,
+    state: RoomState,
+  ): Promise<void> {
+    if (state.activeLockLost || state.activeLockHeartbeatInFlight) {
+      return;
+    }
+
+    state.activeLockHeartbeatInFlight = true;
+
+    try {
+      const ownsActiveLock = await options.redisStore.heartbeatActiveLock(
+        state.documentId,
+        state.roomLeaseValue,
+      );
+
+      if (!ownsActiveLock) {
+        await markActiveLockLost(key, state);
+      }
+    } catch {
+      await markActiveLockLost(key, state);
+    } finally {
+      state.activeLockHeartbeatInFlight = false;
+    }
+  }
+
+  function startActiveLockHeartbeat(key: string, state: RoomState): void {
+    stopActiveLockHeartbeat(state);
+    state.activeLockHeartbeatTimer = setActiveLockHeartbeat(
+      () => heartbeatActiveRoom(key, state),
+      activeLockHeartbeatIntervalMs,
+    );
+  }
 
   return {
     async onLoadDocument(payload: RuntimeHookPayload): Promise<Uint8Array> {
@@ -488,6 +599,8 @@ export function createCollaborationRuntimeHooks(
       }
 
       const loadedState: RoomState = {
+        documentId: context.documentId,
+        documentName: payload.documentName,
         loadedDraftRevision: draftHead.draftRevision,
         loadedBodyHash: draftHead.bodyHash,
         loadedCanonicalBody,
@@ -499,12 +612,15 @@ export function createCollaborationRuntimeHooks(
       assignLoadedRoomState(context, loadedState);
 
       await options.redisStore.clearInactiveCacheTtl(context.documentId);
+      startActiveLockHeartbeat(key, loadedState);
 
       return state;
     },
 
     async beforeHandleMessage(payload: RuntimeHookPayload): Promise<void> {
       const context = requireRuntimeContext(payload);
+      assertActiveLockHeld(roomStates.get(roomKey(context)));
+
       const result = await options.authGuard.revalidateWrite(
         createRequestForRevalidation(payload, context),
         context,
@@ -520,6 +636,7 @@ export function createCollaborationRuntimeHooks(
       const key = roomKey(context);
       const state = roomStates.get(key);
       const contextLeaseValue = context.roomLeaseValue;
+      assertActiveLockHeld(state);
 
       if (
         contextLeaseValue &&
@@ -551,6 +668,7 @@ export function createCollaborationRuntimeHooks(
       const key = roomKey(context);
       const state = roomStates.get(key);
       const contextLeaseValue = context.roomLeaseValue;
+      assertActiveLockHeld(state);
 
       if (
         contextLeaseValue &&
@@ -724,8 +842,15 @@ export function createCollaborationRuntimeHooks(
           leaseValue,
         )
       ) {
+        stopActiveLockHeartbeat(state);
         finalizedRoomLeases.set(key, leaseValue);
         roomStates.delete(key);
+      } else {
+        if (state) {
+          await markActiveLockLost(key, state);
+        }
+
+        throw createActiveLockLostError(context.documentId);
       }
     },
   };
@@ -735,9 +860,17 @@ export function createCollaborationRuntime(
   options: CreateCollaborationRuntimeOptions,
 ): CollaborationRuntime {
   const redisStore = resolveRedisStore(options);
+  let server: Hocuspocus<CollaborationRuntimeContext> | undefined;
   const hooks = createCollaborationRuntimeHooks({
     ...options,
     redisStore,
+    closeRoom: async (documentName) => {
+      try {
+        await options.closeRoom?.(documentName);
+      } finally {
+        server?.closeConnections(documentName);
+      }
+    },
   });
   const config: Partial<Configuration<CollaborationRuntimeContext>> = {
     name: "mdcms-collaboration",
@@ -754,6 +887,6 @@ export function createCollaborationRuntime(
   return {
     config,
     hooks,
-    server: new Hocuspocus<CollaborationRuntimeContext>(config),
+    server: (server = new Hocuspocus<CollaborationRuntimeContext>(config)),
   };
 }
