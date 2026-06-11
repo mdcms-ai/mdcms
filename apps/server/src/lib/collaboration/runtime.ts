@@ -136,6 +136,7 @@ type RuntimeHookPayload = {
   documentName: string;
   document?: Y.Doc;
   clientsCount?: number;
+  update?: Uint8Array;
   request?: Request;
   requestHeaders?: Headers;
   requestParameters?: URLSearchParams;
@@ -448,6 +449,7 @@ export function createCollaborationRuntimeHooks(
   options: CreateCollaborationRuntimeHooksOptions,
 ) {
   const roomStates = new Map<string, RoomState>();
+  const finalizedRoomLeases = new Map<string, string>();
   const createRoomLeaseValue =
     options.createRoomLeaseValue ?? (() => randomUUID());
   const convertMarkdownToYjsUpdate =
@@ -491,7 +493,9 @@ export function createCollaborationRuntimeHooks(
         loadedCanonicalBody,
         roomLeaseValue,
       };
-      roomStates.set(roomKey(context), loadedState);
+      const key = roomKey(context);
+      finalizedRoomLeases.delete(key);
+      roomStates.set(key, loadedState);
       assignLoadedRoomState(context, loadedState);
 
       await options.redisStore.clearInactiveCacheTtl(context.documentId);
@@ -511,11 +515,62 @@ export function createCollaborationRuntimeHooks(
       }
     },
 
+    async onChange(payload: RuntimeHookPayload): Promise<void> {
+      const context = requireRuntimeContext(payload);
+      const key = roomKey(context);
+      const state = roomStates.get(key);
+      const contextLeaseValue = context.roomLeaseValue;
+
+      if (
+        contextLeaseValue &&
+        finalizedRoomLeases.get(key) === contextLeaseValue
+      ) {
+        return;
+      }
+
+      if (
+        state &&
+        contextLeaseValue &&
+        state.roomLeaseValue !== contextLeaseValue
+      ) {
+        return;
+      }
+
+      if (state) {
+        assignLoadedRoomState(context, state);
+      }
+
+      updateLastWriter(roomStates, context);
+    },
+
     async onStoreDocument(payload: RuntimeHookPayload): Promise<void> {
       const context = requireRuntimeContext({
         ...payload,
         context: payload.lastContext ?? payload.context,
       });
+      const key = roomKey(context);
+      const state = roomStates.get(key);
+      const contextLeaseValue = context.roomLeaseValue;
+
+      if (
+        contextLeaseValue &&
+        finalizedRoomLeases.get(key) === contextLeaseValue
+      ) {
+        return;
+      }
+
+      if (!state && finalizedRoomLeases.has(key)) {
+        return;
+      }
+
+      if (
+        state &&
+        contextLeaseValue &&
+        state.roomLeaseValue !== contextLeaseValue
+      ) {
+        return;
+      }
+
       const result = await options.authGuard.revalidateWrite(
         createRequestForRevalidation(payload, context),
         context,
@@ -525,7 +580,6 @@ export function createCollaborationRuntimeHooks(
         throw createCloseEvent(result.closeCode);
       }
 
-      const state = roomStates.get(roomKey(context));
       const metadata = metadataFromContextOrState(context, state);
       const document = payload.document;
 
@@ -670,6 +724,7 @@ export function createCollaborationRuntimeHooks(
           leaseValue,
         )
       ) {
+        finalizedRoomLeases.set(key, leaseValue);
         roomStates.delete(key);
       }
     },
@@ -691,6 +746,7 @@ export function createCollaborationRuntime(
     maxDebounce: COLLABORATION_HOCUSPOCUS_MAX_DEBOUNCE_MS,
     onLoadDocument: hooks.onLoadDocument,
     beforeHandleMessage: hooks.beforeHandleMessage,
+    onChange: hooks.onChange,
     onStoreDocument: hooks.onStoreDocument,
     onDisconnect: hooks.onDisconnect,
   };

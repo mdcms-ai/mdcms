@@ -270,6 +270,7 @@ test("createCollaborationRuntime returns explicit Hocuspocus debounce config", (
   assert.equal(runtime.config.debounce, 2000);
   assert.equal(runtime.config.maxDebounce, 10000);
   assert.equal(typeof runtime.config.onLoadDocument, "function");
+  assert.equal(typeof runtime.config.onChange, "function");
   assert.ok(runtime.server);
 });
 
@@ -617,6 +618,34 @@ test("last disconnect changed body saves once with expected revision, last write
   });
 });
 
+test("last disconnect attributes a pending debounced edit to its writer", async () => {
+  const document = createDocument({
+    body: "# Original\n\nBody.",
+    draftRevision: 10,
+  });
+  const { hooks, contentStore } = createHarness(document);
+  const context = createContext();
+  const pendingDocument = markdownToYDoc("# Pending\n\nBody.");
+
+  await hooks.onLoadDocument({ context, documentName: DOCUMENT_ID });
+  await hooks.onChange({
+    context: createContext({ userId: "writer-pending" }),
+    document: pendingDocument,
+    documentName: DOCUMENT_ID,
+    update: encodeYDocState(pendingDocument),
+  });
+
+  await hooks.onDisconnect({
+    clientsCount: 0,
+    context,
+    document: pendingDocument,
+    documentName: DOCUMENT_ID,
+  });
+
+  assert.equal(contentStore.updates.length, 1);
+  assert.equal(contentStore.updates[0]?.payload.updatedBy, "writer-pending");
+});
+
 test("last disconnect uses neutral lifecycle email when writer email is unavailable", async () => {
   const document = createDocument({
     body: "# Original\n\nBody.",
@@ -646,6 +675,44 @@ test("last disconnect uses neutral lifecycle email when writer email is unavaila
 
   assert.equal(lifecycleEvents.events[0]?.actor.id, "writer-without-email");
   assert.equal(lifecycleEvents.events[0]?.actor.email, "");
+});
+
+test("late debounced store after finalization does not rewrite Redis state or metadata", async () => {
+  const document = createDocument({
+    body: "# Original\n\nBody.",
+    draftRevision: 12,
+  });
+  const { hooks, redisStore } = createHarness(document);
+  const context = createContext();
+  const writerContext = createContext({ userId: "late-store-writer" });
+  const changedDocument = markdownToYDoc("# Late\n\nStore.");
+
+  await hooks.onLoadDocument({ context, documentName: DOCUMENT_ID });
+  await hooks.onChange({
+    context: writerContext,
+    document: changedDocument,
+    documentName: DOCUMENT_ID,
+    update: encodeYDocState(changedDocument),
+  });
+  await hooks.onDisconnect({
+    clientsCount: 0,
+    context,
+    document: changedDocument,
+    documentName: DOCUMENT_ID,
+  });
+
+  const callsAfterFinalization = redisStore.calls.length;
+
+  await hooks.onStoreDocument({
+    document: changedDocument,
+    documentName: DOCUMENT_ID,
+    lastContext: writerContext,
+  });
+
+  assert.deepEqual(
+    redisStore.calls.slice(callsAfterFinalization).map((call) => call.method),
+    [],
+  );
 });
 
 test("stale draft revision failure does not overwrite or release active lock", async () => {
