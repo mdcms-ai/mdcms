@@ -839,3 +839,24 @@ The collaboration transport is a WebSocket upgrade route mounted under the versi
 | Method | Endpoint                                                           | Description                                                                                                      |
 | ------ | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
 | `WS`   | `/api/v1/collaboration?project=...&environment=...&documentId=...` | Open real-time collaboration socket (Session cookie required, API keys rejected, explicit document room target). |
+
+Endpoint contract:
+
+- `project`, `environment`, and `documentId` are required query parameters.
+  Missing routing returns `MISSING_TARGET_ROUTING` (`400`) before upgrade.
+  Invalid query values return `INVALID_QUERY_PARAM` (`400`) before upgrade.
+- Target routing mismatch returns `TARGET_ROUTING_MISMATCH` (`400`) before
+  upgrade. A nonexistent or soft-deleted document returns `NOT_FOUND` (`404`)
+  before upgrade.
+- Missing, expired, or invalid Studio Session credentials return
+  `UNAUTHORIZED` (`401`) before upgrade when detected during handshake, or
+  close an upgraded socket with `4401` if detected after upgrade.
+- Forbidden origin, folder/path RBAC denial, lost write permission, and API-key
+  authentication attempts return `FORBIDDEN` (`403`) before upgrade when
+  detected during handshake, or close an upgraded socket with `4403` if detected
+  after upgrade.
+- Redis initialization or availability failure returns
+  `COLLABORATION_UNAVAILABLE` (`503`) before upgrade.
+- A plain non-upgrade `GET` may return `426 Upgrade Required` only after
+  collaboration availability, authentication, routing, document existence, and
+  authorization checks pass.

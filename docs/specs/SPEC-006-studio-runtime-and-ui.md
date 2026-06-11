@@ -2,7 +2,7 @@
 status: live
 canonical: true
 created: 2026-03-11
-last_updated: 2026-06-06
+last_updated: 2026-06-11
 ---
 
 # SPEC-006 Studio Runtime and UI
@@ -568,7 +568,10 @@ backed by:
   head content snapshot for the addressed document when the caller is
   authorized; it is not a server-side status filter for "draft-only" or
   "show unpublished" documents)
-- `PUT /api/v1/content/:documentId` for draft persistence
+- `PUT /api/v1/content/:documentId` for non-collaborative HTTP draft
+  persistence
+- `WS /api/v1/collaboration?project=...&environment=...&documentId=...` for
+  active collaboration document rooms
 - `POST /api/v1/content/:documentId/publish` for publish
 - `GET /api/v1/content/:documentId/versions` and
   `GET /api/v1/content/:documentId/versions/:version` for history and diff
@@ -584,6 +587,16 @@ Normative behavior:
 - `GET /api/v1/content/:documentId?draft=true` reads the mutable head snapshot
   for that single document in the active target. Authorization controls access
   to that mutable head snapshot.
+- In non-collaborative operation, Studio persists body and frontmatter edits
+  through the HTTP draft write path (`PUT /api/v1/content/:documentId`).
+- When a collaboration document room is active, body editing uses the
+  collaboration socket/Yjs path owned by SPEC-007. The active collaboration
+  lock blocks normal existing-document HTTP mutations for that document, so
+  Studio must not perform HTTP `PUT` auto-save for the active room. PostgreSQL
+  draft persistence for the active collaboration runtime happens through the
+  collaboration final save after the last collaborator disconnects.
+  Periodic/debounced PostgreSQL autosave from active collaboration rooms
+  remains deferred.
 - The primary canvas edits the document `body` through the editor engine owned
   by SPEC-007.
 - The editor supports media insertion from four inputs: the toolbar image
@@ -623,8 +636,10 @@ Normative behavior:
   the user chooses or uploads another image. Delete/Backspace and the contextual
   delete action must remove the selected image node.
 - A successful media insertion marks the body draft unsaved and relies on the
-  existing draft persistence path; it must not introduce a separate content save
-  endpoint or bypass draft-save guards.
+  active draft persistence path: HTTP draft persistence in non-collaborative
+  operation, or collaboration socket/Yjs state when a document room is active.
+  It must not introduce a separate content save endpoint or bypass draft-save
+  guards.
 - During upload, the editor shows an inline upload state near the canvas with
   file-count progress for the active batch and disables additional media upload
   starts while the current batch is in flight. Upload failures keep the current
@@ -670,11 +685,15 @@ Normative behavior:
   `Desktop` viewport preset is selected by default. The
   open-in-new-tab link is always available when a route is resolved so editors
   have a fallback when browser framing policy blocks embedding.
-- Refreshing the real-app preview first runs the normal draft persistence path
+- Refreshing the real-app preview first runs the active draft persistence path
   when local body or frontmatter edits are unsaved, then reloads the iframe only
-  after persistence succeeds. Route resolution uses the latest persisted draft
-  snapshot; local unsaved frontmatter changes must not navigate the iframe
-  before the canonical draft row is updated.
+  after persistence succeeds. In non-collaborative operation this is the HTTP
+  draft write path. In an active collaboration document room, Studio must not
+  bypass the active collaboration lock with HTTP `PUT`; preview refresh can use
+  only the collaboration-backed persisted state available after collaboration
+  final save. Route resolution uses the latest persisted draft snapshot; local
+  unsaved frontmatter changes must not navigate the iframe before the canonical
+  draft row is updated.
 - When route resolution returns a URL, Studio requests a signed preview token
   from `POST /api/v1/content/:documentId/preview-token` before loading the
   iframe. Studio sends the resolved URL as `previewUrl` when available, appends
@@ -706,16 +725,24 @@ Normative behavior:
   token/session expiry, invalid preview-token configuration, and invalid draft.
   Cross-origin adapter failures are represented as unavailable states and an
   open-in-new-tab fallback rather than implicit background retries.
-- `Save draft` calls the same draft-persistence routine that the auto-save
-  debounce uses. It is enabled only while the draft is in `unsaved` state
-  and a publish is not in flight; it is hidden when the active target denies
-  writes. It must not introduce a separate write path or bypass the same
-  guard checks that auto-save respects (RBAC, schema mismatch, viewing a
-  prior version).
-- The auto-save debounce continues to run independently of `Save draft`;
-  removing the manual button must never disable auto-save.
+- `Save draft` calls the active draft-persistence routine for the current
+  editor mode. In non-collaborative operation, this is the same HTTP draft
+  write routine that the auto-save debounce uses. In an active collaboration
+  document room, it must not issue normal HTTP `PUT` while the active
+  collaboration lock exists; collaboration final save owns PostgreSQL draft
+  persistence for the active runtime slice. `Save draft` is enabled only while
+  the draft is in `unsaved` state and a publish is not in flight; it is hidden
+  when the active target denies writes. It must not introduce a separate write
+  path or bypass the same guard checks that auto-save respects (RBAC, schema
+  mismatch, viewing a prior version, active collaboration lock).
+- In non-collaborative operation, the auto-save debounce continues to run
+  independently of `Save draft`; removing the manual button must never disable
+  auto-save. Periodic/debounced PostgreSQL autosave from active collaboration
+  rooms is deferred and must not be represented as independent HTTP `PUT`
+  auto-save while the active collaboration lock exists.
 - `Publish` opens the publish dialog and is disabled until the draft is
-  saved, has unpublished changes, and a publish is not already running.
+  saved, has unpublished changes, a publish is not already running, and the
+  document is not blocked by an active collaboration lock.
 - The redundant workflow status pill (`Draft` / `Changed` / `Published`) and
   the redundant `v{publishedVersion}` chip are NOT shown in the topbar; both
   facts are surfaced via the `UNPUBLISHED CHANGES` badge and the inspector's
@@ -809,8 +836,9 @@ Normative behavior:
   shapes include reference fields, arrays, objects, tuples, unions, executable
   custom schemas, and any unrecognized field kind.
 - Unsupported frontmatter values must be preserved in the local draft state and
-  in subsequent `PUT /api/v1/content/:documentId` writes. Studio must not drop
-  a field solely because the current UI cannot edit it.
+  in subsequent draft persistence payloads. In non-collaborative operation that
+  includes `PUT /api/v1/content/:documentId` writes. Studio must not drop a
+  field solely because the current UI cannot edit it.
 - Property field order follows the resolved schema order for the current type.
 - Fields that only exist in specific environments remain first-class controls
   when they are present in the active environment. Their environment badge is
@@ -820,12 +848,14 @@ Normative behavior:
   rendered as editable controls in that environment.
 - Frontmatter edits participate in the same unsaved/saving/saved indicator model
   as body edits. Changing only a property field is sufficient to mark the draft
-  unsaved and trigger draft persistence.
+  unsaved and trigger the active draft persistence path. When a collaboration
+  document room is active, Studio must not bypass the active collaboration lock
+  with a separate HTTP `PUT` for frontmatter-only edits.
 - Existing write-blocking states continue to apply to both body and property
   editing. When Studio is read-only because of RBAC, schema mismatch, or
   other guarded write conditions, the `Properties` schema form is disabled
   consistently with the main editor canvas.
-- Validation failures returned by `PUT /api/v1/content/:documentId` should be
+- Validation failures returned by the active draft persistence path should be
   anchored to the corresponding property control when the failure can be mapped
   to a named frontmatter field; otherwise Studio falls back to the route-level
   mutation error banner.
