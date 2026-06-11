@@ -1,5 +1,22 @@
 # @mdcms/cli
 
+## 0.3.0
+
+### Minor Changes
+
+- eb598b2: Add schema file field types under fieldTypes, move references to fieldTypes.reference, and expand file fields to media assets on reads.
+
+### Patch Changes
+
+- Updated dependencies [e873553]
+- Updated dependencies [e873553]
+- Updated dependencies [15fdaee]
+- Updated dependencies [e873553]
+- Updated dependencies [e873553]
+- Updated dependencies [eb598b2]
+- Updated dependencies [8d8feb9]
+  - @mdcms/shared@0.5.0
+
 ## 0.2.5
 
 ### Patch Changes
