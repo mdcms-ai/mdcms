@@ -224,6 +224,13 @@ end
 return 0
 `;
 
+const INVALIDATE_INACTIVE_CACHE_SCRIPT = `
+if redis.call("EXISTS", KEYS[3]) == 0 then
+  return redis.call("DEL", KEYS[1], KEYS[2])
+end
+return 0
+`;
+
 function redisBooleanResult(result: unknown): boolean {
   return result === 1 || result === "1";
 }
@@ -408,6 +415,18 @@ export function createCollaborationRedisStore(
       await client.expire(
         buildCollaborationYjsMetaKey(documentId),
         inactiveCacheTtlSeconds,
+      );
+    },
+
+    async invalidateInactiveCache(documentId: string): Promise<void> {
+      const client = requireCollaborationRedisClient(dependency);
+
+      await client.eval(
+        INVALIDATE_INACTIVE_CACHE_SCRIPT,
+        3,
+        buildCollaborationYjsStateKey(documentId),
+        buildCollaborationYjsMetaKey(documentId),
+        buildCollaborationActiveKey(documentId),
       );
     },
 

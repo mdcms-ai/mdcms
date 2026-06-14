@@ -1774,6 +1774,190 @@ test("content API update rejects an active collaboration document", async () => 
   assert.equal(draft.data.body, "before");
 });
 
+test("content API update invalidates inactive collaboration cache after successful commit", async () => {
+  const invalidated: Array<{ documentId: string; body: string }> = [];
+  let handler: ReturnType<typeof createHandler>;
+  handler = createHandler({
+    inactiveCollaborationCache: {
+      invalidateDocument: async (documentId) => {
+        const draftResponse = await handler(
+          new Request(
+            `http://localhost/api/v1/content/${documentId}?draft=true`,
+            { headers: scopeHeaders },
+          ),
+        );
+        const draft = (await draftResponse.json()) as {
+          data: { body: string };
+        };
+
+        invalidated.push({ documentId, body: draft.data.body });
+      },
+    },
+  });
+  const created = await createContentDocument(
+    handler,
+    (headers = {}) => headers,
+    scopeHeaders,
+    {
+      path: "blog/invalidate-after-update",
+      type: "BlogPost",
+      locale: "en",
+      format: "md",
+      frontmatter: { slug: "invalidate-after-update" },
+      body: "before",
+    },
+  );
+  const documentId = String(created.documentId);
+
+  const response = await handler(
+    new Request(`http://localhost/api/v1/content/${documentId}`, {
+      method: "PUT",
+      headers: { ...scopeHeaders, "content-type": "application/json" },
+      body: JSON.stringify({
+        frontmatter: { slug: "invalidate-after-update" },
+        body: "after",
+        draftRevision: created.draftRevision,
+      }),
+    }),
+  );
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(invalidated, [{ documentId, body: "after" }]);
+});
+
+test("content API delete invalidates inactive collaboration cache after successful commit", async () => {
+  const invalidated: string[] = [];
+  const handler = createHandler({
+    inactiveCollaborationCache: {
+      invalidateDocument: async (documentId) => {
+        invalidated.push(documentId);
+      },
+    },
+  });
+  const created = await createContentDocument(
+    handler,
+    (headers = {}) => headers,
+    scopeHeaders,
+    {
+      path: "blog/invalidate-after-delete",
+      type: "BlogPost",
+      locale: "en",
+      format: "md",
+      frontmatter: { slug: "invalidate-after-delete" },
+      body: "delete me",
+    },
+  );
+  const documentId = String(created.documentId);
+
+  const response = await handler(
+    new Request(`http://localhost/api/v1/content/${documentId}`, {
+      method: "DELETE",
+      headers: { ...scopeHeaders, "content-type": "application/json" },
+    }),
+  );
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(invalidated, [documentId]);
+});
+
+test("content API does not invalidate inactive collaboration cache when active collaboration blocks update", async () => {
+  const invalidated: string[] = [];
+  const activeDocumentIds = new Set<string>();
+  const handler = createHandler({
+    activeCollaboration: {
+      isDocumentActive: async (documentId) => activeDocumentIds.has(documentId),
+    },
+    inactiveCollaborationCache: {
+      invalidateDocument: async (documentId) => {
+        invalidated.push(documentId);
+      },
+    },
+  });
+  const created = await createContentDocument(
+    handler,
+    (headers = {}) => headers,
+    scopeHeaders,
+    {
+      path: "blog/no-invalidate-when-active",
+      type: "BlogPost",
+      locale: "en",
+      format: "md",
+      frontmatter: { slug: "no-invalidate-when-active" },
+      body: "before",
+    },
+  );
+  const documentId = String(created.documentId);
+
+  activeDocumentIds.add(documentId);
+
+  const response = await handler(
+    new Request(`http://localhost/api/v1/content/${documentId}`, {
+      method: "PUT",
+      headers: { ...scopeHeaders, "content-type": "application/json" },
+      body: JSON.stringify({
+        frontmatter: { slug: "no-invalidate-when-active" },
+        body: "after",
+      }),
+    }),
+  );
+
+  assert.equal(response.status, 409);
+  assert.deepEqual(invalidated, []);
+});
+
+test("content API update remains successful when inactive collaboration cache invalidation fails", async () => {
+  const attempted: string[] = [];
+  const handler = createHandler({
+    inactiveCollaborationCache: {
+      invalidateDocument: async (documentId) => {
+        attempted.push(documentId);
+        throw new Error("redis unavailable");
+      },
+    },
+  });
+  const created = await createContentDocument(
+    handler,
+    (headers = {}) => headers,
+    scopeHeaders,
+    {
+      path: "blog/invalidation-failure-still-updates",
+      type: "BlogPost",
+      locale: "en",
+      format: "md",
+      frontmatter: { slug: "invalidation-failure-still-updates" },
+      body: "before",
+    },
+  );
+  const documentId = String(created.documentId);
+
+  const response = await handler(
+    new Request(`http://localhost/api/v1/content/${documentId}`, {
+      method: "PUT",
+      headers: { ...scopeHeaders, "content-type": "application/json" },
+      body: JSON.stringify({
+        frontmatter: { slug: "invalidation-failure-still-updates" },
+        body: "after",
+        draftRevision: created.draftRevision,
+      }),
+    }),
+  );
+  const body = (await response.json()) as { data: { body: string } };
+
+  assert.equal(response.status, 200);
+  assert.equal(body.data.body, "after");
+  assert.deepEqual(attempted, [documentId]);
+
+  const draftResponse = await handler(
+    new Request(`http://localhost/api/v1/content/${documentId}?draft=true`, {
+      headers: scopeHeaders,
+    }),
+  );
+  const draft = (await draftResponse.json()) as { data: { body: string } };
+
+  assert.equal(draftResponse.status, 200);
+  assert.equal(draft.data.body, "after");
+});
+
 test("content API create remains allowed while another document is active", async () => {
   const handler = createHandler({
     activeCollaboration: {
@@ -1880,6 +2064,65 @@ test("content API bulk delete reports active collaboration per document and cont
   assert.equal(body.data.results[1]?.documentId, unlocked.documentId);
   assert.equal(body.data.results[1]?.status, "succeeded");
   assert.equal(body.data.results[1]?.document?.isDeleted, true);
+});
+
+test("content API bulk delete invalidates inactive collaboration cache for successful documents only", async () => {
+  const invalidated: string[] = [];
+  const activeDocumentIds = new Set<string>();
+  const handler = createHandler({
+    activeCollaboration: {
+      isDocumentActive: async (documentId) => activeDocumentIds.has(documentId),
+    },
+    inactiveCollaborationCache: {
+      invalidateDocument: async (documentId) => {
+        invalidated.push(documentId);
+      },
+    },
+  });
+  const locked = await createContentDocument(
+    handler,
+    (headers = {}) => headers,
+    scopeHeaders,
+    {
+      path: "blog/bulk-invalidate-delete-locked",
+      type: "BlogPost",
+      locale: "en",
+      format: "md",
+      frontmatter: { slug: "bulk-invalidate-delete-locked" },
+      body: "locked",
+    },
+  );
+  const unlocked = await createContentDocument(
+    handler,
+    (headers = {}) => headers,
+    scopeHeaders,
+    {
+      path: "blog/bulk-invalidate-delete-unlocked",
+      type: "BlogPost",
+      locale: "en",
+      format: "md",
+      frontmatter: { slug: "bulk-invalidate-delete-unlocked" },
+      body: "unlocked",
+    },
+  );
+  const lockedDocumentId = String(locked.documentId);
+  const unlockedDocumentId = String(unlocked.documentId);
+
+  activeDocumentIds.add(lockedDocumentId);
+
+  const response = await handler(
+    new Request("http://localhost/api/v1/content/bulk", {
+      method: "POST",
+      headers: { ...scopeHeaders, "content-type": "application/json" },
+      body: JSON.stringify({
+        action: "delete",
+        documentIds: [lockedDocumentId, unlockedDocumentId],
+      }),
+    }),
+  );
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(invalidated, [unlockedDocumentId]);
 });
 
 test("content API restore rejects an active collaboration document", async () => {
@@ -2041,6 +2284,61 @@ test("content API bulk move constructs archive slug paths and updates drafts", a
   assert.equal(draftResponse.status, 200);
   assert.equal(draft.data.path, "archive/bulk-move-slug");
   assert.equal(draft.data.draftRevision, 2);
+});
+
+test("content API bulk move invalidates inactive collaboration cache after successful commit", async () => {
+  const invalidated: Array<{ documentId: string; path: string }> = [];
+  let handler: ReturnType<typeof createHandler>;
+  handler = createHandler({
+    inactiveCollaborationCache: {
+      invalidateDocument: async (documentId) => {
+        const draftResponse = await handler(
+          new Request(
+            `http://localhost/api/v1/content/${documentId}?draft=true`,
+            { headers: scopeHeaders },
+          ),
+        );
+        const draft = (await draftResponse.json()) as {
+          data: { path: string };
+        };
+
+        invalidated.push({ documentId, path: draft.data.path });
+      },
+    },
+  });
+  const document = await createContentDocument(
+    handler,
+    (headers = {}) => headers,
+    scopeHeaders,
+    {
+      path: "blog/bulk-invalidate-move",
+      type: "BlogPost",
+      locale: "en",
+      format: "md",
+      frontmatter: { slug: "bulk-invalidate-move" },
+      body: "move me",
+    },
+  );
+  const documentId = String(document.documentId);
+
+  const response = await handler(
+    new Request("http://localhost/api/v1/content/bulk", {
+      method: "POST",
+      headers: { ...scopeHeaders, "content-type": "application/json" },
+      body: JSON.stringify({
+        action: "move",
+        documentIds: [documentId],
+        move: {
+          targetDirectory: "archive",
+        },
+      }),
+    }),
+  );
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(invalidated, [
+    { documentId, path: "archive/bulk-invalidate-move" },
+  ]);
 });
 
 test("content API bulk move requires schema hash when write schema state exists", async () => {
@@ -4995,6 +5293,106 @@ test("content API restores a historical version to draft state by default", asyn
   assert.equal(versionsBody.data.length, 2);
   assert.equal(versionsBody.data[0]?.version, 2);
   assert.equal(versionsBody.data[1]?.version, 1);
+});
+
+test("content API version restore invalidates inactive collaboration cache after commit and ignores failure", async () => {
+  const invalidated: Array<{ documentId: string; body: string }> = [];
+  let handler: ReturnType<typeof createHandler>;
+  handler = createHandler({
+    inactiveCollaborationCache: {
+      invalidateDocument: async (documentId) => {
+        const draftResponse = await handler(
+          new Request(
+            `http://localhost/api/v1/content/${documentId}?draft=true`,
+            { headers: scopeHeaders },
+          ),
+        );
+        const draft = (await draftResponse.json()) as {
+          data: { body: string };
+        };
+
+        invalidated.push({ documentId, body: draft.data.body });
+        throw new Error("redis unavailable");
+      },
+    },
+  });
+
+  const createResponse = await handler(
+    new Request("http://localhost/api/v1/content", {
+      method: "POST",
+      headers: {
+        ...scopeHeaders,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        path: "blog/restore-version-invalidate",
+        type: "BlogPost",
+        locale: "en",
+        format: "md",
+        frontmatter: {
+          slug: "restore-version-invalidate",
+          title: "Version One",
+        },
+        body: "version one body",
+      }),
+    }),
+  );
+  const created = (await createResponse.json()) as {
+    data: { documentId: string };
+  };
+
+  assert.equal(createResponse.status, 200);
+
+  const firstPublishResponse = await handler(
+    new Request(
+      `http://localhost/api/v1/content/${created.data.documentId}/publish`,
+      {
+        method: "POST",
+        headers: scopeHeaders,
+      },
+    ),
+  );
+
+  assert.equal(firstPublishResponse.status, 200);
+
+  const updateResponse = await handler(
+    new Request(`http://localhost/api/v1/content/${created.data.documentId}`, {
+      method: "PUT",
+      headers: {
+        ...scopeHeaders,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        frontmatter: {
+          slug: "restore-version-invalidate",
+          title: "Version Two",
+        },
+        body: "version two body",
+      }),
+    }),
+  );
+
+  assert.equal(updateResponse.status, 200);
+  invalidated.length = 0;
+
+  const restoreResponse = await handler(
+    new Request(
+      `http://localhost/api/v1/content/${created.data.documentId}/versions/1/restore`,
+      {
+        method: "POST",
+        headers: scopeHeaders,
+      },
+    ),
+  );
+  const restoreBody = (await restoreResponse.json()) as {
+    data: { body: string };
+  };
+
+  assert.equal(restoreResponse.status, 200);
+  assert.equal(restoreBody.data.body, "version one body");
+  assert.deepEqual(invalidated, [
+    { documentId: created.data.documentId, body: "version one body" },
+  ]);
 });
 
 test("content API restores a historical version to published state when requested", async () => {

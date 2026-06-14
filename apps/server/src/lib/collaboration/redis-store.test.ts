@@ -134,19 +134,20 @@ class FakeRedisClient implements CollaborationRedisClient {
     const seconds = scriptArgs[1];
     const activeKey = numberOfKeys === 3 ? keys[2] : keys[0];
 
-    if (typeof activeKey !== "string" || typeof leaseValue !== "string") {
+    if (typeof activeKey !== "string") {
       throw new Error("Invalid fake Redis eval invocation.");
     }
 
-    const call: (typeof this.calls)[number] = {
-      method: "eval",
-      args: [leaseValue],
-    };
+    const call: (typeof this.calls)[number] = { method: "eval" };
 
     if (numberOfKeys === 1) {
       call.key = activeKey;
     } else {
       call.keys = keys;
+    }
+
+    if (leaseValue !== undefined) {
+      call.args = [leaseValue];
     }
 
     if (seconds !== undefined) {
@@ -155,6 +156,22 @@ class FakeRedisClient implements CollaborationRedisClient {
 
     this.calls.push(call);
     assert.equal(numberOfKeys === 1 || numberOfKeys === 3, true);
+
+    if (numberOfKeys === 3 && script.includes('"EXISTS", KEYS[3]')) {
+      if (this.values.has(activeKey)) {
+        return 0;
+      }
+
+      const [stateKey, metaKey] = keys;
+      assert.equal(typeof stateKey, "string");
+      assert.equal(typeof metaKey, "string");
+
+      return this.del(stateKey, metaKey);
+    }
+
+    if (typeof leaseValue !== "string") {
+      throw new Error("Invalid fake Redis eval invocation.");
+    }
 
     if (this.values.get(activeKey) !== leaseValue) {
       return 0;
@@ -493,6 +510,71 @@ test("active-room lifecycle clears inactive TTLs then expires cache after final 
         method: "expire",
         key: buildCollaborationYjsMetaKey(documentId),
         seconds: COLLABORATION_INACTIVE_CACHE_TTL_SECONDS,
+      },
+    ],
+  );
+});
+
+test("inactive collaboration cache invalidation deletes Yjs state and metadata", async () => {
+  const documentId = "9c003bee-4f4c-42d4-b445-d393a17067bb";
+  const { client, store } = createStore();
+
+  client.values.set(
+    buildCollaborationYjsStateKey(documentId),
+    Buffer.from("state"),
+  );
+  client.values.set(
+    buildCollaborationYjsMetaKey(documentId),
+    JSON.stringify({ draftRevision: 4, bodyHash: "body-hash" }),
+  );
+
+  await store.invalidateInactiveCache(documentId);
+
+  assert.equal(
+    client.values.has(buildCollaborationYjsStateKey(documentId)),
+    false,
+  );
+  assert.equal(
+    client.values.has(buildCollaborationYjsMetaKey(documentId)),
+    false,
+  );
+  assert.deepEqual(
+    client.calls.filter((call) => call.method === "del"),
+    [
+      {
+        method: "del",
+        keys: [
+          buildCollaborationYjsStateKey(documentId),
+          buildCollaborationYjsMetaKey(documentId),
+        ],
+      },
+    ],
+  );
+});
+
+test("inactive collaboration cache invalidation preserves cache when active lock exists", async () => {
+  const documentId = "54f00952-2fb9-49d4-8510-086850825c86";
+  const { client, store } = createStore();
+  const stateKey = buildCollaborationYjsStateKey(documentId);
+  const metaKey = buildCollaborationYjsMetaKey(documentId);
+
+  client.values.set(stateKey, Buffer.from("state"));
+  client.values.set(
+    metaKey,
+    JSON.stringify({ draftRevision: 4, bodyHash: "body-hash" }),
+  );
+  client.values.set(buildCollaborationActiveKey(documentId), "room-1");
+
+  await store.invalidateInactiveCache(documentId);
+
+  assert.equal(client.values.has(stateKey), true);
+  assert.equal(client.values.has(metaKey), true);
+  assert.deepEqual(
+    client.calls.filter((call) => call.method === "eval"),
+    [
+      {
+        method: "eval",
+        keys: [stateKey, metaKey, buildCollaborationActiveKey(documentId)],
       },
     ],
   );

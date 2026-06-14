@@ -18,6 +18,12 @@ Entries are reverse-chronological (newest first).
 **Why:** The delivery worker records status codes from the sink return value; a wrapper that only awaits the sink silently turns successful attempts into `statusCode: null` history rows.
 **How to apply:** When adding logging, tracing, or metrics around `WebhookDeliverySink`, capture `const result = await sink(delivery)`, perform side effects, then `return result`; add worker or composition coverage when new metadata is persisted from sink results.
 
+## 2026-06-14 — use single-address loopback in Postgres availability probes
+
+**Rule:** Test helpers that make short-lived Postgres availability probes should use `127.0.0.1` instead of `localhost`.
+**Why:** Bun can leave a delayed multi-address `node:net` connect-timeout callback behind after a `localhost` probe is closed, which makes later unrelated tests fail with `TypeError: null is not an object (evaluating 'context')`.
+**How to apply:** When adding database probe URLs to test support, prefer an explicit IPv4 loopback address unless the test is specifically covering hostname resolution behavior.
+
 ## 2026-06-03 — inject deterministic DNS in webhook target tests
 
 **Rule:** Webhook route and dispatcher tests that exercise target validation must inject a deterministic target-address resolver instead of relying on real DNS.

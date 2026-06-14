@@ -289,6 +289,10 @@ export type ContentActiveCollaborationChecker = {
   isDocumentActive: (documentId: string) => Promise<boolean>;
 };
 
+export type ContentInactiveCollaborationCacheInvalidator = {
+  invalidateDocument: (documentId: string) => Promise<void>;
+};
+
 export const CONTENT_LIFECYCLE_EVENTS = [
   "content.created",
   "content.updated",
@@ -320,6 +324,7 @@ export type MountContentApiRoutesOptions = {
   resolveUsers?: ContentUserSummaryLookup;
   lifecycleEvents?: ContentLifecycleEventSink;
   activeCollaboration?: ContentActiveCollaborationChecker;
+  inactiveCollaborationCache?: ContentInactiveCollaborationCacheInvalidator;
   previewTokenSecret?: string;
   previewTokenTtlSeconds?: number;
 };
