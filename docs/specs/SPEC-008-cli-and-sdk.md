@@ -2,7 +2,7 @@
 status: live
 canonical: true
 created: 2026-03-11
-last_updated: 2026-06-11
+last_updated: 2026-06-14
 ---
 
 # SPEC-008 CLI and SDK
@@ -383,6 +383,7 @@ The manifest is flushed atomically (via `writeScopedManifestAtomic`) after each 
 - **Schema mismatch handling:** With preflight active, the per-doc `SCHEMA_HASH_MISMATCH` (`409`) path covers race conditions only — a concurrent sync changed the server hash between preflight and content writes. Failed documents are reported with reason code `schema_hash_mismatch`; the exit summary directs the developer to re-run `cms push` rather than `cms schema sync`, since the local state may already be fresh. Other documents in the same push run continue (partial success).
 - **Path conflict handling:** If the server returns `CONTENT_PATH_CONFLICT` (`409`) for a document (update, create, or new-file), that document is reported as failed with reason code `content_path_conflict`. The exit summary directs the developer to run `cms pull` to re-sync the manifest.
 - **Active collaboration handling:** If the server returns `DOCUMENT_COLLABORATION_ACTIVE` (`409`) for a known document, that document is reported as failed with reason code `collaboration_active`. Other documents in the same push run continue. The exit summary tells the developer to wait for the active Studio collaboration session to close before retrying the locked document.
+- **Inactive collaboration cache invalidation:** When a pushed update or delete succeeds and no active collaboration session exists for that document, the server invalidates inactive Redis Yjs state and metadata for that document after committing the database change. The CLI does not call Redis directly and does not expose a separate cache flag. A successful push means the next Studio collaboration room for that document must load from the newly persisted PostgreSQL draft head, not from the previous inactive Yjs cache.
 - **Draft optimistic concurrency:** If the server's current `draft_revision` differs from the base draft revision in the manifest, the push is **rejected** for that document with reason code `stale_draft_revision`. The developer must `cms pull` first, then re-apply their changes.
 - On success, the server updates `documents`, increments `draft_revision`, and does not create new `document_versions` rows.
 - Optional `--validate` flag runs schema validation locally before pushing. Validation covers both changed and selected new documents. Because preflight has already normalized local vs server schema state (or aborted), the old "local schema differs from last synced" warning inside `--validate` is no longer needed.

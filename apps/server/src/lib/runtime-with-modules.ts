@@ -32,6 +32,7 @@ import {
   isCollaborationWebSocketUpgradeRequest,
   type BunUpgradeServer,
   type CollaborationWebSocketHandler,
+  type CollaborationPresenceStore,
   type CollaborationWebSocketTransport,
 } from "./collaboration/transport.js";
 import {
@@ -106,7 +107,7 @@ export type CreateServerRequestHandlerWithModulesOptions = {
 
 type RuntimeCollaborationRedisStore = CollaborationRuntimeRedisStore & {
   isActive: (documentId: string) => Promise<boolean>;
-};
+} & CollaborationPresenceStore;
 
 export type PrepareServerRequestHandlerWithModulesOptions =
   CreateServerRequestHandlerWithModulesOptions & {
@@ -338,6 +339,7 @@ export function createServerRequestHandlerWithModules(
     {
       authGuard: collaborationAuthGuard,
       runtime: collaborationRuntime,
+      presenceStore: collaborationRedisStore,
       unavailableDetails: options.collaborationUnavailableDetails,
     },
   );

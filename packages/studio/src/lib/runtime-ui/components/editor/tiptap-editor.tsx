@@ -17,6 +17,7 @@ import {
   type ChangeEvent as ReactChangeEvent,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useReducer,
   useRef,
@@ -255,6 +256,36 @@ export type TipTapEditorSelectionInfo = {
   anchorRect: TipTapEditorAnchorRect;
 };
 
+export type TipTapEditorCursorSelection = {
+  anchor: number;
+  head: number;
+};
+
+export type TipTapEditorRemoteCursor = {
+  sessionId: string;
+  label: string;
+  color: string;
+  cursor: TipTapEditorCursorSelection;
+};
+
+export type TipTapEditorRemoteCursorPosition = TipTapEditorRemoteCursor & {
+  top: number;
+  left: number;
+};
+
+const EMPTY_REMOTE_CURSORS: TipTapEditorRemoteCursor[] = [];
+const EMPTY_REMOTE_CURSOR_POSITIONS: TipTapEditorRemoteCursorPosition[] = [];
+
+export function createTipTapEditorCursorSelection(selection: {
+  anchor: number;
+  head: number;
+}): TipTapEditorCursorSelection {
+  return {
+    anchor: selection.anchor,
+    head: selection.head,
+  };
+}
+
 export type TipTapEditorMediaUploadState = {
   canUpload: boolean;
   isUploading: boolean;
@@ -291,6 +322,8 @@ interface TipTapEditorProps {
    * transforms.
    */
   onSelectionTextChange?: (selection: TipTapEditorSelectionInfo | null) => void;
+  onCursorSelectionChange?: (selection: TipTapEditorCursorSelection) => void;
+  remoteCursors?: TipTapEditorRemoteCursor[];
   /**
    * Renders ABOVE the editable surface inside the scrollable canvas area —
    * for the document path chip, frontmatter mono row, and any
@@ -493,6 +526,142 @@ type ToolbarButtonProps = {
 };
 
 type TipTapEditorInstance = NonNullable<ReturnType<typeof useEditor>>;
+
+type TipTapRemoteCursorPositionResolverEditor = {
+  view: {
+    coordsAtPos: (position: number) => {
+      top: number;
+      left: number;
+      right: number;
+      bottom: number;
+    };
+  };
+};
+
+type TipTapRemoteCursorPositionResolverWrapper = {
+  getBoundingClientRect: () => {
+    top: number;
+    left: number;
+  };
+};
+
+export function resolveTipTapRemoteCursorPositions({
+  editor,
+  wrapper,
+  remoteCursors,
+}: {
+  editor?: TipTapRemoteCursorPositionResolverEditor | null;
+  wrapper?: TipTapRemoteCursorPositionResolverWrapper | null;
+  remoteCursors: readonly TipTapEditorRemoteCursor[];
+}): TipTapEditorRemoteCursorPosition[] {
+  if (!editor || !wrapper || remoteCursors.length === 0) {
+    return [];
+  }
+
+  const wrapperRect = wrapper.getBoundingClientRect();
+  const positions: TipTapEditorRemoteCursorPosition[] = [];
+
+  for (const remoteCursor of remoteCursors) {
+    try {
+      const cursorRect = editor.view.coordsAtPos(remoteCursor.cursor.head);
+      positions.push({
+        ...remoteCursor,
+        top: cursorRect.top - wrapperRect.top,
+        left: cursorRect.left - wrapperRect.left,
+      });
+    } catch {
+      // Remote cursor snapshots can briefly outlive the local document
+      // position they reference. The next presence snapshot/render can
+      // place it again once positions line up.
+    }
+  }
+
+  return positions;
+}
+
+type TipTapRemoteCursorPositionSyncEditor = {
+  on: (eventName: "update" | "selectionUpdate", listener: () => void) => void;
+  off: (eventName: "update" | "selectionUpdate", listener: () => void) => void;
+};
+
+type TipTapRemoteCursorPositionScrollTarget = {
+  addEventListener: (
+    eventName: "scroll",
+    listener: () => void,
+    options?: AddEventListenerOptions,
+  ) => void;
+  removeEventListener: (eventName: "scroll", listener: () => void) => void;
+};
+
+type TipTapRemoteCursorPositionViewport = {
+  addEventListener: (eventName: "resize", listener: () => void) => void;
+  removeEventListener: (eventName: "resize", listener: () => void) => void;
+};
+
+export function attachTipTapRemoteCursorPositionSync({
+  editor,
+  scrollContainer,
+  viewport,
+  updateRemoteCursorPositions,
+}: {
+  editor: TipTapRemoteCursorPositionSyncEditor;
+  scrollContainer: TipTapRemoteCursorPositionScrollTarget | null;
+  viewport: TipTapRemoteCursorPositionViewport;
+  updateRemoteCursorPositions: () => void;
+}): () => void {
+  updateRemoteCursorPositions();
+  scrollContainer?.addEventListener("scroll", updateRemoteCursorPositions, {
+    passive: true,
+  });
+  viewport.addEventListener("resize", updateRemoteCursorPositions);
+  editor.on("update", updateRemoteCursorPositions);
+  editor.on("selectionUpdate", updateRemoteCursorPositions);
+
+  return () => {
+    scrollContainer?.removeEventListener("scroll", updateRemoteCursorPositions);
+    viewport.removeEventListener("resize", updateRemoteCursorPositions);
+    editor.off("update", updateRemoteCursorPositions);
+    editor.off("selectionUpdate", updateRemoteCursorPositions);
+  };
+}
+
+export function TipTapRemoteCursorLayer({
+  cursors,
+}: {
+  cursors: readonly TipTapEditorRemoteCursorPosition[];
+}) {
+  if (cursors.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="pointer-events-none absolute inset-0 z-20">
+      {cursors.map((cursor) => (
+        <div
+          key={cursor.sessionId}
+          data-mdcms-remote-cursor={cursor.sessionId}
+          aria-label={`${cursor.label} cursor`}
+          className="absolute flex items-start gap-1"
+          style={{
+            top: cursor.top,
+            left: cursor.left,
+          }}
+        >
+          <span
+            className="mt-0.5 h-4 w-px rounded-full"
+            style={{ backgroundColor: cursor.color }}
+          />
+          <span
+            className="max-w-40 truncate rounded-sm px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white shadow-sm"
+            style={{ backgroundColor: cursor.color }}
+          >
+            {cursor.label}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 type MediaUploadInsertEditor = {
   commands: Pick<
@@ -1093,6 +1262,8 @@ function useTipTapEditorElement({
   mediaLibrary,
   onActiveMdxComponentChange,
   onSelectionTextChange,
+  onCursorSelectionChange,
+  remoteCursors = EMPTY_REMOTE_CURSORS,
   canvasHeader,
 }: TipTapEditorProps & { initialEditorContent: ParsedEditorContent }) {
   const toolbar = createEditorToolbarLayout();
@@ -1160,7 +1331,11 @@ function useTipTapEditorElement({
   // explicitly so we can pin `user-select: none` on the editor and run an
   // auto-scroll loop while the canvas pane is the scrollable ancestor.
   const [isMdxDragging, setIsMdxDragging] = useState(false);
+  const [remoteCursorPositions, setRemoteCursorPositions] = useState<
+    TipTapEditorRemoteCursorPosition[]
+  >(EMPTY_REMOTE_CURSOR_POSITIONS);
   const editorWrapperRef = useRef<HTMLDivElement | null>(null);
+  const editorScrollContainerRef = useRef<HTMLDivElement | null>(null);
   const mediaUploadInputRef = useRef<HTMLInputElement | null>(null);
   const mediaUploadInFlightRef = useRef(false);
   const mediaUploadInsertionTargetsRef = useRef<
@@ -1630,6 +1805,9 @@ function useTipTapEditorElement({
         scheduleMarkdownEmission(editor);
       },
       onSelectionUpdate({ editor }) {
+        onCursorSelectionChange?.(
+          createTipTapEditorCursorSelection(editor.state.selection),
+        );
         syncSlashTrigger(editor);
         scheduleAuxSelectionUpdate(editor);
       },
@@ -2106,6 +2284,32 @@ function useTipTapEditorElement({
     readOnly,
     syncSlashTrigger,
   ]);
+
+  useLayoutEffect(() => {
+    const wrapper = editorWrapperRef.current;
+    if (!editor || !wrapper || remoteCursors.length === 0) {
+      setRemoteCursorPositions(EMPTY_REMOTE_CURSOR_POSITIONS);
+      return;
+    }
+
+    const updateRemoteCursorPositions = () => {
+      setRemoteCursorPositions(
+        resolveTipTapRemoteCursorPositions({
+          editor,
+          wrapper,
+          remoteCursors,
+        }),
+      );
+    };
+    const scrollContainer = editorScrollContainerRef.current;
+
+    return attachTipTapRemoteCursorPositionSync({
+      editor,
+      scrollContainer,
+      viewport: window,
+      updateRemoteCursorPositions,
+    });
+  }, [editor, remoteCursors]);
 
   // Drag lifecycle for MDX component handles. Listening at the wrapper
   // catches dragstart only when it originates from a `[data-drag-handle]`
@@ -2833,7 +3037,6 @@ function useTipTapEditorElement({
   const mediaUploadStatusText = mediaUploadProgress
     ? `Uploading media ${mediaUploadProgress.completedFiles} of ${mediaUploadProgress.totalFiles}`
     : "Uploading media...";
-
   return (
     <div
       ref={editorWrapperRef}
@@ -3182,6 +3385,7 @@ function useTipTapEditorElement({
             />
           ) : null}
           <div
+            ref={editorScrollContainerRef}
             className="min-w-0 flex-1 overflow-y-auto"
             onDragOver={handleVisualDragOver}
             onDrop={handleCanvasDrop}
@@ -3239,6 +3443,7 @@ function useTipTapEditorElement({
           </div>
         </div>
       </div>
+      <TipTapRemoteCursorLayer cursors={remoteCursorPositions} />
 
       {context ? (
         <VisualCompositionInsertionDialog

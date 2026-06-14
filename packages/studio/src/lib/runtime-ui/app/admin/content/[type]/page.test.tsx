@@ -1,14 +1,18 @@
 import assert from "node:assert/strict";
 
 import { test } from "bun:test";
+import type { CollaborationPresenceUser } from "@mdcms/shared";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import {
+  ContentTypeDocumentsTable,
   getContentTypeTableColumns,
   TranslationCoverageSummary,
 } from "./page.js";
 import * as pageModule from "./page.js";
+
+const DOCUMENT_ID = "11111111-1111-4111-8111-111111111111";
 
 test("TranslationCoverageSummary renders nothing for the idle state", () => {
   const markup = renderToStaticMarkup(
@@ -107,4 +111,77 @@ test("content type table keeps the original columns for non-localized lists", ()
     getContentTypeTableColumns(false).map((column) => column.label),
     ["", "Title / Path", "Status", "Updated", "Author", ""],
   );
+});
+
+test("content type table renders row presence indicators without adding columns", () => {
+  const columns = getContentTypeTableColumns(false);
+  const rowPresence: CollaborationPresenceUser[] = [
+    {
+      userId: "user-ada",
+      sessionId: "session-ada",
+      label: "Ada Lovelace",
+      color: "#2563eb",
+      documentId: DOCUMENT_ID,
+      mode: "edit",
+      updatedAt: "2026-06-14T10:01:00.000Z",
+    },
+  ];
+  const markup = renderToStaticMarkup(
+    createElement(ContentTypeDocumentsTable, {
+      documents: [
+        {
+          documentId: DOCUMENT_ID,
+          translationGroupId: "translation-group-1",
+          title: "Launch plan",
+          path: "content/launch-plan.mdx",
+          locale: "en-US",
+          status: "changed",
+          updatedAt: "2026-06-14T10:00:00.000Z",
+          createdBy: "user-author",
+          updatedBy: "user-author",
+        },
+      ],
+      users: {
+        "user-author": { email: "author@example.com", name: "Author" },
+      },
+      capabilities: {
+        canPublishContent: true,
+        canUnpublishContent: true,
+        canCreateContent: true,
+        canDeleteContent: true,
+      },
+      pendingRowAction: false,
+      selectedDocumentIds: new Set<string>(),
+      allRenderedSelected: false,
+      someRenderedSelected: false,
+      selectionDisabled: false,
+      showTranslationCoverage: false,
+      translationCoverageStatus: "idle",
+      translationCoverageByGroup: {},
+      tableColumns: columns,
+      presenceByDocumentId: new Map<string, CollaborationPresenceUser[]>([
+        [DOCUMENT_ID, rowPresence],
+      ]),
+      onToggleDocumentSelected: () => {},
+      onToggleRenderedSelection: () => {},
+      onRowClick: () => {},
+      rowActionHandlers: {
+        onEdit: () => {},
+        onPublish: () => {},
+        onUnpublish: () => {},
+        onDuplicate: () => {},
+        onDelete: () => {},
+      },
+    }),
+  );
+
+  assert.deepEqual(
+    columns.map((column) => column.label),
+    ["", "Title / Path", "Status", "Updated", "Author", ""],
+  );
+  assert.equal(markup.match(/<th[\s>]/g)?.length, columns.length);
+  assert.match(markup, /Launch plan/);
+  assert.match(markup, /data-mdcms-presence-indicators="true"/);
+  assert.match(markup, /data-mdcms-presence-mode="edit"/);
+  assert.match(markup, /Ada Lovelace editing/);
 });

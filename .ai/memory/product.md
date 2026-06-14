@@ -25,9 +25,12 @@ The core thesis is that **none of the three should block the others**. An editor
 - **`packages/shared`** holds Zod contracts and types every other package imports.
 - **`packages/modules`** is the first-party module registry — both server-side (`installedModules`) and CLI-side discovery is deterministic and ordered.
 
-## Out of scope (current)
+## Current collaboration scope
 
-- Real-time multi-user collaboration via CRDTs — Post-MVP.
+- Real-time multi-user collaboration via CRDTs is in scope for Studio document
+  rooms. Redis holds ephemeral Yjs state and presence heartbeats; PostgreSQL
+  remains the durable draft source through server-owned collaboration autosave
+  and final save.
 - MCP integration for agent-driven content operations — upcoming.
 - Multiple spaces (team-scoped content organization) — upcoming.
 

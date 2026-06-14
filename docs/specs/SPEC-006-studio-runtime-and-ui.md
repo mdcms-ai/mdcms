@@ -2,7 +2,7 @@
 status: live
 canonical: true
 created: 2026-03-11
-last_updated: 2026-06-11
+last_updated: 2026-06-14
 ---
 
 # SPEC-006 Studio Runtime and UI
@@ -520,6 +520,14 @@ Normative behavior:
     locale variant is unpublished or has unpublished changes
   - `Published` only when every existing locale variant in the group has a
     published version and none have unpublished changes
+- The content list subscribes to the target-scoped collaboration presence stream
+  when the current session can read content in the active target. Visible rows
+  show compact user-identifiable presence indicators for users currently viewing
+  or editing that document. Editing indicators take precedence over viewing
+  indicators when the same document has both.
+- Presence labels and colors come from the collaboration presence contract owned
+  by SPEC-007. The list must not render presence for documents omitted by the
+  backend presence filter or for rows outside the current visible result set.
 
 Deterministic states:
 
@@ -601,10 +609,9 @@ Normative behavior:
   collaboration socket/Yjs path owned by SPEC-007. The active collaboration
   lock blocks normal existing-document HTTP mutations for that document, so
   Studio must not perform HTTP `PUT` auto-save for the active room. PostgreSQL
-  draft persistence for the active collaboration runtime happens through the
-  collaboration final save after the last collaborator disconnects.
-  Periodic/debounced PostgreSQL autosave from active collaboration rooms
-  remains deferred.
+  draft persistence for the active collaboration runtime happens through
+  server-owned collaboration autosave and the collaboration final save after the
+  last collaborator disconnects.
 - The primary canvas edits the document `body` through the editor engine owned
   by SPEC-007.
 - The editor supports media insertion from four inputs: the toolbar image
@@ -698,11 +705,11 @@ Normative behavior:
   reloads the iframe after persistence succeeds. In an active collaboration
   document room, manual preview refresh must not force an HTTP draft save or
   bypass the active collaboration lock; it refreshes against the latest
-  persisted state, and unsaved Yjs changes become visible to backend-backed
-  preview only after the collaboration save contract persists them. Route
-  resolution uses the latest persisted draft snapshot; local unsaved
-  frontmatter changes must not navigate the iframe before the canonical draft
-  row is updated.
+  persisted state, and unsaved Yjs/frontmatter changes become visible to
+  backend-backed preview only after the collaboration autosave/final-save
+  contract persists them. Route resolution uses the latest persisted draft
+  snapshot; local unsaved frontmatter changes must not navigate the iframe
+  before the canonical draft row is updated.
 - When route resolution returns a URL, Studio requests a signed preview token
   from `POST /api/v1/content/:documentId/preview-token` before loading the
   iframe. Studio sends the resolved URL as `previewUrl` when available, appends
@@ -738,16 +745,17 @@ Normative behavior:
   editor mode. In non-collaborative operation, this is the same HTTP draft
   write routine that the auto-save debounce uses. In an active collaboration
   document room, it must not issue normal HTTP `PUT` while the active
-  collaboration lock exists; collaboration final save owns PostgreSQL draft
-  persistence for the active runtime slice. `Save draft` is enabled only while
+  collaboration lock exists; it requests an immediate collaboration autosave
+  flush through the collaboration runtime and reflects `Saving...` until the
+  server acknowledges persisted draft state. `Save draft` is enabled only while
   the draft is in `unsaved` state and a publish is not in flight; it is hidden
-  when the active target denies writes. It must not introduce a separate write
-  path or bypass the same guard checks that auto-save respects (RBAC, schema
-  mismatch, viewing a prior version, active collaboration lock).
+  when the active target denies writes. It must not introduce a separate content
+  write path or bypass the same guard checks that auto-save respects (RBAC,
+  schema mismatch, viewing a prior version, active collaboration lock).
 - In non-collaborative operation, the auto-save debounce continues to run
   independently of `Save draft`; removing the manual button must never disable
-  auto-save. Periodic/debounced PostgreSQL autosave from active collaboration
-  rooms is deferred and must not be represented as independent HTTP `PUT`
+  auto-save. Active collaboration autosave continues to run through the
+  collaboration runtime and must not be represented as independent HTTP `PUT`
   auto-save while the active collaboration lock exists.
 - `Publish` opens the publish dialog and is disabled until the draft is
   saved, has unpublished changes, a publish is not already running, and the
@@ -859,7 +867,9 @@ Normative behavior:
   as body edits. Changing only a property field is sufficient to mark the draft
   unsaved and trigger the active draft persistence path. When a collaboration
   document room is active, Studio must not bypass the active collaboration lock
-  with a separate HTTP `PUT` for frontmatter-only edits.
+  with a separate HTTP `PUT` for frontmatter-only edits; frontmatter changes must
+  be included in the collaboration room draft state so collaboration autosave and
+  final save persist body and frontmatter together.
 - Existing write-blocking states continue to apply to both body and property
   editing. When Studio is read-only because of RBAC, schema mismatch, or
   other guarded write conditions, the `Properties` schema form is disabled

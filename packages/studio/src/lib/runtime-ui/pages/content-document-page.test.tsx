@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 
 import { test } from "bun:test";
 import {
+  type CollaborationPresenceSnapshot,
+  type CollaborationPresenceUser,
   RuntimeError,
   type SchemaRegistryEntry,
   type StudioMountContext,
@@ -18,9 +20,11 @@ import {
   MDCMS_LIVE_PREVIEW_READY_MESSAGE,
   SidebarInfoTab,
   createLivePreviewIframeRoute,
+  createContentDocumentPresenceInput,
   getLivePreviewViewportFrame,
   isLivePreviewReadyMessage,
   readContentDocumentPreviewModeSearchParam,
+  resolveContentDocumentEditorPresence,
   resolveLivePreviewDocument,
   runLivePreviewRefresh,
   shouldPersistBeforeLivePreviewRefresh,
@@ -34,6 +38,7 @@ import {
   applySchemaStateToReadyState,
   createContentDocumentRouteRequestToken,
   createContentDocumentPageState,
+  createLoadingState,
   filterLocaleOptions,
   getPropertyDescriptors,
   loadContentDocumentPageState,
@@ -338,6 +343,33 @@ function createDocumentResponse(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function createPresenceUser(
+  overrides: Partial<CollaborationPresenceUser> = {},
+): CollaborationPresenceUser {
+  return {
+    userId: "user-ada",
+    sessionId: "session-ada",
+    label: "Ada Lovelace",
+    color: "#2563eb",
+    documentId: "11111111-1111-4111-8111-111111111111",
+    mode: "edit",
+    cursor: { anchor: 2, head: 7 },
+    updatedAt: "2026-06-14T10:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function createPresenceSnapshot(
+  users: CollaborationPresenceUser[],
+): CollaborationPresenceSnapshot {
+  return {
+    type: "presence.snapshot",
+    project: "marketing-site",
+    environment: "staging",
+    users,
+  };
+}
+
 test("createContentDocumentPageState maps shell loading and error states into view states", () => {
   const loading = createContentDocumentPageState({
     shell: {
@@ -397,6 +429,145 @@ test("createContentDocumentPageState maps shell loading and error states into vi
   assert.equal(forbidden.status, "forbidden");
   assert.equal(notFound.status, "not-found");
   assert.equal(genericError.status, "error");
+});
+
+test("createContentDocumentPresenceInput reports edit only for writable latest drafts", () => {
+  const cursor = { anchor: 2, head: 7 };
+
+  assert.deepEqual(
+    createContentDocumentPresenceInput({
+      state: createReadyState(),
+      cursor,
+    }),
+    {
+      documentId: "11111111-1111-4111-8111-111111111111",
+      mode: "edit",
+      cursor,
+    },
+  );
+
+  assert.deepEqual(
+    createContentDocumentPresenceInput({
+      state: createReadyState({ canWrite: false }),
+      cursor,
+    }),
+    {
+      documentId: "11111111-1111-4111-8111-111111111111",
+      mode: "view",
+      cursor: null,
+    },
+  );
+
+  assert.deepEqual(
+    createContentDocumentPresenceInput({
+      state: createReadyState({
+        viewingVersion: {
+          version: 4,
+          body: "# Launch Notes v4",
+          status: "ready",
+        },
+      }),
+      cursor,
+    }),
+    {
+      documentId: "11111111-1111-4111-8111-111111111111",
+      mode: "view",
+      cursor: null,
+    },
+  );
+
+  assert.deepEqual(
+    createContentDocumentPresenceInput({
+      state: createLoadingState({
+        typeId: "BlogPost",
+        typeLabel: "Blog post",
+        documentId: "11111111-1111-4111-8111-111111111111",
+        route: createRouteContext(),
+      }),
+      cursor,
+    }),
+    {
+      documentId: null,
+      mode: "view",
+      cursor: null,
+    },
+  );
+});
+
+test("resolveContentDocumentEditorPresence filters current and off-document sessions", () => {
+  const snapshot = createPresenceSnapshot([
+    createPresenceUser(),
+    createPresenceUser({
+      sessionId: "session-current",
+      label: "Current User",
+    }),
+    createPresenceUser({
+      sessionId: "session-no-cursor",
+      label: "Grace Hopper",
+      cursor: undefined,
+      mode: "view",
+    }),
+    createPresenceUser({
+      sessionId: "session-view-cursor",
+      label: "Viewer Cursor",
+      mode: "view",
+      cursor: { anchor: 4, head: 9 },
+    }),
+    createPresenceUser({
+      sessionId: "session-other-doc",
+      label: "Katherine Johnson",
+      documentId: "22222222-2222-4222-8222-222222222222",
+    }),
+  ]);
+
+  const presence = resolveContentDocumentEditorPresence({
+    snapshot,
+    documentId: "11111111-1111-4111-8111-111111111111",
+    currentSessionId: "session-current",
+  });
+
+  assert.deepEqual(
+    presence.users.map((user) => user.sessionId),
+    ["session-ada", "session-no-cursor", "session-view-cursor"],
+  );
+  assert.deepEqual(presence.remoteCursors, [
+    {
+      sessionId: "session-ada",
+      label: "Ada Lovelace",
+      color: "#2563eb",
+      cursor: { anchor: 2, head: 7 },
+    },
+  ]);
+
+  const readOnlyPresence = resolveContentDocumentEditorPresence({
+    snapshot,
+    documentId: "11111111-1111-4111-8111-111111111111",
+    currentSessionId: "session-current",
+    includeRemoteCursors: false,
+  });
+
+  assert.deepEqual(
+    readOnlyPresence.users.map((user) => user.sessionId),
+    ["session-ada", "session-no-cursor", "session-view-cursor"],
+  );
+  assert.deepEqual(readOnlyPresence.remoteCursors, []);
+});
+
+test("ContentDocumentPageView renders editor collaborator indicators", () => {
+  const markup = renderPageMarkup(createReadyState(), {
+    editorPresenceUsers: [
+      createPresenceUser({
+        sessionId: "session-ada",
+        label: "Ada Lovelace",
+        color: "#2563eb",
+        mode: "edit",
+      }),
+    ],
+  });
+
+  assert.match(markup, /data-mdcms-editor-collaborators="true"/);
+  assert.match(markup, /data-mdcms-presence-session="session-ada"/);
+  assert.match(markup, /Ada Lovelace editing/);
 });
 
 test("ContentDocumentPageView renders document route loading and failure states", () => {

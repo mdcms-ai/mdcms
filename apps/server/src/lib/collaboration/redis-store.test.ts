@@ -2,11 +2,14 @@ import assert from "node:assert/strict";
 import { test } from "bun:test";
 
 import { RuntimeError } from "@mdcms/shared";
+import type { CollaborationPresenceUser } from "@mdcms/shared";
 
 import {
   COLLABORATION_ACTIVE_LOCK_LEASE_SECONDS,
   COLLABORATION_INACTIVE_CACHE_TTL_SECONDS,
+  COLLABORATION_PRESENCE_TTL_SECONDS,
   buildCollaborationActiveKey,
+  buildCollaborationPresenceKey,
   buildCollaborationYjsMetaKey,
   buildCollaborationYjsStateKey,
   createCollaborationRedisStore,
@@ -21,9 +24,12 @@ class FakeRedisClient implements CollaborationRedisClient {
     key?: string;
     keys?: string[];
     seconds?: number;
+    count?: number;
     value?: Buffer | string;
     condition?: "NX";
     args?: string[];
+    cursor?: string;
+    pattern?: string;
   }> = [];
 
   async get(key: string): Promise<string | null> {
@@ -93,6 +99,28 @@ class FakeRedisClient implements CollaborationRedisClient {
   async exists(key: string): Promise<number> {
     this.calls.push({ method: "exists", key });
     return this.values.has(key) ? 1 : 0;
+  }
+
+  async scan(
+    cursor: string,
+    matchKeyword: "MATCH",
+    pattern: string,
+    countKeyword: "COUNT",
+    count: number,
+  ): Promise<[string, string[]]> {
+    this.calls.push({ method: "scan", cursor, pattern, count });
+    assert.equal(cursor, "0");
+    assert.equal(matchKeyword, "MATCH");
+    assert.equal(countKeyword, "COUNT");
+    assert.equal(count > 0, true);
+
+    const expression = new RegExp(
+      `^${pattern
+        .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+        .replaceAll("*", ".*")}$`,
+    );
+
+    return ["0", [...this.values.keys()].filter((key) => expression.test(key))];
   }
 
   async eval(
@@ -166,6 +194,22 @@ function createStore(): {
   };
 }
 
+function createPresenceRecord(
+  overrides: Partial<CollaborationPresenceUser> = {},
+): CollaborationPresenceUser {
+  return {
+    userId: "user-1",
+    sessionId: "session-1",
+    label: "Ada",
+    color: "#2563eb",
+    documentId: "11111111-1111-4111-8111-111111111111",
+    mode: "view",
+    cursor: { anchor: 2, head: 7 },
+    updatedAt: "2026-06-14T10:00:00.000Z",
+    ...overrides,
+  };
+}
+
 test("collaboration Redis key builders match the documented key shape", () => {
   const documentId = "5ad76d8b-4de0-48e7-9370-8f5d2df3b1d1";
 
@@ -181,6 +225,134 @@ test("collaboration Redis key builders match the documented key shape", () => {
     buildCollaborationActiveKey(documentId),
     "mdcms:collaboration:active:5ad76d8b-4de0-48e7-9370-8f5d2df3b1d1",
   );
+  assert.equal(
+    buildCollaborationPresenceKey({
+      project: "marketing",
+      environment: "draft",
+      sessionId: "session-1",
+    }),
+    "mdcms:collaboration:presence:marketing:draft:session-1",
+  );
+});
+
+test("presence writes JSON records with the presence heartbeat TTL", async () => {
+  const { client, store } = createStore();
+  const record = createPresenceRecord();
+  const key = buildCollaborationPresenceKey({
+    project: "marketing",
+    environment: "draft",
+    sessionId: "session-1",
+  });
+
+  await store.setPresence({
+    ...record,
+    project: "marketing",
+    environment: "draft",
+  });
+
+  assert.deepEqual(JSON.parse(String(client.values.get(key))), record);
+  assert.deepEqual(client.calls.at(-1), {
+    method: "set",
+    key,
+    value: JSON.stringify(record),
+    seconds: COLLABORATION_PRESENCE_TTL_SECONDS,
+    condition: undefined,
+  });
+});
+
+test("presence listing returns valid records only for the requested target", async () => {
+  const { client, store } = createStore();
+  const valid = createPresenceRecord({
+    sessionId: "session-1",
+    label: "Ada",
+  });
+  const otherEnvironment = createPresenceRecord({
+    sessionId: "session-2",
+    label: "Grace",
+  });
+  const otherProject = createPresenceRecord({
+    sessionId: "session-3",
+    label: "Linus",
+  });
+
+  client.values.set(
+    buildCollaborationPresenceKey({
+      project: "marketing",
+      environment: "draft",
+      sessionId: valid.sessionId,
+    }),
+    JSON.stringify(valid),
+  );
+  client.values.set(
+    buildCollaborationPresenceKey({
+      project: "marketing",
+      environment: "draft",
+      sessionId: "malformed-json",
+    }),
+    "{",
+  );
+  client.values.set(
+    buildCollaborationPresenceKey({
+      project: "marketing",
+      environment: "draft",
+      sessionId: "invalid-shape",
+    }),
+    JSON.stringify({ ...valid, label: "", sessionId: "invalid-shape" }),
+  );
+  client.values.set(
+    buildCollaborationPresenceKey({
+      project: "marketing",
+      environment: "prod",
+      sessionId: otherEnvironment.sessionId,
+    }),
+    JSON.stringify(otherEnvironment),
+  );
+  client.values.set(
+    buildCollaborationPresenceKey({
+      project: "sales",
+      environment: "draft",
+      sessionId: otherProject.sessionId,
+    }),
+    JSON.stringify(otherProject),
+  );
+
+  assert.deepEqual(
+    await store.listPresence({ project: "marketing", environment: "draft" }),
+    [valid],
+  );
+});
+
+test("presence delete removes only the exact session key", async () => {
+  const { client, store } = createStore();
+  const targetKey = buildCollaborationPresenceKey({
+    project: "marketing",
+    environment: "draft",
+    sessionId: "session-1",
+  });
+  const siblingKey = buildCollaborationPresenceKey({
+    project: "marketing",
+    environment: "draft",
+    sessionId: "session-2",
+  });
+
+  client.values.set(targetKey, JSON.stringify(createPresenceRecord()));
+  client.values.set(
+    siblingKey,
+    JSON.stringify(createPresenceRecord({ sessionId: "session-2" })),
+  );
+
+  await store.deletePresence({
+    project: "marketing",
+    environment: "draft",
+    sessionId: "session-1",
+  });
+
+  assert.equal(client.values.has(targetKey), false);
+  assert.equal(client.values.has(siblingKey), true);
+  assert.deepEqual(client.calls.at(-1), {
+    method: "del",
+    keys: [targetKey],
+  });
 });
 
 test("state and metadata round trip through Redis without changing binary bytes", async () => {

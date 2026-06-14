@@ -41,6 +41,7 @@ export const COLLABORATION_ACTIVE_LOCK_HEARTBEAT_INTERVAL_MS = Math.floor(
 export const COLLABORATION_FINALIZED_ROOM_LEASE_TTL_MS =
   COLLABORATION_INACTIVE_CACHE_TTL_SECONDS * 1000;
 export const COLLABORATION_YJS_FIELD_NAME = "default";
+export const COLLABORATION_FRONTMATTER_FIELD_NAME = "frontmatter";
 
 export type CollaborationRuntimeLastWriter = {
   userId: string;
@@ -52,6 +53,8 @@ export type CollaborationRuntimeContext = CollaborationSessionContext & {
   loadedDraftRevision?: number;
   loadedBodyHash?: string;
   loadedCanonicalBody?: string;
+  loadedFrontmatterHash?: string;
+  loadedCanonicalFrontmatter?: Record<string, unknown>;
   roomLeaseValue?: string;
   lastWriter?: CollaborationRuntimeLastWriter;
   request?: Request;
@@ -73,7 +76,11 @@ export type CollaborationRuntimeContentStore = {
   update: (
     scope: ContentScope,
     documentId: string,
-    payload: { body: string; updatedBy: string },
+    payload: {
+      body: string;
+      frontmatter: Record<string, unknown>;
+      updatedBy: string;
+    },
     options?: { expectedDraftRevision?: number },
   ) => Promise<ContentDocument>;
 };
@@ -113,6 +120,8 @@ type RoomState = {
   loadedDraftRevision: number;
   loadedBodyHash: string;
   loadedCanonicalBody: string;
+  loadedFrontmatterHash: string;
+  loadedCanonicalFrontmatter: Record<string, unknown>;
   roomLeaseValue: string;
   lastWriter?: CollaborationRuntimeLastWriter;
   activeLockHeartbeatInFlight?: boolean;
@@ -145,7 +154,10 @@ export type CreateCollaborationRuntimeHooksOptions = {
   clearFinalizedRoomLeaseTimeout?: (timer: unknown) => void;
   closeRoom?: (documentName: string) => Promise<void> | void;
   createRoomLeaseValue?: () => string;
-  convertMarkdownToYjsUpdate?: (markdown: string) => Uint8Array;
+  convertMarkdownToYjsUpdate?: (
+    markdown: string,
+    frontmatter?: Record<string, unknown>,
+  ) => Uint8Array;
 };
 
 export type CreateCollaborationRuntimeOptions = Omit<
@@ -182,6 +194,30 @@ export function computeCollaborationBodyHash(body: string): string {
   return `sha256:${createHash("sha256").update(body, "utf8").digest("hex")}`;
 }
 
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableJson(item)).join(",")}]`;
+  }
+
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value as Record<string, unknown>)
+      .sort()
+      .map(
+        (key) =>
+          `${JSON.stringify(key)}:${stableJson(
+            (value as Record<string, unknown>)[key],
+          )}`,
+      )
+      .join(",")}}`;
+  }
+
+  return JSON.stringify(value) ?? "undefined";
+}
+
+function computeFrontmatterHash(frontmatter: Record<string, unknown>): string {
+  return `sha256:${createHash("sha256").update(stableJson(frontmatter), "utf8").digest("hex")}`;
+}
+
 export function encodeYDocState(document: Y.Doc): Uint8Array {
   return Y.encodeStateAsUpdate(document);
 }
@@ -192,17 +228,54 @@ export function yjsUpdateToYDoc(update: Uint8Array): Y.Doc {
   return document;
 }
 
-export function markdownToYDoc(markdown: string): Y.Doc {
+function cloneJsonObject(
+  value: Record<string, unknown>,
+): Record<string, unknown> {
+  return JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+}
+
+export function writeFrontmatterToYDoc(
+  document: Y.Doc,
+  frontmatter: Record<string, unknown>,
+): void {
+  const frontmatterSnapshot = cloneJsonObject(frontmatter);
+  const frontmatterMap = document.getMap<unknown>(
+    COLLABORATION_FRONTMATTER_FIELD_NAME,
+  );
+  frontmatterMap.clear();
+
+  for (const [fieldName, value] of Object.entries(frontmatterSnapshot)) {
+    frontmatterMap.set(fieldName, value);
+  }
+}
+
+export function yDocToFrontmatter(document: Y.Doc): Record<string, unknown> {
+  return cloneJsonObject(
+    Object.fromEntries(
+      document.getMap<unknown>(COLLABORATION_FRONTMATTER_FIELD_NAME).entries(),
+    ),
+  );
+}
+
+export function markdownToYDoc(
+  markdown: string,
+  frontmatter: Record<string, unknown> = {},
+): Y.Doc {
   const tiptapDocument = parseMarkdownToDocument(markdown);
-  return TiptapTransformer.toYdoc(
+  const document = TiptapTransformer.toYdoc(
     tiptapDocument,
     COLLABORATION_YJS_FIELD_NAME,
     createEditorCoreExtensions(),
   );
+  writeFrontmatterToYDoc(document, frontmatter);
+  return document;
 }
 
-export function markdownToYjsUpdate(markdown: string): Uint8Array {
-  return encodeYDocState(markdownToYDoc(markdown));
+export function markdownToYjsUpdate(
+  markdown: string,
+  frontmatter: Record<string, unknown> = {},
+): Uint8Array {
+  return encodeYDocState(markdownToYDoc(markdown, frontmatter));
 }
 
 export function yDocToMarkdown(document: Y.Doc): string {
@@ -360,6 +433,10 @@ function assignLoadedRoomState(
   context.loadedDraftRevision = state.loadedDraftRevision;
   context.loadedBodyHash = state.loadedBodyHash;
   context.loadedCanonicalBody = state.loadedCanonicalBody;
+  context.loadedFrontmatterHash = state.loadedFrontmatterHash;
+  context.loadedCanonicalFrontmatter = cloneJsonObject(
+    state.loadedCanonicalFrontmatter,
+  );
   context.roomLeaseValue = state.roomLeaseValue;
   context.lastWriter = state.lastWriter;
 }
@@ -470,31 +547,6 @@ function assertActiveLockHeld(state: RoomState | undefined): void {
   if (state?.activeLockLost) {
     throw createActiveLockLostError(state.documentId);
   }
-}
-
-function metadataFromContextOrState(
-  context: CollaborationRuntimeContext,
-  state?: RoomState,
-): CollaborationYjsMetadata {
-  const draftRevision =
-    state?.loadedDraftRevision ?? context.loadedDraftRevision;
-  const bodyHash = state?.loadedBodyHash ?? context.loadedBodyHash;
-
-  if (typeof draftRevision !== "number" || typeof bodyHash !== "string") {
-    throw new RuntimeError({
-      code: "INVALID_COLLABORATION_CONTEXT",
-      message: "Collaboration room is missing loaded draft metadata.",
-      statusCode: 500,
-      details: {
-        documentId: context.documentId,
-      },
-    });
-  }
-
-  return {
-    draftRevision,
-    bodyHash,
-  };
 }
 
 export function createCollaborationRuntimeHooks(
@@ -679,6 +731,135 @@ export function createCollaborationRuntimeHooks(
     throw createActiveLockLostError(input.documentId);
   }
 
+  async function persistRoomDraft(input: {
+    context: CollaborationRuntimeContext;
+    document: Y.Doc;
+    key: string;
+    state: RoomState | undefined;
+    writer: CollaborationRuntimeLastWriter;
+  }): Promise<CollaborationYjsMetadata> {
+    const nextBody = yDocToMarkdown(input.document);
+    const nextFrontmatter = yDocToFrontmatter(input.document);
+    const loadedCanonicalBody =
+      input.state?.loadedCanonicalBody ?? input.context.loadedCanonicalBody;
+    const loadedFrontmatterHash =
+      input.state?.loadedFrontmatterHash ?? input.context.loadedFrontmatterHash;
+
+    if (typeof loadedCanonicalBody !== "string") {
+      throw new RuntimeError({
+        code: "INVALID_COLLABORATION_CONTEXT",
+        message: "Collaboration room is missing loaded canonical body.",
+        statusCode: 500,
+        details: {
+          documentId: input.context.documentId,
+        },
+      });
+    }
+
+    if (typeof loadedFrontmatterHash !== "string") {
+      throw new RuntimeError({
+        code: "INVALID_COLLABORATION_CONTEXT",
+        message: "Collaboration room is missing loaded frontmatter metadata.",
+        statusCode: 500,
+        details: {
+          documentId: input.context.documentId,
+        },
+      });
+    }
+
+    const nextFrontmatterHash = computeFrontmatterHash(nextFrontmatter);
+    const bodyChanged = nextBody !== loadedCanonicalBody;
+    const frontmatterChanged = nextFrontmatterHash !== loadedFrontmatterHash;
+
+    if (!bodyChanged && !frontmatterChanged) {
+      const loadedDraftRevision =
+        input.state?.loadedDraftRevision ?? input.context.loadedDraftRevision;
+      const loadedBodyHash =
+        input.state?.loadedBodyHash ?? input.context.loadedBodyHash;
+
+      if (
+        typeof loadedDraftRevision !== "number" ||
+        typeof loadedBodyHash !== "string"
+      ) {
+        throw new RuntimeError({
+          code: "INVALID_COLLABORATION_CONTEXT",
+          message: "Collaboration room is missing loaded draft metadata.",
+          statusCode: 500,
+          details: {
+            documentId: input.context.documentId,
+          },
+        });
+      }
+
+      return { draftRevision: loadedDraftRevision, bodyHash: loadedBodyHash };
+    }
+
+    const expectedDraftRevision =
+      input.state?.loadedDraftRevision ?? input.context.loadedDraftRevision;
+
+    if (typeof expectedDraftRevision !== "number") {
+      throw new RuntimeError({
+        code: "INVALID_COLLABORATION_CONTEXT",
+        message: "Collaboration autosave is missing expected draft revision.",
+        statusCode: 500,
+        details: {
+          documentId: input.context.documentId,
+        },
+      });
+    }
+
+    const updated = await options.contentStore.update(
+      scopeFromContext(input.context),
+      input.context.documentId,
+      {
+        body: nextBody,
+        frontmatter: nextFrontmatter,
+        updatedBy: input.writer.userId,
+      },
+      { expectedDraftRevision },
+    );
+
+    const metadata = {
+      draftRevision: updated.draftRevision,
+      bodyHash: computeCollaborationBodyHash(updated.body),
+    };
+    const loadedCanonicalFrontmatter = cloneJsonObject(updated.frontmatter);
+    const updatedFrontmatterHash = computeFrontmatterHash(updated.frontmatter);
+
+    if (input.state) {
+      input.state.loadedDraftRevision = updated.draftRevision;
+      input.state.loadedBodyHash = metadata.bodyHash;
+      input.state.loadedCanonicalBody = nextBody;
+      input.state.loadedFrontmatterHash = updatedFrontmatterHash;
+      input.state.loadedCanonicalFrontmatter = loadedCanonicalFrontmatter;
+      input.state.lastWriter = input.writer;
+    }
+
+    assignLoadedRoomState(
+      input.context,
+      input.state ?? {
+        documentId: input.context.documentId,
+        documentName: input.key,
+        loadedDraftRevision: updated.draftRevision,
+        loadedBodyHash: metadata.bodyHash,
+        loadedCanonicalBody: nextBody,
+        loadedFrontmatterHash: updatedFrontmatterHash,
+        loadedCanonicalFrontmatter,
+        roomLeaseValue: input.context.roomLeaseValue ?? "",
+        lastWriter: input.writer,
+      },
+    );
+
+    await options.lifecycleEvents?.emitContentEvent({
+      event: "content.updated",
+      scope: scopeFromContext(input.context),
+      document: updated,
+      actor: createLifecycleActor(input.writer),
+    });
+
+    return metadata;
+  }
+
   return {
     async onLoadDocument(payload: RuntimeHookPayload): Promise<Uint8Array> {
       const context = requireRuntimeContext(payload);
@@ -693,8 +874,18 @@ export function createCollaborationRuntimeHooks(
         draftHead,
       );
 
-      const state = cached?.state ?? convertMarkdownToYjsUpdate(draft.body);
+      const sourceState =
+        cached?.state ??
+        convertMarkdownToYjsUpdate(draft.body, draft.frontmatter);
+      const sourceDocument = yjsUpdateToYDoc(sourceState);
+      const draftFrontmatterHash = computeFrontmatterHash(draft.frontmatter);
+      const frontmatterReconciled =
+        computeFrontmatterHash(yDocToFrontmatter(sourceDocument)) !==
+        draftFrontmatterHash;
+      writeFrontmatterToYDoc(sourceDocument, draft.frontmatter);
+      const state = encodeYDocState(sourceDocument);
       const loadedCanonicalBody = canonicalizeMarkdownUpdate(state);
+      const loadedCanonicalFrontmatter = cloneJsonObject(draft.frontmatter);
 
       const roomLeaseValue = createRoomLeaseValue();
       const acquired = await options.redisStore.acquireActiveLock(
@@ -712,12 +903,14 @@ export function createCollaborationRuntimeHooks(
         loadedDraftRevision: draftHead.draftRevision,
         loadedBodyHash: draftHead.bodyHash,
         loadedCanonicalBody,
+        loadedFrontmatterHash: draftFrontmatterHash,
+        loadedCanonicalFrontmatter,
         roomLeaseValue,
       };
       const key = roomKey(context);
 
       try {
-        if (!cached) {
+        if (!cached || frontmatterReconciled) {
           await options.redisStore.setYjsState(context.documentId, state);
           await options.redisStore.setYjsMetadata(
             context.documentId,
@@ -829,7 +1022,6 @@ export function createCollaborationRuntimeHooks(
         throw createCloseEvent(result.closeCode);
       }
 
-      const metadata = metadataFromContextOrState(context, state);
       const document = payload.document;
 
       if (!document) {
@@ -853,6 +1045,29 @@ export function createCollaborationRuntimeHooks(
           leaseValue,
           state,
         });
+      }
+
+      const writer = state?.lastWriter ??
+        context.lastWriter ?? {
+          userId: context.userId,
+          ...(context.userEmail ? { email: context.userEmail } : {}),
+        };
+      let metadata: CollaborationYjsMetadata;
+
+      try {
+        metadata = await persistRoomDraft({
+          context,
+          document,
+          key,
+          state,
+          writer,
+        });
+      } catch (error) {
+        if (state) {
+          await markActiveLockLost(key, state);
+        }
+
+        throw error;
       }
 
       await options.redisStore.setYjsState(
@@ -900,20 +1115,6 @@ export function createCollaborationRuntimeHooks(
 
       try {
         const nextState = encodeYDocState(document);
-        const nextBody = yDocToMarkdown(document);
-        const loadedCanonicalBody =
-          state?.loadedCanonicalBody ?? context.loadedCanonicalBody;
-
-        if (typeof loadedCanonicalBody !== "string") {
-          throw new RuntimeError({
-            code: "INVALID_COLLABORATION_CONTEXT",
-            message: "Collaboration room is missing loaded canonical body.",
-            statusCode: 500,
-            details: {
-              documentId: context.documentId,
-            },
-          });
-        }
 
         await verifyActiveLockOwnership({
           documentId: context.documentId,
@@ -923,58 +1124,18 @@ export function createCollaborationRuntimeHooks(
           state,
         });
 
-        const currentDraft = await loadDraftDocument(
-          options.contentStore,
-          context,
-        );
-        let metadata: CollaborationYjsMetadata = {
-          draftRevision: currentDraft.draftRevision,
-          bodyHash: computeCollaborationBodyHash(currentDraft.body),
-        };
-
-        if (nextBody !== loadedCanonicalBody) {
-          const writer = state?.lastWriter ??
-            context.lastWriter ?? {
-              userId: context.userId,
-              ...(context.userEmail ? { email: context.userEmail } : {}),
-            };
-          const expectedDraftRevision =
-            state?.loadedDraftRevision ?? context.loadedDraftRevision;
-
-          if (typeof expectedDraftRevision !== "number") {
-            throw new RuntimeError({
-              code: "INVALID_COLLABORATION_CONTEXT",
-              message:
-                "Collaboration final save is missing expected draft revision.",
-              statusCode: 500,
-              details: {
-                documentId: context.documentId,
-              },
-            });
-          }
-
-          const updated = await options.contentStore.update(
-            scopeFromContext(context),
-            context.documentId,
-            {
-              body: nextBody,
-              updatedBy: writer.userId,
-            },
-            { expectedDraftRevision },
-          );
-
-          metadata = {
-            draftRevision: updated.draftRevision,
-            bodyHash: computeCollaborationBodyHash(updated.body),
+        const writer = state?.lastWriter ??
+          context.lastWriter ?? {
+            userId: context.userId,
+            ...(context.userEmail ? { email: context.userEmail } : {}),
           };
-
-          await options.lifecycleEvents?.emitContentEvent({
-            event: "content.updated",
-            scope: scopeFromContext(context),
-            document: updated,
-            actor: createLifecycleActor(writer),
-          });
-        }
+        const metadata = await persistRoomDraft({
+          context,
+          document,
+          key,
+          state,
+          writer,
+        });
 
         await options.redisStore.setYjsState(context.documentId, nextState);
         await options.redisStore.setYjsMetadata(context.documentId, metadata);

@@ -2,7 +2,7 @@
 status: live
 canonical: true
 created: 2026-03-11
-last_updated: 2026-06-11
+last_updated: 2026-06-14
 ---
 
 # SPEC-011 Local Development and Operations
@@ -201,12 +201,33 @@ This seed key is intended for local demo UX only and does not replace normal CLI
 
 The collaboration runtime requires `REDIS_URL`. If Redis is not configured or cannot initialize, the server can still boot for non-collaboration HTTP traffic, but collaboration upgrade requests fail with `COLLABORATION_UNAVAILABLE`.
 
-Collaboration uses three namespaced Redis keys per document:
+Collaboration uses namespaced Redis keys for document state and target-scoped
+presence:
 
 - `mdcms:collaboration:yjs:{documentId}` stores the binary Yjs state.
 - `mdcms:collaboration:yjs-meta:{documentId}` stores cache metadata for the PostgreSQL draft head used to build or last save the Yjs state.
 - `mdcms:collaboration:active:{documentId}` stores the active-room heartbeat lease while collaborators are connected.
+- `mdcms:collaboration:presence:{project}:{environment}:{sessionId}` stores one
+  Studio session's ephemeral presence heartbeat.
 
 The active-room lock is distinct from the inactive Yjs cache. The active lock exists only while a document room has connected collaborators and blocks existing-document mutations. The Yjs state and metadata keys may remain after disconnect so a recently closed room can reopen quickly; after the last collaborator disconnects, both inactive cache keys receive a 30-minute TTL and the active-room lock is removed.
+
+Redis is not the durable collaboration source of truth. If Redis is flushed,
+restarted, or restored from an older snapshot, the durable recovery point is the
+last successfully saved PostgreSQL draft head. Operators should expect connected
+collaboration rooms and presence streams to reconnect or fail closed while Redis
+is unavailable; no published versions are created by recovery.
+
+Redis-loss recovery drill:
+
+1. Open a document in Studio collaboration mode and make a body or frontmatter
+   change.
+2. Wait for the active collaboration autosave indicator to return to `Saved`.
+3. Flush or restart Redis in the local environment.
+4. Reopen the same document room.
+5. Verify the editor loads the last PostgreSQL draft head, not a stale Redis Yjs
+   cache, and that `document_versions` did not receive a new row.
+6. Verify content list/editor presence repopulates after reconnect and stale
+   presence indicators disappear within 30 seconds.
 
 ---

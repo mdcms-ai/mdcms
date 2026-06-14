@@ -12,6 +12,10 @@ import {
 
 import {
   appendMdcmsPreviewTokenToUrl,
+  type CollaborationPresenceCursor,
+  type CollaborationPresenceMode,
+  type CollaborationPresenceSnapshot,
+  type CollaborationPresenceUser,
   isRuntimeErrorLike,
   type MdcmsPreviewDocument,
   RuntimeError,
@@ -35,11 +39,14 @@ import {
 import { MediaFieldControl } from "../components/editor/media-field-picker.js";
 import {
   TipTapEditor,
+  type TipTapEditorCursorSelection,
   type TipTapEditorHandle,
   type TipTapEditorMediaLibraryState,
   type TipTapEditorMediaUploadState,
+  type TipTapEditorRemoteCursor,
   type TipTapEditorSelectionInfo,
 } from "../components/editor/tiptap-editor.js";
+import { PresenceIndicators } from "../components/presence/presence-indicators.js";
 import { InlineAiBubble } from "../components/editor/inline-ai-bubble.js";
 import {
   createStudioAiRouteApi,
@@ -94,6 +101,8 @@ import {
   createStudioMediaLibraryApi,
   type StudioMediaLibraryApi,
 } from "../lib/media-library-api.js";
+import { groupPresenceByDocument } from "../lib/collaboration-presence.js";
+import { useCollaborationPresence } from "../hooks/use-collaboration-presence.js";
 import {
   Select,
   SelectContent,
@@ -217,6 +226,70 @@ function replaceBrowserContentDocumentPreviewMode(
   );
 }
 
+export function createContentDocumentPresenceInput({
+  state,
+  cursor,
+}: {
+  state: ContentDocumentPageState;
+  cursor: CollaborationPresenceCursor | null;
+}): {
+  documentId: string | null;
+  mode: CollaborationPresenceMode;
+  cursor: CollaborationPresenceCursor | null;
+} {
+  const isEditingLatestDraft =
+    state.status === "ready" && state.canWrite && !state.viewingVersion;
+
+  return {
+    documentId: state.status === "ready" ? state.documentId : null,
+    mode: isEditingLatestDraft ? "edit" : "view",
+    cursor: isEditingLatestDraft ? cursor : null,
+  };
+}
+
+export function resolveContentDocumentEditorPresence({
+  snapshot,
+  documentId,
+  currentSessionId,
+  includeRemoteCursors = true,
+}: {
+  snapshot: CollaborationPresenceSnapshot | null;
+  documentId: string | null;
+  currentSessionId?: string | null;
+  includeRemoteCursors?: boolean;
+}): {
+  users: CollaborationPresenceUser[];
+  remoteCursors: TipTapEditorRemoteCursor[];
+} {
+  if (!snapshot || !documentId) {
+    return { users: [], remoteCursors: [] };
+  }
+
+  const users =
+    groupPresenceByDocument(snapshot.users, {
+      visibleDocumentIds: [documentId],
+      currentSessionId,
+    }).get(documentId) ?? [];
+
+  return {
+    users,
+    remoteCursors: includeRemoteCursors
+      ? users.flatMap((user) =>
+          user.mode === "edit" && user.cursor
+            ? [
+                {
+                  sessionId: user.sessionId,
+                  label: user.label,
+                  color: user.color,
+                  cursor: user.cursor,
+                },
+              ]
+            : [],
+        )
+      : [],
+  };
+}
+
 function useLatestCallback<Args extends unknown[], Return>(
   callback: (...args: Args) => Return,
 ): (...args: Args) => Return {
@@ -336,6 +409,9 @@ type ContentDocumentPageViewProps = {
   mediaLibrary?: TipTapEditorMediaLibraryState;
   fileFieldMediaUploadApi?: StudioMediaUploadApi | null;
   fileFieldMediaLibraryApi?: Pick<StudioMediaLibraryApi, "get" | "list"> | null;
+  editorPresenceUsers?: CollaborationPresenceUser[];
+  remoteCursors?: TipTapEditorRemoteCursor[];
+  onCursorSelectionChange?: (selection: TipTapEditorCursorSelection) => void;
   aiSelection?: TipTapEditorSelectionInfo | null;
   onAiSelectionChange?: (selection: TipTapEditorSelectionInfo | null) => void;
   aiApi?: StudioAiRouteApi;
@@ -1883,6 +1959,9 @@ function useContentDocumentPageViewElement({
   mediaLibrary,
   fileFieldMediaUploadApi,
   fileFieldMediaLibraryApi,
+  editorPresenceUsers = [],
+  remoteCursors = [],
+  onCursorSelectionChange,
   aiSelection,
   onAiSelectionChange,
   aiApi,
@@ -2065,6 +2144,18 @@ function useContentDocumentPageViewElement({
                   mode={activePreviewMode}
                   onModeChange={setPreviewMode}
                 />
+              ) : null}
+
+              {state.status === "ready" && editorPresenceUsers.length > 0 ? (
+                <div
+                  data-mdcms-editor-collaborators="true"
+                  className="flex h-8 items-center"
+                >
+                  <PresenceIndicators
+                    users={editorPresenceUsers}
+                    maxVisible={4}
+                  />
+                </div>
               ) : null}
 
               {state.status === "ready" &&
@@ -2258,6 +2349,8 @@ function useContentDocumentPageViewElement({
                         onChange={onDraftChange}
                         onActiveMdxComponentChange={onActiveMdxComponentChange}
                         onSelectionTextChange={onAiSelectionChange}
+                        onCursorSelectionChange={onCursorSelectionChange}
+                        remoteCursors={remoteCursors}
                         readOnly={!state.canWrite || !!state.viewingVersion}
                         forbidden={false}
                         mediaUpload={editorMediaUpload}
@@ -2642,6 +2735,8 @@ function useContentDocumentPageController({
     useState<MdxPropsPanelSelection | null>(null);
   const [aiSelection, setAiSelection] =
     useState<TipTapEditorSelectionInfo | null>(null);
+  const [cursorSelection, setCursorSelection] =
+    useState<TipTapEditorCursorSelection | null>(null);
   const [mediaUploadState, setMediaUploadState] =
     useState<MediaUploadControllerState>({ status: "idle" });
   const mediaUploadStateRef = useRef(mediaUploadState);
@@ -2702,6 +2797,29 @@ function useContentDocumentPageController({
   }, [activeContext, route]);
   const stateRef = useRef(state);
   const loadRequestIdRef = useRef(0);
+  const presenceInput = createContentDocumentPresenceInput({
+    state,
+    cursor: cursorSelection,
+  });
+  const collaborationPresence = useCollaborationPresence(presenceInput);
+  const editorPresence = useMemo(
+    () =>
+      resolveContentDocumentEditorPresence({
+        snapshot: collaborationPresence.snapshot,
+        documentId: presenceInput.documentId,
+        currentSessionId: collaborationPresence.currentSessionId,
+        includeRemoteCursors: presenceInput.mode === "edit",
+      }),
+    [
+      collaborationPresence.currentSessionId,
+      collaborationPresence.snapshot,
+      presenceInput.documentId,
+      presenceInput.mode,
+    ],
+  );
+  useEffect(() => {
+    setCursorSelection(null);
+  }, [documentId, presenceInput.mode]);
   const canBrowseMediaLibrary =
     state.status === "ready" &&
     state.canWrite &&
@@ -3953,6 +4071,9 @@ function useContentDocumentPageController({
     mediaLibrary,
     fileFieldMediaUploadApi: mediaUploadApi,
     fileFieldMediaLibraryApi: mediaLibraryApi,
+    editorPresenceUsers: editorPresence.users,
+    remoteCursors: editorPresence.remoteCursors,
+    onCursorSelectionChange: setCursorSelection,
     editorRef,
     onViewVersion: (version) => {
       void handleViewVersion(version);

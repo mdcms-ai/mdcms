@@ -1,9 +1,16 @@
 import { z } from "zod";
 
+import {
+  CollaborationPresenceUserSchema,
+  type CollaborationPresenceUser,
+} from "@mdcms/shared";
+
 import { createCollaborationUnavailableError } from "./errors.js";
 
 export const COLLABORATION_INACTIVE_CACHE_TTL_SECONDS = 30 * 60;
 export const COLLABORATION_ACTIVE_LOCK_LEASE_SECONDS = 30;
+export const COLLABORATION_PRESENCE_TTL_SECONDS = 30;
+const COLLABORATION_PRESENCE_SCAN_COUNT = 100;
 
 export type CollaborationYjsMetadata = {
   draftRevision: number;
@@ -23,6 +30,11 @@ export type CollaborationDraftHead = {
 export type FreshCollaborationYjsState = {
   state: Uint8Array;
   metadata: CollaborationYjsMetadata;
+};
+
+type CollaborationPresenceRecordInput = CollaborationPresenceUser & {
+  project: string;
+  environment: string;
 };
 
 export type CollaborationRedisClient = {
@@ -51,6 +63,13 @@ export type CollaborationRedisClient = {
     numberOfKeys: number,
     ...args: string[]
   ): Promise<unknown>;
+  scan?(
+    cursor: string,
+    matchKeyword: "MATCH",
+    pattern: string,
+    countKeyword: "COUNT",
+    count: number,
+  ): Promise<[string, string[]]>;
 };
 
 export type CollaborationRedisUnavailableReason =
@@ -83,6 +102,14 @@ export function buildCollaborationYjsMetaKey(documentId: string): string {
 
 export function buildCollaborationActiveKey(documentId: string): string {
   return `mdcms:collaboration:active:${documentId}`;
+}
+
+export function buildCollaborationPresenceKey(input: {
+  project: string;
+  environment: string;
+  sessionId: string;
+}): string {
+  return `mdcms:collaboration:presence:${input.project}:${input.environment}:${input.sessionId}`;
 }
 
 export function createUnavailableCollaborationRedisDependency(
@@ -152,6 +179,25 @@ function parseYjsMetadata(raw: string | null): CollaborationYjsMetadata | null {
   }
 
   const result = CollaborationYjsMetadataSchema.safeParse(parsed);
+  return result.success ? result.data : null;
+}
+
+function parsePresenceUser(
+  raw: string | null,
+): CollaborationPresenceUser | null {
+  if (raw === null) {
+    return null;
+  }
+
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+
+  const result = CollaborationPresenceUserSchema.safeParse(parsed);
   return result.success ? result.data : null;
 }
 
@@ -250,6 +296,75 @@ export function createCollaborationRedisStore(
         buildCollaborationYjsStateKey(documentId),
         buildCollaborationYjsMetaKey(documentId),
       );
+    },
+
+    async setPresence(record: CollaborationPresenceRecordInput): Promise<void> {
+      const client = requireCollaborationRedisClient(dependency);
+      const presenceRecord = CollaborationPresenceUserSchema.parse(record);
+
+      await client.set(
+        buildCollaborationPresenceKey({
+          project: record.project,
+          environment: record.environment,
+          sessionId: record.sessionId,
+        }),
+        JSON.stringify(presenceRecord),
+        "EX",
+        COLLABORATION_PRESENCE_TTL_SECONDS,
+      );
+    },
+
+    async deletePresence(input: {
+      project: string;
+      environment: string;
+      sessionId: string;
+    }): Promise<void> {
+      await requireCollaborationRedisClient(dependency).del(
+        buildCollaborationPresenceKey(input),
+      );
+    },
+
+    async listPresence(input: {
+      project: string;
+      environment: string;
+    }): Promise<CollaborationPresenceUser[]> {
+      const client = requireCollaborationRedisClient(dependency);
+
+      if (!client.scan) {
+        throw new Error("Collaboration Redis client does not support SCAN.");
+      }
+
+      const pattern = buildCollaborationPresenceKey({
+        ...input,
+        sessionId: "*",
+      });
+      const records: CollaborationPresenceUser[] = [];
+      let cursor = "0";
+
+      do {
+        const [nextCursor, keys] = await client.scan(
+          cursor,
+          "MATCH",
+          pattern,
+          "COUNT",
+          COLLABORATION_PRESENCE_SCAN_COUNT,
+        );
+        cursor = nextCursor;
+
+        const rawRecords = await Promise.all(
+          keys.map((key) => client.get(key)),
+        );
+
+        for (const rawRecord of rawRecords) {
+          const record = parsePresenceUser(rawRecord);
+
+          if (record !== null) {
+            records.push(record);
+          }
+        }
+      } while (cursor !== "0");
+
+      return records;
     },
 
     async getFreshYjsState(

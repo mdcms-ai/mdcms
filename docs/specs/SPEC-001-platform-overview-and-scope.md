@@ -2,7 +2,7 @@
 status: live
 canonical: true
 created: 2026-03-11
-last_updated: 2026-06-11
+last_updated: 2026-06-14
 ---
 
 # SPEC-001 Platform Overview and Scope
@@ -28,7 +28,9 @@ This section keeps only the product-scope split for the live product definition.
 ### MVP
 
 - Schema-based content modeling with explicit schema sync.
-- TipTap-based Markdown/MDX editing with an active collaboration socket/cache runtime for document rooms.
+- TipTap-based Markdown/MDX editing with an active collaboration socket/cache
+  runtime for document rooms, server-owned collaboration autosave, and baseline
+  presence indicators.
 - REST API with explicit project/environment routing, draft writes, and publish-as-version semantics.
 - SDK, CLI, and Studio as the primary operator surfaces.
 - Draft/publish workflow, version history, permissions, and authentication.
@@ -41,6 +43,6 @@ This section keeps only the product-scope split for the live product definition.
 
 - AI integration (`High`) and AI-assisted CMS migration (`High`).
 - SEO analysis (`Medium`), scheduled publishing (`Medium`), and comprehensive audit log (`Medium`).
-- Advanced media organization, image transformations, CDN controls, asset governance, presence awareness (`Medium`), advanced multi-user collaboration UI (`Medium`), webhooks (`Medium`), full-text search (`Medium`), and advanced bulk operation workflows (`Medium`).
+- Advanced media organization, image transformations, CDN controls, asset governance, advanced multi-user collaboration controls beyond baseline presence (`Medium`), webhooks (`Medium`), full-text search (`Medium`), and advanced bulk operation workflows (`Medium`).
 - Schema-aware API filtering (`Low`), third-party plugin sandboxing (`Low`), cursor-based pagination (`Low`), and side-by-side translation view (`Low`).
 - Organizations (`Deferred`), multi-tenant SaaS (`Deferred`), and white-label branding (`Deferred`).
