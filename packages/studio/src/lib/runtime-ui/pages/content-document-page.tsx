@@ -23,6 +23,7 @@ import {
   type StudioDocumentRouteMountContext,
   type StudioMountContext,
 } from "@mdcms/shared";
+import type * as Y from "yjs";
 
 import type { StudioDocumentRouteApi } from "../../document-route-api.js";
 import type { StudioSchemaState } from "../../schema-state.js";
@@ -103,6 +104,10 @@ import {
 } from "../lib/media-library-api.js";
 import { groupPresenceByDocument } from "../lib/collaboration-presence.js";
 import { useCollaborationPresence } from "../hooks/use-collaboration-presence.js";
+import {
+  useDocumentCollaboration,
+  type DocumentCollaborationConnectionStatus,
+} from "../hooks/use-document-collaboration.js";
 import {
   Select,
   SelectContent,
@@ -268,14 +273,15 @@ export function resolveContentDocumentEditorPresence({
   const users =
     groupPresenceByDocument(snapshot.users, {
       visibleDocumentIds: [documentId],
-      currentSessionId,
     }).get(documentId) ?? [];
 
   return {
     users,
     remoteCursors: includeRemoteCursors
       ? users.flatMap((user) =>
-          user.mode === "edit" && user.cursor
+          user.sessionId !== currentSessionId &&
+          user.mode === "edit" &&
+          user.cursor
             ? [
                 {
                   sessionId: user.sessionId,
@@ -411,6 +417,10 @@ type ContentDocumentPageViewProps = {
   fileFieldMediaLibraryApi?: Pick<StudioMediaLibraryApi, "get" | "list"> | null;
   editorPresenceUsers?: CollaborationPresenceUser[];
   remoteCursors?: TipTapEditorRemoteCursor[];
+  documentCollaboration?: {
+    status: DocumentCollaborationConnectionStatus;
+    body: Y.XmlFragment;
+  };
   onCursorSelectionChange?: (selection: TipTapEditorCursorSelection) => void;
   aiSelection?: TipTapEditorSelectionInfo | null;
   onAiSelectionChange?: (selection: TipTapEditorSelectionInfo | null) => void;
@@ -1961,6 +1971,7 @@ function useContentDocumentPageViewElement({
   fileFieldMediaLibraryApi,
   editorPresenceUsers = [],
   remoteCursors = [],
+  documentCollaboration,
   onCursorSelectionChange,
   aiSelection,
   onAiSelectionChange,
@@ -2351,7 +2362,17 @@ function useContentDocumentPageViewElement({
                         onSelectionTextChange={onAiSelectionChange}
                         onCursorSelectionChange={onCursorSelectionChange}
                         remoteCursors={remoteCursors}
-                        readOnly={!state.canWrite || !!state.viewingVersion}
+                        readOnly={
+                          !state.canWrite ||
+                          !!state.viewingVersion ||
+                          (documentCollaboration !== undefined &&
+                            documentCollaboration.status !== "open")
+                        }
+                        collaboration={
+                          documentCollaboration
+                            ? { body: documentCollaboration.body }
+                            : undefined
+                        }
                         forbidden={false}
                         mediaUpload={editorMediaUpload}
                         mediaLibrary={editorMediaLibrary}
@@ -2802,6 +2823,11 @@ function useContentDocumentPageController({
     cursor: cursorSelection,
   });
   const collaborationPresence = useCollaborationPresence(presenceInput);
+  const documentCollaboration = useDocumentCollaboration({
+    enabled:
+      state.status === "ready" && state.canWrite && !state.viewingVersion,
+    documentId: state.status === "ready" ? state.documentId : null,
+  });
   const editorPresence = useMemo(
     () =>
       resolveContentDocumentEditorPresence({
@@ -3312,13 +3338,8 @@ function useContentDocumentPageController({
     const currentState = stateRef.current;
     const requestContext = activeContext;
     const requestRoute = route;
-    const api = createRouteApi({
-      context: requestContext,
-      route: requestRoute,
-    });
 
     if (
-      !api ||
       // Fail closed when the embedded host cannot derive the local schema hash
       // required by guarded draft-write routes.
       !requestRoute ||
@@ -3353,6 +3374,80 @@ function useContentDocumentPageController({
       documentId: currentState.documentId,
       route: requestRoute,
     });
+
+    if (documentCollaboration.enabled) {
+      if (documentCollaboration.status !== "open") {
+        return false;
+      }
+
+      setState((current) =>
+        current.status === "ready"
+          ? reduceContentDocumentPageReadyState(current, {
+              type: "saveStarted",
+            })
+          : current,
+      );
+
+      try {
+        const result = await documentCollaboration.flush();
+
+        if (result.status === "error") {
+          setState((current) =>
+            current.status === "ready" &&
+            matchesContentDocumentRouteRequestToken(requestToken, current)
+              ? applyFailedDraftSaveToReadyState({
+                  state: current,
+                  requestBody,
+                  requestFrontmatter,
+                  message: result.message,
+                })
+              : current,
+          );
+          return false;
+        }
+
+        setState((current) =>
+          current.status === "ready" &&
+          matchesContentDocumentRouteRequestToken(requestToken, current)
+            ? applySuccessfulDraftSaveToReadyState({
+                state: current,
+                requestBody,
+                requestFrontmatter,
+                persistedBody: requestBody,
+                persistedFrontmatter: requestFrontmatter,
+                updatedAt: currentState.document.updatedAt,
+                draftRevision: result.draftRevision,
+              })
+            : current,
+        );
+        return true;
+      } catch (error) {
+        setState((current) =>
+          current.status === "ready" &&
+          matchesContentDocumentRouteRequestToken(requestToken, current)
+            ? applyFailedDraftSaveToReadyState({
+                state: current,
+                requestBody,
+                requestFrontmatter,
+                message:
+                  error instanceof Error
+                    ? error.message
+                    : "Collaboration save failed.",
+              })
+            : current,
+        );
+        return false;
+      }
+    }
+
+    const api = createRouteApi({
+      context: requestContext,
+      route: requestRoute,
+    });
+
+    if (!api) {
+      return false;
+    }
 
     setState((current) =>
       current.status === "ready"
@@ -3952,7 +4047,12 @@ function useContentDocumentPageController({
     return () => {
       clearTimeout(timeout);
     };
-  }, [saveDraft, state]);
+  }, [
+    documentCollaboration.enabled,
+    documentCollaboration.status,
+    saveDraft,
+    state,
+  ]);
 
   useEffect(() => {
     if (
@@ -4000,6 +4100,18 @@ function useContentDocumentPageController({
       );
     },
     onFrontmatterFieldChange: (fieldName, value) => {
+      if (
+        documentCollaboration.enabled &&
+        documentCollaboration.status === "open" &&
+        documentCollaboration.frontmatter
+      ) {
+        if (value === undefined) {
+          documentCollaboration.frontmatter.delete(fieldName);
+        } else {
+          documentCollaboration.frontmatter.set(fieldName, value);
+        }
+      }
+
       setState((current) =>
         current.status === "ready"
           ? reduceContentDocumentPageReadyState(current, {
@@ -4073,6 +4185,13 @@ function useContentDocumentPageController({
     fileFieldMediaLibraryApi: mediaLibraryApi,
     editorPresenceUsers: editorPresence.users,
     remoteCursors: editorPresence.remoteCursors,
+    documentCollaboration:
+      documentCollaboration.enabled && documentCollaboration.body
+        ? {
+            status: documentCollaboration.status,
+            body: documentCollaboration.body,
+          }
+        : undefined,
     onCursorSelectionChange: setCursorSelection,
     editorRef,
     onViewVersion: (version) => {

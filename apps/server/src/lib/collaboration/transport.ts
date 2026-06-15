@@ -22,7 +22,11 @@ import type {
 import { toServerErrorResponse } from "../errors.js";
 import { createJsonResponse, resolvePathname } from "../http-utils.js";
 import { createCollaborationUnavailableError } from "./errors.js";
-import type { CollaborationRuntimeContext } from "./runtime.js";
+import {
+  createCollaborationDocumentName,
+  type CollaborationDocumentFlushResult,
+  type CollaborationRuntimeContext,
+} from "./runtime.js";
 
 export type BunUpgradeServer = Parameters<BunAdapter["handleUpgrade"]>[1];
 export type CollaborationWebSocketHandler = BunAdapter["websocket"];
@@ -40,6 +44,9 @@ type HocuspocusConnectionServer = {
   ) => HocuspocusClientConnection;
   closeConnections?: (documentName?: string) => void;
   flushPendingStores?: () => void;
+  flushDocument?: (
+    documentName: string,
+  ) => Promise<CollaborationDocumentFlushResult>;
   getDocumentsCount?: () => number;
 };
 
@@ -112,6 +119,26 @@ const COLLABORATION_DRAIN_POLL_INTERVAL_MS = 10;
 const COLLABORATION_DRAIN_TIMEOUT_MS = 10_000;
 
 type CollaborationRouteKind = "document" | "presence";
+
+type CollaborationFlushRequest = {
+  type: "mdcms.collaboration.flush";
+  requestId: string;
+};
+
+type CollaborationFlushResultPayload =
+  | {
+      type: "mdcms.collaboration.flush.result";
+      requestId: string;
+      status: "saved" | "unchanged";
+      draftRevision: number;
+    }
+  | {
+      type: "mdcms.collaboration.flush.result";
+      requestId: string;
+      status: "error";
+      code: string;
+      message: string;
+    };
 
 type CollaborationPeerContext =
   | {
@@ -211,6 +238,67 @@ function presenceContextFromPeer(
     Partial<CollaborationPeerContext>;
 
   return context.kind === "presence" ? context.presence : undefined;
+}
+
+function createDocumentNameFromContext(
+  context: CollaborationSessionContext,
+): string {
+  return createCollaborationDocumentName({
+    project: context.project,
+    environment: context.environment,
+    documentId: context.documentId,
+  });
+}
+
+function readStringMessage(message: Message): string | null {
+  const rawData = (message as { rawData?: unknown }).rawData;
+
+  if (typeof rawData === "string") {
+    return rawData;
+  }
+
+  if (rawData !== undefined) {
+    return null;
+  }
+
+  if (typeof message === "string") {
+    return message;
+  }
+
+  try {
+    return (message as { text?: () => string }).text?.() ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function parseCollaborationFlushRequest(
+  message: Message,
+): CollaborationFlushRequest | null {
+  const text = readStringMessage(message);
+
+  if (!text) {
+    return null;
+  }
+
+  let payload: unknown;
+
+  try {
+    payload = JSON.parse(text) as unknown;
+  } catch {
+    return null;
+  }
+
+  if (
+    typeof payload !== "object" ||
+    payload === null ||
+    (payload as { type?: unknown }).type !== "mdcms.collaboration.flush" ||
+    typeof (payload as { requestId?: unknown }).requestId !== "string"
+  ) {
+    return null;
+  }
+
+  return payload as CollaborationFlushRequest;
 }
 
 function createRuntimeContext(
@@ -347,6 +435,7 @@ export function createCollaborationWebSocketTransport(
   const presenceConnectionCounts = new Map<string, number>();
   const presencePeerLifecycles = new Map<Peer, PresencePeerLifecycle>();
   const pendingPresenceTasks = new Set<Promise<void>>();
+  const pendingDocumentTasks = new Set<Promise<void>>();
   const now = options.now ?? (() => new Date());
 
   function trackPresenceTask(task: Promise<void>): void {
@@ -360,6 +449,65 @@ export function createCollaborationWebSocketTransport(
       });
 
     pendingPresenceTasks.add(trackedTask);
+  }
+
+  function trackDocumentTask(task: Promise<void>): void {
+    const trackedTask = task
+      .catch(() => {
+        // The task sends its own error payload. This prevents unhandled
+        // rejections from fire-and-forget websocket adapter hooks.
+      })
+      .finally(() => {
+        pendingDocumentTasks.delete(trackedTask);
+      });
+
+    pendingDocumentTasks.add(trackedTask);
+  }
+
+  async function handleDocumentFlushMessage(
+    peer: Peer,
+    context: CollaborationSessionContext,
+    request: CollaborationFlushRequest,
+  ): Promise<void> {
+    const server = options.runtime?.server;
+    let payload: CollaborationFlushResultPayload;
+
+    try {
+      if (!server?.flushDocument) {
+        throw new RuntimeError({
+          code: "COLLABORATION_FLUSH_UNAVAILABLE",
+          message: "Collaboration flush is unavailable.",
+          statusCode: 503,
+        });
+      }
+
+      const result = await server.flushDocument(
+        createDocumentNameFromContext(context),
+      );
+
+      payload = {
+        type: "mdcms.collaboration.flush.result",
+        requestId: request.requestId,
+        status: result.status,
+        draftRevision: result.draftRevision,
+      };
+    } catch (error) {
+      payload = {
+        type: "mdcms.collaboration.flush.result",
+        requestId: request.requestId,
+        status: "error",
+        code:
+          error instanceof RuntimeError
+            ? error.code
+            : "COLLABORATION_FLUSH_FAILED",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Collaboration flush failed.",
+      };
+    }
+
+    peer.send(JSON.stringify(payload));
   }
 
   function incrementPresenceConnectionCount(
@@ -729,6 +877,16 @@ export function createCollaborationWebSocketTransport(
           return;
         }
 
+        const context = collaborationContextFromPeer(peer);
+        const flushRequest = parseCollaborationFlushRequest(message);
+
+        if (context && flushRequest) {
+          trackDocumentTask(
+            handleDocumentFlushMessage(peer, context, flushRequest),
+          );
+          return;
+        }
+
         peerConnections.get(peer)?.handleMessage(message.uint8Array());
       },
       close: (peer, event) => {
@@ -784,6 +942,7 @@ export function createCollaborationWebSocketTransport(
         ),
       );
       await Promise.all(Array.from(pendingPresenceTasks));
+      await Promise.all(Array.from(pendingDocumentTasks));
       server?.flushPendingStores?.();
       await waitForCollaborationDocumentsToUnload(server);
       openPeers.clear();

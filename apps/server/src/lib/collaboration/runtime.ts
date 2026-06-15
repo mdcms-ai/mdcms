@@ -43,6 +43,11 @@ export const COLLABORATION_FINALIZED_ROOM_LEASE_TTL_MS =
 export const COLLABORATION_YJS_FIELD_NAME = "default";
 export const COLLABORATION_FRONTMATTER_FIELD_NAME = "frontmatter";
 
+export type CollaborationDocumentFlushResult = {
+  status: "saved" | "unchanged";
+  draftRevision: number;
+};
+
 export type CollaborationRuntimeLastWriter = {
   userId: string;
   email?: string;
@@ -175,7 +180,11 @@ export type CollaborationRuntimeHooks = ReturnType<
 export type CollaborationRuntime = {
   config: Partial<Configuration<CollaborationRuntimeContext>>;
   hooks: CollaborationRuntimeHooks;
-  server: Hocuspocus<CollaborationRuntimeContext>;
+  server: Hocuspocus<CollaborationRuntimeContext> & {
+    flushDocument?: (
+      documentName: string,
+    ) => Promise<CollaborationDocumentFlushResult>;
+  };
 };
 
 type RuntimeHookPayload = {
@@ -189,6 +198,71 @@ type RuntimeHookPayload = {
   requestParameters?: URLSearchParams;
   lastContext?: CollaborationRuntimeContext;
 };
+
+type CollaborationStoreDebouncer = {
+  isDebounced?: (id: string) => boolean;
+  isCurrentlyExecuting?: (id: string) => boolean;
+  executeNow?: (id: string) => Promise<unknown> | unknown;
+};
+
+type FlushableHocuspocusServer = Hocuspocus<CollaborationRuntimeContext> & {
+  debouncer?: CollaborationStoreDebouncer;
+  flushDocument?: (
+    documentName: string,
+  ) => Promise<CollaborationDocumentFlushResult>;
+};
+
+const COLLABORATION_FLUSH_POLL_INTERVAL_MS = 10;
+const COLLABORATION_FLUSH_SETTLE_TIMEOUT_MS = 2000;
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForStoreDebounceToSettle(
+  debouncer: CollaborationStoreDebouncer | undefined,
+  debounceId: string,
+): Promise<void> {
+  if (!debouncer) {
+    return;
+  }
+
+  const startedAt = Date.now();
+
+  while (
+    debouncer.isDebounced?.(debounceId) ||
+    debouncer.isCurrentlyExecuting?.(debounceId)
+  ) {
+    if (Date.now() - startedAt > COLLABORATION_FLUSH_SETTLE_TIMEOUT_MS) {
+      throw new RuntimeError({
+        code: "COLLABORATION_FLUSH_TIMEOUT",
+        message: "Timed out waiting for collaboration flush to finish.",
+        statusCode: 503,
+      });
+    }
+
+    await sleep(COLLABORATION_FLUSH_POLL_INTERVAL_MS);
+  }
+}
+
+async function flushPendingStoreForDocument(
+  server: FlushableHocuspocusServer,
+  documentName: string,
+): Promise<void> {
+  const debounceId = `onStoreDocument-${documentName}`;
+  const debouncer = server.debouncer;
+
+  // Hocuspocus exposes flushPendingStores(), but that public method does not
+  // return the async store-hook promise. The debouncer is used here only to
+  // await the specific document flush that Hocuspocus already schedules.
+  if (debouncer?.isDebounced?.(debounceId)) {
+    await debouncer.executeNow?.(debounceId);
+  } else {
+    server.flushPendingStores();
+  }
+
+  await waitForStoreDebounceToSettle(debouncer, debounceId);
+}
 
 export function computeCollaborationBodyHash(body: string): string {
   return `sha256:${createHash("sha256").update(body, "utf8").digest("hex")}`;
@@ -861,6 +935,25 @@ export function createCollaborationRuntimeHooks(
   }
 
   return {
+    getDocumentFlushState(documentName: string): { draftRevision: number } {
+      const state = roomStates.get(documentName);
+
+      if (!state) {
+        throw new RuntimeError({
+          code: "COLLABORATION_ROOM_NOT_LOADED",
+          message: "Collaboration room is not loaded.",
+          statusCode: 409,
+          details: { documentName },
+        });
+      }
+
+      assertActiveLockHeld(state);
+
+      return {
+        draftRevision: state.loadedDraftRevision,
+      };
+    },
+
     async onLoadDocument(payload: RuntimeHookPayload): Promise<Uint8Array> {
       const context = requireRuntimeContext(payload);
       const draft = await loadDraftDocument(options.contentStore, context);
@@ -1173,7 +1266,7 @@ export function createCollaborationRuntime(
   options: CreateCollaborationRuntimeOptions,
 ): CollaborationRuntime {
   const redisStore = resolveRedisStore(options);
-  let server: Hocuspocus<CollaborationRuntimeContext> | undefined;
+  let server: FlushableHocuspocusServer | undefined;
   const hooks = createCollaborationRuntimeHooks({
     ...options,
     redisStore,
@@ -1196,10 +1289,27 @@ export function createCollaborationRuntime(
     onStoreDocument: hooks.onStoreDocument,
     onDisconnect: hooks.onDisconnect,
   };
+  const hocuspocusServer = new Hocuspocus<CollaborationRuntimeContext>(
+    config,
+  ) as FlushableHocuspocusServer;
+
+  hocuspocusServer.flushDocument = async (documentName) => {
+    const before = hooks.getDocumentFlushState(documentName).draftRevision;
+
+    await flushPendingStoreForDocument(hocuspocusServer, documentName);
+
+    const after = hooks.getDocumentFlushState(documentName).draftRevision;
+
+    return {
+      status: after > before ? "saved" : "unchanged",
+      draftRevision: after,
+    };
+  };
+  server = hocuspocusServer;
 
   return {
     config,
     hooks,
-    server: (server = new Hocuspocus<CollaborationRuntimeContext>(config)),
+    server,
   };
 }

@@ -30,6 +30,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 
+import { Extension } from "@tiptap/core";
 import {
   isRuntimeErrorLike,
   type MediaAsset,
@@ -45,6 +46,8 @@ import {
 import { Fragment, Slice } from "@tiptap/pm/model";
 import type { SelectionBookmark } from "@tiptap/pm/state";
 import type { Mappable } from "@tiptap/pm/transform";
+import { ySyncPlugin } from "y-prosemirror";
+import type * as Y from "yjs";
 
 import {
   Bold,
@@ -276,6 +279,17 @@ export type TipTapEditorRemoteCursorPosition = TipTapEditorRemoteCursor & {
 const EMPTY_REMOTE_CURSORS: TipTapEditorRemoteCursor[] = [];
 const EMPTY_REMOTE_CURSOR_POSITIONS: TipTapEditorRemoteCursorPosition[] = [];
 
+function createCollaborationExtension(body: Y.XmlFragment) {
+  return Extension.create({
+    name: "mdcmsCollaboration",
+    priority: 1000,
+
+    addProseMirrorPlugins() {
+      return [ySyncPlugin(body)];
+    },
+  });
+}
+
 export function createTipTapEditorCursorSelection(selection: {
   anchor: number;
   head: number;
@@ -310,6 +324,9 @@ interface TipTapEditorProps {
   context?: StudioMountContext;
   readOnly?: boolean;
   forbidden?: boolean;
+  collaboration?: {
+    body: Y.XmlFragment;
+  };
   mediaUpload?: TipTapEditorMediaUploadState;
   mediaLibrary?: TipTapEditorMediaLibraryState;
   onActiveMdxComponentChange?: (
@@ -1258,6 +1275,7 @@ function useTipTapEditorElement({
   context,
   readOnly = false,
   forbidden = false,
+  collaboration,
   mediaUpload,
   mediaLibrary,
   onActiveMdxComponentChange,
@@ -1281,6 +1299,11 @@ function useTipTapEditorElement({
     [catalogComponents],
   );
   const isEditorReadOnly = readOnly || forbidden;
+  const collaborationExtension = useMemo(
+    () =>
+      collaboration ? createCollaborationExtension(collaboration.body) : null,
+    [collaboration?.body],
+  );
   const mediaUploadUnavailableMessage =
     mediaUpload?.unavailableMessage?.trim() || MEDIA_UPLOAD_UNAVAILABLE_MESSAGE;
   const mediaLibraryUnavailableMessage =
@@ -1676,8 +1699,8 @@ function useTipTapEditorElement({
   );
   const editor = useEditor(
     {
-      content: initialEditorContent,
-      contentType: "json",
+      content: collaboration ? undefined : initialEditorContent,
+      contentType: collaboration ? undefined : "json",
       editable: !isEditorReadOnly,
       immediatelyRender: false,
       // Leaving `shouldRerenderOnTransaction` at its default (`false`) is
@@ -1686,29 +1709,32 @@ function useTipTapEditorElement({
       // lag behind during fast typing (especially Shift+Enter spam). The
       // toolbar stays reactive via `useEditorState` below, which subscribes
       // only to the handful of mark/node-active flags it actually reads.
-      extensions: createEditorExtensions({
-        codeBlock: CodeBlockWithNodeView,
-        image: StudioImageExtension.extend({
-          addNodeView() {
-            return ReactNodeViewRenderer(TipTapImageNodeView);
-          },
+      extensions: [
+        ...createEditorExtensions({
+          codeBlock: CodeBlockWithNodeView,
+          image: StudioImageExtension.extend({
+            addNodeView() {
+              return ReactNodeViewRenderer(TipTapImageNodeView);
+            },
+          }),
+          mdxRawJsx: MdxRawJsxExtension.extend({
+            addNodeView() {
+              return ReactNodeViewRenderer(MdxRawJsxNodeView);
+            },
+          }),
+          mdxComponent: MdxComponentExtension.extend({
+            addNodeView() {
+              return ReactNodeViewRenderer(TipTapMdxComponentNodeView);
+            },
+          }),
+          mdxIntrinsicElement: MdxIntrinsicElementExtension.extend({
+            addNodeView() {
+              return ReactNodeViewRenderer(MdxIntrinsicElementNodeView);
+            },
+          }),
         }),
-        mdxRawJsx: MdxRawJsxExtension.extend({
-          addNodeView() {
-            return ReactNodeViewRenderer(MdxRawJsxNodeView);
-          },
-        }),
-        mdxComponent: MdxComponentExtension.extend({
-          addNodeView() {
-            return ReactNodeViewRenderer(TipTapMdxComponentNodeView);
-          },
-        }),
-        mdxIntrinsicElement: MdxIntrinsicElementExtension.extend({
-          addNodeView() {
-            return ReactNodeViewRenderer(MdxIntrinsicElementNodeView);
-          },
-        }),
-      }),
+        ...(collaborationExtension ? [collaborationExtension] : []),
+      ],
       editorProps: {
         attributes: {
           // Padding lives on `.ProseMirror` itself rather than the outer
@@ -1818,12 +1844,15 @@ function useTipTapEditorElement({
         emitMarkdownNow(editor);
       },
     },
-    createTipTapEditorDependencies({
-      placeholder,
-      hostBridge: context?.hostBridge,
-      readOnly,
-      forbidden,
-    }),
+    [
+      ...createTipTapEditorDependencies({
+        placeholder,
+        hostBridge: context?.hostBridge,
+        readOnly,
+        forbidden,
+      }),
+      collaboration?.body ?? null,
+    ],
   );
   activeEditorRef.current = editor;
   isEditorReadOnlyRef.current = isEditorReadOnly;

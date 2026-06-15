@@ -494,7 +494,7 @@ test("createContentDocumentPresenceInput reports edit only for writable latest d
   );
 });
 
-test("resolveContentDocumentEditorPresence filters current and off-document sessions", () => {
+test("resolveContentDocumentEditorPresence keeps current user chips and filters current cursor overlays", () => {
   const snapshot = createPresenceSnapshot([
     createPresenceUser(),
     createPresenceUser({
@@ -528,7 +528,12 @@ test("resolveContentDocumentEditorPresence filters current and off-document sess
 
   assert.deepEqual(
     presence.users.map((user) => user.sessionId),
-    ["session-ada", "session-no-cursor", "session-view-cursor"],
+    [
+      "session-ada",
+      "session-current",
+      "session-no-cursor",
+      "session-view-cursor",
+    ],
   );
   assert.deepEqual(presence.remoteCursors, [
     {
@@ -548,7 +553,12 @@ test("resolveContentDocumentEditorPresence filters current and off-document sess
 
   assert.deepEqual(
     readOnlyPresence.users.map((user) => user.sessionId),
-    ["session-ada", "session-no-cursor", "session-view-cursor"],
+    [
+      "session-ada",
+      "session-current",
+      "session-no-cursor",
+      "session-view-cursor",
+    ],
   );
   assert.deepEqual(readOnlyPresence.remoteCursors, []);
 });

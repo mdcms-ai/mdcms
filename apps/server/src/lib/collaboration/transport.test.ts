@@ -562,6 +562,71 @@ test("collaboration transport upgrades and delegates open, message, and close to
   ]);
 });
 
+test("collaboration transport handles document-room flush control messages outside Hocuspocus sync", async () => {
+  const context = createContext({ userId: "editor-1" });
+  const { calls, server } = createBunServerStub();
+  const delegated: string[] = [];
+  const flushed: string[] = [];
+  const transport = createCollaborationWebSocketTransport({
+    authGuard: createAuthGuard({ ok: true, context }),
+    runtime: {
+      server: {
+        handleConnection(
+          websocket: WebSocketLike,
+          request: Request,
+          defaultContext: CollaborationRuntimeContext,
+        ) {
+          delegated.push(`open:${defaultContext.userId}:${request.url}`);
+          assert.equal(typeof websocket.send, "function");
+
+          return {
+            handleMessage(message: Uint8Array) {
+              delegated.push(`message:${Array.from(message).join(",")}`);
+            },
+            handleClose(event?: { code?: number; reason?: string }) {
+              delegated.push(`close:${event?.code}:${event?.reason}`);
+            },
+          };
+        },
+        async flushDocument(documentName: string) {
+          flushed.push(documentName);
+          return { status: "saved" as const, draftRevision: 12 };
+        },
+      },
+    },
+  });
+
+  const response = await transport.handleFetchUpgrade(
+    createUpgradeRequest(),
+    server as never,
+  );
+
+  assert.equal(response, undefined);
+  assert.equal(calls.length, 1);
+
+  const { socket, sent } = createBunSocketStub(calls[0]!.options.data);
+
+  transport.websocket.open(socket as never);
+  transport.websocket.message(
+    socket as never,
+    JSON.stringify({
+      type: "mdcms.collaboration.flush",
+      requestId: "flush-1",
+    }),
+  );
+
+  await waitFor(() => sent.length === 1, "Timed out waiting for flush result.");
+
+  assert.deepEqual(flushed, [`marketing:staging:${DOCUMENT_ID}`]);
+  assert.deepEqual(delegated, [`open:editor-1:${calls[0]!.request.url}`]);
+  assert.deepEqual(JSON.parse(sent[0] as string), {
+    type: "mdcms.collaboration.flush.result",
+    requestId: "flush-1",
+    status: "saved",
+    draftRevision: 12,
+  });
+});
+
 test("presence transport stores online record and sends initial filtered snapshot on open", async () => {
   const { calls, server } = createBunServerStub();
   const presenceStore = createPresenceStore();
