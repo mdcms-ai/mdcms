@@ -5,6 +5,8 @@ import type { AiProvider } from "../provider.js";
 
 export const ANTHROPIC_PROVIDER_ID = "anthropic" as const;
 export const ANTHROPIC_PROVIDER_DEFAULT_MODEL = "claude-sonnet-4-6" as const;
+export const ANTHROPIC_PROVIDER_DEFAULT_BASE_URL =
+  "https://api.anthropic.com/v1" as const;
 
 export type AnthropicProviderOptions = {
   apiKey: string;
@@ -33,7 +35,7 @@ export function createAnthropicAiProvider(
 
   const anthropic = createAnthropic({
     apiKey: trimmedKey,
-    ...(options.baseURL ? { baseURL: options.baseURL } : {}),
+    baseURL: options.baseURL?.trim() || ANTHROPIC_PROVIDER_DEFAULT_BASE_URL,
   });
   const modelId = options.model?.trim() || ANTHROPIC_PROVIDER_DEFAULT_MODEL;
 

@@ -694,8 +694,10 @@ reads `AI_PROVIDER` and normalizes it case-insensitively:
 absent, the direct Anthropic provider defaults to `claude-sonnet-4-6`, and the
 Groq provider uses its server-defined default. Provider-specific base URL
 overrides are server-only operator settings: `GROQ_BASE_URL` for Groq and
-`ANTHROPIC_BASE_URL` for Anthropic. Missing or blank required provider
-credentials must fail deterministically as `AI_PROVIDER_UNAVAILABLE`.
+`ANTHROPIC_BASE_URL` for Anthropic. Missing or blank base URL overrides are
+treated as absent and use the provider's default API endpoint. Missing or blank
+required provider credentials must fail deterministically as
+`AI_PROVIDER_UNAVAILABLE`.
 
 The orchestration layer must support task-specific prompt templates or
 equivalent workflow definitions for at least:

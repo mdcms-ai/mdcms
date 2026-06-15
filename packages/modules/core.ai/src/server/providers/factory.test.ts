@@ -3,6 +3,7 @@ import { describe, test } from "bun:test";
 
 import { RuntimeError } from "@mdcms/shared";
 
+import { createAnthropicAiProvider } from "./anthropic.js";
 import { ECHO_PROVIDER_ID } from "./echo.js";
 import {
   AI_MODEL_ENV_KEY,
@@ -13,6 +14,40 @@ import {
 } from "./factory.js";
 import { GROQ_PROVIDER_DEFAULT_MODEL, GROQ_PROVIDER_ID } from "./groq.js";
 import { NULL_PROVIDER_ID } from "./null.js";
+
+function withTemporaryEnvVar<T>(
+  key: string,
+  value: string | undefined,
+  callback: () => T,
+): T {
+  const previous = process.env[key];
+
+  if (value === undefined) {
+    delete process.env[key];
+  } else {
+    process.env[key] = value;
+  }
+
+  try {
+    return callback();
+  } finally {
+    if (previous === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = previous;
+    }
+  }
+}
+
+function readProviderBaseUrl(
+  provider: ReturnType<typeof createAnthropicAiProvider>,
+) {
+  const languageModel = provider.languageModel as {
+    config?: { baseURL?: unknown };
+  } | null;
+
+  return languageModel?.config?.baseURL;
+}
 
 describe("resolveAiProvider", () => {
   test("returns null provider when env var is missing", () => {
@@ -73,6 +108,19 @@ describe("resolveAiProvider", () => {
       },
     });
     assert.equal(provider.languageModel?.modelId, "claude-opus-4-6");
+  });
+
+  test("anthropic ignores blank SDK base URL env from compose defaults", () => {
+    withTemporaryEnvVar("ANTHROPIC_BASE_URL", "", () => {
+      const provider = createAnthropicAiProvider({
+        apiKey: "sk-ant-test-key",
+      });
+
+      assert.equal(
+        readProviderBaseUrl(provider),
+        "https://api.anthropic.com/v1",
+      );
+    });
   });
 
   test("anthropic without ANTHROPIC_API_KEY raises AI_PROVIDER_UNAVAILABLE", () => {

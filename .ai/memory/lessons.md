@@ -6,6 +6,12 @@ Entries are reverse-chronological (newest first).
 
 ---
 
+## 2026-06-15 — treat blank provider URL env as absent
+
+**Rule:** AI provider wrappers must normalize blank provider-specific base URL env values to the provider default before constructing SDK clients.
+**Why:** Docker Compose can pass `ANTHROPIC_BASE_URL=` as an empty environment variable; `@ai-sdk/anthropic` treats that as an explicit override, builds `/messages`, and Bun fails with `fetch() URL is invalid` before any provider request is sent.
+**How to apply:** When adding provider SDK wrappers, trim optional URL overrides and pass an explicit default endpoint when the override is blank; add a regression that sets the SDK's own env var to `""`.
+
 ## 2026-06-15 — normalize session actor ids before DB writes
 
 **Rule:** Collaboration and session-backed write paths must not pass Better Auth session user ids directly into `documents.updated_by`.
