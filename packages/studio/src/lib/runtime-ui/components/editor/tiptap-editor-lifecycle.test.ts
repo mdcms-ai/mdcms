@@ -17,6 +17,7 @@ import {
   createTipTapEditorCursorSelection,
   insertUploadedMediaFiles,
   MediaImagePickerView,
+  resolveTipTapEditorCursorPresenceSelection,
   resolveTipTapRemoteCursorPositions,
   resolveMediaUploadFileEvent,
   TipTapEditor,
@@ -80,6 +81,28 @@ test("createTipTapEditorCursorSelection preserves collapsed and ranged selection
     anchor: 12,
     head: 3,
   });
+});
+
+test("resolveTipTapEditorCursorPresenceSelection hides cursors when the editor is blurred", () => {
+  const selection = { anchor: 5, head: 12 };
+
+  assert.deepEqual(
+    resolveTipTapEditorCursorPresenceSelection({
+      focused: true,
+      selection,
+    }),
+    {
+      anchor: 5,
+      head: 12,
+    },
+  );
+  assert.equal(
+    resolveTipTapEditorCursorPresenceSelection({
+      focused: false,
+      selection,
+    }),
+    null,
+  );
 });
 
 test("TipTapEditor renders an enabled image picker and hidden media upload input for writable media targets", () => {

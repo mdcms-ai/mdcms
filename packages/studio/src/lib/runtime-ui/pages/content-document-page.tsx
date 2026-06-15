@@ -523,7 +523,9 @@ type ContentDocumentPageViewProps = {
     status: DocumentCollaborationConnectionStatus;
     body: Y.XmlFragment;
   };
-  onCursorSelectionChange?: (selection: TipTapEditorCursorSelection) => void;
+  onCursorSelectionChange?: (
+    selection: TipTapEditorCursorSelection | null,
+  ) => void;
   aiSelection?: TipTapEditorSelectionInfo | null;
   onAiSelectionChange?: (selection: TipTapEditorSelectionInfo | null) => void;
   aiApi?: StudioAiRouteApi;

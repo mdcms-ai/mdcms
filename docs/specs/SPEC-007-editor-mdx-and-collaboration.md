@@ -128,7 +128,10 @@ environment)` target.
 - Editor presence shows collaborators in the current room with labels/colors.
   Live cursor/selection overlays are shown only while the caller is editing the
   latest draft. Users without write access do not join the editing room and
-  must not appear as active editors.
+  must not appear as active editors. Clients must clear cursor/selection
+  coordinates when that user's focus leaves the editable document surface; the
+  user remains present, but other clients must not render a stale caret for that
+  session.
 - Presence heartbeats expire stale records within 30 seconds. Normal socket close
   removes the session's presence record immediately.
 

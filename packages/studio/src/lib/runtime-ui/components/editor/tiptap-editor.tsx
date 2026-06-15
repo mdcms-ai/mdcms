@@ -309,6 +309,16 @@ export function createTipTapEditorCursorSelection(selection: {
   };
 }
 
+export function resolveTipTapEditorCursorPresenceSelection({
+  focused,
+  selection,
+}: {
+  focused: boolean;
+  selection: { anchor: number; head: number };
+}): TipTapEditorCursorSelection | null {
+  return focused ? createTipTapEditorCursorSelection(selection) : null;
+}
+
 export type TipTapEditorMediaUploadState = {
   canUpload: boolean;
   isUploading: boolean;
@@ -348,7 +358,9 @@ interface TipTapEditorProps {
    * transforms.
    */
   onSelectionTextChange?: (selection: TipTapEditorSelectionInfo | null) => void;
-  onCursorSelectionChange?: (selection: TipTapEditorCursorSelection) => void;
+  onCursorSelectionChange?: (
+    selection: TipTapEditorCursorSelection | null,
+  ) => void;
   remoteCursors?: TipTapEditorRemoteCursor[];
   /**
    * Renders ABOVE the editable surface inside the scrollable canvas area —
@@ -1873,12 +1885,29 @@ function useTipTapEditorElement({
       },
       onSelectionUpdate({ editor }) {
         onCursorSelectionChange?.(
-          createTipTapEditorCursorSelection(editor.state.selection),
+          resolveTipTapEditorCursorPresenceSelection({
+            focused: true,
+            selection: editor.state.selection,
+          }),
         );
         syncSlashTrigger(editor);
         scheduleAuxSelectionUpdate(editor);
       },
+      onFocus({ editor }) {
+        onCursorSelectionChange?.(
+          resolveTipTapEditorCursorPresenceSelection({
+            focused: true,
+            selection: editor.state.selection,
+          }),
+        );
+      },
       onBlur({ editor }) {
+        onCursorSelectionChange?.(
+          resolveTipTapEditorCursorPresenceSelection({
+            focused: false,
+            selection: editor.state.selection,
+          }),
+        );
         // Blur is typically the user switching away to save or navigate —
         // flush any pending debounced markdown emission now so the host app
         // sees the latest content immediately.
