@@ -21,6 +21,7 @@ import type {
 
 import type { CollaborationYjsMetadata } from "./redis-store.js";
 import {
+  COLLABORATION_FRONTMATTER_FIELD_NAME,
   COLLABORATION_YJS_FIELD_NAME,
   computeCollaborationBodyHash,
   createCollaborationDocumentName,
@@ -47,6 +48,7 @@ export const COLLABORATION_BASELINE_PROFILE = {
 
 export type CollaborationBaselineRoomResult = {
   documentId: string;
+  type: string;
   sessionCount: number;
   mutationCount: number;
   draftRevisionBefore: number;
@@ -98,6 +100,50 @@ const PROJECT = "marketing";
 const ENVIRONMENT = "draft";
 const BASELINE_UPDATED_AT = "2026-06-14T12:00:00.000Z";
 
+type BaselineContentTypeFixture = {
+  type: string;
+  directory: string;
+  locale?: string;
+  frontmatter: (roomIndex: number) => Record<string, unknown>;
+};
+
+const BASELINE_CONTENT_TYPE_FIXTURES: readonly BaselineContentTypeFixture[] = [
+  {
+    type: "post",
+    directory: "content/posts",
+    frontmatter: (roomIndex: number) => ({
+      title: `Baseline post ${roomIndex}`,
+      slug: `baseline-post-${roomIndex}`,
+      featured: false,
+      abTestVariant: "control",
+    }),
+  },
+  {
+    type: "author",
+    directory: "content/authors",
+    frontmatter: (roomIndex: number) => ({
+      name: `Baseline author ${roomIndex}`,
+    }),
+  },
+  {
+    type: "page",
+    directory: "content/pages",
+    frontmatter: (roomIndex: number) => ({
+      title: `Baseline page ${roomIndex}`,
+    }),
+  },
+  {
+    type: "campaign",
+    directory: "content/campaigns",
+    locale: "en",
+    frontmatter: (roomIndex: number) => ({
+      title: `Baseline campaign ${roomIndex}`,
+      slug: `baseline-campaign-${roomIndex}`,
+      summary: `Initial campaign summary ${roomIndex}`,
+    }),
+  },
+];
+
 type BaselineRoomState = {
   roomIndex: number;
   seedDocument: ContentDocument;
@@ -141,6 +187,11 @@ function recordsEqual(
 }
 
 function createBaselineDocument(roomIndex: number): ContentDocument {
+  const fixture =
+    BASELINE_CONTENT_TYPE_FIXTURES[
+      (roomIndex - 1) % BASELINE_CONTENT_TYPE_FIXTURES.length
+    ];
+
   return {
     documentId: `00000000-0000-4000-8000-${roomIndex
       .toString()
@@ -150,18 +201,16 @@ function createBaselineDocument(roomIndex: number): ContentDocument {
       .padStart(12, "0")}`,
     project: PROJECT,
     environment: ENVIRONMENT,
-    path: `campaigns/baseline-room-${roomIndex}`,
-    type: "Page",
-    locale: "__mdcms_default__",
+    path: `${fixture.directory}/baseline-room-${roomIndex}`,
+    type: fixture.type,
+    locale: fixture.locale ?? "__mdcms_default__",
     format: "mdx",
     isDeleted: false,
     hasUnpublishedChanges: true,
     version: 0,
     publishedVersion: null,
     draftRevision: roomIndex,
-    frontmatter: {
-      title: `Baseline room ${roomIndex}`,
-    },
+    frontmatter: fixture.frontmatter(roomIndex),
     body: `# Baseline room ${roomIndex}\n\nInitial draft body for room ${roomIndex}.`,
     createdBy: "baseline-fixture",
     createdAt: BASELINE_UPDATED_AT,
@@ -625,6 +674,60 @@ function appendMutationParagraph(
   return Y.encodeStateAsUpdate(document, stateVector);
 }
 
+function writeCollaborationFrontmatterMutation(input: {
+  document: Y.Doc;
+  frontmatter: Record<string, unknown>;
+}): void {
+  const frontmatter = input.document.getMap<unknown>(
+    COLLABORATION_FRONTMATTER_FIELD_NAME,
+  );
+
+  frontmatter.clear();
+
+  for (const [fieldName, value] of Object.entries(input.frontmatter)) {
+    frontmatter.set(fieldName, value);
+  }
+}
+
+function buildExpectedCollaborationFrontmatter(input: {
+  seedDocument: ContentDocument;
+  mutationCount: number;
+  sessionId: string;
+}): Record<string, unknown> {
+  const frontmatter = cloneJsonObject(input.seedDocument.frontmatter);
+
+  if (input.seedDocument.type === "post") {
+    return {
+      ...frontmatter,
+      abTestVariant: input.sessionId,
+      featured: true,
+    };
+  }
+
+  if (input.seedDocument.type === "author") {
+    return {
+      ...frontmatter,
+      name: `${String(frontmatter.name)} (${input.mutationCount})`,
+    };
+  }
+
+  if (input.seedDocument.type === "page") {
+    return {
+      ...frontmatter,
+      title: `${String(frontmatter.title)} (${input.mutationCount})`,
+    };
+  }
+
+  if (input.seedDocument.type === "campaign") {
+    return {
+      ...frontmatter,
+      summary: `Updated by ${input.sessionId} after ${input.mutationCount} mutations`,
+    };
+  }
+
+  throw new Error(`Unsupported baseline type ${input.seedDocument.type}`);
+}
+
 function createPresenceUpdateMessage(input: {
   documentId: string;
   sessionIndex: number;
@@ -860,10 +963,18 @@ export async function runCollaborationBaselineScenario(): Promise<CollaborationB
       initialBody: roomState.initialBody,
       mutations: roomState.mutations,
     });
-    const expectedFrontmatter = cloneJsonObject(
-      roomState.seedDocument.frontmatter,
-    );
     const lastContext = roomState.sessions[roomState.sessions.length - 1];
+
+    const expectedFrontmatter = buildExpectedCollaborationFrontmatter({
+      seedDocument: roomState.seedDocument,
+      mutationCount: roomState.mutations.length,
+      sessionId: lastContext.sessionId,
+    });
+
+    writeCollaborationFrontmatterMutation({
+      document: roomState.roomDocument,
+      frontmatter: expectedFrontmatter,
+    });
 
     await hooks.onStoreDocument({
       lastContext,
@@ -949,6 +1060,7 @@ export async function runCollaborationBaselineScenario(): Promise<CollaborationB
 
       return {
         documentId: state.seedDocument.documentId,
+        type: state.seedDocument.type,
         sessionCount: state.sessions.length,
         mutationCount: state.mutations.length,
         draftRevisionBefore: state.draftRevisionBefore,

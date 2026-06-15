@@ -272,9 +272,17 @@ export type TipTapEditorRemoteCursor = {
   cursor: TipTapEditorCursorSelection;
 };
 
+export type TipTapEditorRemoteSelectionPosition = {
+  top: number;
+  left: number;
+  width: number;
+  height: number;
+};
+
 export type TipTapEditorRemoteCursorPosition = TipTapEditorRemoteCursor & {
   top: number;
   left: number;
+  selection?: TipTapEditorRemoteSelectionPosition;
 };
 
 const EMPTY_REMOTE_CURSORS: TipTapEditorRemoteCursor[] = [];
@@ -581,11 +589,28 @@ export function resolveTipTapRemoteCursorPositions({
 
   for (const remoteCursor of remoteCursors) {
     try {
+      const anchorRect = editor.view.coordsAtPos(remoteCursor.cursor.anchor);
       const cursorRect = editor.view.coordsAtPos(remoteCursor.cursor.head);
+      const selection =
+        remoteCursor.cursor.anchor === remoteCursor.cursor.head
+          ? undefined
+          : {
+              top: Math.min(anchorRect.top, cursorRect.top) - wrapperRect.top,
+              left:
+                Math.min(anchorRect.left, cursorRect.left) - wrapperRect.left,
+              width:
+                Math.max(anchorRect.right, cursorRect.right) -
+                Math.min(anchorRect.left, cursorRect.left),
+              height:
+                Math.max(anchorRect.bottom, cursorRect.bottom) -
+                Math.min(anchorRect.top, cursorRect.top),
+            };
+
       positions.push({
         ...remoteCursor,
         top: cursorRect.top - wrapperRect.top,
         left: cursorRect.left - wrapperRect.left,
+        ...(selection ? { selection } : {}),
       });
     } catch {
       // Remote cursor snapshots can briefly outlive the local document
@@ -655,27 +680,42 @@ export function TipTapRemoteCursorLayer({
   return (
     <div className="pointer-events-none absolute inset-0 z-20">
       {cursors.map((cursor) => (
-        <div
-          key={cursor.sessionId}
-          data-mdcms-remote-cursor={cursor.sessionId}
-          aria-label={`${cursor.label} cursor`}
-          className="absolute flex items-start gap-1"
-          style={{
-            top: cursor.top,
-            left: cursor.left,
-          }}
-        >
-          <span
-            className="mt-0.5 h-4 w-px rounded-full"
-            style={{ backgroundColor: cursor.color }}
-          />
-          <span
-            className="max-w-40 truncate rounded-sm px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white shadow-sm"
-            style={{ backgroundColor: cursor.color }}
+        <ReactFragment key={cursor.sessionId}>
+          {cursor.selection ? (
+            <div
+              data-mdcms-remote-selection={cursor.sessionId}
+              aria-hidden="true"
+              className="absolute rounded-sm opacity-20"
+              style={{
+                top: cursor.selection.top,
+                left: cursor.selection.left,
+                width: cursor.selection.width,
+                height: cursor.selection.height,
+                backgroundColor: cursor.color,
+              }}
+            />
+          ) : null}
+          <div
+            data-mdcms-remote-cursor={cursor.sessionId}
+            aria-label={`${cursor.label} cursor`}
+            className="absolute flex items-start gap-1"
+            style={{
+              top: cursor.top,
+              left: cursor.left,
+            }}
           >
-            {cursor.label}
-          </span>
-        </div>
+            <span
+              className="mt-0.5 h-4 w-px rounded-full"
+              style={{ backgroundColor: cursor.color }}
+            />
+            <span
+              className="max-w-40 truncate rounded-sm px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white shadow-sm"
+              style={{ backgroundColor: cursor.color }}
+            >
+              {cursor.label}
+            </span>
+          </div>
+        </ReactFragment>
       ))}
     </div>
   );

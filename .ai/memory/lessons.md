@@ -6,6 +6,12 @@ Entries are reverse-chronological (newest first).
 
 ---
 
+## 2026-06-15 — normalize session actor ids before DB writes
+
+**Rule:** Collaboration and session-backed write paths must not pass Better Auth session user ids directly into `documents.updated_by`.
+**Why:** Better Auth user ids are not guaranteed to be PostgreSQL UUIDs, while `documents.updated_by` is a UUID column; DB-backed collaboration autosave can fail even though in-memory tests pass.
+**How to apply:** When persisting content from session identity, preserve the real actor in lifecycle events but coerce the DB `updatedBy` value to a valid UUID or the neutral content-store actor.
+
 ## 2026-06-06 — patch the active worktree by absolute path
 
 **Rule:** When editing from a feature worktree, pass absolute worktree paths to `apply_patch` instead of relying on the thread root.

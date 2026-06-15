@@ -16,7 +16,11 @@ import type {
   CollaborationPresenceContext,
   CollaborationSessionContext,
 } from "../collaboration-auth.js";
-import type { ContentDocument, ContentScope } from "../content-api/types.js";
+import {
+  DEFAULT_ACTOR,
+  type ContentDocument,
+  type ContentScope,
+} from "../content-api/types.js";
 
 import {
   COLLABORATION_INACTIVE_CACHE_TTL_SECONDS,
@@ -610,7 +614,7 @@ test("Bun collaboration sockets sync Yjs updates and finalize the document room 
     );
 
     assert.match(contentStore.updates[0]?.payload.body ?? "", /Updated from A/);
-    assert.equal(contentStore.updates[0]?.payload.updatedBy, "writer-1");
+    assert.equal(contentStore.updates[0]?.payload.updatedBy, DEFAULT_ACTOR);
     assert.equal(contentStore.updates[0]?.options?.expectedDraftRevision, 5);
     assert.deepEqual(redisStore.metadata, {
       draftRevision: 6,

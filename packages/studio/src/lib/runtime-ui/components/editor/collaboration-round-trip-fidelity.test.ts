@@ -36,7 +36,7 @@ type CollaborationRoundTripFixture = {
 
 const BODY_FIXTURES: CollaborationRoundTripFixture[] = [
   {
-    type: "Article",
+    type: "post",
     body: [
       "# Product Update",
       "",
@@ -53,7 +53,7 @@ const BODY_FIXTURES: CollaborationRoundTripFixture[] = [
     ].join("\n"),
   },
   {
-    type: "MarketingPage",
+    type: "page",
     body: [
       '<Hero title="Launch" image={{"src":"https://cdn.example.com/hero.png"}} />',
       "",
@@ -67,7 +67,7 @@ const BODY_FIXTURES: CollaborationRoundTripFixture[] = [
     ].join("\n"),
   },
   {
-    type: "LandingPage",
+    type: "campaign",
     body: [
       '<section style={{"backgroundColor":"#fff"}}>',
       "<h2>",
@@ -75,6 +75,10 @@ const BODY_FIXTURES: CollaborationRoundTripFixture[] = [
       "</h2>",
       "</section>",
     ].join("\n"),
+  },
+  {
+    type: "author",
+    body: ["# Ada Lovelace", "", "Author profile copy."].join("\n"),
   },
 ];
 
@@ -88,63 +92,81 @@ type FrontmatterFixture = {
 
 const FRONTMATTER_FIXTURES: FrontmatterFixture[] = [
   {
-    type: "Article",
+    type: "post",
     frontmatter: {
       title: "Product Update",
-      priority: 3,
+      slug: "product-update",
       featured: true,
-      heroImage: "media_hero",
-      status: "published",
+      abTestVariant: "control",
+      author: "11111111-1111-4111-8111-111111111111",
     },
     fields: {
       title: { kind: "string", required: true, nullable: false },
-      priority: { kind: "number", required: false, nullable: true },
+      slug: { kind: "string", required: true, nullable: false },
       featured: { kind: "boolean", required: false, nullable: false },
-      heroImage: {
-        kind: "file",
-        required: false,
-        nullable: true,
-        file: {
-          preset: "image",
-          accept: ["image/png", "image/jpeg"],
-          emptyStringAsUnset: true,
-        },
-      },
-      status: {
+      abTestVariant: {
         kind: "string",
         required: false,
         nullable: true,
-        options: ["draft", "review", "published"],
+      },
+      author: {
+        kind: "string",
+        required: false,
+        nullable: true,
+        reference: { targetType: "author" },
       },
     },
-    editableFields: ["title", "priority", "featured", "heroImage", "status"],
+    editableFields: ["abTestVariant", "author", "featured", "slug", "title"],
     unsupportedFields: [],
   },
   {
-    type: "LandingPage",
+    type: "author",
     frontmatter: {
-      seo: { title: "Launch", description: "Ship the new page." },
-      tags: ["launch", "product"],
+      name: "Ada Lovelace",
     },
     fields: {
-      seo: {
-        kind: "object",
-        required: false,
+      name: { kind: "string", required: true, nullable: false },
+    },
+    editableFields: ["name"],
+    unsupportedFields: [],
+  },
+  {
+    type: "page",
+    frontmatter: {
+      title: "Launch",
+    },
+    fields: {
+      title: { kind: "string", required: true, nullable: false },
+    },
+    editableFields: ["title"],
+    unsupportedFields: [],
+  },
+  {
+    type: "campaign",
+    frontmatter: {
+      title: "Summer Campaign",
+      slug: "summer-campaign",
+      summary: "Localized launch copy.",
+    },
+    fields: {
+      title: {
+        kind: "string",
+        required: true,
         nullable: false,
-        fields: {
-          title: { kind: "string", required: true, nullable: false },
-          description: { kind: "string", required: false, nullable: true },
-        },
       },
-      tags: {
-        kind: "array",
-        required: false,
+      slug: {
+        kind: "string",
+        required: true,
         nullable: false,
-        item: { kind: "string", required: true, nullable: false },
+      },
+      summary: {
+        kind: "string",
+        required: true,
+        nullable: false,
       },
     },
-    editableFields: [],
-    unsupportedFields: ["seo", "tags"],
+    editableFields: ["slug", "summary", "title"],
+    unsupportedFields: [],
   },
 ];
 
@@ -315,6 +337,13 @@ function getCollapseToolbarButtonMarkup(markup: string): string {
 }
 
 test("collaboration body fixtures round-trip byte-for-byte", () => {
+  assert.deepEqual(BODY_FIXTURES.map((fixture) => fixture.type).sort(), [
+    "author",
+    "campaign",
+    "page",
+    "post",
+  ]);
+
   for (const fixture of BODY_FIXTURES) {
     assert.equal(
       roundTripMarkdown(fixture.body).markdown,
@@ -330,6 +359,13 @@ test("collaboration body fixtures round-trip byte-for-byte", () => {
 });
 
 test("collaboration frontmatter fixtures preserve supported values", () => {
+  assert.deepEqual(FRONTMATTER_FIXTURES.map((fixture) => fixture.type).sort(), [
+    "author",
+    "campaign",
+    "page",
+    "post",
+  ]);
+
   for (const fixture of FRONTMATTER_FIXTURES) {
     const cloned = cloneFrontmatter(fixture.frontmatter);
     assert.notEqual(cloned, fixture.frontmatter);

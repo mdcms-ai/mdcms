@@ -15,6 +15,12 @@ test("collaboration baseline load/soak scenario satisfies SPEC-007", async () =>
   assert.equal(COLLABORATION_BASELINE_PROFILE.mutationsPerSession, 25);
   assert.equal(COLLABORATION_BASELINE_PROFILE.timeoutMs, 30_000);
   assert.equal(result.rooms.length, COLLABORATION_BASELINE_PROFILE.roomCount);
+  assert.deepEqual(result.rooms.map((room) => room.type).sort(), [
+    "author",
+    "campaign",
+    "page",
+    "post",
+  ]);
   assert.equal(result.totals.sessionCount, 12);
   assert.equal(result.totals.mutationCount, 300);
   assert.equal(result.totals.contentUpdatedEvents, 4);

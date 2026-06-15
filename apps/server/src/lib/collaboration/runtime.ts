@@ -14,10 +14,11 @@ import type {
   CollaborationCloseCode,
   CollaborationSessionContext,
 } from "../collaboration-auth.js";
-import type {
-  ContentDocument,
-  ContentLifecycleEventSink,
-  ContentScope,
+import {
+  DEFAULT_ACTOR,
+  type ContentDocument,
+  type ContentLifecycleEventSink,
+  type ContentScope,
 } from "../content-api/types.js";
 
 import {
@@ -42,6 +43,8 @@ export const COLLABORATION_FINALIZED_ROOM_LEASE_TTL_MS =
   COLLABORATION_INACTIVE_CACHE_TTL_SECONDS * 1000;
 export const COLLABORATION_YJS_FIELD_NAME = "default";
 export const COLLABORATION_FRONTMATTER_FIELD_NAME = "frontmatter";
+const POSTGRES_UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export type CollaborationDocumentFlushResult = {
   status: "saved" | "unchanged";
@@ -646,6 +649,12 @@ function createLifecycleActor(writer: CollaborationRuntimeLastWriter): {
   };
 }
 
+function toContentStoreActorId(userId: string): string {
+  const normalized = userId.trim();
+
+  return POSTGRES_UUID_PATTERN.test(normalized) ? normalized : DEFAULT_ACTOR;
+}
+
 function createActiveLockLostError(documentId: string): RuntimeError {
   return new RuntimeError({
     code: "COLLABORATION_ACTIVE_LOCK_LOST",
@@ -928,7 +937,7 @@ export function createCollaborationRuntimeHooks(
       {
         body: nextBody,
         frontmatter: nextFrontmatter,
-        updatedBy: input.writer.userId,
+        updatedBy: toContentStoreActorId(input.writer.userId),
       },
       { expectedDraftRevision },
     );

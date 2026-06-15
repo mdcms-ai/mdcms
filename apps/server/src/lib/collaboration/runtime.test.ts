@@ -4,10 +4,11 @@ import { test } from "bun:test";
 import { RuntimeError } from "@mdcms/shared";
 
 import type { CollaborationSessionContext } from "../collaboration-auth.js";
-import type {
-  ContentDocument,
-  ContentLifecycleEventSink,
-  ContentScope,
+import {
+  DEFAULT_ACTOR,
+  type ContentDocument,
+  type ContentLifecycleEventSink,
+  type ContentScope,
 } from "../content-api/types.js";
 
 import { createUnavailableCollaborationRedisDependency } from "./redis-store.js";
@@ -805,7 +806,7 @@ test("onStoreDocument autosaves changed body and frontmatter to PostgreSQL", asy
 
   assert.equal(contentStore.updates.length, 1);
   assert.equal(contentStore.updates[0]?.options?.expectedDraftRevision, 4);
-  assert.equal(contentStore.updates[0]?.payload.updatedBy, "writer-1");
+  assert.equal(contentStore.updates[0]?.payload.updatedBy, DEFAULT_ACTOR);
   assert.match(contentStore.updates[0]?.payload.body ?? "", /# Changed/);
   assert.deepEqual(contentStore.updates[0]?.payload.frontmatter, {
     title: "Changed",
@@ -1210,7 +1211,7 @@ test("last disconnect changed body saves once with expected revision, last write
 
   assert.equal(contentStore.updates.length, 1);
   assert.equal(contentStore.updates[0]?.options?.expectedDraftRevision, 8);
-  assert.equal(contentStore.updates[0]?.payload.updatedBy, "writer-2");
+  assert.equal(contentStore.updates[0]?.payload.updatedBy, DEFAULT_ACTOR);
   assert.match(contentStore.updates[0]?.payload.body ?? "", /# Changed/);
   assert.equal(lifecycleEvents.events.length, 1);
   assert.equal(lifecycleEvents.events[0]?.event, "content.updated");
@@ -1308,7 +1309,7 @@ test("last disconnect attributes a pending debounced edit to its writer", async 
   });
 
   assert.equal(contentStore.updates.length, 1);
-  assert.equal(contentStore.updates[0]?.payload.updatedBy, "writer-pending");
+  assert.equal(contentStore.updates[0]?.payload.updatedBy, DEFAULT_ACTOR);
 });
 
 test("last disconnect uses neutral lifecycle email when writer email is unavailable", async () => {

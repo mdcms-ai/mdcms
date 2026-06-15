@@ -135,12 +135,19 @@ test("TipTapRemoteCursorLayer renders compact labels with server-provided identi
           cursor: { anchor: 2, head: 7 },
           top: 24,
           left: 48,
+          selection: {
+            top: 24,
+            left: 24,
+            width: 24,
+            height: 16,
+          },
         },
       ],
     }),
   );
 
   assert.match(markup, /data-mdcms-remote-cursor="session-ada"/);
+  assert.match(markup, /data-mdcms-remote-selection="session-ada"/);
   assert.match(markup, /Ada Lovelace/);
   assert.match(markup, /#2563eb/);
 });
@@ -150,6 +157,15 @@ test("resolveTipTapRemoteCursorPositions resolves cursor heads relative to the e
     editor: {
       view: {
         coordsAtPos(position: number) {
+          if (position === 2) {
+            return {
+              top: 140,
+              right: 71,
+              bottom: 158,
+              left: 70,
+            };
+          }
+
           if (position === 7) {
             return {
               top: 140,
@@ -197,6 +213,12 @@ test("resolveTipTapRemoteCursorPositions resolves cursor heads relative to the e
       cursor: { anchor: 2, head: 7 },
       top: 20,
       left: 26,
+      selection: {
+        top: 20,
+        left: 6,
+        width: 21,
+        height: 18,
+      },
     },
   ]);
 });
