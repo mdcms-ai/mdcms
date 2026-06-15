@@ -256,30 +256,40 @@ export function resolveContentDocumentEditorPresence({
   snapshot,
   documentId,
   currentSessionId,
+  currentUser,
   includeRemoteCursors = true,
 }: {
   snapshot: CollaborationPresenceSnapshot | null;
   documentId: string | null;
   currentSessionId?: string | null;
+  currentUser?: CollaborationPresenceUser | null;
   includeRemoteCursors?: boolean;
 }): {
   users: CollaborationPresenceUser[];
   remoteCursors: TipTapEditorRemoteCursor[];
 } {
-  if (!snapshot || !documentId) {
+  if (!documentId) {
     return { users: [], remoteCursors: [] };
   }
 
-  const users =
-    groupPresenceByDocument(snapshot.users, {
-      visibleDocumentIds: [documentId],
-    }).get(documentId) ?? [];
+  const users = snapshot
+    ? (groupPresenceByDocument(snapshot.users, {
+        visibleDocumentIds: [documentId],
+      }).get(documentId) ?? [])
+    : [];
+  const visibleUsers =
+    currentUser &&
+    currentUser.documentId === documentId &&
+    !users.some((user) => user.sessionId === currentUser.sessionId)
+      ? [...users, currentUser]
+      : users;
 
   return {
-    users,
+    users: visibleUsers,
     remoteCursors: includeRemoteCursors
-      ? users.flatMap((user) =>
+      ? visibleUsers.flatMap((user) =>
           user.sessionId !== currentSessionId &&
+          user.sessionId !== currentUser?.sessionId &&
           user.mode === "edit" &&
           user.cursor
             ? [
@@ -293,6 +303,98 @@ export function resolveContentDocumentEditorPresence({
             : [],
         )
       : [],
+  };
+}
+
+type ContentDocumentEditorCollaborationInput = {
+  status: DocumentCollaborationConnectionStatus;
+  body: Y.XmlFragment;
+};
+
+export function resolveContentDocumentEditorCollaboration({
+  documentCollaboration,
+}: {
+  documentCollaboration?: ContentDocumentEditorCollaborationInput;
+}): {
+  editorCollaboration?: { body: Y.XmlFragment };
+  readOnlyBlockedByCollaboration: boolean;
+  publishBlockedByActiveCollaboration: boolean;
+} {
+  return {
+    editorCollaboration:
+      documentCollaboration?.status === "open"
+        ? { body: documentCollaboration.body }
+        : undefined,
+    readOnlyBlockedByCollaboration:
+      documentCollaboration !== undefined &&
+      documentCollaboration.status !== "open",
+    publishBlockedByActiveCollaboration: documentCollaboration !== undefined,
+  };
+}
+
+export function resolveCollaborationDraftSaveSnapshot({
+  editor,
+  fallbackBody,
+  frontmatter,
+}: {
+  editor: Pick<TipTapEditorHandle, "getContent"> | null | undefined;
+  fallbackBody: string;
+  frontmatter: Record<string, unknown>;
+}): {
+  body: string;
+  frontmatter: Record<string, unknown>;
+} {
+  return {
+    body: editor?.getContent() ?? fallbackBody,
+    frontmatter,
+  };
+}
+
+function deriveLocalPresenceLabel(input: {
+  email: string;
+  userId: string;
+}): string {
+  const [localPart] = input.email.split("@", 1);
+  const label = localPart?.trim();
+
+  return label && label.length > 0 ? label : input.userId;
+}
+
+function deriveLocalPresenceColor(userId: string): string {
+  let hash = 0x811c9dc5;
+
+  for (let index = 0; index < userId.length; index += 1) {
+    hash ^= userId.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+
+  return `#${(hash >>> 0).toString(16).padStart(8, "0").slice(0, 6)}`;
+}
+
+function createCurrentEditorPresenceUser({
+  session,
+  documentId,
+  mode,
+  cursor,
+}: {
+  session: { id: string; userId: string; email: string } | null;
+  documentId: string | null;
+  mode: CollaborationPresenceMode;
+  cursor: CollaborationPresenceCursor | null;
+}): CollaborationPresenceUser | null {
+  if (!session || !documentId) {
+    return null;
+  }
+
+  return {
+    userId: session.userId,
+    sessionId: session.id,
+    label: deriveLocalPresenceLabel(session),
+    color: deriveLocalPresenceColor(session.userId),
+    documentId,
+    mode,
+    ...(cursor ? { cursor } : {}),
+    updatedAt: new Date().toISOString(),
   };
 }
 
@@ -2046,12 +2148,16 @@ function useContentDocumentPageViewElement({
         ? "enabled"
         : "blocked"
       : "idle";
+  const editorCollaboration = resolveContentDocumentEditorCollaboration({
+    documentCollaboration,
+  });
   const canPublish =
     state.status === "ready" &&
     state.canWrite &&
     state.saveState === "saved" &&
     state.document.hasUnpublishedChanges &&
-    state.publishState !== "publishing";
+    state.publishState !== "publishing" &&
+    !editorCollaboration.publishBlockedByActiveCollaboration;
 
   const canSaveNow =
     state.status === "ready" &&
@@ -2250,6 +2356,9 @@ function useContentDocumentPageViewElement({
                   size="sm"
                   disabled={!canPublish}
                   onClick={() => onPublishDialogOpenChange?.(true)}
+                  data-mdcms-document-publish-disabled={
+                    !canPublish ? "true" : undefined
+                  }
                   data-mdcms-document-unpublished-changes={
                     state.document.hasUnpublishedChanges ? "true" : undefined
                   }
@@ -2365,14 +2474,9 @@ function useContentDocumentPageViewElement({
                         readOnly={
                           !state.canWrite ||
                           !!state.viewingVersion ||
-                          (documentCollaboration !== undefined &&
-                            documentCollaboration.status !== "open")
+                          editorCollaboration.readOnlyBlockedByCollaboration
                         }
-                        collaboration={
-                          documentCollaboration
-                            ? { body: documentCollaboration.body }
-                            : undefined
-                        }
+                        collaboration={editorCollaboration.editorCollaboration}
                         forbidden={false}
                         mediaUpload={editorMediaUpload}
                         mediaLibrary={editorMediaLibrary}
@@ -2828,17 +2932,39 @@ function useContentDocumentPageController({
       state.status === "ready" && state.canWrite && !state.viewingVersion,
     documentId: state.status === "ready" ? state.documentId : null,
   });
+  const currentEditorPresenceUser = useMemo(
+    () =>
+      createCurrentEditorPresenceUser({
+        session:
+          session.status === "authenticated" &&
+          collaborationPresence.status === "open"
+            ? session.session
+            : null,
+        documentId: presenceInput.documentId,
+        mode: presenceInput.mode,
+        cursor: presenceInput.cursor,
+      }),
+    [
+      collaborationPresence.status,
+      presenceInput.cursor,
+      presenceInput.documentId,
+      presenceInput.mode,
+      session,
+    ],
+  );
   const editorPresence = useMemo(
     () =>
       resolveContentDocumentEditorPresence({
         snapshot: collaborationPresence.snapshot,
         documentId: presenceInput.documentId,
         currentSessionId: collaborationPresence.currentSessionId,
+        currentUser: currentEditorPresenceUser,
         includeRemoteCursors: presenceInput.mode === "edit",
       }),
     [
       collaborationPresence.currentSessionId,
       collaborationPresence.snapshot,
+      currentEditorPresenceUser,
       presenceInput.documentId,
       presenceInput.mode,
     ],
@@ -3178,7 +3304,8 @@ function useContentDocumentPageController({
       !api ||
       !requestRoute ||
       currentState.status !== "ready" ||
-      !currentState.canWrite
+      !currentState.canWrite ||
+      documentCollaboration.enabled
     ) {
       return;
     }
@@ -3406,6 +3533,12 @@ function useContentDocumentPageController({
           return false;
         }
 
+        const persistedSnapshot = resolveCollaborationDraftSaveSnapshot({
+          editor: editorRef.current,
+          fallbackBody: requestBody,
+          frontmatter: requestFrontmatter,
+        });
+
         setState((current) =>
           current.status === "ready" &&
           matchesContentDocumentRouteRequestToken(requestToken, current)
@@ -3413,8 +3546,8 @@ function useContentDocumentPageController({
                 state: current,
                 requestBody,
                 requestFrontmatter,
-                persistedBody: requestBody,
-                persistedFrontmatter: requestFrontmatter,
+                persistedBody: persistedSnapshot.body,
+                persistedFrontmatter: persistedSnapshot.frontmatter,
                 updatedAt: currentState.document.updatedAt,
                 draftRevision: result.draftRevision,
               })

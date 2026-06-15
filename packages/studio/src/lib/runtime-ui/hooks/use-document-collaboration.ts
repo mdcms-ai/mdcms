@@ -221,7 +221,6 @@ export function useDocumentCollaboration({
         return;
       }
 
-      setStatus("open");
       socket.send(
         encodeCollaborationAuthMessage(connectionConfig.documentName),
       );
@@ -266,6 +265,10 @@ export function useDocumentCollaboration({
           transactionOrigin: SOCKET_UPDATE_ORIGIN,
           send: sendIfOpen,
         });
+
+        if (result.type === "sync") {
+          setStatus("open");
+        }
 
         if (result.type === "permission-denied" || result.type === "close") {
           setStatus("error");

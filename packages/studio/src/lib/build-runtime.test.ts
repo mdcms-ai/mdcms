@@ -281,11 +281,11 @@ test("buildStudioRuntimeArtifacts inlines production runtime environment", async
 // Budget for the studio-runtime first-load bundle. Raised from 2.0 MB
 // to 2.5 MB when the assistant chat picked up `streamdown` for proper
 // markdown rendering (Sonia bullet — chat needs headings, lists, code
-// blocks, GFM). Streamdown pulls in shiki + mermaid transitively for
-// syntax highlighting and diagrams; both are deliberate features. A
-// future optimisation can split these out via dynamic import — track
-// in the assistant performance work.
-const STUDIO_RUNTIME_SIZE_BUDGET_BYTES = 2_500_000;
+// blocks, GFM). Raised to 2.65 MB when real-time collaboration moved
+// Yjs and y-protocols into the default document editor runtime. The
+// build currently emits one browser module; future runtime splitting
+// can move assistant/collaboration surfaces behind dynamic imports.
+const STUDIO_RUNTIME_SIZE_BUDGET_BYTES = 2_650_000;
 
 test("buildStudioRuntimeArtifacts keeps the default browser runtime below the first-load size target", async () => {
   await withTempDir("studio-runtime-real-", async (directory) => {

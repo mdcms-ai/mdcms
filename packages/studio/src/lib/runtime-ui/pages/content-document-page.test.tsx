@@ -11,6 +11,7 @@ import {
 } from "@mdcms/shared";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import * as Y from "yjs";
 
 import type { StudioDocumentShell } from "../../document-shell.js";
 import { StudioNavigationProvider } from "../navigation.js";
@@ -24,6 +25,8 @@ import {
   getLivePreviewViewportFrame,
   isLivePreviewReadyMessage,
   readContentDocumentPreviewModeSearchParam,
+  resolveCollaborationDraftSaveSnapshot,
+  resolveContentDocumentEditorCollaboration,
   resolveContentDocumentEditorPresence,
   resolveLivePreviewDocument,
   runLivePreviewRefresh,
@@ -563,6 +566,85 @@ test("resolveContentDocumentEditorPresence keeps current user chips and filters 
   assert.deepEqual(readOnlyPresence.remoteCursors, []);
 });
 
+test("resolveContentDocumentEditorPresence adds the current user chip before the presence snapshot echoes it", () => {
+  const snapshot = createPresenceSnapshot([
+    createPresenceUser({
+      sessionId: "session-ada",
+      label: "Ada Lovelace",
+    }),
+  ]);
+
+  const presence = resolveContentDocumentEditorPresence({
+    snapshot,
+    documentId: "11111111-1111-4111-8111-111111111111",
+    currentSessionId: null,
+    currentUser: createPresenceUser({
+      sessionId: "session-current",
+      label: "Current User",
+    }),
+  });
+
+  assert.deepEqual(
+    presence.users.map((user) => user.sessionId),
+    ["session-ada", "session-current"],
+  );
+  assert.deepEqual(presence.remoteCursors, [
+    {
+      sessionId: "session-ada",
+      label: "Ada Lovelace",
+      color: "#2563eb",
+      cursor: { anchor: 2, head: 7 },
+    },
+  ]);
+});
+
+test("resolveContentDocumentEditorCollaboration waits for room sync before binding the Yjs editor body", () => {
+  const document = new Y.Doc();
+  const body = document.getXmlFragment("default");
+
+  const connecting = resolveContentDocumentEditorCollaboration({
+    documentCollaboration: { status: "connecting", body },
+  });
+  assert.equal(connecting.editorCollaboration, undefined);
+  assert.equal(connecting.readOnlyBlockedByCollaboration, true);
+  assert.equal(connecting.publishBlockedByActiveCollaboration, true);
+
+  const open = resolveContentDocumentEditorCollaboration({
+    documentCollaboration: { status: "open", body },
+  });
+  assert.equal(open.editorCollaboration?.body, body);
+  assert.equal(open.readOnlyBlockedByCollaboration, false);
+  assert.equal(open.publishBlockedByActiveCollaboration, true);
+});
+
+test("resolveCollaborationDraftSaveSnapshot reads the live editor body after collaboration flush", () => {
+  const frontmatter = { title: "Launch Notes" };
+
+  assert.deepEqual(
+    resolveCollaborationDraftSaveSnapshot({
+      editor: { getContent: () => "Live collaborative body" },
+      fallbackBody: "Stale draft body",
+      frontmatter,
+    }),
+    {
+      body: "Live collaborative body",
+      frontmatter,
+    },
+  );
+
+  assert.deepEqual(
+    resolveCollaborationDraftSaveSnapshot({
+      editor: { getContent: () => null },
+      fallbackBody: "Fallback draft body",
+      frontmatter,
+    }),
+    {
+      body: "Fallback draft body",
+      frontmatter,
+    },
+  );
+});
+
 test("ContentDocumentPageView renders editor collaborator indicators", () => {
   const markup = renderPageMarkup(createReadyState(), {
     editorPresenceUsers: [
@@ -578,6 +660,17 @@ test("ContentDocumentPageView renders editor collaborator indicators", () => {
   assert.match(markup, /data-mdcms-editor-collaborators="true"/);
   assert.match(markup, /data-mdcms-presence-session="session-ada"/);
   assert.match(markup, /Ada Lovelace editing/);
+});
+
+test("ContentDocumentPageView disables publish while a collaboration room is active", () => {
+  const document = new Y.Doc();
+  const body = document.getXmlFragment("default");
+  const markup = renderPageMarkup(createReadyState(), {
+    documentCollaboration: { status: "open", body },
+  });
+
+  assert.match(markup, /data-mdcms-document-publish-disabled="true"/);
+  assert.match(markup, /disabled=""/);
 });
 
 test("ContentDocumentPageView renders document route loading and failure states", () => {

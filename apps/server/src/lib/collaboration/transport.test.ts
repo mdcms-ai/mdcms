@@ -532,6 +532,9 @@ test("collaboration transport upgrades and delegates open, message, and close to
             handleMessage(message: Uint8Array) {
               delegated.push(`message:${Array.from(message).join(",")}`);
             },
+            async waitForPendingMessages() {
+              delegated.push("wait");
+            },
             handleClose(event?: { code?: number; reason?: string }) {
               delegated.push(`close:${event?.code}:${event?.reason}`);
             },
@@ -583,6 +586,9 @@ test("collaboration transport handles document-room flush control messages outsi
             handleMessage(message: Uint8Array) {
               delegated.push(`message:${Array.from(message).join(",")}`);
             },
+            async waitForPendingMessages() {
+              delegated.push("wait");
+            },
             handleClose(event?: { code?: number; reason?: string }) {
               delegated.push(`close:${event?.code}:${event?.reason}`);
             },
@@ -618,7 +624,10 @@ test("collaboration transport handles document-room flush control messages outsi
   await waitFor(() => sent.length === 1, "Timed out waiting for flush result.");
 
   assert.deepEqual(flushed, [`marketing:staging:${DOCUMENT_ID}`]);
-  assert.deepEqual(delegated, [`open:editor-1:${calls[0]!.request.url}`]);
+  assert.deepEqual(delegated, [
+    `open:editor-1:${calls[0]!.request.url}`,
+    "wait",
+  ]);
   assert.deepEqual(JSON.parse(sent[0] as string), {
     type: "mdcms.collaboration.flush.result",
     requestId: "flush-1",

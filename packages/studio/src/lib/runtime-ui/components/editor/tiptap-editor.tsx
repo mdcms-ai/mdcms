@@ -154,6 +154,7 @@ import { Separator } from "../ui/separator.js";
 import { cn } from "../../lib/utils.js";
 
 export interface TipTapEditorHandle {
+  getContent: () => string | null;
   setContent: (markdown: string) => void;
   /**
    * Returns the markdown serialization of the document slice between
@@ -2128,6 +2129,13 @@ function useTipTapEditorElement({
   useImperativeHandle(
     ref,
     () => ({
+      getContent() {
+        if (!editor || editor.isDestroyed) {
+          return null;
+        }
+
+        return extractMarkdownFromEditor(editor);
+      },
       setContent(markdown: string) {
         if (!editor || editor.isDestroyed) {
           return;

@@ -34,6 +34,7 @@ export type CollaborationWebSocketHandler = BunAdapter["websocket"];
 type HocuspocusClientConnection = {
   handleMessage: (message: Uint8Array) => void;
   handleClose: (event?: { code: number; reason: string }) => void;
+  waitForPendingMessages?: () => Promise<void>;
 };
 
 type HocuspocusConnectionServer = {
@@ -467,6 +468,7 @@ export function createCollaborationWebSocketTransport(
   async function handleDocumentFlushMessage(
     peer: Peer,
     context: CollaborationSessionContext,
+    connection: HocuspocusClientConnection | undefined,
     request: CollaborationFlushRequest,
   ): Promise<void> {
     const server = options.runtime?.server;
@@ -480,6 +482,8 @@ export function createCollaborationWebSocketTransport(
           statusCode: 503,
         });
       }
+
+      await connection?.waitForPendingMessages?.();
 
       const result = await server.flushDocument(
         createDocumentNameFromContext(context),
@@ -882,7 +886,12 @@ export function createCollaborationWebSocketTransport(
 
         if (context && flushRequest) {
           trackDocumentTask(
-            handleDocumentFlushMessage(peer, context, flushRequest),
+            handleDocumentFlushMessage(
+              peer,
+              context,
+              peerConnections.get(peer),
+              flushRequest,
+            ),
           );
           return;
         }
