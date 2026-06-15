@@ -167,8 +167,7 @@ function originIsAllowed(
 }
 
 function derivePresenceLabel(session: StudioSession): string {
-  const [localPart] = session.email.split("@", 1);
-  const label = localPart?.trim();
+  const label = session.name?.trim();
 
   return label && label.length > 0 ? label : session.userId;
 }

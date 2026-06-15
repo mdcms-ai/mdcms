@@ -99,6 +99,7 @@ export type StudioSession = {
   id: string;
   userId: string;
   email: string;
+  name?: string;
   issuedAt: string;
   expiresAt: string;
 };
@@ -359,6 +360,7 @@ type BetterAuthLikeSession = {
   user?: {
     id?: unknown;
     email?: unknown;
+    name?: unknown;
   };
 };
 
@@ -1222,6 +1224,7 @@ function toStudioSession(payload: BetterAuthLikeSession): StudioSession {
   const sessionId = assertNonEmptyString(payload.session?.id, "session.id");
   const userId = assertNonEmptyString(payload.user?.id, "user.id");
   const email = assertNonEmptyString(payload.user?.email, "user.email");
+  const name = normalizeOptionalOidcClaimString(payload.user?.name);
   const issuedAt = toIsoString(payload.session?.createdAt);
   const expiresAt = toIsoString(payload.session?.expiresAt);
 
@@ -1229,6 +1232,7 @@ function toStudioSession(payload: BetterAuthLikeSession): StudioSession {
     id: sessionId,
     userId,
     email,
+    ...(name ? { name } : {}),
     issuedAt,
     expiresAt,
   };

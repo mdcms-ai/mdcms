@@ -366,6 +366,79 @@ test("presence handshake accepts target-only query and returns label and color",
   ]);
 });
 
+test("presence handshake uses the session display name instead of deriving a label from email", async () => {
+  const session = {
+    ...createSession("user-1"),
+    email: "test@blazity.com",
+    name: "Blazity Test User",
+  };
+  const guard = createCollaborationAuthGuard({
+    authService: createAuthServiceStub({
+      async authorizeRequest() {
+        return {
+          mode: "session",
+          principal: {
+            type: "session",
+            session,
+            role: "editor",
+          },
+        };
+      },
+    }),
+    allowedOrigins: ["http://localhost:4173"],
+    resolveDocument: async () => ({ path: "blog/post-1" }),
+  });
+
+  const result = await guard.authorizePresenceHandshake(
+    createCollaborationRequest(
+      "/api/v1/collaboration/presence?project=marketing&environment=staging",
+    ),
+  );
+
+  assert.equal(result.ok, true);
+  if (!result.ok) {
+    return;
+  }
+
+  assert.equal(result.context.label, "Blazity Test User");
+});
+
+test("presence handshake falls back to user id without exposing email local-part", async () => {
+  const session = {
+    ...createSession("user-1"),
+    email: "private-label@blazity.com",
+  };
+  const guard = createCollaborationAuthGuard({
+    authService: createAuthServiceStub({
+      async authorizeRequest() {
+        return {
+          mode: "session",
+          principal: {
+            type: "session",
+            session,
+            role: "editor",
+          },
+        };
+      },
+    }),
+    allowedOrigins: ["http://localhost:4173"],
+    resolveDocument: async () => ({ path: "blog/post-1" }),
+  });
+
+  const result = await guard.authorizePresenceHandshake(
+    createCollaborationRequest(
+      "/api/v1/collaboration/presence?project=marketing&environment=staging",
+    ),
+  );
+
+  assert.equal(result.ok, true);
+  if (!result.ok) {
+    return;
+  }
+
+  assert.equal(result.context.label, "user-1");
+});
+
 test("presence handshake rejects URL documentId with 4403", async () => {
   const guard = createCollaborationAuthGuard({
     authService: createAuthServiceStub({}),
