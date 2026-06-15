@@ -13,6 +13,7 @@ import type {
 import { createUnavailableCollaborationRedisDependency } from "./redis-store.js";
 import {
   computeCollaborationBodyHash,
+  createCollaborationDocumentName,
   createCollaborationRuntime,
   createCollaborationRuntimeHooks,
   encodeYDocState,
@@ -578,6 +579,33 @@ test("onLoadDocument rejects documentName mismatches without mutating authentica
   assert.equal(context.project, "marketing");
   assert.equal(context.environment, "draft");
   assert.equal(context.documentId, DOCUMENT_ID);
+});
+
+test("onLoadDocument accepts encoded documentName route segments", async () => {
+  const document = createDocument({
+    project: "marketing:site",
+    environment: "preview/draft",
+  });
+  const { hooks, redisStore } = createHarness(document);
+  const context = createContext({
+    project: document.project,
+    environment: document.environment,
+  });
+  const documentName = createCollaborationDocumentName({
+    project: document.project,
+    environment: document.environment,
+    documentId: document.documentId,
+  });
+
+  await hooks.onLoadDocument({
+    context,
+    documentName,
+  });
+
+  assert.equal(documentName, `marketing%3Asite:preview%2Fdraft:${DOCUMENT_ID}`);
+  assert.equal(context.project, "marketing:site");
+  assert.equal(context.environment, "preview/draft");
+  assert.equal(redisStore.calls[0]?.documentId, DOCUMENT_ID);
 });
 
 test("onLoadDocument returns Redis cached binary when metadata matches", async () => {

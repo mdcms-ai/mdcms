@@ -374,7 +374,19 @@ export function createCollaborationDocumentName(input: {
   environment: string;
   documentId: string;
 }): string {
-  return `${input.project}:${input.environment}:${input.documentId}`;
+  return [input.project, input.environment, input.documentId]
+    .map((segment) => encodeURIComponent(segment))
+    .join(":");
+}
+
+function decodeCollaborationDocumentNameSegment(
+  segment: string,
+): string | null {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return null;
+  }
 }
 
 function parseCollaborationDocumentName(
@@ -384,19 +396,47 @@ function parseCollaborationDocumentName(
 > {
   const colonParts = documentName.split(":");
   if (colonParts.length === 3) {
+    const project = decodeCollaborationDocumentNameSegment(colonParts[0] ?? "");
+    const environment = decodeCollaborationDocumentNameSegment(
+      colonParts[1] ?? "",
+    );
+    const documentId = decodeCollaborationDocumentNameSegment(
+      colonParts[2] ?? "",
+    );
+
+    if (!project || !environment || !documentId) {
+      return {
+        documentId: documentName,
+      };
+    }
+
     return {
-      project: colonParts[0],
-      environment: colonParts[1],
-      documentId: colonParts[2],
+      project,
+      environment,
+      documentId,
     };
   }
 
   const slashParts = documentName.split("/");
   if (slashParts.length === 3) {
+    const project = decodeCollaborationDocumentNameSegment(slashParts[0] ?? "");
+    const environment = decodeCollaborationDocumentNameSegment(
+      slashParts[1] ?? "",
+    );
+    const documentId = decodeCollaborationDocumentNameSegment(
+      slashParts[2] ?? "",
+    );
+
+    if (!project || !environment || !documentId) {
+      return {
+        documentId: documentName,
+      };
+    }
+
     return {
-      project: slashParts[0],
-      environment: slashParts[1],
-      documentId: slashParts[2],
+      project,
+      environment,
+      documentId,
     };
   }
 

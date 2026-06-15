@@ -60,12 +60,20 @@ export type CollaborationFlushResult =
       message: string;
     };
 
+function encodeCollaborationDocumentNameSegment(segment: string): string {
+  return encodeURIComponent(segment);
+}
+
 export function createCollaborationDocumentName({
   project,
   environment,
   documentId,
 }: CreateCollaborationDocumentNameInput): string {
-  return `${project}:${environment}:${documentId}`;
+  return [
+    encodeCollaborationDocumentNameSegment(project),
+    encodeCollaborationDocumentNameSegment(environment),
+    encodeCollaborationDocumentNameSegment(documentId),
+  ].join(":");
 }
 
 export function createCollaborationDocumentConnectionKey({

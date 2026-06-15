@@ -55,6 +55,15 @@ test("createCollaborationDocumentName and connection key are stable per routed d
     }),
     `ws://localhost:4000/api/v1/collaboration\u0000${DOCUMENT_NAME}`,
   );
+
+  assert.equal(
+    createCollaborationDocumentName({
+      project: "marketing:site",
+      environment: "preview/draft",
+      documentId: DOCUMENT_ID,
+    }),
+    `marketing%3Asite:preview%2Fdraft:${DOCUMENT_ID}`,
+  );
 });
 
 test("encodeCollaborationAuthMessage matches Hocuspocus token auth framing", () => {
