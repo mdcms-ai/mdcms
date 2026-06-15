@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { resolve } from "node:path";
 
 import { AdminStudioClient } from "../admin-studio-client";
+import { resetPreparedAdminStudioConfigCacheForTests } from "../prepared-studio-config-cache";
 import { resolveStudioExampleAppRoot } from "../resolve-studio-example-app-root";
 import AdminCatchAllPage from "./page";
 
@@ -21,6 +22,7 @@ test("resolveStudioExampleAppRoot does not duplicate the app path", () => {
 });
 
 test("admin catch-all page prepares studio config with local MDX metadata", async () => {
+  resetPreparedAdminStudioConfigCacheForTests();
   const element = await AdminCatchAllPage();
 
   assert.equal(element.type, AdminStudioClient);
