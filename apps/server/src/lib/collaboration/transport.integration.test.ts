@@ -568,6 +568,7 @@ test("Bun collaboration sockets sync Yjs updates and finalize the document room 
       }),
       authorizePresenceUpdate: async () => ({ ok: true }),
       filterPresenceSnapshot: async (_request, _context, users) => users,
+      revalidateWrite: async () => ({ ok: true }),
     },
     runtime,
   });
@@ -656,6 +657,7 @@ test("Bun presence sockets exchange JSON snapshots and clean up on disconnect", 
       },
       authorizePresenceUpdate: async () => ({ ok: true }),
       filterPresenceSnapshot: async (_request, _context, users) => users,
+      revalidateWrite: async () => ({ ok: true }),
     },
     presenceStore: redisStore,
     now: () => new Date("2026-06-14T10:00:00.000Z"),
@@ -764,6 +766,7 @@ test("Bun collaboration socket receives a forbidden close message when write rev
       }),
       authorizePresenceUpdate: async () => ({ ok: true }),
       filterPresenceSnapshot: async (_request, _context, users) => users,
+      revalidateWrite: async () => ({ ok: true }),
     },
     runtime,
   });

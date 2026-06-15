@@ -104,12 +104,37 @@ export function buildCollaborationActiveKey(documentId: string): string {
   return `mdcms:collaboration:active:${documentId}`;
 }
 
+function encodeCollaborationRedisKeySegment(segment: string): string {
+  return encodeURIComponent(segment).replace(/\*/g, "%2A");
+}
+
 export function buildCollaborationPresenceKey(input: {
   project: string;
   environment: string;
   sessionId: string;
 }): string {
-  return `mdcms:collaboration:presence:${input.project}:${input.environment}:${input.sessionId}`;
+  return [
+    "mdcms",
+    "collaboration",
+    "presence",
+    encodeCollaborationRedisKeySegment(input.project),
+    encodeCollaborationRedisKeySegment(input.environment),
+    encodeCollaborationRedisKeySegment(input.sessionId),
+  ].join(":");
+}
+
+function buildCollaborationPresenceScanPattern(input: {
+  project: string;
+  environment: string;
+}): string {
+  return [
+    "mdcms",
+    "collaboration",
+    "presence",
+    encodeCollaborationRedisKeySegment(input.project),
+    encodeCollaborationRedisKeySegment(input.environment),
+    "*",
+  ].join(":");
 }
 
 export function createUnavailableCollaborationRedisDependency(
@@ -341,10 +366,7 @@ export function createCollaborationRedisStore(
         throw new Error("Collaboration Redis client does not support SCAN.");
       }
 
-      const pattern = buildCollaborationPresenceKey({
-        ...input,
-        sessionId: "*",
-      });
+      const pattern = buildCollaborationPresenceScanPattern(input);
       const records: CollaborationPresenceUser[] = [];
       let cursor = "0";
 

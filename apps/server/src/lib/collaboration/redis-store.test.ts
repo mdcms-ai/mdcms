@@ -250,6 +250,14 @@ test("collaboration Redis key builders match the documented key shape", () => {
     }),
     "mdcms:collaboration:presence:marketing:draft:session-1",
   );
+  assert.equal(
+    buildCollaborationPresenceKey({
+      project: "market:ing",
+      environment: "draft:blue",
+      sessionId: "session:1*",
+    }),
+    "mdcms:collaboration:presence:market%3Aing:draft%3Ablue:session%3A1%2A",
+  );
 });
 
 test("presence writes JSON records with the presence heartbeat TTL", async () => {
@@ -336,6 +344,52 @@ test("presence listing returns valid records only for the requested target", asy
   assert.deepEqual(
     await store.listPresence({ project: "marketing", environment: "draft" }),
     [valid],
+  );
+});
+
+test("presence listing scans the encoded target prefix", async () => {
+  const { client, store } = createStore();
+  const valid = createPresenceRecord({
+    sessionId: "session:1",
+    label: "Ada",
+  });
+  const otherTarget = createPresenceRecord({
+    sessionId: "session:2",
+    label: "Grace",
+  });
+
+  client.values.set(
+    buildCollaborationPresenceKey({
+      project: "market:ing",
+      environment: "draft:blue",
+      sessionId: valid.sessionId,
+    }),
+    JSON.stringify(valid),
+  );
+  client.values.set(
+    buildCollaborationPresenceKey({
+      project: "market",
+      environment: "ing:draft:blue",
+      sessionId: otherTarget.sessionId,
+    }),
+    JSON.stringify(otherTarget),
+  );
+
+  assert.deepEqual(
+    await store.listPresence({
+      project: "market:ing",
+      environment: "draft:blue",
+    }),
+    [valid],
+  );
+  assert.deepEqual(
+    client.calls.find((call) => call.method === "scan"),
+    {
+      method: "scan",
+      cursor: "0",
+      pattern: "mdcms:collaboration:presence:market%3Aing:draft%3Ablue:*",
+      count: 100,
+    },
   );
 });
 

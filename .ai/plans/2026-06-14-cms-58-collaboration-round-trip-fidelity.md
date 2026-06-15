@@ -36,7 +36,7 @@ Acceptance criteria covered:
   - Import `cloneFrontmatter`, `areJsonValuesEqual`, `getPropertyDescriptors`, and `type ContentDocumentPageReadyState` from `../../pages/content-document-page-state.js`.
   - Import `type SchemaRegistryFieldSnapshot` from `@mdcms/shared`.
 - No production files should change unless one of the canonical fixtures fails and exposes a real serializer defect.
-- No changeset should be required if the work remains under `packages/studio/src/lib/runtime-ui/**`, which is listed in `packages/studio/.changeset-gate.json` as runtime-only unpublished source.
+- Changes under `packages/studio/src/lib/runtime-ui/**` are exempted by `packages/studio/.changeset-gate.json`, which lists that runtime-only, backend-served source as unpublished. Changes outside that documented exception in published package `src/**` still require a changeset.
 
 ## Task 1: Fixture-Driven Body Idempotency
 

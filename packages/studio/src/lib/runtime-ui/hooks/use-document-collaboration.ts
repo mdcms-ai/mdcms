@@ -272,48 +272,72 @@ export function useDocumentCollaboration({
 
       socket.onmessage = (event) => {
         void (async () => {
-          const data = await readWebSocketMessageData(event.data);
+          try {
+            const data = await readWebSocketMessageData(event.data);
 
-          if (disposed || data === null) {
-            return;
-          }
-
-          if (typeof data === "string") {
-            const flushResult = parseCollaborationFlushResult(data);
-
-            if (flushResult) {
-              const pending = pendingFlushesRef.current.get(
-                flushResult.requestId,
-              );
-
-              if (pending) {
-                clearTimeout(pending.timeout);
-                pendingFlushesRef.current.delete(flushResult.requestId);
-                pending.resolve(flushResult);
-              }
+            if (disposed || data === null) {
+              return;
             }
 
-            return;
-          }
+            if (typeof data === "string") {
+              const flushResult = parseCollaborationFlushResult(data);
 
-          const result = handleCollaborationSyncMessage({
-            documentName: connectionConfig.documentName,
-            document: documentState.document,
-            data,
-            transactionOrigin: SOCKET_UPDATE_ORIGIN,
-            send: sendIfOpen,
-          });
+              if (flushResult) {
+                const pending = pendingFlushesRef.current.get(
+                  flushResult.requestId,
+                );
 
-          if (result.type === "sync") {
-            setStatus("open");
-          }
+                if (pending) {
+                  clearTimeout(pending.timeout);
+                  pendingFlushesRef.current.delete(flushResult.requestId);
+                  pending.resolve(flushResult);
+                }
+              }
 
-          if (result.type === "permission-denied" || result.type === "close") {
+              return;
+            }
+
+            const result = handleCollaborationSyncMessage({
+              documentName: connectionConfig.documentName,
+              document: documentState.document,
+              data,
+              transactionOrigin: SOCKET_UPDATE_ORIGIN,
+              send: sendIfOpen,
+            });
+
+            if (result.type === "sync") {
+              setStatus("open");
+            }
+
+            if (
+              result.type === "permission-denied" ||
+              result.type === "close"
+            ) {
+              fatalClose = true;
+              setStatus("error");
+              rejectPendingFlushes(
+                pendingFlushesRef.current,
+                new Error("Document collaboration socket failed."),
+              );
+              if (
+                socket.readyState === WebSocket.OPEN ||
+                socket.readyState === WebSocket.CONNECTING
+              ) {
+                socket.close();
+              }
+            }
+          } catch (error) {
+            if (disposed) {
+              return;
+            }
+
             fatalClose = true;
             setStatus("error");
             rejectPendingFlushes(
               pendingFlushesRef.current,
-              new Error("Document collaboration socket failed."),
+              error instanceof Error
+                ? error
+                : new Error("Document collaboration socket failed."),
             );
             if (
               socket.readyState === WebSocket.OPEN ||

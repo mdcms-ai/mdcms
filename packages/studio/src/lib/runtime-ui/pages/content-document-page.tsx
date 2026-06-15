@@ -546,7 +546,11 @@ type ContentDocumentPageViewProps = {
   sidebarOpen?: boolean;
   activeMdxComponent?: MdxPropsPanelSelection | null;
   onDraftChange?: (body: string) => void;
-  onFrontmatterFieldChange?: (fieldName: string, value: unknown) => void;
+  onFrontmatterFieldChange?: (
+    fieldName: string,
+    value: unknown,
+    options?: { syncCollaboration?: boolean },
+  ) => void;
   onActiveMdxComponentChange?: (
     selection: MdxPropsPanelSelection | null,
   ) => void;
@@ -1016,7 +1020,11 @@ export function SidebarInfoTab(props: {
 
 function SidebarPropertiesTab(props: {
   state: ContentDocumentPageReadyState;
-  onFrontmatterFieldChange?: (fieldName: string, value: unknown) => void;
+  onFrontmatterFieldChange?: (
+    fieldName: string,
+    value: unknown,
+    options?: { syncCollaboration?: boolean },
+  ) => void;
   fileFieldMediaUploadApi?: StudioMediaUploadApi | null;
   fileFieldMediaLibraryApi?: Pick<StudioMediaLibraryApi, "get" | "list"> | null;
 }) {
@@ -1405,7 +1413,11 @@ function ContentDocumentPageSidebar(props: {
   state: ContentDocumentPageReadyState;
   context?: StudioMountContext;
   activeMdxComponent?: MdxPropsPanelSelection | null;
-  onFrontmatterFieldChange?: (fieldName: string, value: unknown) => void;
+  onFrontmatterFieldChange?: (
+    fieldName: string,
+    value: unknown,
+    options?: { syncCollaboration?: boolean },
+  ) => void;
   fileFieldMediaUploadApi?: StudioMediaUploadApi | null;
   fileFieldMediaLibraryApi?: Pick<StudioMediaLibraryApi, "get" | "list"> | null;
   onViewVersion?: (version: number) => void;
@@ -2277,7 +2289,9 @@ function useContentDocumentPageViewElement({
         if (
           !areJsonValuesEqual(currentFrontmatter[key], draft.frontmatter[key])
         ) {
-          onFrontmatterFieldChange?.(key, draft.frontmatter[key]);
+          onFrontmatterFieldChange?.(key, draft.frontmatter[key], {
+            syncCollaboration: false,
+          });
         }
       }
     },
@@ -4413,8 +4427,9 @@ function useContentDocumentPageController({
           : current,
       );
     },
-    onFrontmatterFieldChange: (fieldName, value) => {
+    onFrontmatterFieldChange: (fieldName, value, options) => {
       if (
+        options?.syncCollaboration !== false &&
         documentCollaboration.enabled &&
         documentCollaboration.status === "open" &&
         documentCollaboration.frontmatter

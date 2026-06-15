@@ -105,6 +105,20 @@ test("applyAssistantCollaborationProposalDraft rejects ambiguous replace_selecti
   );
 });
 
+test("applyAssistantCollaborationProposalDraft rejects proposal kind and operation mismatches", () => {
+  assert.throws(
+    () =>
+      applyAssistantCollaborationProposalDraft({
+        proposal: buildProposal({ kind: "insert_block" }),
+        documentId: "doc_1",
+        body: "The old intro is here.",
+        frontmatter: {},
+      }),
+    (error) =>
+      error instanceof RuntimeError && error.code === "AI_OUTPUT_INVALID",
+  );
+});
+
 test("applyAssistantCollaborationProposalDraft appends insert blocks and merges frontmatter patches", () => {
   const insert = applyAssistantCollaborationProposalDraft({
     proposal: buildProposal({

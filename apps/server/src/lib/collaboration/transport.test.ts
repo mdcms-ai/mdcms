@@ -107,6 +107,9 @@ function createAuthGuard(
     async filterPresenceSnapshot(_request, _context, users) {
       return users;
     },
+    async revalidateWrite() {
+      return result.ok ? { ok: true } : result;
+    },
   };
 }
 
@@ -114,6 +117,7 @@ function createPresenceAuthGuard(overrides: {
   authorizePresenceHandshake?: CollaborationAuthHandshakeGuard["authorizePresenceHandshake"];
   authorizePresenceUpdate?: CollaborationAuthHandshakeGuard["authorizePresenceUpdate"];
   filterPresenceSnapshot?: CollaborationAuthHandshakeGuard["filterPresenceSnapshot"];
+  revalidateWrite?: CollaborationAuthHandshakeGuard["revalidateWrite"];
 }): CollaborationAuthHandshakeGuard {
   return {
     async authorizeHandshake() {
@@ -140,6 +144,7 @@ function createPresenceAuthGuard(overrides: {
     filterPresenceSnapshot:
       overrides.filterPresenceSnapshot ??
       (async (_request, _context, users) => users),
+    revalidateWrite: overrides.revalidateWrite ?? (async () => ({ ok: true })),
   };
 }
 
@@ -155,22 +160,32 @@ function createPresenceStore(initialUsers: CollaborationPresenceUser[] = []) {
     environment: string;
     sessionId: string;
   }> = [];
+  const key = (input: {
+    project: string;
+    environment: string;
+    sessionId: string;
+  }) =>
+    [input.project, input.environment, input.sessionId]
+      .map((segment) => encodeURIComponent(segment))
+      .join(":");
 
   for (const user of initialUsers) {
-    records.set(`${user.sessionId}`, {
+    const record = {
       ...user,
       project: "marketing",
       environment: "staging",
-    });
+    };
+    records.set(key(record), record);
   }
 
   return {
     records,
+    key,
     setCalls,
     deleteCalls,
     async setPresence(record: PresenceRecord) {
       setCalls.push(record);
-      records.set(record.sessionId, record);
+      records.set(key(record), record);
     },
     async deletePresence(input: {
       project: string;
@@ -178,7 +193,7 @@ function createPresenceStore(initialUsers: CollaborationPresenceUser[] = []) {
       sessionId: string;
     }) {
       deleteCalls.push(input);
-      records.delete(input.sessionId);
+      records.delete(key(input));
     },
     async listPresence(input: {
       project: string;
@@ -367,6 +382,9 @@ test("collaboration transport falls through for non-collaboration requests", asy
       },
       async filterPresenceSnapshot() {
         throw new Error("should not filter presence snapshot");
+      },
+      async revalidateWrite() {
+        throw new Error("should not revalidate writes");
       },
     },
     runtime: {
@@ -570,8 +588,15 @@ test("collaboration transport handles document-room flush control messages outsi
   const { calls, server } = createBunServerStub();
   const delegated: string[] = [];
   const flushed: string[] = [];
+  const securityEvents: string[] = [];
   const transport = createCollaborationWebSocketTransport({
-    authGuard: createAuthGuard({ ok: true, context }),
+    authGuard: {
+      ...createAuthGuard({ ok: true, context }),
+      async revalidateWrite(_request, revalidatedContext) {
+        securityEvents.push(`revalidate:${revalidatedContext.documentId}`);
+        return { ok: true as const };
+      },
+    },
     runtime: {
       server: {
         handleConnection(
@@ -595,6 +620,7 @@ test("collaboration transport handles document-room flush control messages outsi
           };
         },
         async flushDocument(documentName: string) {
+          securityEvents.push(`flush:${documentName}`);
           flushed.push(documentName);
           return { status: "saved" as const, draftRevision: 12 };
         },
@@ -624,6 +650,10 @@ test("collaboration transport handles document-room flush control messages outsi
   await waitFor(() => sent.length === 1, "Timed out waiting for flush result.");
 
   assert.deepEqual(flushed, [`marketing:staging:${DOCUMENT_ID}`]);
+  assert.deepEqual(securityEvents, [
+    `revalidate:${DOCUMENT_ID}`,
+    `flush:marketing:staging:${DOCUMENT_ID}`,
+  ]);
   assert.deepEqual(delegated, [
     `open:editor-1:${calls[0]!.request.url}`,
     "wait",
@@ -633,6 +663,61 @@ test("collaboration transport handles document-room flush control messages outsi
     requestId: "flush-1",
     status: "saved",
     draftRevision: 12,
+  });
+});
+
+test("collaboration transport rejects flush control messages after write access is revoked", async () => {
+  const context = createContext({ userId: "editor-1" });
+  const { calls, server } = createBunServerStub();
+  const flushed: string[] = [];
+  const transport = createCollaborationWebSocketTransport({
+    authGuard: {
+      ...createAuthGuard({ ok: true, context }),
+      async revalidateWrite() {
+        return { ok: false as const, closeCode: 4403 as const };
+      },
+    },
+    runtime: {
+      server: {
+        handleConnection() {
+          return {
+            handleMessage() {
+              throw new Error("flush control messages should not delegate");
+            },
+            async waitForPendingMessages() {},
+            handleClose() {},
+          };
+        },
+        async flushDocument(documentName: string) {
+          flushed.push(documentName);
+          return { status: "saved" as const, draftRevision: 12 };
+        },
+      },
+    },
+  });
+
+  await transport.handleFetchUpgrade(createUpgradeRequest(), server as never);
+
+  const { socket, sent } = createBunSocketStub(calls[0]!.options.data);
+
+  transport.websocket.open(socket as never);
+  transport.websocket.message(
+    socket as never,
+    JSON.stringify({
+      type: "mdcms.collaboration.flush",
+      requestId: "flush-1",
+    }),
+  );
+
+  await waitFor(() => sent.length === 1, "Timed out waiting for flush error.");
+
+  assert.deepEqual(flushed, []);
+  assert.deepEqual(JSON.parse(sent[0] as string), {
+    type: "mdcms.collaboration.flush.result",
+    requestId: "flush-1",
+    status: "error",
+    code: "FORBIDDEN",
+    message: "Collaboration write access is no longer allowed.",
   });
 });
 
@@ -792,18 +877,27 @@ test("presence transport stores authorized updates and broadcasts filtered snaps
     "Timed out waiting for update broadcast.",
   );
 
-  assert.deepEqual(presenceStore.records.get("session-1"), {
-    project: "marketing",
-    environment: "staging",
-    userId: "ada",
-    sessionId: "session-1",
-    label: "ada",
-    color: "#2563eb",
-    documentId: DOCUMENT_ID,
-    mode: "edit",
-    cursor: { anchor: 2, head: 7 },
-    updatedAt: "2026-06-14T10:00:00.000Z",
-  });
+  assert.deepEqual(
+    presenceStore.records.get(
+      presenceStore.key({
+        project: "marketing",
+        environment: "staging",
+        sessionId: "session-1",
+      }),
+    ),
+    {
+      project: "marketing",
+      environment: "staging",
+      userId: "ada",
+      sessionId: "session-1",
+      label: "ada",
+      color: "#2563eb",
+      documentId: DOCUMENT_ID,
+      mode: "edit",
+      cursor: { anchor: 2, head: 7 },
+      updatedAt: "2026-06-14T10:00:00.000Z",
+    },
+  );
   assert.deepEqual(filterCalls, ["session-1", "session-2"]);
   assert.deepEqual(
     parseSnapshotMessages(peerA.sent)
@@ -859,8 +953,20 @@ test("presence transport fails closed and cleans up when update storage fails", 
   transport.websocket.open(observer.socket as never);
   await waitFor(
     () =>
-      presenceStore.records.has("session-1") &&
-      presenceStore.records.has("session-2") &&
+      presenceStore.records.has(
+        presenceStore.key({
+          project: "marketing",
+          environment: "staging",
+          sessionId: "session-1",
+        }),
+      ) &&
+      presenceStore.records.has(
+        presenceStore.key({
+          project: "marketing",
+          environment: "staging",
+          sessionId: "session-2",
+        }),
+      ) &&
       parseSnapshotMessages(observer.sent).length > 0,
     "Timed out waiting for initial presence records.",
   );
@@ -894,7 +1000,16 @@ test("presence transport fails closed and cleans up when update storage fails", 
       sessionId: "session-1",
     },
   ]);
-  assert.equal(presenceStore.records.has("session-1"), false);
+  assert.equal(
+    presenceStore.records.has(
+      presenceStore.key({
+        project: "marketing",
+        environment: "staging",
+        sessionId: "session-1",
+      }),
+    ),
+    false,
+  );
   assert.deepEqual(
     parseSnapshotMessages(observer.sent)
       .at(-1)
@@ -932,8 +1047,20 @@ test("presence transport fails closed and cleans up when update authorization th
   transport.websocket.open(observer.socket as never);
   await waitFor(
     () =>
-      presenceStore.records.has("session-1") &&
-      presenceStore.records.has("session-2") &&
+      presenceStore.records.has(
+        presenceStore.key({
+          project: "marketing",
+          environment: "staging",
+          sessionId: "session-1",
+        }),
+      ) &&
+      presenceStore.records.has(
+        presenceStore.key({
+          project: "marketing",
+          environment: "staging",
+          sessionId: "session-2",
+        }),
+      ) &&
       parseSnapshotMessages(observer.sent).length > 0,
     "Timed out waiting for initial presence records.",
   );
@@ -966,7 +1093,16 @@ test("presence transport fails closed and cleans up when update authorization th
       sessionId: "session-1",
     },
   ]);
-  assert.equal(presenceStore.records.has("session-1"), false);
+  assert.equal(
+    presenceStore.records.has(
+      presenceStore.key({
+        project: "marketing",
+        environment: "staging",
+        sessionId: "session-1",
+      }),
+    ),
+    false,
+  );
 });
 
 test("presence transport cleans up peers when snapshot filtering fails", async () => {
@@ -1018,7 +1154,16 @@ test("presence transport cleans up peers when snapshot filtering fails", async (
       sessionId: "session-1",
     },
   ]);
-  assert.equal(presenceStore.records.has("session-1"), false);
+  assert.equal(
+    presenceStore.records.has(
+      presenceStore.key({
+        project: "marketing",
+        environment: "staging",
+        sessionId: "session-1",
+      }),
+    ),
+    false,
+  );
   assert.deepEqual(
     parseSnapshotMessages(observer.sent)
       .at(-1)
@@ -1061,8 +1206,15 @@ test("presence transport omits cursor from target-level updates", async () => {
     "Timed out waiting for target-level presence update.",
   );
 
-  assert.equal(presenceStore.records.get("session-1")?.documentId, null);
-  assert.equal(presenceStore.records.get("session-1")?.cursor, undefined);
+  const storedTargetLevelUser = presenceStore.records.get(
+    presenceStore.key({
+      project: "marketing",
+      environment: "staging",
+      sessionId: "session-1",
+    }),
+  );
+  assert.equal(storedTargetLevelUser?.documentId, null);
+  assert.equal(storedTargetLevelUser?.cursor, undefined);
 });
 
 test("presence transport closes with 4403 for invalid JSON and invalid update payloads", async () => {
@@ -1214,7 +1366,16 @@ test("presence transport deletes presence only after the last local socket for a
   );
 
   assert.deepEqual(presenceStore.deleteCalls, []);
-  assert.equal(presenceStore.records.has("session-1"), true);
+  assert.equal(
+    presenceStore.records.has(
+      presenceStore.key({
+        project: "marketing",
+        environment: "staging",
+        sessionId: "session-1",
+      }),
+    ),
+    true,
+  );
 
   transport.websocket.close(secondTab.socket as never, 1000, "tab closed");
   await waitFor(
@@ -1231,7 +1392,16 @@ test("presence transport deletes presence only after the last local socket for a
       sessionId: "session-1",
     },
   ]);
-  assert.equal(presenceStore.records.has("session-1"), false);
+  assert.equal(
+    presenceStore.records.has(
+      presenceStore.key({
+        project: "marketing",
+        environment: "staging",
+        sessionId: "session-1",
+      }),
+    ),
+    false,
+  );
   assert.deepEqual(
     parseSnapshotMessages(observer.sent)
       .at(-1)
@@ -1331,7 +1501,14 @@ test("collaboration transport shutdown awaits deterministic presence cleanup", a
 
   transport.websocket.open(socket as never);
   await waitFor(
-    () => presenceStore.records.has("session-1"),
+    () =>
+      presenceStore.records.has(
+        presenceStore.key({
+          project: "marketing",
+          environment: "staging",
+          sessionId: "session-1",
+        }),
+      ),
     "Timed out waiting for initial presence record.",
   );
 

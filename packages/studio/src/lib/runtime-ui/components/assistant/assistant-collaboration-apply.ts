@@ -170,6 +170,13 @@ export function applyAssistantCollaborationProposalDraft({
   }
 
   const operation = getSingleOperation(proposal);
+  if (operation.op !== proposal.kind) {
+    throw aiOutputInvalid(
+      `Proposal kind "${proposal.kind}" does not match operation kind "${operation.op}".`,
+      { proposalId: proposal.proposalId },
+    );
+  }
+
   const priorDraft = { body, frontmatter: { ...frontmatter } };
   let nextBody = body;
   let nextFrontmatter = frontmatter;

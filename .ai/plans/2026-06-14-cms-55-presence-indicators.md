@@ -263,7 +263,7 @@ export type CollaborationPresenceContext = {
 };
 ```
 
-Use a deterministic color derived from `userId` with a stable palette. Label should prefer a display name if a future session exposes one, otherwise use the email local-part, then `userId`.
+Use a deterministic color derived from `userId` with a stable palette. Label should prefer a display name if a future session exposes one, otherwise fall back directly to `userId`.
 
 - [ ] **Step 3: Add presence auth guard methods**
 

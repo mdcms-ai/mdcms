@@ -68,6 +68,10 @@ export type CollaborationAuthHandshakeGuard = {
     context: CollaborationPresenceContext,
     users: CollaborationPresenceUser[],
   ) => Promise<CollaborationPresenceUser[]>;
+  revalidateWrite: (
+    request: Request,
+    context: CollaborationSessionContext,
+  ) => Promise<{ ok: true } | { ok: false; closeCode: CollaborationCloseCode }>;
 };
 
 export type CollaborationPresenceStore = {
@@ -484,6 +488,22 @@ export function createCollaborationWebSocketTransport(
       }
 
       await connection?.waitForPendingMessages?.();
+
+      const authorization = await options.authGuard.revalidateWrite(
+        peer.request,
+        context,
+      );
+
+      if (!authorization.ok) {
+        throw new RuntimeError({
+          code: authorization.closeCode === 4401 ? "UNAUTHORIZED" : "FORBIDDEN",
+          message:
+            authorization.closeCode === 4401
+              ? COLLABORATION_SESSION_INVALID_REASON
+              : COLLABORATION_WRITE_FORBIDDEN_REASON,
+          statusCode: authorization.closeCode === 4401 ? 401 : 403,
+        });
+      }
 
       const result = await server.flushDocument(
         createDocumentNameFromContext(context),

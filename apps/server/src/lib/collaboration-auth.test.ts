@@ -570,6 +570,44 @@ test("presence view update only checks draft-read permission with document path"
   ]);
 });
 
+test("presence edit update without a document is rejected before draft-read authorization", async () => {
+  const requiredScopes: AuthorizationRequirement[] = [];
+  const guard = createCollaborationAuthGuard({
+    authService: createAuthServiceStub({
+      async authorizeRequest(_request, requirement) {
+        requiredScopes.push(requirement);
+        return {
+          mode: "session",
+          principal: {
+            type: "session",
+            session: createSession("editor-1"),
+            role: "editor",
+          },
+        };
+      },
+    }),
+    allowedOrigins: ["http://localhost:4173"],
+    resolveDocument: async () => ({ path: "blog/post-1" }),
+  });
+
+  const result = await guard.authorizePresenceUpdate(
+    createCollaborationRequest("/api/v1/collaboration/presence"),
+    createPresenceContext(),
+    createPresenceUpdate({
+      documentId: null,
+      mode: "edit",
+    }),
+  );
+
+  assert.equal(result.ok, false);
+  if (result.ok) {
+    return;
+  }
+
+  assert.equal(result.closeCode, 4403);
+  assert.deepEqual(requiredScopes, []);
+});
+
 test("presence update maps authorization failures to 4403", async () => {
   const guard = createCollaborationAuthGuard({
     authService: createAuthServiceStub({
@@ -697,6 +735,11 @@ test("presence snapshot filtering removes unreadable documents and keeps target-
       requiredScope: "content:read:draft",
       project: "marketing",
       environment: "staging",
+    },
+    {
+      requiredScope: "content:read:draft",
+      project: "marketing",
+      environment: "staging",
       documentPath: "blog/post-1",
     },
     {
@@ -704,6 +747,50 @@ test("presence snapshot filtering removes unreadable documents and keeps target-
       project: "marketing",
       environment: "staging",
       documentPath: "secret/post-2",
+    },
+  ]);
+});
+
+test("presence snapshot filtering returns no users when target draft-read revalidation fails", async () => {
+  const requiredScopes: AuthorizationRequirement[] = [];
+  const guard = createCollaborationAuthGuard({
+    authService: createAuthServiceStub({
+      async authorizeRequest(_request, requirement) {
+        requiredScopes.push(requirement);
+        throw new RuntimeError({
+          code: "FORBIDDEN",
+          message: "Denied",
+          statusCode: 403,
+        });
+      },
+    }),
+    allowedOrigins: ["http://localhost:4173"],
+    resolveDocument: async () => {
+      throw new Error("document paths should not resolve after target deny");
+    },
+  });
+
+  const filtered = await guard.filterPresenceSnapshot(
+    createCollaborationRequest("/api/v1/collaboration/presence"),
+    createPresenceContext(),
+    [
+      createPresenceUser({
+        sessionId: "online",
+        documentId: null,
+      }),
+      createPresenceUser({
+        sessionId: "readable",
+        documentId: DOCUMENT_ID,
+      }),
+    ],
+  );
+
+  assert.deepEqual(filtered, []);
+  assert.deepEqual(requiredScopes, [
+    {
+      requiredScope: "content:read:draft",
+      project: "marketing",
+      environment: "staging",
     },
   ]);
 });

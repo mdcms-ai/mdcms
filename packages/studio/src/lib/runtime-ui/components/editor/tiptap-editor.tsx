@@ -1887,7 +1887,7 @@ function useTipTapEditorElement({
       onSelectionUpdate({ editor }) {
         onCursorSelectionChange?.(
           resolveTipTapEditorCursorPresenceSelection({
-            focused: true,
+            focused: editor.isFocused,
             selection: editor.state.selection,
           }),
         );

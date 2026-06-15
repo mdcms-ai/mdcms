@@ -510,6 +510,10 @@ class BaselinePresenceAuthGuard implements CollaborationAuthHandshakeGuard {
   ): Promise<CollaborationPresenceUser[]> {
     return users;
   }
+
+  async revalidateWrite(): Promise<{ ok: true }> {
+    return { ok: true };
+  }
 }
 
 class BaselinePresencePeer {

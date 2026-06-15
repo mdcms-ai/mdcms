@@ -451,6 +451,13 @@ export function createCollaborationAuthGuard(
       const documentId = update.documentId ?? null;
 
       if (!documentId) {
+        if (update.mode === "edit") {
+          return {
+            ok: false,
+            closeCode: 4403,
+          };
+        }
+
         const authorized = await authorizeDraftRead({
           request,
           project: context.project,
@@ -518,6 +525,24 @@ export function createCollaborationAuthGuard(
     context: CollaborationPresenceContext,
     users: CollaborationPresenceUser[],
   ): Promise<CollaborationPresenceUser[]> {
+    try {
+      const authorized = await authorizeDraftRead({
+        request,
+        project: context.project,
+        environment: context.environment,
+      });
+
+      if (authorized.mode !== "session") {
+        return [];
+      }
+    } catch (error) {
+      if (error instanceof RuntimeError) {
+        return [];
+      }
+
+      throw error;
+    }
+
     const filtered: CollaborationPresenceUser[] = [];
 
     for (const user of users) {

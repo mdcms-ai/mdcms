@@ -2,6 +2,7 @@ import * as decoding from "lib0/decoding.js";
 import * as encoding from "lib0/encoding.js";
 import * as syncProtocol from "y-protocols/sync.js";
 import type * as Y from "yjs";
+import { z } from "zod";
 
 import { resolveStudioRelativeUrl } from "../../url-resolution.js";
 
@@ -59,6 +60,22 @@ export type CollaborationFlushResult =
       code: string;
       message: string;
     };
+
+const CollaborationFlushResultSchema = z.discriminatedUnion("status", [
+  z.object({
+    type: z.literal("mdcms.collaboration.flush.result"),
+    requestId: z.string(),
+    status: z.enum(["saved", "unchanged"]),
+    draftRevision: z.number(),
+  }),
+  z.object({
+    type: z.literal("mdcms.collaboration.flush.result"),
+    requestId: z.string(),
+    status: z.literal("error"),
+    code: z.string(),
+    message: z.string(),
+  }),
+]);
 
 function encodeCollaborationDocumentNameSegment(segment: string): string {
   return encodeURIComponent(segment);
@@ -250,32 +267,6 @@ export function parseCollaborationFlushResult(
     return null;
   }
 
-  if (
-    typeof payload !== "object" ||
-    payload === null ||
-    (payload as { type?: unknown }).type !==
-      "mdcms.collaboration.flush.result" ||
-    typeof (payload as { requestId?: unknown }).requestId !== "string"
-  ) {
-    return null;
-  }
-
-  const status = (payload as { status?: unknown }).status;
-
-  if (
-    (status === "saved" || status === "unchanged") &&
-    typeof (payload as { draftRevision?: unknown }).draftRevision === "number"
-  ) {
-    return payload as CollaborationFlushResult;
-  }
-
-  if (
-    status === "error" &&
-    typeof (payload as { code?: unknown }).code === "string" &&
-    typeof (payload as { message?: unknown }).message === "string"
-  ) {
-    return payload as CollaborationFlushResult;
-  }
-
-  return null;
+  const result = CollaborationFlushResultSchema.safeParse(payload);
+  return result.success ? result.data : null;
 }
