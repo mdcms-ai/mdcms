@@ -180,7 +180,8 @@ function createWorkspaceSourceAliasPlugin(input: {
   projectRoot: string;
 }): BunBuildPlugin {
   const sharedPackageRoot = resolve(input.projectRoot, "../shared");
-  const sharedSourceExports = new Map([
+  const editorCorePackageRoot = resolve(input.projectRoot, "../editor-core");
+  const firstPartySourceExports = new Map([
     ["@mdcms/shared", join(sharedPackageRoot, "src/index.ts")],
     ["@mdcms/shared/mdx", join(sharedPackageRoot, "src/lib/mdx/index.ts")],
     [
@@ -195,20 +196,24 @@ function createWorkspaceSourceAliasPlugin(input: {
       "@mdcms/shared/server",
       join(sharedPackageRoot, "src/lib/contracts/schema-hash.ts"),
     ],
+    ["@mdcms/editor-core", join(editorCorePackageRoot, "src/index.ts")],
   ]);
 
   return {
     name: "mdcms-workspace-source-aliases",
     setup(build) {
-      build.onResolve({ filter: /^@mdcms\/shared(?:\/.*)?$/ }, (args) => {
-        const sourcePath = sharedSourceExports.get(args.path);
+      build.onResolve(
+        { filter: /^@mdcms\/(?:shared|editor-core)(?:\/.*)?$/ },
+        (args) => {
+          const sourcePath = firstPartySourceExports.get(args.path);
 
-        if (!sourcePath || !existsSync(sourcePath)) {
-          return undefined;
-        }
+          if (!sourcePath || !existsSync(sourcePath)) {
+            return undefined;
+          }
 
-        return { path: sourcePath };
-      });
+          return { path: sourcePath };
+        },
+      );
     },
   };
 }
