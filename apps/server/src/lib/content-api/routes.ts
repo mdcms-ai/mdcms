@@ -536,6 +536,22 @@ async function assertNoActiveCollaboration(
   throw createDocumentCollaborationActiveError(documentId);
 }
 
+async function invalidateInactiveCollaborationCache(
+  inactiveCollaborationCache: MountContentApiRoutesOptions["inactiveCollaborationCache"],
+  documentId: string,
+): Promise<void> {
+  if (!inactiveCollaborationCache) {
+    return;
+  }
+
+  try {
+    await inactiveCollaborationCache.invalidateDocument(documentId);
+  } catch {
+    // The content mutation is already committed. Stale inactive Redis cache is
+    // rejected by draft-revision/body-hash metadata on the next room load.
+  }
+}
+
 const BULK_REQUEST_LEVEL_ERROR_CODES = new Set([
   "UNAUTHORIZED",
   "MISSING_TARGET_ROUTING",
@@ -1284,6 +1300,13 @@ export function mountContentApiRoutes(
             );
           }
 
+          if (payload.action === "delete" || payload.action === "move") {
+            await invalidateInactiveCollaborationCache(
+              options.inactiveCollaborationCache,
+              documentId,
+            );
+          }
+
           results.push({
             documentId,
             status: "succeeded",
@@ -1413,6 +1436,11 @@ export function mountContentApiRoutes(
               expectedSchemaHash: schemaHash,
               expectedDraftRevision,
             }),
+        );
+
+        await invalidateInactiveCollaborationCache(
+          options.inactiveCollaborationCache,
+          params.documentId,
         );
 
         return {
@@ -1584,6 +1612,11 @@ export function mountContentApiRoutes(
               changeSummary,
               actorId,
             }),
+        );
+
+        await invalidateInactiveCollaborationCache(
+          options.inactiveCollaborationCache,
+          params.documentId,
         );
 
         return {
@@ -1920,6 +1953,11 @@ export function mountContentApiRoutes(
           scope,
           authorization,
           () => options.store.softDelete(scope, params.documentId),
+        );
+
+        await invalidateInactiveCollaborationCache(
+          options.inactiveCollaborationCache,
+          params.documentId,
         );
 
         return {

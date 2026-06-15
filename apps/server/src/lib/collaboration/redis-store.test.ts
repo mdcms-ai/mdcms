@@ -2,11 +2,14 @@ import assert from "node:assert/strict";
 import { test } from "bun:test";
 
 import { RuntimeError } from "@mdcms/shared";
+import type { CollaborationPresenceUser } from "@mdcms/shared";
 
 import {
   COLLABORATION_ACTIVE_LOCK_LEASE_SECONDS,
   COLLABORATION_INACTIVE_CACHE_TTL_SECONDS,
+  COLLABORATION_PRESENCE_TTL_SECONDS,
   buildCollaborationActiveKey,
+  buildCollaborationPresenceKey,
   buildCollaborationYjsMetaKey,
   buildCollaborationYjsStateKey,
   createCollaborationRedisStore,
@@ -21,9 +24,12 @@ class FakeRedisClient implements CollaborationRedisClient {
     key?: string;
     keys?: string[];
     seconds?: number;
+    count?: number;
     value?: Buffer | string;
     condition?: "NX";
     args?: string[];
+    cursor?: string;
+    pattern?: string;
   }> = [];
 
   async get(key: string): Promise<string | null> {
@@ -95,6 +101,28 @@ class FakeRedisClient implements CollaborationRedisClient {
     return this.values.has(key) ? 1 : 0;
   }
 
+  async scan(
+    cursor: string,
+    matchKeyword: "MATCH",
+    pattern: string,
+    countKeyword: "COUNT",
+    count: number,
+  ): Promise<[string, string[]]> {
+    this.calls.push({ method: "scan", cursor, pattern, count });
+    assert.equal(cursor, "0");
+    assert.equal(matchKeyword, "MATCH");
+    assert.equal(countKeyword, "COUNT");
+    assert.equal(count > 0, true);
+
+    const expression = new RegExp(
+      `^${pattern
+        .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+        .replaceAll("*", ".*")}$`,
+    );
+
+    return ["0", [...this.values.keys()].filter((key) => expression.test(key))];
+  }
+
   async eval(
     script: string,
     numberOfKeys: number,
@@ -106,19 +134,20 @@ class FakeRedisClient implements CollaborationRedisClient {
     const seconds = scriptArgs[1];
     const activeKey = numberOfKeys === 3 ? keys[2] : keys[0];
 
-    if (typeof activeKey !== "string" || typeof leaseValue !== "string") {
+    if (typeof activeKey !== "string") {
       throw new Error("Invalid fake Redis eval invocation.");
     }
 
-    const call: (typeof this.calls)[number] = {
-      method: "eval",
-      args: [leaseValue],
-    };
+    const call: (typeof this.calls)[number] = { method: "eval" };
 
     if (numberOfKeys === 1) {
       call.key = activeKey;
     } else {
       call.keys = keys;
+    }
+
+    if (leaseValue !== undefined) {
+      call.args = [leaseValue];
     }
 
     if (seconds !== undefined) {
@@ -127,6 +156,22 @@ class FakeRedisClient implements CollaborationRedisClient {
 
     this.calls.push(call);
     assert.equal(numberOfKeys === 1 || numberOfKeys === 3, true);
+
+    if (numberOfKeys === 3 && script.includes('"EXISTS", KEYS[3]')) {
+      if (this.values.has(activeKey)) {
+        return 0;
+      }
+
+      const [stateKey, metaKey] = keys;
+      assert.equal(typeof stateKey, "string");
+      assert.equal(typeof metaKey, "string");
+
+      return this.del(stateKey, metaKey);
+    }
+
+    if (typeof leaseValue !== "string") {
+      throw new Error("Invalid fake Redis eval invocation.");
+    }
 
     if (this.values.get(activeKey) !== leaseValue) {
       return 0;
@@ -166,6 +211,22 @@ function createStore(): {
   };
 }
 
+function createPresenceRecord(
+  overrides: Partial<CollaborationPresenceUser> = {},
+): CollaborationPresenceUser {
+  return {
+    userId: "user-1",
+    sessionId: "session-1",
+    label: "Ada",
+    color: "#2563eb",
+    documentId: "11111111-1111-4111-8111-111111111111",
+    mode: "view",
+    cursor: { anchor: 2, head: 7 },
+    updatedAt: "2026-06-14T10:00:00.000Z",
+    ...overrides,
+  };
+}
+
 test("collaboration Redis key builders match the documented key shape", () => {
   const documentId = "5ad76d8b-4de0-48e7-9370-8f5d2df3b1d1";
 
@@ -181,6 +242,188 @@ test("collaboration Redis key builders match the documented key shape", () => {
     buildCollaborationActiveKey(documentId),
     "mdcms:collaboration:active:5ad76d8b-4de0-48e7-9370-8f5d2df3b1d1",
   );
+  assert.equal(
+    buildCollaborationPresenceKey({
+      project: "marketing",
+      environment: "draft",
+      sessionId: "session-1",
+    }),
+    "mdcms:collaboration:presence:marketing:draft:session-1",
+  );
+  assert.equal(
+    buildCollaborationPresenceKey({
+      project: "market:ing",
+      environment: "draft:blue",
+      sessionId: "session:1*",
+    }),
+    "mdcms:collaboration:presence:market%3Aing:draft%3Ablue:session%3A1%2A",
+  );
+});
+
+test("presence writes JSON records with the presence heartbeat TTL", async () => {
+  const { client, store } = createStore();
+  const record = createPresenceRecord();
+  const key = buildCollaborationPresenceKey({
+    project: "marketing",
+    environment: "draft",
+    sessionId: "session-1",
+  });
+
+  await store.setPresence({
+    ...record,
+    project: "marketing",
+    environment: "draft",
+  });
+
+  assert.deepEqual(JSON.parse(String(client.values.get(key))), record);
+  assert.deepEqual(client.calls.at(-1), {
+    method: "set",
+    key,
+    value: JSON.stringify(record),
+    seconds: COLLABORATION_PRESENCE_TTL_SECONDS,
+    condition: undefined,
+  });
+});
+
+test("presence listing returns valid records only for the requested target", async () => {
+  const { client, store } = createStore();
+  const valid = createPresenceRecord({
+    sessionId: "session-1",
+    label: "Ada",
+  });
+  const otherEnvironment = createPresenceRecord({
+    sessionId: "session-2",
+    label: "Grace",
+  });
+  const otherProject = createPresenceRecord({
+    sessionId: "session-3",
+    label: "Linus",
+  });
+
+  client.values.set(
+    buildCollaborationPresenceKey({
+      project: "marketing",
+      environment: "draft",
+      sessionId: valid.sessionId,
+    }),
+    JSON.stringify(valid),
+  );
+  client.values.set(
+    buildCollaborationPresenceKey({
+      project: "marketing",
+      environment: "draft",
+      sessionId: "malformed-json",
+    }),
+    "{",
+  );
+  client.values.set(
+    buildCollaborationPresenceKey({
+      project: "marketing",
+      environment: "draft",
+      sessionId: "invalid-shape",
+    }),
+    JSON.stringify({ ...valid, label: "", sessionId: "invalid-shape" }),
+  );
+  client.values.set(
+    buildCollaborationPresenceKey({
+      project: "marketing",
+      environment: "prod",
+      sessionId: otherEnvironment.sessionId,
+    }),
+    JSON.stringify(otherEnvironment),
+  );
+  client.values.set(
+    buildCollaborationPresenceKey({
+      project: "sales",
+      environment: "draft",
+      sessionId: otherProject.sessionId,
+    }),
+    JSON.stringify(otherProject),
+  );
+
+  assert.deepEqual(
+    await store.listPresence({ project: "marketing", environment: "draft" }),
+    [valid],
+  );
+});
+
+test("presence listing scans the encoded target prefix", async () => {
+  const { client, store } = createStore();
+  const valid = createPresenceRecord({
+    sessionId: "session:1",
+    label: "Ada",
+  });
+  const otherTarget = createPresenceRecord({
+    sessionId: "session:2",
+    label: "Grace",
+  });
+
+  client.values.set(
+    buildCollaborationPresenceKey({
+      project: "market:ing",
+      environment: "draft:blue",
+      sessionId: valid.sessionId,
+    }),
+    JSON.stringify(valid),
+  );
+  client.values.set(
+    buildCollaborationPresenceKey({
+      project: "market",
+      environment: "ing:draft:blue",
+      sessionId: otherTarget.sessionId,
+    }),
+    JSON.stringify(otherTarget),
+  );
+
+  assert.deepEqual(
+    await store.listPresence({
+      project: "market:ing",
+      environment: "draft:blue",
+    }),
+    [valid],
+  );
+  assert.deepEqual(
+    client.calls.find((call) => call.method === "scan"),
+    {
+      method: "scan",
+      cursor: "0",
+      pattern: "mdcms:collaboration:presence:market%3Aing:draft%3Ablue:*",
+      count: 100,
+    },
+  );
+});
+
+test("presence delete removes only the exact session key", async () => {
+  const { client, store } = createStore();
+  const targetKey = buildCollaborationPresenceKey({
+    project: "marketing",
+    environment: "draft",
+    sessionId: "session-1",
+  });
+  const siblingKey = buildCollaborationPresenceKey({
+    project: "marketing",
+    environment: "draft",
+    sessionId: "session-2",
+  });
+
+  client.values.set(targetKey, JSON.stringify(createPresenceRecord()));
+  client.values.set(
+    siblingKey,
+    JSON.stringify(createPresenceRecord({ sessionId: "session-2" })),
+  );
+
+  await store.deletePresence({
+    project: "marketing",
+    environment: "draft",
+    sessionId: "session-1",
+  });
+
+  assert.equal(client.values.has(targetKey), false);
+  assert.equal(client.values.has(siblingKey), true);
+  assert.deepEqual(client.calls.at(-1), {
+    method: "del",
+    keys: [targetKey],
+  });
 });
 
 test("state and metadata round trip through Redis without changing binary bytes", async () => {
@@ -321,6 +564,71 @@ test("active-room lifecycle clears inactive TTLs then expires cache after final 
         method: "expire",
         key: buildCollaborationYjsMetaKey(documentId),
         seconds: COLLABORATION_INACTIVE_CACHE_TTL_SECONDS,
+      },
+    ],
+  );
+});
+
+test("inactive collaboration cache invalidation deletes Yjs state and metadata", async () => {
+  const documentId = "9c003bee-4f4c-42d4-b445-d393a17067bb";
+  const { client, store } = createStore();
+
+  client.values.set(
+    buildCollaborationYjsStateKey(documentId),
+    Buffer.from("state"),
+  );
+  client.values.set(
+    buildCollaborationYjsMetaKey(documentId),
+    JSON.stringify({ draftRevision: 4, bodyHash: "body-hash" }),
+  );
+
+  await store.invalidateInactiveCache(documentId);
+
+  assert.equal(
+    client.values.has(buildCollaborationYjsStateKey(documentId)),
+    false,
+  );
+  assert.equal(
+    client.values.has(buildCollaborationYjsMetaKey(documentId)),
+    false,
+  );
+  assert.deepEqual(
+    client.calls.filter((call) => call.method === "del"),
+    [
+      {
+        method: "del",
+        keys: [
+          buildCollaborationYjsStateKey(documentId),
+          buildCollaborationYjsMetaKey(documentId),
+        ],
+      },
+    ],
+  );
+});
+
+test("inactive collaboration cache invalidation preserves cache when active lock exists", async () => {
+  const documentId = "54f00952-2fb9-49d4-8510-086850825c86";
+  const { client, store } = createStore();
+  const stateKey = buildCollaborationYjsStateKey(documentId);
+  const metaKey = buildCollaborationYjsMetaKey(documentId);
+
+  client.values.set(stateKey, Buffer.from("state"));
+  client.values.set(
+    metaKey,
+    JSON.stringify({ draftRevision: 4, bodyHash: "body-hash" }),
+  );
+  client.values.set(buildCollaborationActiveKey(documentId), "room-1");
+
+  await store.invalidateInactiveCache(documentId);
+
+  assert.equal(client.values.has(stateKey), true);
+  assert.equal(client.values.has(metaKey), true);
+  assert.deepEqual(
+    client.calls.filter((call) => call.method === "eval"),
+    [
+      {
+        method: "eval",
+        keys: [stateKey, metaKey, buildCollaborationActiveKey(documentId)],
       },
     ],
   );

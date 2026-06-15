@@ -41,7 +41,7 @@ export const baseEnv = {
 
 export const dbEnv = {
   ...baseEnv,
-  DATABASE_URL: "postgres://mdcms:mdcms@localhost:5432/mdcms",
+  DATABASE_URL: "postgres://mdcms:mdcms@127.0.0.1:5432/mdcms",
 } as NodeJS.ProcessEnv;
 
 export const logger = createConsoleLogger({
@@ -242,6 +242,7 @@ export function createHandler(
   options: {
     lookupMediaAsset?: ContentMediaAssetLookup;
     activeCollaboration?: MountContentApiRoutesOptions["activeCollaboration"];
+    inactiveCollaborationCache?: MountContentApiRoutesOptions["inactiveCollaborationCache"];
   } = {},
 ) {
   const store = createInMemoryContentStore({
@@ -266,6 +267,7 @@ export function createHandler(
         }),
         lookupMediaAsset: options.lookupMediaAsset,
         activeCollaboration: options.activeCollaboration,
+        inactiveCollaborationCache: options.inactiveCollaborationCache,
       });
     },
     now: () => new Date("2026-03-02T10:00:00.000Z"),

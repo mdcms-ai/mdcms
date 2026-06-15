@@ -2,7 +2,7 @@
 status: live
 canonical: true
 created: 2026-03-11
-last_updated: 2026-06-11
+last_updated: 2026-06-14
 ---
 
 # SPEC-005 Auth, Authorization, and Request Routing
@@ -409,17 +409,17 @@ MDCMS rejects sign-in with `AUTH_SAML_REQUIRED_ATTRIBUTE_MISSING` (`401`) when:
 
 #### Collaboration Socket Authentication
 
-Collaboration sockets are authenticated with the same Studio session cookie as the Studio runtime. API keys are rejected for this endpoint even when a key has content scopes:
+Collaboration sockets are authenticated with the same Studio session cookie as the Studio runtime. API keys are rejected for collaboration endpoints even when a key has content scopes:
 
-- Connect URL: `/api/v1/collaboration?project=...&environment=...&documentId=...`
+- Document-room URL: `/api/v1/collaboration?project=...&environment=...&documentId=...`
+- Presence-stream URL: `/api/v1/collaboration/presence?project=...&environment=...`
 - `Origin` must match the configured Studio allowlist.
 - Session cookie is validated through better-auth during the WebSocket handshake.
-- `project`, `environment`, and `documentId` are required query parameters.
-- Target document must belong to the requested `(project, environment)` scope.
-- Folder/path RBAC (`documents.path`) is evaluated before subscribing the socket to the document room.
+- `project` and `environment` are required for every collaboration socket.
+- `documentId` is required for document-room sockets and forbidden on the presence stream.
+- For document-room sockets, the target document must belong to the requested `(project, environment)` scope.
+- Folder/path RBAC (`documents.path`) is evaluated before subscribing the socket to the document room. Presence-stream snapshots are filtered to documents the subscriber can read in the routed target.
 - Revoked/expired sessions are disconnected immediately with `4401`; authorization failures return `4403`.
-
-Presence indicators and periodic/debounced PostgreSQL autosave from active collaboration rooms are not part of this authentication contract.
 
 ### API Authentication
 

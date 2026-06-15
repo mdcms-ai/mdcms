@@ -88,6 +88,34 @@ function createServerModule(
   };
 }
 
+function createAiStoreDocument(
+  documentId: string,
+  overrides: Partial<ContentDocumentResponse> = {},
+): ContentDocumentResponse {
+  return {
+    documentId,
+    translationGroupId: `${documentId}-translation-group`,
+    project: "marketing",
+    environment: "draft",
+    path: `content/${documentId}`,
+    type: "BlogPost",
+    locale: "en",
+    format: "md",
+    frontmatter: {},
+    body: "body",
+    version: 0,
+    publishedVersion: null,
+    hasUnpublishedChanges: true,
+    isDeleted: false,
+    createdAt: "2026-06-11T00:00:00.000Z",
+    createdBy: "user-1",
+    updatedAt: "2026-06-11T00:00:00.000Z",
+    updatedBy: "user-1",
+    draftRevision: 1,
+    ...overrides,
+  };
+}
+
 test("createServerRequestHandlerWithModules surfaces module actions in /api/v1/actions", async () => {
   const { handler, moduleLoadReport, dbConnection } =
     createServerRequestHandlerWithModules({
@@ -235,6 +263,11 @@ test("createCollaborationGuardedAiContentStore blocks existing-document writes w
     {
       isDocumentActive: async (documentId) => documentId === "active-document",
     },
+    {
+      invalidateDocument: async () => {
+        calls.push("invalidate");
+      },
+    },
   );
 
   await assert.rejects(
@@ -285,6 +318,118 @@ test("createCollaborationGuardedAiContentStore blocks existing-document writes w
   );
 
   assert.deepEqual(calls, ["getById", "create"]);
+});
+
+test("createCollaborationGuardedAiContentStore invalidates inactive cache after update and delete", async () => {
+  const invalidated: string[] = [];
+  const store = createCollaborationGuardedAiContentStore(
+    {
+      async getById() {
+        return undefined;
+      },
+      async update(_scope, documentId) {
+        return createAiStoreDocument(documentId, { path: "content/updated" });
+      },
+      async create(_scope, payload) {
+        return createAiStoreDocument("created", { path: payload.path });
+      },
+      async softDelete(_scope, documentId) {
+        return createAiStoreDocument(documentId, {
+          path: "content/deleted",
+          isDeleted: true,
+        });
+      },
+    },
+    undefined,
+    {
+      invalidateDocument: async (documentId) => {
+        invalidated.push(documentId);
+      },
+    },
+  );
+
+  await store.update(
+    { project: "marketing", environment: "draft" },
+    "doc-update",
+    { body: "updated" },
+    { expectedSchemaHash: "schema-hash" },
+  );
+  await store.softDelete(
+    { project: "marketing", environment: "draft" },
+    "doc-delete",
+  );
+
+  assert.deepEqual(invalidated, ["doc-update", "doc-delete"]);
+});
+
+test("createCollaborationGuardedAiContentStore invalidates inactive cache after restore", async () => {
+  const invalidated: string[] = [];
+  const store = createCollaborationGuardedAiContentStore(
+    {
+      async getById() {
+        return undefined;
+      },
+      async update(_scope, documentId) {
+        return createAiStoreDocument(documentId);
+      },
+      async create(_scope, payload) {
+        return createAiStoreDocument("created", { path: payload.path });
+      },
+      async softDelete(_scope, documentId) {
+        return createAiStoreDocument(documentId, { isDeleted: true });
+      },
+      async restore(_scope, documentId) {
+        return createAiStoreDocument(documentId);
+      },
+    },
+    undefined,
+    {
+      invalidateDocument: async (documentId) => {
+        invalidated.push(documentId);
+      },
+    },
+  );
+
+  const restore = store.restore;
+  assert.ok(restore);
+
+  await restore({ project: "marketing", environment: "draft" }, "doc-restore");
+
+  assert.deepEqual(invalidated, ["doc-restore"]);
+});
+
+test("createCollaborationGuardedAiContentStore ignores inactive cache invalidation failure after update", async () => {
+  const store = createCollaborationGuardedAiContentStore(
+    {
+      async getById() {
+        return undefined;
+      },
+      async update(_scope, documentId) {
+        return createAiStoreDocument(documentId, { path: "content/updated" });
+      },
+      async create(_scope, payload) {
+        return createAiStoreDocument("created", { path: payload.path });
+      },
+      async softDelete(_scope, documentId) {
+        return createAiStoreDocument(documentId, { isDeleted: true });
+      },
+    },
+    undefined,
+    {
+      invalidateDocument: async () => {
+        throw new Error("redis unavailable");
+      },
+    },
+  );
+
+  const updated = await store.update(
+    { project: "marketing", environment: "draft" },
+    "doc-update",
+    { body: "updated" },
+    { expectedSchemaHash: "schema-hash" },
+  );
+
+  assert.equal(updated.documentId, "doc-update");
 });
 
 test("createServerRequestHandlerWithModules loads bundled modules when APP_VERSION is unset", async () => {

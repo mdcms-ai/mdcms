@@ -17,6 +17,7 @@ import {
   type ChangeEvent as ReactChangeEvent,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useReducer,
   useRef,
@@ -29,6 +30,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 
+import { Extension } from "@tiptap/core";
 import {
   isRuntimeErrorLike,
   type MediaAsset,
@@ -44,6 +46,8 @@ import {
 import { Fragment, Slice } from "@tiptap/pm/model";
 import type { SelectionBookmark } from "@tiptap/pm/state";
 import type { Mappable } from "@tiptap/pm/transform";
+import { ySyncPlugin } from "y-prosemirror";
+import type * as Y from "yjs";
 
 import {
   Bold,
@@ -150,7 +154,9 @@ import { Separator } from "../ui/separator.js";
 import { cn } from "../../lib/utils.js";
 
 export interface TipTapEditorHandle {
+  getContent: () => string | null;
   setContent: (markdown: string) => void;
+  applyAssistantContent: (markdown: string) => void;
   /**
    * Returns the markdown serialization of the document slice between
    * `from` and `to`, plus the mode the caller should use when
@@ -255,6 +261,65 @@ export type TipTapEditorSelectionInfo = {
   anchorRect: TipTapEditorAnchorRect;
 };
 
+export type TipTapEditorCursorSelection = {
+  anchor: number;
+  head: number;
+};
+
+export type TipTapEditorRemoteCursor = {
+  sessionId: string;
+  label: string;
+  color: string;
+  cursor: TipTapEditorCursorSelection;
+};
+
+export type TipTapEditorRemoteSelectionPosition = {
+  top: number;
+  left: number;
+  width: number;
+  height: number;
+};
+
+export type TipTapEditorRemoteCursorPosition = TipTapEditorRemoteCursor & {
+  top: number;
+  left: number;
+  selection?: TipTapEditorRemoteSelectionPosition;
+};
+
+const EMPTY_REMOTE_CURSORS: TipTapEditorRemoteCursor[] = [];
+const EMPTY_REMOTE_CURSOR_POSITIONS: TipTapEditorRemoteCursorPosition[] = [];
+
+function createCollaborationExtension(body: Y.XmlFragment) {
+  return Extension.create({
+    name: "mdcmsCollaboration",
+    priority: 1000,
+
+    addProseMirrorPlugins() {
+      return [ySyncPlugin(body)];
+    },
+  });
+}
+
+export function createTipTapEditorCursorSelection(selection: {
+  anchor: number;
+  head: number;
+}): TipTapEditorCursorSelection {
+  return {
+    anchor: selection.anchor,
+    head: selection.head,
+  };
+}
+
+export function resolveTipTapEditorCursorPresenceSelection({
+  focused,
+  selection,
+}: {
+  focused: boolean;
+  selection: { anchor: number; head: number };
+}): TipTapEditorCursorSelection | null {
+  return focused ? createTipTapEditorCursorSelection(selection) : null;
+}
+
 export type TipTapEditorMediaUploadState = {
   canUpload: boolean;
   isUploading: boolean;
@@ -279,6 +344,9 @@ interface TipTapEditorProps {
   context?: StudioMountContext;
   readOnly?: boolean;
   forbidden?: boolean;
+  collaboration?: {
+    body: Y.XmlFragment;
+  };
   mediaUpload?: TipTapEditorMediaUploadState;
   mediaLibrary?: TipTapEditorMediaLibraryState;
   onActiveMdxComponentChange?: (
@@ -291,6 +359,10 @@ interface TipTapEditorProps {
    * transforms.
    */
   onSelectionTextChange?: (selection: TipTapEditorSelectionInfo | null) => void;
+  onCursorSelectionChange?: (
+    selection: TipTapEditorCursorSelection | null,
+  ) => void;
+  remoteCursors?: TipTapEditorRemoteCursor[];
   /**
    * Renders ABOVE the editable surface inside the scrollable canvas area —
    * for the document path chip, frontmatter mono row, and any
@@ -493,6 +565,174 @@ type ToolbarButtonProps = {
 };
 
 type TipTapEditorInstance = NonNullable<ReturnType<typeof useEditor>>;
+
+type TipTapRemoteCursorPositionResolverEditor = {
+  view: {
+    coordsAtPos: (position: number) => {
+      top: number;
+      left: number;
+      right: number;
+      bottom: number;
+    };
+  };
+};
+
+type TipTapRemoteCursorPositionResolverWrapper = {
+  getBoundingClientRect: () => {
+    top: number;
+    left: number;
+  };
+};
+
+export function resolveTipTapRemoteCursorPositions({
+  editor,
+  wrapper,
+  remoteCursors,
+}: {
+  editor?: TipTapRemoteCursorPositionResolverEditor | null;
+  wrapper?: TipTapRemoteCursorPositionResolverWrapper | null;
+  remoteCursors: readonly TipTapEditorRemoteCursor[];
+}): TipTapEditorRemoteCursorPosition[] {
+  if (!editor || !wrapper || remoteCursors.length === 0) {
+    return [];
+  }
+
+  const wrapperRect = wrapper.getBoundingClientRect();
+  const positions: TipTapEditorRemoteCursorPosition[] = [];
+
+  for (const remoteCursor of remoteCursors) {
+    try {
+      const anchorRect = editor.view.coordsAtPos(remoteCursor.cursor.anchor);
+      const cursorRect = editor.view.coordsAtPos(remoteCursor.cursor.head);
+      const selection =
+        remoteCursor.cursor.anchor === remoteCursor.cursor.head
+          ? undefined
+          : {
+              top: Math.min(anchorRect.top, cursorRect.top) - wrapperRect.top,
+              left:
+                Math.min(anchorRect.left, cursorRect.left) - wrapperRect.left,
+              width:
+                Math.max(anchorRect.right, cursorRect.right) -
+                Math.min(anchorRect.left, cursorRect.left),
+              height:
+                Math.max(anchorRect.bottom, cursorRect.bottom) -
+                Math.min(anchorRect.top, cursorRect.top),
+            };
+
+      positions.push({
+        ...remoteCursor,
+        top: cursorRect.top - wrapperRect.top,
+        left: cursorRect.left - wrapperRect.left,
+        ...(selection ? { selection } : {}),
+      });
+    } catch {
+      // Remote cursor snapshots can briefly outlive the local document
+      // position they reference. The next presence snapshot/render can
+      // place it again once positions line up.
+    }
+  }
+
+  return positions;
+}
+
+type TipTapRemoteCursorPositionSyncEditor = {
+  on: (eventName: "update" | "selectionUpdate", listener: () => void) => void;
+  off: (eventName: "update" | "selectionUpdate", listener: () => void) => void;
+};
+
+type TipTapRemoteCursorPositionScrollTarget = {
+  addEventListener: (
+    eventName: "scroll",
+    listener: () => void,
+    options?: AddEventListenerOptions,
+  ) => void;
+  removeEventListener: (eventName: "scroll", listener: () => void) => void;
+};
+
+type TipTapRemoteCursorPositionViewport = {
+  addEventListener: (eventName: "resize", listener: () => void) => void;
+  removeEventListener: (eventName: "resize", listener: () => void) => void;
+};
+
+export function attachTipTapRemoteCursorPositionSync({
+  editor,
+  scrollContainer,
+  viewport,
+  updateRemoteCursorPositions,
+}: {
+  editor: TipTapRemoteCursorPositionSyncEditor;
+  scrollContainer: TipTapRemoteCursorPositionScrollTarget | null;
+  viewport: TipTapRemoteCursorPositionViewport;
+  updateRemoteCursorPositions: () => void;
+}): () => void {
+  updateRemoteCursorPositions();
+  scrollContainer?.addEventListener("scroll", updateRemoteCursorPositions, {
+    passive: true,
+  });
+  viewport.addEventListener("resize", updateRemoteCursorPositions);
+  editor.on("update", updateRemoteCursorPositions);
+  editor.on("selectionUpdate", updateRemoteCursorPositions);
+
+  return () => {
+    scrollContainer?.removeEventListener("scroll", updateRemoteCursorPositions);
+    viewport.removeEventListener("resize", updateRemoteCursorPositions);
+    editor.off("update", updateRemoteCursorPositions);
+    editor.off("selectionUpdate", updateRemoteCursorPositions);
+  };
+}
+
+export function TipTapRemoteCursorLayer({
+  cursors,
+}: {
+  cursors: readonly TipTapEditorRemoteCursorPosition[];
+}) {
+  if (cursors.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="pointer-events-none absolute inset-0 z-20">
+      {cursors.map((cursor) => (
+        <ReactFragment key={cursor.sessionId}>
+          {cursor.selection ? (
+            <div
+              data-mdcms-remote-selection={cursor.sessionId}
+              aria-hidden="true"
+              className="absolute rounded-sm opacity-20"
+              style={{
+                top: cursor.selection.top,
+                left: cursor.selection.left,
+                width: cursor.selection.width,
+                height: cursor.selection.height,
+                backgroundColor: cursor.color,
+              }}
+            />
+          ) : null}
+          <div
+            data-mdcms-remote-cursor={cursor.sessionId}
+            aria-label={`${cursor.label} cursor`}
+            className="absolute flex items-start gap-1"
+            style={{
+              top: cursor.top,
+              left: cursor.left,
+            }}
+          >
+            <span
+              className="mt-0.5 h-4 w-px rounded-full"
+              style={{ backgroundColor: cursor.color }}
+            />
+            <span
+              className="max-w-40 truncate rounded-sm px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white shadow-sm"
+              style={{ backgroundColor: cursor.color }}
+            >
+              {cursor.label}
+            </span>
+          </div>
+        </ReactFragment>
+      ))}
+    </div>
+  );
+}
 
 type MediaUploadInsertEditor = {
   commands: Pick<
@@ -1089,10 +1329,13 @@ function useTipTapEditorElement({
   context,
   readOnly = false,
   forbidden = false,
+  collaboration,
   mediaUpload,
   mediaLibrary,
   onActiveMdxComponentChange,
   onSelectionTextChange,
+  onCursorSelectionChange,
+  remoteCursors = EMPTY_REMOTE_CURSORS,
   canvasHeader,
 }: TipTapEditorProps & { initialEditorContent: ParsedEditorContent }) {
   const toolbar = createEditorToolbarLayout();
@@ -1110,6 +1353,11 @@ function useTipTapEditorElement({
     [catalogComponents],
   );
   const isEditorReadOnly = readOnly || forbidden;
+  const collaborationExtension = useMemo(
+    () =>
+      collaboration ? createCollaborationExtension(collaboration.body) : null,
+    [collaboration?.body],
+  );
   const mediaUploadUnavailableMessage =
     mediaUpload?.unavailableMessage?.trim() || MEDIA_UPLOAD_UNAVAILABLE_MESSAGE;
   const mediaLibraryUnavailableMessage =
@@ -1160,7 +1408,11 @@ function useTipTapEditorElement({
   // explicitly so we can pin `user-select: none` on the editor and run an
   // auto-scroll loop while the canvas pane is the scrollable ancestor.
   const [isMdxDragging, setIsMdxDragging] = useState(false);
+  const [remoteCursorPositions, setRemoteCursorPositions] = useState<
+    TipTapEditorRemoteCursorPosition[]
+  >(EMPTY_REMOTE_CURSOR_POSITIONS);
   const editorWrapperRef = useRef<HTMLDivElement | null>(null);
+  const editorScrollContainerRef = useRef<HTMLDivElement | null>(null);
   const mediaUploadInputRef = useRef<HTMLInputElement | null>(null);
   const mediaUploadInFlightRef = useRef(false);
   const mediaUploadInsertionTargetsRef = useRef<
@@ -1501,8 +1753,8 @@ function useTipTapEditorElement({
   );
   const editor = useEditor(
     {
-      content: initialEditorContent,
-      contentType: "json",
+      content: collaboration ? undefined : initialEditorContent,
+      contentType: collaboration ? undefined : "json",
       editable: !isEditorReadOnly,
       immediatelyRender: false,
       // Leaving `shouldRerenderOnTransaction` at its default (`false`) is
@@ -1511,29 +1763,32 @@ function useTipTapEditorElement({
       // lag behind during fast typing (especially Shift+Enter spam). The
       // toolbar stays reactive via `useEditorState` below, which subscribes
       // only to the handful of mark/node-active flags it actually reads.
-      extensions: createEditorExtensions({
-        codeBlock: CodeBlockWithNodeView,
-        image: StudioImageExtension.extend({
-          addNodeView() {
-            return ReactNodeViewRenderer(TipTapImageNodeView);
-          },
+      extensions: [
+        ...createEditorExtensions({
+          codeBlock: CodeBlockWithNodeView,
+          image: StudioImageExtension.extend({
+            addNodeView() {
+              return ReactNodeViewRenderer(TipTapImageNodeView);
+            },
+          }),
+          mdxRawJsx: MdxRawJsxExtension.extend({
+            addNodeView() {
+              return ReactNodeViewRenderer(MdxRawJsxNodeView);
+            },
+          }),
+          mdxComponent: MdxComponentExtension.extend({
+            addNodeView() {
+              return ReactNodeViewRenderer(TipTapMdxComponentNodeView);
+            },
+          }),
+          mdxIntrinsicElement: MdxIntrinsicElementExtension.extend({
+            addNodeView() {
+              return ReactNodeViewRenderer(MdxIntrinsicElementNodeView);
+            },
+          }),
         }),
-        mdxRawJsx: MdxRawJsxExtension.extend({
-          addNodeView() {
-            return ReactNodeViewRenderer(MdxRawJsxNodeView);
-          },
-        }),
-        mdxComponent: MdxComponentExtension.extend({
-          addNodeView() {
-            return ReactNodeViewRenderer(TipTapMdxComponentNodeView);
-          },
-        }),
-        mdxIntrinsicElement: MdxIntrinsicElementExtension.extend({
-          addNodeView() {
-            return ReactNodeViewRenderer(MdxIntrinsicElementNodeView);
-          },
-        }),
-      }),
+        ...(collaborationExtension ? [collaborationExtension] : []),
+      ],
       editorProps: {
         attributes: {
           // Padding lives on `.ProseMirror` itself rather than the outer
@@ -1630,22 +1885,45 @@ function useTipTapEditorElement({
         scheduleMarkdownEmission(editor);
       },
       onSelectionUpdate({ editor }) {
+        onCursorSelectionChange?.(
+          resolveTipTapEditorCursorPresenceSelection({
+            focused: editor.isFocused,
+            selection: editor.state.selection,
+          }),
+        );
         syncSlashTrigger(editor);
         scheduleAuxSelectionUpdate(editor);
       },
+      onFocus({ editor }) {
+        onCursorSelectionChange?.(
+          resolveTipTapEditorCursorPresenceSelection({
+            focused: true,
+            selection: editor.state.selection,
+          }),
+        );
+      },
       onBlur({ editor }) {
+        onCursorSelectionChange?.(
+          resolveTipTapEditorCursorPresenceSelection({
+            focused: false,
+            selection: editor.state.selection,
+          }),
+        );
         // Blur is typically the user switching away to save or navigate —
         // flush any pending debounced markdown emission now so the host app
         // sees the latest content immediately.
         emitMarkdownNow(editor);
       },
     },
-    createTipTapEditorDependencies({
-      placeholder,
-      hostBridge: context?.hostBridge,
-      readOnly,
-      forbidden,
-    }),
+    [
+      ...createTipTapEditorDependencies({
+        placeholder,
+        hostBridge: context?.hostBridge,
+        readOnly,
+        forbidden,
+      }),
+      collaboration?.body ?? null,
+    ],
   );
   activeEditorRef.current = editor;
   isEditorReadOnlyRef.current = isEditorReadOnly;
@@ -1921,6 +2199,13 @@ function useTipTapEditorElement({
   useImperativeHandle(
     ref,
     () => ({
+      getContent() {
+        if (!editor || editor.isDestroyed) {
+          return null;
+        }
+
+        return extractMarkdownFromEditor(editor);
+      },
       setContent(markdown: string) {
         if (!editor || editor.isDestroyed) {
           return;
@@ -1952,6 +2237,32 @@ function useTipTapEditorElement({
 
         // Refresh derived UI state that onUpdate would normally handle,
         // since we suppressed the update event above.
+        publishSelectedMdxComponent(editor);
+        syncSlashTrigger(editor);
+      },
+      applyAssistantContent(markdown: string) {
+        if (!editor || editor.isDestroyed) {
+          return;
+        }
+
+        const currentMarkdown = extractMarkdownFromEditor(editor);
+
+        if (currentMarkdown === markdown) {
+          lastEmittedMarkdownRef.current = currentMarkdown;
+          return;
+        }
+
+        if (markdownEmitTimerRef.current !== null) {
+          clearTimeout(markdownEmitTimerRef.current);
+          markdownEmitTimerRef.current = null;
+        }
+
+        mediaUploadInsertionTargetsRef.current.clear();
+        editor.commands.setContent(parseMarkdownToDocument(markdown), {
+          contentType: "json",
+          emitUpdate: true,
+        });
+        handleEditorUpdate(editor);
         publishSelectedMdxComponent(editor);
         syncSlashTrigger(editor);
       },
@@ -2106,6 +2417,32 @@ function useTipTapEditorElement({
     readOnly,
     syncSlashTrigger,
   ]);
+
+  useLayoutEffect(() => {
+    const wrapper = editorWrapperRef.current;
+    if (!editor || !wrapper || remoteCursors.length === 0) {
+      setRemoteCursorPositions(EMPTY_REMOTE_CURSOR_POSITIONS);
+      return;
+    }
+
+    const updateRemoteCursorPositions = () => {
+      setRemoteCursorPositions(
+        resolveTipTapRemoteCursorPositions({
+          editor,
+          wrapper,
+          remoteCursors,
+        }),
+      );
+    };
+    const scrollContainer = editorScrollContainerRef.current;
+
+    return attachTipTapRemoteCursorPositionSync({
+      editor,
+      scrollContainer,
+      viewport: window,
+      updateRemoteCursorPositions,
+    });
+  }, [editor, remoteCursors]);
 
   // Drag lifecycle for MDX component handles. Listening at the wrapper
   // catches dragstart only when it originates from a `[data-drag-handle]`
@@ -2833,7 +3170,6 @@ function useTipTapEditorElement({
   const mediaUploadStatusText = mediaUploadProgress
     ? `Uploading media ${mediaUploadProgress.completedFiles} of ${mediaUploadProgress.totalFiles}`
     : "Uploading media...";
-
   return (
     <div
       ref={editorWrapperRef}
@@ -3182,6 +3518,7 @@ function useTipTapEditorElement({
             />
           ) : null}
           <div
+            ref={editorScrollContainerRef}
             className="min-w-0 flex-1 overflow-y-auto"
             onDragOver={handleVisualDragOver}
             onDrop={handleCanvasDrop}
@@ -3239,6 +3576,7 @@ function useTipTapEditorElement({
           </div>
         </div>
       </div>
+      <TipTapRemoteCursorLayer cursors={remoteCursorPositions} />
 
       {context ? (
         <VisualCompositionInsertionDialog

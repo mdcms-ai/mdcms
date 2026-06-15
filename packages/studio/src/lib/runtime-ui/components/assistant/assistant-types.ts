@@ -115,6 +115,12 @@ type ProposalCommonFields = {
    * to clobber them.
    */
   postApplyDraftRevision?: number;
+  /**
+   * True when the proposal was applied into an active collaboration room
+   * instead of through the server apply endpoint. Undo must use the same
+   * active room while the short undo window is open.
+   */
+  acceptedViaCollaboration?: boolean;
 };
 
 export type AssistantProposalEdit = ProposalCommonFields & {

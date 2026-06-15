@@ -6,6 +6,18 @@ Entries are reverse-chronological (newest first).
 
 ---
 
+## 2026-06-15 — treat blank provider URL env as absent
+
+**Rule:** AI provider wrappers must normalize blank provider-specific base URL env values to the provider default before constructing SDK clients.
+**Why:** Docker Compose can pass `ANTHROPIC_BASE_URL=` as an empty environment variable; `@ai-sdk/anthropic` treats that as an explicit override, builds `/messages`, and Bun fails with `fetch() URL is invalid` before any provider request is sent.
+**How to apply:** When adding provider SDK wrappers, trim optional URL overrides and pass an explicit default endpoint when the override is blank; add a regression that sets the SDK's own env var to `""`.
+
+## 2026-06-15 — normalize session actor ids before DB writes
+
+**Rule:** Collaboration and session-backed write paths must not pass Better Auth session user ids directly into `documents.updated_by`.
+**Why:** Better Auth user ids are not guaranteed to be PostgreSQL UUIDs, while `documents.updated_by` is a UUID column; DB-backed collaboration autosave can fail even though in-memory tests pass.
+**How to apply:** When persisting content from session identity, preserve the real actor in lifecycle events but coerce the DB `updatedBy` value to a valid UUID or the neutral content-store actor.
+
 ## 2026-06-06 — patch the active worktree by absolute path
 
 **Rule:** When editing from a feature worktree, pass absolute worktree paths to `apply_patch` instead of relying on the thread root.
@@ -17,6 +29,12 @@ Entries are reverse-chronological (newest first).
 **Rule:** Webhook delivery wrappers must return the wrapped sink result after logging or instrumentation.
 **Why:** The delivery worker records status codes from the sink return value; a wrapper that only awaits the sink silently turns successful attempts into `statusCode: null` history rows.
 **How to apply:** When adding logging, tracing, or metrics around `WebhookDeliverySink`, capture `const result = await sink(delivery)`, perform side effects, then `return result`; add worker or composition coverage when new metadata is persisted from sink results.
+
+## 2026-06-14 — use single-address loopback in Postgres availability probes
+
+**Rule:** Test helpers that make short-lived Postgres availability probes should use `127.0.0.1` instead of `localhost`.
+**Why:** Bun can leave a delayed multi-address `node:net` connect-timeout callback behind after a `localhost` probe is closed, which makes later unrelated tests fail with `TypeError: null is not an object (evaluating 'context')`.
+**How to apply:** When adding database probe URLs to test support, prefer an explicit IPv4 loopback address unless the test is specifically covering hostname resolution behavior.
 
 ## 2026-06-03 — inject deterministic DNS in webhook target tests
 

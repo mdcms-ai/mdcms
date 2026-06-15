@@ -2,7 +2,7 @@
 status: live
 canonical: true
 created: 2026-03-11
-last_updated: 2026-06-11
+last_updated: 2026-06-14
 ---
 
 # SPEC-007 Editor, MDX, and Collaboration
@@ -13,7 +13,7 @@ This is the live canonical document under `docs/`.
 
 ### Editor Engine
 
-The content editor is built on **TipTap**. MDCMS supports Markdown/MDX serialization, explicit publish/version-history flows, and a Hocuspocus-backed collaboration runtime for active Studio document rooms. Presence indicators and periodic/debounced PostgreSQL autosave from active collaboration rooms remain deferred.
+The content editor is built on **TipTap**. MDCMS supports Markdown/MDX serialization, explicit publish/version-history flows, a Hocuspocus-backed collaboration runtime for active Studio document rooms, presence indicators, and server-owned active collaboration autosave.
 
 > **TipTap & ProseMirror:** TipTap is a framework built on top of ProseMirror (the low-level editing engine by Marijn Haverbeke). TipTap provides the extension system, React integration, NodeViews, and developer-friendly APIs — but under the hood, every TipTap document is a ProseMirror document. When this spec refers to "ProseMirror document model," "node types," or "schema," it means TipTap's internal data structures inherited from ProseMirror. You interact with them through TipTap's API; direct ProseMirror imports are only needed for advanced custom extensions.
 
@@ -38,8 +38,8 @@ If the parser implementation changes again, it must be swapped behind the same a
 flowchart LR
   EA["Editor A"] -->|"WebSocket + session cookie"| API["API Server (Elysia HTTP + Hocuspocus via crossws bridge)"]
   EB["Editor B"] -->|"WebSocket + session cookie"| API
-  API --> REDIS["Redis (Yjs state)"]
-  API -->|"Last-disconnect final save / publish"| PG["PostgreSQL (mutable heads + version rows)"]
+  API --> REDIS["Redis (Yjs state + presence heartbeats)"]
+  API -->|"Active autosave / final save / publish"| PG["PostgreSQL (mutable heads + version rows)"]
 ```
 
 Active collaboration transport contract:
@@ -49,12 +49,20 @@ Active collaboration transport contract:
 - Collaboration runs in the same Bun process as the API server via Hocuspocus through a Bun-compatible `crossws` bridge.
 - Connection target is explicit via query params: `project`, `environment`, and `documentId`. All three are required.
 - API keys are rejected for collaboration sockets; the endpoint accepts session-cookie auth only.
-- Redis stores active Yjs state and room metadata under namespaced keys:
+- Redis stores active Yjs state, room metadata, and presence heartbeats under
+  namespaced keys:
   - `mdcms:collaboration:yjs:{documentId}` — binary Yjs state
   - `mdcms:collaboration:yjs-meta:{documentId}` — source draft metadata, including the source `draftRevision` and body hash
   - `mdcms:collaboration:active:{documentId}` — active-room heartbeat lease
+  - `mdcms:collaboration:presence:{project}:{environment}:{sessionId}` — online
+    presence heartbeat for one Studio session
 - The active-room key is a heartbeat lease held only while collaborators are connected. It is distinct from the inactive Yjs cache, which may remain for 30 minutes after the last disconnect.
 - If Redis is unavailable, collaboration upgrade requests fail before upgrade with `503` and error code `COLLABORATION_UNAVAILABLE`; the rest of the HTTP API can still boot and serve non-collaboration traffic.
+- Studio clients treat transient document-room and target-presence WebSocket
+  closes as recoverable and reconnect with bounded backoff. Authorization
+  failures (`4401`/`4403`) fail closed. During document-room reconnect, Studio
+  visibly reports the degraded connection state and keeps the editor read-only
+  until the room is synchronized again.
 
 #### Collaboration Authorization Flow
 
@@ -70,7 +78,7 @@ WebSocket connect (`/api/v1/collaboration?project=...&environment=...&documentId
 
 ### State Management
 
-**Source of truth hierarchy:** PostgreSQL `body` (markdown/MDX) is the canonical durable source of truth. During an active document room, Redis holds ephemeral Yjs state for real-time editing and PostgreSQL is updated only by the final save after the last collaborator disconnects. Publish flows read from PostgreSQL and remain blocked while the active collaboration lock exists.
+**Source of truth hierarchy:** PostgreSQL `body` (markdown/MDX) and `frontmatter` are the canonical durable draft source of truth. During an active document room, Redis holds ephemeral Yjs state for real-time editing and presence heartbeats for online indicators. PostgreSQL is updated by server-owned active collaboration autosave and by the final save after the last collaborator disconnects. Publish flows read from PostgreSQL and remain blocked while the active collaboration lock exists.
 
 **Single-user document load/save cycle:**
 
@@ -84,27 +92,57 @@ WebSocket connect (`/api/v1/collaboration?project=...&environment=...&documentId
 **Collaboration cache design:** Redis-backed Yjs state is ephemeral and PostgreSQL remains canonical. The Yjs binary is never stored in PostgreSQL.
 
 - `onLoadDocument` may use Redis Yjs state only when `mdcms:collaboration:yjs-meta:{documentId}` matches the current PostgreSQL draft head. Metadata must match the current draft revision and body hash. If metadata is missing or stale, the room is rebuilt from PostgreSQL markdown/MDX and Redis state/metadata are replaced.
-- `onStoreDocument` persists only binary Yjs state and matching metadata to Redis. It must never persist Yjs binary to PostgreSQL.
+- The room Y.Doc contains both the ProseMirror document state and a top-level
+  shared map named `frontmatter`. Studio property controls update that shared
+  map while the active collaboration lock exists. The server reads body and
+  frontmatter from the same Y.Doc snapshot when autosaving or final-saving.
+- `onStoreDocument` persists only binary Yjs state and matching metadata to Redis. It must never persist Yjs binary to PostgreSQL. It also schedules active collaboration autosave when the serialized document differs from the last PostgreSQL draft head known to the room.
 - While a room is active, the server clears inactive-cache TTLs on the Yjs state/meta keys and maintains `mdcms:collaboration:active:{documentId}` as a heartbeat lease.
-- After the last collaborator disconnects, the server serializes the current Y.Doc to markdown/MDX and performs a final draft save only when the serialized body differs from the current PostgreSQL draft body. A no-op final save must not increment `draft_revision`.
-- Final saves are attributed to the last actual writer in the room, not merely the last disconnecting user.
-- Final saves use the expected draft revision from room load/save metadata and fail closed on stale revision instead of overwriting newer PostgreSQL content.
-- If a final save updates the database, it emits the existing `content.updated` lifecycle event.
+- Active collaboration autosave is server-owned. Studio clients must not issue normal HTTP `PUT /api/v1/content/:documentId` while the active collaboration lock exists. The server debounces PostgreSQL autosaves for active rooms for approximately 2 seconds after the latest Yjs mutation and must flush at least every 10 seconds under sustained edits.
+- Each active collaboration autosave serializes the current Y.Doc to the ProseMirror JSON shape used by the editor, serializes that document model to Markdown/MDX, combines it with the room's current frontmatter draft state, and updates the `documents` head row only when the body or frontmatter differs from the current PostgreSQL draft head.
+- Active collaboration autosaves are silent draft `UPDATE`s: they increment `draft_revision`, set `has_unpublished_changes = TRUE`, never create `document_versions` rows, and emit the existing `content.updated` lifecycle event when the database changes.
+- Active collaboration autosaves and final saves are attributed to the last actual writer in the room, not merely the last disconnecting user.
+- Active collaboration autosaves use the expected draft revision from room load/save metadata and refresh that expected revision after each successful database write. A stale revision fails closed instead of overwriting newer PostgreSQL content, closes the room to further writes, and requires clients to reconnect so the next room load rebuilds from the canonical draft head.
+- After the last collaborator disconnects, the server flushes any pending active autosave, serializes the current Y.Doc to markdown/MDX, and performs a final draft save only when the serialized body or frontmatter differs from the current PostgreSQL draft head. A no-op final save must not increment `draft_revision`.
 - After last-disconnect cleanup, the server sets a 30-minute TTL on `mdcms:collaboration:yjs:{documentId}` and `mdcms:collaboration:yjs-meta:{documentId}`, then removes `mdcms:collaboration:active:{documentId}`.
+- If Redis is lost or flushed, the last successfully saved PostgreSQL draft head is the recovery point. A later room load with missing or stale Yjs state must rebuild from PostgreSQL, replace Redis Yjs state/metadata, and never resurrect stale Redis content over a newer draft head.
 
 #### Active Collaboration Lock
 
 Existing-document mutations must fail while `mdcms:collaboration:active:{documentId}` exists. The lock applies to update, move, restore, restore-version, publish, unpublish, delete, bulk equivalents, and server content-store writes from AI or module surfaces. Reads and new document creation remain allowed. The content API error contract is defined in SPEC-003.
 
-### Presence Awareness (Post-MVP)
+### Presence Awareness
 
-Presence awareness is deferred. When implemented, the server will track:
+Presence awareness is part of the collaboration contract. Presence is ephemeral
+runtime state, not durable content, and must never create document versions.
 
-- Which users are online
-- Which document each user is currently viewing or editing
-- Cursor positions and selections within collaborative editing sessions
+- The server tracks which Studio sessions are online in each `(project,
+environment)` target.
+- Each online presence record includes the user id, session id, display label,
+  deterministic user color, current document id when the user is viewing or
+  editing a document, mode (`view` or `edit`), cursor/selection positions when
+  reported by the editor, and `updatedAt`.
+- Baseline editor presence reports cursor positions and selections through the
+  target-scoped presence stream. Cursor/selection data is scoped to the target
+  document and is sent only to callers authorized to read that document. A
+  future document-room Yjs awareness provider may mirror the same data on the
+  document collaboration socket, but the presence stream remains the
+  Studio-facing snapshot source for list and editor indicators.
+- Content-list presence exposes aggregate online/editing indicators per visible
+  row. It must filter out presence records for documents the caller cannot read.
+- Editor presence shows collaborators in the current room with labels/colors.
+  Live cursor/selection overlays are shown only while the caller is editing the
+  latest draft. Users without write access do not join the editing room and
+  must not appear as active editors. Clients must clear cursor/selection
+  coordinates when that user's focus leaves the editable document surface; the
+  user remains present, but other clients must not render a stale caret for that
+  session.
+- Presence heartbeats expire stale records within 30 seconds. Normal socket close
+  removes the session's presence record immediately.
 
-Presence indicators belong in the content list and editor only after the presence contract exists.
+Presence labels prefer the authenticated user's display name. If no display name
+is available, Studio uses a stable fallback derived from the user id without
+exposing additional private account fields.
 
 ### Saving
 
@@ -121,9 +159,10 @@ There are two distinct save operations:
 - Frontmatter-only edits and body-only edits use the same draft-save pipeline
   and the same unsaved/saving/saved state machine.
 
-Active collaboration document rooms use the collaboration final-save behavior
-documented above. Periodic/debounced PostgreSQL autosave from active
-collaboration rooms remains deferred.
+Active collaboration document rooms use the server-owned active collaboration
+autosave and final-save behavior documented above. Studio must route body and
+frontmatter draft changes through the collaboration runtime while the active
+collaboration lock exists, never through a normal HTTP draft `PUT`.
 
 **Publish (versioned):**
 
@@ -794,8 +833,8 @@ Draft propagation to the real-app preview is staged:
 - In single-user HTTP editing, Studio may persist the current body/frontmatter
   through the normal draft update path before refreshing the iframe. In an
   active collaboration document room, preview refresh uses collaboration-backed
-  persisted state according to the collaboration save contract and must not
-  bypass the active collaboration lock.
+  persisted state according to the collaboration autosave/final-save contract
+  and must not bypass the active collaboration lock.
 - Lower-latency live injection may be added later through a host-adapter
   `postMessage` protocol, but it must preserve the same serialization contract
   and must never write published content.
@@ -836,6 +875,50 @@ controls derived from `catalog.components[*].extractedProps`.
 
 ---
 
+## Collaboration Regression Coverage
+
+The CI suite must include deterministic collaboration coverage for the
+collaboration runtime, persistence path, and Studio-facing presence behavior.
+
+Round-trip fidelity coverage must exercise every configured content type shape
+that the editor can produce. For each fixture, `serialize(parse(markdown)) ===
+markdown` must hold byte-for-byte. Fixtures must cover Markdown and MDX bodies,
+frontmatter fields supported by the Studio properties panel, MDX component nodes
+with props, nested component children, native image/link serialization, and
+collapsed MDX component UI state proving it does not affect serialization.
+
+The baseline concurrency profile is:
+
+1. Four document rooms in one `(project, environment)` target.
+2. Three authenticated Studio sessions per room.
+3. Twenty-five body mutations per session, applied through Yjs.
+4. One active autosave flush after all mutations in each room.
+5. Last-disconnect cleanup for every room.
+
+The baseline passes only when all of the following are true within a 30-second CI
+timeout:
+
+- every client in a room observes converged Yjs state;
+- Redis contains fresh Yjs state and metadata before disconnect cleanup;
+- PostgreSQL contains the expected Markdown/MDX and frontmatter after the active
+  autosave flush;
+- each changed document's `draft_revision` increments exactly once for the
+  forced autosave flush, and the later no-op final save does not increment it;
+- no `document_versions` rows are created;
+- `content.updated` is emitted for every document whose autosave changed the
+  database;
+- active locks are present while rooms have clients and are removed after final
+  cleanup;
+- presence snapshots show the expected online/editing users while clients are
+  connected and remove those users after disconnect.
+
+Redis-loss validation must be deterministic. The test harness must persist at
+least one active autosave to PostgreSQL, flush or restart Redis, open a new room
+for the same document, and prove the new Yjs state is rebuilt from the
+PostgreSQL draft head rather than from stale/missing Redis state.
+
+---
+
 ## Collaboration Endpoints
 
 The collaboration transport is a WebSocket upgrade route mounted under the versioned API prefix. It is session-cookie only and rejects API-key authentication.
@@ -843,6 +926,7 @@ The collaboration transport is a WebSocket upgrade route mounted under the versi
 | Method | Endpoint                                                           | Description                                                                                                      |
 | ------ | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
 | `WS`   | `/api/v1/collaboration?project=...&environment=...&documentId=...` | Open real-time collaboration socket (Session cookie required, API keys rejected, explicit document room target). |
+| `WS`   | `/api/v1/collaboration/presence?project=...&environment=...`       | Subscribe to target-scoped presence snapshots for the Studio content list and shell.                             |
 
 Endpoint contract:
 
@@ -864,3 +948,83 @@ Endpoint contract:
 - A plain non-upgrade `GET` may return `426 Upgrade Required` only after
   collaboration availability, authentication, routing, document existence, and
   authorization checks pass.
+
+Document-room control messages:
+
+- Yjs sync/update and awareness messages use the Hocuspocus protocol.
+- Studio may send an application JSON flush message on the same document-room
+  socket after ensuring pending local Yjs updates have been applied:
+
+```typescript
+type CollaborationFlushRequest = {
+  type: "mdcms.collaboration.flush";
+  requestId: string;
+};
+
+type CollaborationFlushResult =
+  | {
+      type: "mdcms.collaboration.flush.result";
+      requestId: string;
+      status: "saved" | "unchanged";
+      draftRevision: number;
+    }
+  | {
+      type: "mdcms.collaboration.flush.result";
+      requestId: string;
+      status: "error";
+      code: string;
+      message: string;
+    };
+```
+
+- A successful flush performs the same authorization revalidation and
+  optimistic draft-revision checks as active collaboration autosave. `saved`
+  means PostgreSQL changed and `draft_revision` advanced; `unchanged` means the
+  room snapshot already matched the PostgreSQL draft head.
+
+Presence stream contract:
+
+- `project` and `environment` are required query parameters. `documentId` is not
+  accepted on the presence stream URL. Document-specific state is reported in
+  JSON messages after the target-scoped socket is established.
+- Authentication, origin, API-key rejection, target routing, Redis availability,
+  and `426 Upgrade Required` behavior match the document collaboration socket.
+- Clients send JSON updates with shape:
+
+```typescript
+type CollaborationPresenceUpdate = {
+  type: "presence.update";
+  documentId?: string | null;
+  mode: "view" | "edit";
+  cursor?: { anchor: number; head: number } | null;
+};
+```
+
+- A `presence.update` with no `documentId` records target-level online presence.
+  A `view` update with a `documentId` requires draft read access for that
+  document. An `edit` update requires draft read and content write access for
+  that document. Failed update authorization closes the socket with the same
+  `4401` or `4403` close codes as document-room write revalidation.
+- The server sends JSON snapshots with shape:
+
+```typescript
+type CollaborationPresenceSnapshot = {
+  type: "presence.snapshot";
+  project: string;
+  environment: string;
+  users: Array<{
+    userId: string;
+    sessionId: string;
+    label: string;
+    color: string;
+    documentId: string | null;
+    mode: "view" | "edit";
+    cursor?: { anchor: number; head: number };
+    updatedAt: string;
+  }>;
+};
+```
+
+- Presence snapshots must include only documents visible to the authenticated
+  subscriber in the routed target. Cursor details are omitted unless the
+  subscriber can read the target document draft.

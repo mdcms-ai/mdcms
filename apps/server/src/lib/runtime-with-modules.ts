@@ -19,6 +19,7 @@ import {
   createDatabaseContentStore,
   mountContentApiRoutes,
   type ContentActiveCollaborationChecker,
+  type ContentInactiveCollaborationCacheInvalidator,
 } from "./content-api.js";
 import { createCollaborationRedisDependency } from "./collaboration/redis-client.js";
 import { createDocumentCollaborationActiveError } from "./collaboration/errors.js";
@@ -32,6 +33,7 @@ import {
   isCollaborationWebSocketUpgradeRequest,
   type BunUpgradeServer,
   type CollaborationWebSocketHandler,
+  type CollaborationPresenceStore,
   type CollaborationWebSocketTransport,
 } from "./collaboration/transport.js";
 import {
@@ -106,7 +108,8 @@ export type CreateServerRequestHandlerWithModulesOptions = {
 
 type RuntimeCollaborationRedisStore = CollaborationRuntimeRedisStore & {
   isActive: (documentId: string) => Promise<boolean>;
-};
+  invalidateInactiveCache: (documentId: string) => Promise<void>;
+} & CollaborationPresenceStore;
 
 export type PrepareServerRequestHandlerWithModulesOptions =
   CreateServerRequestHandlerWithModulesOptions & {
@@ -173,8 +176,21 @@ async function assertNoActiveCollaboration(
 export function createCollaborationGuardedAiContentStore(
   store: AiContentStore,
   activeCollaboration: ContentActiveCollaborationChecker | undefined,
+  inactiveCollaborationCache?: ContentInactiveCollaborationCacheInvalidator,
 ): AiContentStore {
   const restore = store.restore;
+  const invalidateInactiveCache = async (documentId: string) => {
+    if (!inactiveCollaborationCache) {
+      return;
+    }
+
+    await inactiveCollaborationCache
+      .invalidateDocument(documentId)
+      .catch(() => {
+        // The mutation is already committed. Inactive Redis cache deletion is
+        // best-effort; future room loads still validate metadata against the DB.
+      });
+  };
 
   return {
     getById: (scope, documentId, opts) =>
@@ -182,16 +198,22 @@ export function createCollaborationGuardedAiContentStore(
     create: (scope, payload, opts) => store.create(scope, payload, opts),
     update: async (scope, documentId, payload, opts) => {
       await assertNoActiveCollaboration(activeCollaboration, documentId);
-      return store.update(scope, documentId, payload, opts);
+      const document = await store.update(scope, documentId, payload, opts);
+      await invalidateInactiveCache(documentId);
+      return document;
     },
     softDelete: async (scope, documentId) => {
       await assertNoActiveCollaboration(activeCollaboration, documentId);
-      return store.softDelete(scope, documentId);
+      const document = await store.softDelete(scope, documentId);
+      await invalidateInactiveCache(documentId);
+      return document;
     },
     restore: restore
       ? async (scope, documentId) => {
           await assertNoActiveCollaboration(activeCollaboration, documentId);
-          return restore(scope, documentId);
+          const document = await restore(scope, documentId);
+          await invalidateInactiveCache(documentId);
+          return document;
         }
       : undefined,
   };
@@ -302,6 +324,12 @@ export function createServerRequestHandlerWithModules(
             collaborationRedisStore.isActive(documentId),
         }
       : undefined);
+  const inactiveCollaborationCache = collaborationRedisStore
+    ? {
+        invalidateDocument: (documentId: string) =>
+          collaborationRedisStore.invalidateInactiveCache(documentId),
+      }
+    : undefined;
   const resolveCollaborationDocument: CollaborationDocumentLocator = async ({
     project,
     environment,
@@ -338,6 +366,7 @@ export function createServerRequestHandlerWithModules(
     {
       authGuard: collaborationAuthGuard,
       runtime: collaborationRuntime,
+      presenceStore: collaborationRedisStore,
       unavailableDetails: options.collaborationUnavailableDetails,
     },
   );
@@ -581,6 +610,7 @@ export function createServerRequestHandlerWithModules(
         restore: (scope, documentId) => contentStore.restore(scope, documentId),
       },
       activeCollaboration,
+      inactiveCollaborationCache,
     ),
     contextResolver: {
       loadDraftContext: async ({
@@ -716,6 +746,7 @@ export function createServerRequestHandlerWithModules(
         },
         lifecycleEvents: webhookRuntime.dispatcher,
         activeCollaboration,
+        inactiveCollaborationCache,
         previewTokenSecret: env.MDCMS_PREVIEW_TOKEN_SECRET,
       });
       mountSchemaApiRoutes(app, {

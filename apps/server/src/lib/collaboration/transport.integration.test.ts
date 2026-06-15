@@ -9,10 +9,18 @@ import {
   MessageType,
   OutgoingMessage,
 } from "@hocuspocus/server";
+import type { CollaborationPresenceUser } from "@mdcms/shared";
 import * as Y from "yjs";
 
-import type { CollaborationSessionContext } from "../collaboration-auth.js";
-import type { ContentDocument, ContentScope } from "../content-api/types.js";
+import type {
+  CollaborationPresenceContext,
+  CollaborationSessionContext,
+} from "../collaboration-auth.js";
+import {
+  DEFAULT_ACTOR,
+  type ContentDocument,
+  type ContentScope,
+} from "../content-api/types.js";
 
 import {
   COLLABORATION_INACTIVE_CACHE_TTL_SECONDS,
@@ -60,7 +68,7 @@ type TestWebSocket = {
     event: "open" | "message" | "close" | "error",
     listener: (event: any) => void,
   ) => void;
-  send: (data: Uint8Array) => void;
+  send: (data: string | Uint8Array) => void;
   close: () => void;
 };
 
@@ -117,6 +125,20 @@ function createSessionContext(
   };
 }
 
+function createPresenceContext(
+  overrides: Partial<CollaborationPresenceContext> = {},
+): CollaborationPresenceContext {
+  return {
+    userId: overrides.userId ?? "user-1",
+    sessionId: overrides.sessionId ?? "session-1",
+    project: overrides.project ?? "marketing",
+    environment: overrides.environment ?? "draft",
+    role: overrides.role ?? "editor",
+    label: overrides.label ?? overrides.userId ?? "user-1",
+    color: overrides.color ?? "#2563eb",
+  };
+}
+
 class IntegrationContentStore implements CollaborationRuntimeContentStore {
   document: ContentDocument;
   readonly updates: Array<{
@@ -167,6 +189,10 @@ class IntegrationRedisStore implements CollaborationRuntimeRedisStore {
   metadata: CollaborationYjsMetadata | null = null;
   activeLeaseValue: string | null = null;
   readonly expirations = new Map<string, number>();
+  readonly presenceRecords = new Map<
+    string,
+    CollaborationPresenceUser & { project: string; environment: string }
+  >();
 
   async getFreshYjsState(
     _documentId: string,
@@ -244,6 +270,43 @@ class IntegrationRedisStore implements CollaborationRuntimeRedisStore {
     this.activeLeaseValue = null;
     return true;
   }
+
+  async setPresence(
+    record: CollaborationPresenceUser & {
+      project: string;
+      environment: string;
+    },
+  ): Promise<void> {
+    this.presenceRecords.set(record.sessionId, record);
+  }
+
+  async deletePresence(input: {
+    project: string;
+    environment: string;
+    sessionId: string;
+  }): Promise<void> {
+    const record = this.presenceRecords.get(input.sessionId);
+
+    if (
+      record?.project === input.project &&
+      record.environment === input.environment
+    ) {
+      this.presenceRecords.delete(input.sessionId);
+    }
+  }
+
+  async listPresence(input: {
+    project: string;
+    environment: string;
+  }): Promise<CollaborationPresenceUser[]> {
+    return Array.from(this.presenceRecords.values())
+      .filter(
+        (record) =>
+          record.project === input.project &&
+          record.environment === input.environment,
+      )
+      .map(({ project: _project, environment: _environment, ...user }) => user);
+  }
 }
 
 function createAuthMessage(documentName: string): Uint8Array {
@@ -257,14 +320,14 @@ function createAuthMessage(documentName: string): Uint8Array {
 
 async function waitFor(
   predicate: () => boolean,
-  message: string,
+  message: string | (() => string),
   timeoutMs = 8_000,
 ): Promise<void> {
   const startedAt = Date.now();
 
   while (!predicate()) {
     if (Date.now() - startedAt > timeoutMs) {
-      throw new Error(message);
+      throw new Error(typeof message === "function" ? message() : message);
     }
 
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -400,6 +463,80 @@ class RawHocuspocusSocket {
   }
 }
 
+class PresenceSocket {
+  readonly socket: TestWebSocket;
+  readonly snapshots: Array<{
+    type: "presence.snapshot";
+    project: string;
+    environment: string;
+    users: CollaborationPresenceUser[];
+  }> = [];
+  closeEvent: { code: number; reason: string } | undefined;
+
+  constructor(url: string) {
+    this.socket = new WebSocketRuntime(url);
+    this.socket.addEventListener("message", (event) => {
+      void this.handleMessage(event.data);
+    });
+    this.socket.addEventListener("close", (event) => {
+      this.closeEvent = {
+        code: event.code,
+        reason: event.reason,
+      };
+    });
+  }
+
+  async open(): Promise<void> {
+    await waitFor(
+      () => this.socket.readyState === WebSocketRuntime.OPEN,
+      "Timed out opening presence WebSocket.",
+    );
+  }
+
+  sendUpdate(update: unknown): void {
+    this.socket.send(JSON.stringify(update));
+  }
+
+  latestSnapshot() {
+    return this.snapshots.at(-1);
+  }
+
+  close(): void {
+    if (
+      this.socket.readyState !== WebSocketRuntime.CLOSED &&
+      this.socket.readyState !== WebSocketRuntime.CLOSING
+    ) {
+      this.socket.close();
+    }
+  }
+
+  private async handleMessage(rawData: unknown): Promise<void> {
+    const text =
+      typeof rawData === "string"
+        ? rawData
+        : rawData instanceof ArrayBuffer
+          ? new TextDecoder().decode(rawData)
+          : rawData instanceof Uint8Array
+            ? new TextDecoder().decode(rawData)
+            : await (rawData as Blob).text();
+    const payload = JSON.parse(text) as {
+      type?: string;
+      project?: string;
+      environment?: string;
+      users?: CollaborationPresenceUser[];
+    };
+
+    if (payload.type === "presence.snapshot") {
+      this.snapshots.push({
+        type: "presence.snapshot",
+        project: payload.project ?? "",
+        environment: payload.environment ?? "",
+        users: payload.users ?? [],
+      });
+    }
+  }
+}
+
 test("Bun collaboration sockets sync Yjs updates and finalize the document room on last disconnect", async () => {
   const contentStore = new IntegrationContentStore(
     createDocument({ body: "# Shared\n\nInitial body.", draftRevision: 5 }),
@@ -425,6 +562,13 @@ test("Bun collaboration sockets sync Yjs updates and finalize the document room 
           }),
         };
       },
+      authorizePresenceHandshake: async () => ({
+        ok: true,
+        context: createPresenceContext(),
+      }),
+      authorizePresenceUpdate: async () => ({ ok: true }),
+      filterPresenceSnapshot: async (_request, _context, users) => users,
+      revalidateWrite: async () => ({ ok: true }),
     },
     runtime,
   });
@@ -471,7 +615,7 @@ test("Bun collaboration sockets sync Yjs updates and finalize the document room 
     );
 
     assert.match(contentStore.updates[0]?.payload.body ?? "", /Updated from A/);
-    assert.equal(contentStore.updates[0]?.payload.updatedBy, "writer-1");
+    assert.equal(contentStore.updates[0]?.payload.updatedBy, DEFAULT_ACTOR);
     assert.equal(contentStore.updates[0]?.options?.expectedDraftRevision, 5);
     assert.deepEqual(redisStore.metadata, {
       draftRevision: 6,
@@ -485,6 +629,114 @@ test("Bun collaboration sockets sync Yjs updates and finalize the document room 
   } finally {
     clientA.close();
     clientB.close();
+    server.stop(true);
+  }
+});
+
+test("Bun presence sockets exchange JSON snapshots and clean up on disconnect", async () => {
+  const redisStore = new IntegrationRedisStore();
+  const transport = createCollaborationWebSocketTransport({
+    authGuard: {
+      authorizeHandshake: async () => ({
+        ok: true,
+        context: createSessionContext(),
+      }),
+      authorizePresenceHandshake: async (request) => {
+        const url = new URL(request.url);
+        const sessionId = url.searchParams.get("sessionId") ?? "session-1";
+        const userId = url.searchParams.get("userId") ?? sessionId;
+
+        return {
+          ok: true,
+          context: createPresenceContext({
+            userId,
+            sessionId,
+            label: userId,
+          }),
+        };
+      },
+      authorizePresenceUpdate: async () => ({ ok: true }),
+      filterPresenceSnapshot: async (_request, _context, users) => users,
+      revalidateWrite: async () => ({ ok: true }),
+    },
+    presenceStore: redisStore,
+    now: () => new Date("2026-06-14T10:00:00.000Z"),
+  });
+  const port = await getAvailablePort();
+  const server = BunRuntime.serve({
+    port,
+    websocket: transport.websocket,
+    fetch: (request, bunServer) =>
+      transport.handleFetchUpgrade(request, bunServer as never) ??
+      new Response("ok"),
+  });
+  const baseUrl = `ws://127.0.0.1:${server.port}/api/v1/collaboration/presence?project=marketing&environment=draft`;
+  const clientA = new PresenceSocket(
+    `${baseUrl}&userId=ada&sessionId=session-a`,
+  );
+  let clientB: PresenceSocket | undefined;
+
+  try {
+    await clientA.open();
+    await waitFor(
+      () => clientA.latestSnapshot()?.users.length === 1,
+      "Timed out waiting for initial presence snapshot.",
+      1_000,
+    );
+
+    clientB = new PresenceSocket(`${baseUrl}&userId=grace&sessionId=session-b`);
+    const connectedClientB = clientB;
+
+    await connectedClientB.open();
+    await waitFor(
+      () =>
+        clientA
+          .latestSnapshot()
+          ?.users.some((user) => user.sessionId === "session-b") === true &&
+        connectedClientB.latestSnapshot()?.users.length === 2,
+      "Timed out waiting for joined presence snapshot.",
+      1_000,
+    );
+
+    clientA.sendUpdate({
+      type: "presence.update",
+      documentId: DOCUMENT_ID,
+      mode: "edit",
+      cursor: { anchor: 3, head: 9 },
+    });
+
+    await waitFor(
+      () =>
+        connectedClientB
+          .latestSnapshot()
+          ?.users.some(
+            (user) =>
+              user.sessionId === "session-a" &&
+              user.documentId === DOCUMENT_ID &&
+              user.mode === "edit" &&
+              user.cursor?.anchor === 3 &&
+              user.cursor.head === 9,
+          ) === true,
+      "Timed out waiting for edited presence snapshot.",
+      1_000,
+    );
+
+    clientA.close();
+
+    await waitFor(
+      () =>
+        connectedClientB
+          .latestSnapshot()
+          ?.users.every((user) => user.sessionId !== "session-a") === true,
+      "Timed out waiting for disconnect presence cleanup.",
+      1_000,
+    );
+
+    assert.equal(redisStore.presenceRecords.has("session-a"), false);
+    assert.equal(redisStore.presenceRecords.has("session-b"), true);
+  } finally {
+    clientA.close();
+    clientB?.close();
     server.stop(true);
   }
 });
@@ -508,6 +760,13 @@ test("Bun collaboration socket receives a forbidden close message when write rev
         ok: true,
         context: createSessionContext({ userId: "writer-1" }),
       }),
+      authorizePresenceHandshake: async () => ({
+        ok: true,
+        context: createPresenceContext(),
+      }),
+      authorizePresenceUpdate: async () => ({ ok: true }),
+      filterPresenceSnapshot: async (_request, _context, users) => users,
+      revalidateWrite: async () => ({ ok: true }),
     },
     runtime,
   });

@@ -195,7 +195,12 @@ AI output is always mediated through proposals:
    apply may proceed when the operation's `originalText` still appears exactly
    once in the current draft body. Proposal kinds without an exact source-text
    replacement anchor continue to require the live draft revision to match the
-   proposal's base revision.
+   proposal's base revision. When the accepted proposal targets the same
+   document as an open Studio collaboration room and the proposal kind is
+   `replace_selection`, `insert_block`, or `update_frontmatter`, Studio applies
+   the proposal into the active collaboration document instead of calling the
+   normal apply endpoint. Persistence then follows the collaboration autosave
+   contract defined in the editor and collaboration spec.
 6. Studio reconciles local editor state from the accepted draft response.
 
 Rejecting a proposal has no content side effects. Proposals expire after a short
@@ -618,6 +623,25 @@ All AI write application paths must:
   proposal kind, accepted/rejected outcome, model/provider metadata, and
   validation result
 
+Active collaboration exception:
+
+- For current-document body/frontmatter proposals accepted while a Studio
+  collaboration room is open, Studio applies the proposal through the active
+  editor/Yjs collaboration state. It must use the same operation semantics as
+  server apply: `replace_selection` requires a unique live source-text match,
+  `insert_block` appends with markdown block separation, and
+  `update_frontmatter` shallow-merges the patch.
+- The active collaboration path must not call the normal apply endpoint or any
+  normal content update endpoint for the active document while the collaboration
+  lock exists.
+- The short post-accept undo window for these collaboration-applied proposals
+  replays the captured prior draft snapshot through the active collaboration
+  state while the room remains connected. If the room is no longer connected,
+  undo fails loud in the proposal card.
+- Creating documents, deleting documents, and proposals targeting any document
+  other than the current active collaboration document continue to use the
+  server apply endpoint.
+
 ## Endpoint Contracts
 
 This table is normative and follows the shared contract template in `SPEC-005`.
@@ -694,8 +718,10 @@ reads `AI_PROVIDER` and normalizes it case-insensitively:
 absent, the direct Anthropic provider defaults to `claude-sonnet-4-6`, and the
 Groq provider uses its server-defined default. Provider-specific base URL
 overrides are server-only operator settings: `GROQ_BASE_URL` for Groq and
-`ANTHROPIC_BASE_URL` for Anthropic. Missing or blank required provider
-credentials must fail deterministically as `AI_PROVIDER_UNAVAILABLE`.
+`ANTHROPIC_BASE_URL` for Anthropic. Missing or blank base URL overrides are
+treated as absent and use the provider's default API endpoint. Missing or blank
+required provider credentials must fail deterministically as
+`AI_PROVIDER_UNAVAILABLE`.
 
 The orchestration layer must support task-specific prompt templates or
 equivalent workflow definitions for at least:

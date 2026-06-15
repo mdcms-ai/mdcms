@@ -1886,7 +1886,7 @@ testWithDatabase(
         }),
       );
       const loginBody = (await loginResponse.json()) as {
-        data: { session: { email: string } };
+        data: { session: { email: string; name?: string } };
       };
       const setCookie = extractSetCookie(loginResponse);
       const cookie = toCookieHeader(setCookie);
@@ -1894,6 +1894,7 @@ testWithDatabase(
       assert.equal(loginResponse.status, 200);
       assert.equal(setCookie.includes("session_token="), true);
       assert.equal(loginBody.data.session.email, email);
+      assert.equal(loginBody.data.session.name, "Admin User");
 
       const sessionResponse = await handler(
         new Request("http://localhost/api/v1/auth/session", {
@@ -1903,11 +1904,12 @@ testWithDatabase(
         }),
       );
       const sessionBody = (await sessionResponse.json()) as {
-        data: { session: { email: string } };
+        data: { session: { email: string; name?: string } };
       };
 
       assert.equal(sessionResponse.status, 200);
       assert.equal(sessionBody.data.session.email, email);
+      assert.equal(sessionBody.data.session.name, "Admin User");
     } finally {
       await dbConnection.close();
     }

@@ -1,7 +1,10 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import type { ContentBulkAction } from "@mdcms/shared";
+import type {
+  CollaborationPresenceUser,
+  ContentBulkAction,
+} from "@mdcms/shared";
 import { useParams, useRouter } from "../../../../adapters/next-navigation.js";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -62,6 +65,7 @@ import {
 } from "../../../../components/ui/dialog.js";
 import { PageHeader } from "../../../../components/layout/page-header.js";
 import { Skeleton } from "../../../../components/ui/skeleton.js";
+import { PresenceIndicators } from "../../../../components/presence/presence-indicators.js";
 
 import { useAdminCapabilities } from "../../capabilities-context.js";
 import { useStudioMountInfo } from "../../mount-info-context.js";
@@ -74,10 +78,12 @@ import {
   type ContentTypeListFilters,
 } from "../../../../hooks/use-content-type-list.js";
 import { useCreateDocument } from "../../../../hooks/use-create-document.js";
+import { useCollaborationPresence } from "../../../../hooks/use-collaboration-presence.js";
 import { CreateDocumentDialog } from "../../../../components/create-document-dialog.js";
 import { createStudioContentListApi } from "../../../../../content-list-api.js";
 import { createStudioSchemaRouteApi } from "../../../../../schema-route-api.js";
 import { createStudioDocumentRouteApi } from "../../../../../document-route-api.js";
+import { groupPresenceByDocument } from "../../../../lib/collaboration-presence.js";
 import { useToast } from "../../../../components/toast.js";
 import {
   formatContentTranslationCoverageLabel,
@@ -526,7 +532,7 @@ function RowActions({
   );
 }
 
-function ContentTypeDocumentsTable({
+export function ContentTypeDocumentsTable({
   documents,
   users,
   capabilities,
@@ -539,6 +545,7 @@ function ContentTypeDocumentsTable({
   translationCoverageStatus,
   translationCoverageByGroup,
   tableColumns,
+  presenceByDocumentId,
   onToggleDocumentSelected,
   onToggleRenderedSelection,
   onRowClick,
@@ -565,6 +572,7 @@ function ContentTypeDocumentsTable({
     typeof useContentTypeList
   >["translationCoverageByGroup"];
   tableColumns: ReturnType<typeof getContentTypeTableColumns>;
+  presenceByDocumentId?: ReadonlyMap<string, CollaborationPresenceUser[]>;
   onToggleDocumentSelected: (documentId: string, checked: boolean) => void;
   onToggleRenderedSelection: (checked: boolean) => void;
   onRowClick: (documentId: string) => void;
@@ -650,9 +658,15 @@ function ContentTypeDocumentsTable({
               </TableCell>
               <TableCell className="px-4 py-3">
                 <div className="max-w-[480px]">
-                  <p className="truncate text-[13px] font-semibold text-foreground">
-                    {doc.title}
-                  </p>
+                  <div className="flex min-w-0 items-center gap-2">
+                    <p className="min-w-0 truncate text-[13px] font-semibold text-foreground">
+                      {doc.title}
+                    </p>
+                    <PresenceIndicators
+                      className="shrink-0"
+                      users={presenceByDocumentId?.get(doc.documentId) ?? []}
+                    />
+                  </div>
                   <p className="truncate font-mono text-[11px] text-foreground-muted">
                     {doc.path}
                   </p>
@@ -926,6 +940,15 @@ function useContentTypePageController() {
     [list.documents],
   );
   const renderedDocumentIdsKey = renderedDocumentIds.join("\u0000");
+  const presence = useCollaborationPresence({ mode: "view" });
+  const presenceByDocumentId = useMemo(
+    () =>
+      groupPresenceByDocument(presence.snapshot?.users ?? [], {
+        visibleDocumentIds: renderedDocumentIds,
+        currentSessionId: presence.currentSessionId,
+      }),
+    [presence.currentSessionId, presence.snapshot?.users, renderedDocumentIds],
+  );
   const selectedDocuments = useMemo(
     () => getSelectedDocuments(list.documents, selectedDocumentIds),
     [list.documents, selectedDocumentIds],
@@ -1244,6 +1267,7 @@ function useContentTypePageController() {
     moveTargetDirectory,
     moveTargetDirectoryError,
     openBulkAction,
+    presenceByDocumentId,
     rowActionError,
     rowActionHandlers,
     schemaEntry,
@@ -1285,6 +1309,7 @@ function ContentTypePageView({
   moveTargetDirectoryError,
   openBulkAction,
   rowActionError,
+  presenceByDocumentId,
   rowActionHandlers,
   schemaEntry,
   searchInput,
@@ -1511,6 +1536,7 @@ function ContentTypePageView({
                 translationCoverageStatus={list.translationCoverageStatus}
                 translationCoverageByGroup={list.translationCoverageByGroup}
                 tableColumns={tableColumns}
+                presenceByDocumentId={presenceByDocumentId}
                 onToggleDocumentSelected={toggleDocumentSelection}
                 onToggleRenderedSelection={toggleRenderedSelection}
                 onRowClick={(documentId) =>

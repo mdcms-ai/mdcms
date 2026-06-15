@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "bun:test";
 
 import {
+  type CollaborationPresenceUpdate,
+  type CollaborationPresenceUser,
   RuntimeError,
   createEmptyCurrentPrincipalCapabilities,
 } from "@mdcms/shared";
@@ -21,6 +23,17 @@ import type {
 import { createServerRequestHandler } from "./server.js";
 
 const DOCUMENT_ID = "11111111-1111-4111-8111-111111111111";
+const UNREADABLE_DOCUMENT_ID = "22222222-2222-4222-8222-222222222222";
+
+function createCollaborationRequest(pathAndQuery: string, init?: RequestInit) {
+  return new Request(`http://localhost${pathAndQuery}`, {
+    ...init,
+    headers: {
+      origin: "http://localhost:4173",
+      ...init?.headers,
+    },
+  });
+}
 
 function createSession(userId = "user-1"): StudioSession {
   return {
@@ -29,6 +42,44 @@ function createSession(userId = "user-1"): StudioSession {
     email: `${userId}@mdcms.local`,
     issuedAt: new Date().toISOString(),
     expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+  };
+}
+
+function createPresenceContext() {
+  return {
+    userId: "editor-1",
+    sessionId: "session-1",
+    project: "marketing",
+    environment: "staging",
+    role: "editor",
+    label: "editor-1",
+    color: "#2563eb",
+  };
+}
+
+function createPresenceUpdate(
+  overrides: Partial<CollaborationPresenceUpdate> = {},
+): CollaborationPresenceUpdate {
+  return {
+    type: "presence.update",
+    documentId: DOCUMENT_ID,
+    mode: "view",
+    ...overrides,
+  };
+}
+
+function createPresenceUser(
+  overrides: Partial<CollaborationPresenceUser> = {},
+): CollaborationPresenceUser {
+  return {
+    userId: "editor-1",
+    sessionId: "session-1",
+    label: "editor-1",
+    color: "#2563eb",
+    documentId: DOCUMENT_ID,
+    mode: "view",
+    updatedAt: "2026-06-14T10:00:00.000Z",
+    ...overrides,
   };
 }
 
@@ -244,6 +295,504 @@ test("collaboration handshake rejects API key auth with 4403", async () => {
   }
 
   assert.equal(result.closeCode, 4403);
+});
+
+test("collaboration handshake rejects missing documentId with 4403", async () => {
+  const guard = createCollaborationAuthGuard({
+    authService: createAuthServiceStub({}),
+    allowedOrigins: ["http://localhost:4173"],
+    resolveDocument: async () => ({ path: "blog/post-1" }),
+  });
+
+  const result = await guard.authorizeHandshake(
+    createCollaborationRequest(
+      "/api/v1/collaboration?project=marketing&environment=staging",
+    ),
+  );
+
+  assert.equal(result.ok, false);
+  if (result.ok) {
+    return;
+  }
+
+  assert.equal(result.closeCode, 4403);
+});
+
+test("presence handshake accepts target-only query and returns label and color", async () => {
+  const session = createSession("editor-1");
+  const requiredScopes: AuthorizationRequirement[] = [];
+  const guard = createCollaborationAuthGuard({
+    authService: createAuthServiceStub({
+      async authorizeRequest(_request, requirement) {
+        requiredScopes.push(requirement);
+        return {
+          mode: "session",
+          principal: {
+            type: "session",
+            session,
+            role: "editor",
+          },
+        };
+      },
+    }),
+    allowedOrigins: ["http://localhost:4173"],
+    resolveDocument: async () => ({ path: "blog/post-1" }),
+  });
+
+  const result = await guard.authorizePresenceHandshake(
+    createCollaborationRequest(
+      "/api/v1/collaboration/presence?project=marketing&environment=staging",
+    ),
+  );
+
+  assert.equal(result.ok, true);
+  if (!result.ok) {
+    return;
+  }
+
+  assert.equal(result.context.userId, "editor-1");
+  assert.equal(result.context.sessionId, "session-1");
+  assert.equal(result.context.project, "marketing");
+  assert.equal(result.context.environment, "staging");
+  assert.equal(result.context.role, "editor");
+  assert.equal(result.context.label, "editor-1");
+  assert.match(result.context.color, /^#[0-9a-f]{6}$/);
+  assert.deepEqual(requiredScopes, [
+    {
+      requiredScope: "content:read:draft",
+      project: "marketing",
+      environment: "staging",
+    },
+  ]);
+});
+
+test("presence handshake uses the session display name instead of deriving a label from email", async () => {
+  const session = {
+    ...createSession("user-1"),
+    email: "test@blazity.com",
+    name: "Blazity Test User",
+  };
+  const guard = createCollaborationAuthGuard({
+    authService: createAuthServiceStub({
+      async authorizeRequest() {
+        return {
+          mode: "session",
+          principal: {
+            type: "session",
+            session,
+            role: "editor",
+          },
+        };
+      },
+    }),
+    allowedOrigins: ["http://localhost:4173"],
+    resolveDocument: async () => ({ path: "blog/post-1" }),
+  });
+
+  const result = await guard.authorizePresenceHandshake(
+    createCollaborationRequest(
+      "/api/v1/collaboration/presence?project=marketing&environment=staging",
+    ),
+  );
+
+  assert.equal(result.ok, true);
+  if (!result.ok) {
+    return;
+  }
+
+  assert.equal(result.context.label, "Blazity Test User");
+});
+
+test("presence handshake falls back to user id without exposing email local-part", async () => {
+  const session = {
+    ...createSession("user-1"),
+    email: "private-label@blazity.com",
+  };
+  const guard = createCollaborationAuthGuard({
+    authService: createAuthServiceStub({
+      async authorizeRequest() {
+        return {
+          mode: "session",
+          principal: {
+            type: "session",
+            session,
+            role: "editor",
+          },
+        };
+      },
+    }),
+    allowedOrigins: ["http://localhost:4173"],
+    resolveDocument: async () => ({ path: "blog/post-1" }),
+  });
+
+  const result = await guard.authorizePresenceHandshake(
+    createCollaborationRequest(
+      "/api/v1/collaboration/presence?project=marketing&environment=staging",
+    ),
+  );
+
+  assert.equal(result.ok, true);
+  if (!result.ok) {
+    return;
+  }
+
+  assert.equal(result.context.label, "user-1");
+});
+
+test("presence handshake rejects URL documentId with 4403", async () => {
+  const guard = createCollaborationAuthGuard({
+    authService: createAuthServiceStub({}),
+    allowedOrigins: ["http://localhost:4173"],
+    resolveDocument: async () => ({ path: "blog/post-1" }),
+  });
+
+  const result = await guard.authorizePresenceHandshake(
+    createCollaborationRequest(
+      `/api/v1/collaboration/presence?project=marketing&environment=staging&documentId=${DOCUMENT_ID}`,
+    ),
+  );
+
+  assert.equal(result.ok, false);
+  if (result.ok) {
+    return;
+  }
+
+  assert.equal(result.closeCode, 4403);
+});
+
+test("presence handshake rejects API key auth with 4403", async () => {
+  const guard = createCollaborationAuthGuard({
+    authService: createAuthServiceStub({}),
+    allowedOrigins: ["http://localhost:4173"],
+    resolveDocument: async () => ({ path: "blog/post-1" }),
+  });
+
+  const result = await guard.authorizePresenceHandshake(
+    createCollaborationRequest(
+      "/api/v1/collaboration/presence?project=marketing&environment=staging",
+      {
+        headers: {
+          authorization: "Bearer mdcms_key_test",
+        },
+      },
+    ),
+  );
+
+  assert.equal(result.ok, false);
+  if (result.ok) {
+    return;
+  }
+
+  assert.equal(result.closeCode, 4403);
+});
+
+test("presence edit update checks draft-read and write permissions with document path", async () => {
+  const requiredScopes: AuthorizationRequirement[] = [];
+  const guard = createCollaborationAuthGuard({
+    authService: createAuthServiceStub({
+      async authorizeRequest(_request, requirement) {
+        requiredScopes.push(requirement);
+        return {
+          mode: "session",
+          principal: {
+            type: "session",
+            session: createSession("editor-1"),
+            role: "editor",
+          },
+        };
+      },
+    }),
+    allowedOrigins: ["http://localhost:4173"],
+    resolveDocument: async () => ({ path: "blog/post-1" }),
+  });
+
+  const result = await guard.authorizePresenceUpdate(
+    createCollaborationRequest("/api/v1/collaboration/presence"),
+    createPresenceContext(),
+    createPresenceUpdate({
+      mode: "edit",
+    }),
+  );
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(requiredScopes, [
+    {
+      requiredScope: "content:read:draft",
+      project: "marketing",
+      environment: "staging",
+      documentPath: "blog/post-1",
+    },
+    {
+      requiredScope: "content:write",
+      project: "marketing",
+      environment: "staging",
+      documentPath: "blog/post-1",
+    },
+  ]);
+});
+
+test("presence view update only checks draft-read permission with document path", async () => {
+  const requiredScopes: AuthorizationRequirement[] = [];
+  const guard = createCollaborationAuthGuard({
+    authService: createAuthServiceStub({
+      async authorizeRequest(_request, requirement) {
+        requiredScopes.push(requirement);
+        return {
+          mode: "session",
+          principal: {
+            type: "session",
+            session: createSession("viewer-1"),
+            role: "viewer",
+          },
+        };
+      },
+    }),
+    allowedOrigins: ["http://localhost:4173"],
+    resolveDocument: async () => ({ path: "blog/post-1" }),
+  });
+
+  const result = await guard.authorizePresenceUpdate(
+    createCollaborationRequest("/api/v1/collaboration/presence"),
+    createPresenceContext(),
+    createPresenceUpdate({
+      mode: "view",
+    }),
+  );
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(requiredScopes, [
+    {
+      requiredScope: "content:read:draft",
+      project: "marketing",
+      environment: "staging",
+      documentPath: "blog/post-1",
+    },
+  ]);
+});
+
+test("presence edit update without a document is rejected before draft-read authorization", async () => {
+  const requiredScopes: AuthorizationRequirement[] = [];
+  const guard = createCollaborationAuthGuard({
+    authService: createAuthServiceStub({
+      async authorizeRequest(_request, requirement) {
+        requiredScopes.push(requirement);
+        return {
+          mode: "session",
+          principal: {
+            type: "session",
+            session: createSession("editor-1"),
+            role: "editor",
+          },
+        };
+      },
+    }),
+    allowedOrigins: ["http://localhost:4173"],
+    resolveDocument: async () => ({ path: "blog/post-1" }),
+  });
+
+  const result = await guard.authorizePresenceUpdate(
+    createCollaborationRequest("/api/v1/collaboration/presence"),
+    createPresenceContext(),
+    createPresenceUpdate({
+      documentId: null,
+      mode: "edit",
+    }),
+  );
+
+  assert.equal(result.ok, false);
+  if (result.ok) {
+    return;
+  }
+
+  assert.equal(result.closeCode, 4403);
+  assert.deepEqual(requiredScopes, []);
+});
+
+test("presence update maps authorization failures to 4403", async () => {
+  const guard = createCollaborationAuthGuard({
+    authService: createAuthServiceStub({
+      async authorizeRequest() {
+        throw new RuntimeError({
+          code: "FORBIDDEN",
+          message: "Denied",
+          statusCode: 403,
+        });
+      },
+    }),
+    allowedOrigins: ["http://localhost:4173"],
+    resolveDocument: async () => ({ path: "blog/post-1" }),
+  });
+
+  const result = await guard.authorizePresenceUpdate(
+    createCollaborationRequest("/api/v1/collaboration/presence"),
+    createPresenceContext(),
+    createPresenceUpdate({
+      mode: "edit",
+    }),
+  );
+
+  assert.equal(result.ok, false);
+  if (result.ok) {
+    return;
+  }
+
+  assert.equal(result.closeCode, 4403);
+});
+
+test("presence update maps unauthorized revalidation failures to 4401", async () => {
+  const guard = createCollaborationAuthGuard({
+    authService: createAuthServiceStub({
+      async authorizeRequest() {
+        throw new RuntimeError({
+          code: "UNAUTHORIZED",
+          message: "Session expired",
+          statusCode: 401,
+        });
+      },
+    }),
+    allowedOrigins: ["http://localhost:4173"],
+    resolveDocument: async () => ({ path: "blog/post-1" }),
+  });
+
+  const result = await guard.authorizePresenceUpdate(
+    createCollaborationRequest("/api/v1/collaboration/presence"),
+    createPresenceContext(),
+    createPresenceUpdate({
+      mode: "edit",
+    }),
+  );
+
+  assert.equal(result.ok, false);
+  if (result.ok) {
+    return;
+  }
+
+  assert.equal(result.closeCode, 4401);
+});
+
+test("presence snapshot filtering removes unreadable documents and keeps target-level users", async () => {
+  const requiredScopes: AuthorizationRequirement[] = [];
+  const guard = createCollaborationAuthGuard({
+    authService: createAuthServiceStub({
+      async authorizeRequest(_request, requirement) {
+        requiredScopes.push(requirement);
+        if (requirement.documentPath === "secret/post-2") {
+          throw new RuntimeError({
+            code: "FORBIDDEN",
+            message: "Denied",
+            statusCode: 403,
+          });
+        }
+        return {
+          mode: "session",
+          principal: {
+            type: "session",
+            session: createSession("viewer-1"),
+            role: "viewer",
+          },
+        };
+      },
+    }),
+    allowedOrigins: ["http://localhost:4173"],
+    resolveDocument: async ({ documentId }) => {
+      if (documentId === DOCUMENT_ID) {
+        return { path: "blog/post-1" };
+      }
+      if (documentId === UNREADABLE_DOCUMENT_ID) {
+        return { path: "secret/post-2" };
+      }
+      return undefined;
+    },
+  });
+
+  const users = [
+    createPresenceUser({
+      sessionId: "online",
+      documentId: null,
+    }),
+    createPresenceUser({
+      sessionId: "readable",
+      documentId: DOCUMENT_ID,
+    }),
+    createPresenceUser({
+      sessionId: "unreadable",
+      documentId: UNREADABLE_DOCUMENT_ID,
+    }),
+  ];
+
+  const filtered = await guard.filterPresenceSnapshot(
+    createCollaborationRequest("/api/v1/collaboration/presence"),
+    createPresenceContext(),
+    users,
+  );
+
+  assert.deepEqual(
+    filtered.map((user) => user.sessionId),
+    ["online", "readable"],
+  );
+  assert.deepEqual(requiredScopes, [
+    {
+      requiredScope: "content:read:draft",
+      project: "marketing",
+      environment: "staging",
+    },
+    {
+      requiredScope: "content:read:draft",
+      project: "marketing",
+      environment: "staging",
+      documentPath: "blog/post-1",
+    },
+    {
+      requiredScope: "content:read:draft",
+      project: "marketing",
+      environment: "staging",
+      documentPath: "secret/post-2",
+    },
+  ]);
+});
+
+test("presence snapshot filtering returns no users when target draft-read revalidation fails", async () => {
+  const requiredScopes: AuthorizationRequirement[] = [];
+  const guard = createCollaborationAuthGuard({
+    authService: createAuthServiceStub({
+      async authorizeRequest(_request, requirement) {
+        requiredScopes.push(requirement);
+        throw new RuntimeError({
+          code: "FORBIDDEN",
+          message: "Denied",
+          statusCode: 403,
+        });
+      },
+    }),
+    allowedOrigins: ["http://localhost:4173"],
+    resolveDocument: async () => {
+      throw new Error("document paths should not resolve after target deny");
+    },
+  });
+
+  const filtered = await guard.filterPresenceSnapshot(
+    createCollaborationRequest("/api/v1/collaboration/presence"),
+    createPresenceContext(),
+    [
+      createPresenceUser({
+        sessionId: "online",
+        documentId: null,
+      }),
+      createPresenceUser({
+        sessionId: "readable",
+        documentId: DOCUMENT_ID,
+      }),
+    ],
+  );
+
+  assert.deepEqual(filtered, []);
+  assert.deepEqual(requiredScopes, [
+    {
+      requiredScope: "content:read:draft",
+      project: "marketing",
+      environment: "staging",
+    },
+  ]);
 });
 
 test("collaboration handshake maps unauthorized session failures to 4401", async () => {
@@ -502,4 +1051,68 @@ test("collaboration route returns 426 after successful handshake authorization",
   );
 
   assert.equal(response.status, 426);
+});
+
+test("collaboration presence route returns 426 after successful handshake authorization", async () => {
+  const handler = createServerRequestHandler({
+    env: {
+      NODE_ENV: "test",
+      LOG_LEVEL: "debug",
+      APP_VERSION: "0.0.0",
+      PORT: "4000",
+      SERVICE_NAME: "mdcms-server",
+      MDCMS_COLLAB_ALLOWED_ORIGINS: "http://localhost:4173",
+    },
+    configureApp(app) {
+      mountCollaborationRoutes(app, {
+        authService: createAuthServiceStub({}),
+        resolveDocument: async () => ({ path: "blog/post-1" }),
+        env: {
+          MDCMS_COLLAB_ALLOWED_ORIGINS: "http://localhost:4173",
+        },
+      });
+    },
+  });
+
+  const response = await handler(
+    new Request(
+      "http://localhost/api/v1/collaboration/presence?project=marketing&environment=staging",
+      {
+        headers: {
+          origin: "http://localhost:4173",
+        },
+      },
+    ),
+  );
+  const body = (await response.json()) as {
+    data?: {
+      status?: string;
+      closeCodeOnSessionInvalid?: number;
+      closeCodeOnForbidden?: number;
+      context?: {
+        userId?: string;
+        sessionId?: string;
+        project?: string;
+        environment?: string;
+        role?: string;
+        label?: string;
+        color?: string;
+      };
+    };
+  };
+
+  assert.equal(response.status, 426);
+  assert.equal(body.data?.status, "presence_handshake_authorized");
+  assert.equal(body.data?.closeCodeOnSessionInvalid, 4401);
+  assert.equal(body.data?.closeCodeOnForbidden, 4403);
+  assert.deepEqual(body.data?.context, {
+    userId: "user-1",
+    sessionId: "session-1",
+    project: "marketing",
+    environment: "staging",
+    role: "editor",
+    label: "user-1",
+    color: body.data?.context?.color,
+  });
+  assert.match(body.data?.context?.color ?? "", /^#[0-9a-f]{6}$/);
 });

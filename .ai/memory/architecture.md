@@ -7,6 +7,9 @@ Architecture invariants and key technical decisions. Update when one changes.
 - **Database is canonical**, not the filesystem. The server is the only thing that owns truth.
 - The CLI's local files are a working copy. Pull/push reconciles against the server, not vice versa.
 - Schema (content types + fields) lives in the server's schema registry. The local `mdcms.config.ts` is the developer's authoring surface; `schema sync` reconciles it to the registry.
+- Collaboration Redis state is ephemeral. Yjs state and presence make active
+  editing fast, but PostgreSQL remains the durable draft recovery point through
+  collaboration autosave/final save.
 
 ## Module system
 

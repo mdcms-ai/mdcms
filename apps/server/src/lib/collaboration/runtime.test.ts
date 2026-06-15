@@ -4,20 +4,24 @@ import { test } from "bun:test";
 import { RuntimeError } from "@mdcms/shared";
 
 import type { CollaborationSessionContext } from "../collaboration-auth.js";
-import type {
-  ContentDocument,
-  ContentLifecycleEventSink,
-  ContentScope,
+import {
+  DEFAULT_ACTOR,
+  type ContentDocument,
+  type ContentLifecycleEventSink,
+  type ContentScope,
 } from "../content-api/types.js";
 
 import { createUnavailableCollaborationRedisDependency } from "./redis-store.js";
 import {
   computeCollaborationBodyHash,
+  createCollaborationDocumentName,
   createCollaborationRuntime,
   createCollaborationRuntimeHooks,
   encodeYDocState,
   markdownToYDoc,
+  yDocToFrontmatter,
   yDocToMarkdown,
+  yjsUpdateToYDoc,
   type CollaborationRuntimeAuthGuard,
   type CollaborationRuntimeContentStore,
   type CollaborationRuntimeContext,
@@ -74,7 +78,11 @@ class FakeContentStore implements CollaborationRuntimeContentStore {
   readonly updates: Array<{
     scope: ContentScope;
     documentId: string;
-    payload: { body?: string; updatedBy?: string };
+    payload: {
+      body?: string;
+      frontmatter?: Record<string, unknown>;
+      updatedBy?: string;
+    };
     options?: { expectedDraftRevision?: number };
   }> = [];
 
@@ -99,7 +107,11 @@ class FakeContentStore implements CollaborationRuntimeContentStore {
   async update(
     scope: ContentScope,
     documentId: string,
-    payload: { body?: string; updatedBy?: string },
+    payload: {
+      body?: string;
+      frontmatter?: Record<string, unknown>;
+      updatedBy?: string;
+    },
     options?: { expectedDraftRevision?: number },
   ): Promise<ContentDocument> {
     this.updates.push({ scope, documentId, payload, options });
@@ -127,6 +139,7 @@ class FakeContentStore implements CollaborationRuntimeContentStore {
     this.document = {
       ...this.document,
       body: payload.body ?? this.document.body,
+      frontmatter: payload.frontmatter ?? this.document.frontmatter,
       draftRevision: this.document.draftRevision + 1,
       updatedBy: payload.updatedBy ?? this.document.updatedBy,
       updatedAt: "2026-06-11T10:01:00.000Z",
@@ -406,6 +419,30 @@ test("createCollaborationRuntime fails with collaboration unavailable when Redis
   );
 });
 
+test("markdownToYDoc stores frontmatter in the collaboration Y.Doc", () => {
+  const frontmatter = {
+    title: "Launch",
+    featured: true,
+    order: 3,
+  };
+
+  const ydoc = markdownToYDoc("# Launch\n\nBody.", frontmatter);
+
+  assert.deepEqual(yDocToFrontmatter(ydoc), frontmatter);
+  assert.equal(yDocToMarkdown(ydoc), "# Launch\n\nBody.");
+});
+
+test("frontmatter Y.Doc helpers snapshot nested values", () => {
+  const frontmatter = { seo: { title: "Original" } };
+  const ydoc = markdownToYDoc("# Launch", frontmatter);
+
+  (frontmatter.seo as { title: string }).title = "Mutated after write";
+  const firstRead = yDocToFrontmatter(ydoc) as { seo: { title: string } };
+  firstRead.seo.title = "Mutated after read";
+
+  assert.deepEqual(yDocToFrontmatter(ydoc), { seo: { title: "Original" } });
+});
+
 test("onLoadDocument falls back to PostgreSQL and seeds Redis when cache is missing", async () => {
   const document = createDocument({
     body: "# Fresh draft\n\nSeed this body.",
@@ -545,6 +582,33 @@ test("onLoadDocument rejects documentName mismatches without mutating authentica
   assert.equal(context.documentId, DOCUMENT_ID);
 });
 
+test("onLoadDocument accepts encoded documentName route segments", async () => {
+  const document = createDocument({
+    project: "marketing:site",
+    environment: "preview/draft",
+  });
+  const { hooks, redisStore } = createHarness(document);
+  const context = createContext({
+    project: document.project,
+    environment: document.environment,
+  });
+  const documentName = createCollaborationDocumentName({
+    project: document.project,
+    environment: document.environment,
+    documentId: document.documentId,
+  });
+
+  await hooks.onLoadDocument({
+    context,
+    documentName,
+  });
+
+  assert.equal(documentName, `marketing%3Asite:preview%2Fdraft:${DOCUMENT_ID}`);
+  assert.equal(context.project, "marketing:site");
+  assert.equal(context.environment, "preview/draft");
+  assert.equal(redisStore.calls[0]?.documentId, DOCUMENT_ID);
+});
+
 test("onLoadDocument returns Redis cached binary when metadata matches", async () => {
   const document = createDocument({
     body: "# Cached draft",
@@ -568,6 +632,36 @@ test("onLoadDocument returns Redis cached binary when metadata matches", async (
     redisStore.calls.map((call) => call.method),
     ["getFreshYjsState", "acquireActiveLock", "clearInactiveCacheTtl"],
   );
+});
+
+test("onLoadDocument reconciles cached Yjs frontmatter with PostgreSQL draft", async () => {
+  const document = createDocument({
+    body: "# Cached draft",
+    draftRevision: 12,
+    frontmatter: { title: "Current" },
+  });
+  const { hooks, contentStore, redisStore } = createHarness(document);
+  redisStore.state = encodeYDocState(markdownToYDoc(document.body, {}));
+  redisStore.metadata = {
+    draftRevision: 12,
+    bodyHash: computeCollaborationBodyHash(document.body),
+  };
+  const context = createContext();
+
+  const loaded = await hooks.onLoadDocument({
+    context,
+    documentName: DOCUMENT_ID,
+  });
+  const loadedDocument = yjsUpdateToYDoc(loaded);
+
+  await hooks.onStoreDocument({
+    document: loadedDocument,
+    documentName: DOCUMENT_ID,
+    lastContext: context,
+  });
+
+  assert.equal(contentStore.updates.length, 0);
+  assert.deepEqual(yDocToFrontmatter(loadedDocument), { title: "Current" });
 });
 
 test("onLoadDocument active lock conflict does not overwrite Redis cache", async () => {
@@ -655,15 +749,17 @@ test("beforeHandleMessage rejects revoked sessions and lost write permission wit
   }
 });
 
-test("onStoreDocument writes Redis state and metadata only", async () => {
-  const document = createDocument({ body: "# Stored", draftRevision: 4 });
-  const { hooks, contentStore, redisStore } = createHarness(document);
-  const context = createContext({
-    loadedDraftRevision: 4,
-    loadedBodyHash: computeCollaborationBodyHash(document.body),
-    roomLeaseValue: "lease-1",
+test("onStoreDocument writes Redis state without PostgreSQL update when unchanged", async () => {
+  const document = createDocument({
+    body: "# Stored\n\nSame body.",
+    draftRevision: 4,
+    frontmatter: { title: "Stored" },
   });
-  const ydoc = markdownToYDoc("# Stored\n\nChanged in Yjs.");
+  const { hooks, contentStore, redisStore } = createHarness(document);
+  const context = createContext();
+  const ydoc = markdownToYDoc(document.body, document.frontmatter);
+
+  await hooks.onLoadDocument({ context, documentName: DOCUMENT_ID });
 
   await hooks.onStoreDocument({
     document: ydoc,
@@ -678,6 +774,142 @@ test("onStoreDocument writes Redis state and metadata only", async () => {
     bodyHash: computeCollaborationBodyHash(document.body),
   });
   assert.equal(contentStore.document.body, document.body);
+});
+
+test("onStoreDocument autosaves changed body and frontmatter to PostgreSQL", async () => {
+  const document = createDocument({
+    body: "# Original\n\nBody.",
+    draftRevision: 4,
+    frontmatter: { title: "Original", featured: false },
+  });
+  const { hooks, contentStore, lifecycleEvents, redisStore } =
+    createHarness(document);
+  const context = createContext();
+  const ydoc = markdownToYDoc("# Changed\n\nBody.", {
+    title: "Changed",
+    featured: true,
+  });
+
+  await hooks.onLoadDocument({ context, documentName: DOCUMENT_ID });
+  await hooks.onStoreDocument({
+    document: ydoc,
+    documentName: DOCUMENT_ID,
+    lastContext: createContext({
+      userId: "writer-1",
+      userEmail: "writer-1@example.com",
+      loadedDraftRevision: context.loadedDraftRevision,
+      loadedBodyHash: context.loadedBodyHash,
+      loadedFrontmatterHash: context.loadedFrontmatterHash,
+      roomLeaseValue: context.roomLeaseValue,
+    }),
+  });
+
+  assert.equal(contentStore.updates.length, 1);
+  assert.equal(contentStore.updates[0]?.options?.expectedDraftRevision, 4);
+  assert.equal(contentStore.updates[0]?.payload.updatedBy, DEFAULT_ACTOR);
+  assert.match(contentStore.updates[0]?.payload.body ?? "", /# Changed/);
+  assert.deepEqual(contentStore.updates[0]?.payload.frontmatter, {
+    title: "Changed",
+    featured: true,
+  });
+  assert.equal(contentStore.document.draftRevision, 5);
+  assert.deepEqual(redisStore.metadata, {
+    draftRevision: 5,
+    bodyHash: computeCollaborationBodyHash(contentStore.document.body),
+  });
+  assert.equal(lifecycleEvents.events.length, 1);
+  assert.equal(lifecycleEvents.events[0]?.event, "content.updated");
+  assert.equal(lifecycleEvents.events[0]?.actor.id, "writer-1");
+});
+
+test("active autosave failure does not publish unsaved Yjs state to Redis", async () => {
+  const document = createDocument({
+    body: "# Original\n\nBody.",
+    draftRevision: 4,
+    frontmatter: { title: "Original" },
+  });
+  const { hooks, contentStore, redisStore } = createHarness(document);
+  const context = createContext();
+  const changed = markdownToYDoc("# Changed\n\nBody.", { title: "Changed" });
+
+  await hooks.onLoadDocument({ context, documentName: DOCUMENT_ID });
+  const cachedState = redisStore.state;
+  const cachedMetadata = redisStore.metadata;
+  assert.ok(cachedState);
+  assert.ok(cachedMetadata);
+  const updateError = new Error("database unavailable");
+  contentStore.updateError = updateError;
+
+  await assert.rejects(
+    hooks.onStoreDocument({
+      document: changed,
+      documentName: DOCUMENT_ID,
+      lastContext: createContext({
+        userId: "writer-failed",
+        loadedDraftRevision: context.loadedDraftRevision,
+        loadedBodyHash: context.loadedBodyHash,
+        loadedFrontmatterHash: context.loadedFrontmatterHash,
+        roomLeaseValue: context.roomLeaseValue,
+      }),
+    }),
+    updateError,
+  );
+
+  assert.deepEqual(redisStore.state, cachedState);
+  assert.deepEqual(redisStore.metadata, cachedMetadata);
+  assert.equal(
+    redisStore.calls.some((call) => call.method === "finalizeInactiveRoom"),
+    false,
+  );
+});
+
+test("active autosave stale draft revision fails closed without overwriting PostgreSQL", async () => {
+  const document = createDocument({
+    body: "# Original\n\nBody.",
+    draftRevision: 3,
+  });
+  const { hooks, contentStore, redisStore, closedRooms } =
+    createHarness(document);
+  const context = createContext();
+
+  await hooks.onLoadDocument({ context, documentName: DOCUMENT_ID });
+  contentStore.document = {
+    ...contentStore.document,
+    body: "# External change",
+    draftRevision: 4,
+  };
+
+  await assert.rejects(
+    hooks.onStoreDocument({
+      document: markdownToYDoc("# Collaboration change"),
+      documentName: DOCUMENT_ID,
+      lastContext: createContext({
+        loadedDraftRevision: context.loadedDraftRevision,
+        loadedBodyHash: context.loadedBodyHash,
+        loadedFrontmatterHash: context.loadedFrontmatterHash,
+        roomLeaseValue: context.roomLeaseValue,
+      }),
+    }),
+    (error: unknown) =>
+      error instanceof RuntimeError && error.code === "STALE_DRAFT_REVISION",
+  );
+
+  assert.equal(contentStore.document.body, "# External change");
+  assert.equal(
+    redisStore.calls.some((call) => call.method === "finalizeInactiveRoom"),
+    false,
+  );
+  assert.deepEqual(closedRooms, [DOCUMENT_ID]);
+
+  await assert.rejects(
+    hooks.beforeHandleMessage({
+      context,
+      documentName: DOCUMENT_ID,
+    }),
+    (error: unknown) =>
+      error instanceof RuntimeError &&
+      error.code === "COLLABORATION_ACTIVE_LOCK_LOST",
+  );
 });
 
 test("onStoreDocument fails closed before cache writes when active lock is lost", async () => {
@@ -979,7 +1211,7 @@ test("last disconnect changed body saves once with expected revision, last write
 
   assert.equal(contentStore.updates.length, 1);
   assert.equal(contentStore.updates[0]?.options?.expectedDraftRevision, 8);
-  assert.equal(contentStore.updates[0]?.payload.updatedBy, "writer-2");
+  assert.equal(contentStore.updates[0]?.payload.updatedBy, DEFAULT_ACTOR);
   assert.match(contentStore.updates[0]?.payload.body ?? "", /# Changed/);
   assert.equal(lifecycleEvents.events.length, 1);
   assert.equal(lifecycleEvents.events[0]?.event, "content.updated");
@@ -989,6 +1221,67 @@ test("last disconnect changed body saves once with expected revision, last write
     draftRevision: 9,
     bodyHash: computeCollaborationBodyHash(contentStore.document.body),
   });
+});
+
+test("last disconnect after active autosave does not increment draft revision again", async () => {
+  const document = createDocument({
+    body: "# Original\n\nBody.",
+    draftRevision: 8,
+    frontmatter: { title: "Original" },
+  });
+  const { hooks, contentStore, lifecycleEvents } = createHarness(document);
+  const context = createContext();
+  const changed = markdownToYDoc("# Changed\n\nBody.", { title: "Changed" });
+
+  await hooks.onLoadDocument({ context, documentName: DOCUMENT_ID });
+  await hooks.onStoreDocument({
+    document: changed,
+    documentName: DOCUMENT_ID,
+    lastContext: createContext({
+      userId: "writer-2",
+      loadedDraftRevision: context.loadedDraftRevision,
+      loadedBodyHash: context.loadedBodyHash,
+      loadedFrontmatterHash: context.loadedFrontmatterHash,
+      roomLeaseValue: context.roomLeaseValue,
+    }),
+  });
+  await hooks.onDisconnect({
+    clientsCount: 0,
+    context,
+    document: changed,
+    documentName: DOCUMENT_ID,
+  });
+
+  assert.equal(contentStore.updates.length, 1);
+  assert.equal(contentStore.document.draftRevision, 9);
+  assert.equal(lifecycleEvents.events.length, 1);
+});
+
+test("last disconnect persists frontmatter-only changes when autosave has not run", async () => {
+  const document = createDocument({
+    body: "# Original\n\nBody.",
+    draftRevision: 9,
+    frontmatter: { title: "Original" },
+  });
+  const { hooks, contentStore, lifecycleEvents } = createHarness(document);
+  const context = createContext();
+  const changed = markdownToYDoc(document.body, { title: "Changed" });
+
+  await hooks.onLoadDocument({ context, documentName: DOCUMENT_ID });
+  await hooks.onDisconnect({
+    clientsCount: 0,
+    context,
+    document: changed,
+    documentName: DOCUMENT_ID,
+  });
+
+  assert.equal(contentStore.updates.length, 1);
+  assert.equal(contentStore.updates[0]?.options?.expectedDraftRevision, 9);
+  assert.deepEqual(contentStore.updates[0]?.payload.frontmatter, {
+    title: "Changed",
+  });
+  assert.equal(contentStore.document.draftRevision, 10);
+  assert.equal(lifecycleEvents.events.length, 1);
 });
 
 test("last disconnect attributes a pending debounced edit to its writer", async () => {
@@ -1016,7 +1309,7 @@ test("last disconnect attributes a pending debounced edit to its writer", async 
   });
 
   assert.equal(contentStore.updates.length, 1);
-  assert.equal(contentStore.updates[0]?.payload.updatedBy, "writer-pending");
+  assert.equal(contentStore.updates[0]?.payload.updatedBy, DEFAULT_ACTOR);
 });
 
 test("last disconnect uses neutral lifecycle email when writer email is unavailable", async () => {

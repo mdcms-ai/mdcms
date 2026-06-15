@@ -13,10 +13,15 @@ import {
 } from "./tiptap-editor-utils.js";
 import { extractMarkdownFromEditor } from "../../../markdown-pipeline.js";
 import {
+  attachTipTapRemoteCursorPositionSync,
+  createTipTapEditorCursorSelection,
   insertUploadedMediaFiles,
   MediaImagePickerView,
+  resolveTipTapEditorCursorPresenceSelection,
+  resolveTipTapRemoteCursorPositions,
   resolveMediaUploadFileEvent,
   TipTapEditor,
+  TipTapRemoteCursorLayer,
 } from "./tiptap-editor.js";
 import { createDocumentEditor } from "../../../document-editor.js";
 
@@ -67,6 +72,39 @@ test("createTipTapEditorDependencies keeps editor lifetime independent of onChan
   );
 });
 
+test("createTipTapEditorCursorSelection preserves collapsed and ranged selections", () => {
+  assert.deepEqual(createTipTapEditorCursorSelection({ anchor: 5, head: 5 }), {
+    anchor: 5,
+    head: 5,
+  });
+  assert.deepEqual(createTipTapEditorCursorSelection({ anchor: 12, head: 3 }), {
+    anchor: 12,
+    head: 3,
+  });
+});
+
+test("resolveTipTapEditorCursorPresenceSelection hides cursors when the editor is blurred", () => {
+  const selection = { anchor: 5, head: 12 };
+
+  assert.deepEqual(
+    resolveTipTapEditorCursorPresenceSelection({
+      focused: true,
+      selection,
+    }),
+    {
+      anchor: 5,
+      head: 12,
+    },
+  );
+  assert.equal(
+    resolveTipTapEditorCursorPresenceSelection({
+      focused: false,
+      selection,
+    }),
+    null,
+  );
+});
+
 test("TipTapEditor renders an enabled image picker and hidden media upload input for writable media targets", () => {
   const markup = renderToStaticMarkup(
     createElement(TipTapEditor, {
@@ -107,6 +145,182 @@ test("TipTapEditor disables the image toolbar control when media upload is unava
     markup,
     /<button(?=[^>]*aria-label="Upload media unavailable in this target\.")(?=[^>]*\sdisabled(?:=""|\s|>))[^>]*>/,
   );
+});
+
+test("TipTapRemoteCursorLayer renders compact labels with server-provided identity", () => {
+  const markup = renderToStaticMarkup(
+    createElement(TipTapRemoteCursorLayer, {
+      cursors: [
+        {
+          sessionId: "session-ada",
+          label: "Ada Lovelace",
+          color: "#2563eb",
+          cursor: { anchor: 2, head: 7 },
+          top: 24,
+          left: 48,
+          selection: {
+            top: 24,
+            left: 24,
+            width: 24,
+            height: 16,
+          },
+        },
+      ],
+    }),
+  );
+
+  assert.match(markup, /data-mdcms-remote-cursor="session-ada"/);
+  assert.match(markup, /data-mdcms-remote-selection="session-ada"/);
+  assert.match(markup, /Ada Lovelace/);
+  assert.match(markup, /#2563eb/);
+});
+
+test("resolveTipTapRemoteCursorPositions resolves cursor heads relative to the editor wrapper", () => {
+  const positions = resolveTipTapRemoteCursorPositions({
+    editor: {
+      view: {
+        coordsAtPos(position: number) {
+          if (position === 2) {
+            return {
+              top: 140,
+              right: 71,
+              bottom: 158,
+              left: 70,
+            };
+          }
+
+          if (position === 7) {
+            return {
+              top: 140,
+              right: 91,
+              bottom: 158,
+              left: 90,
+            };
+          }
+
+          throw new Error("stale position");
+        },
+      },
+    },
+    wrapper: {
+      getBoundingClientRect: () => ({
+        top: 120,
+        right: 320,
+        bottom: 520,
+        left: 64,
+        width: 256,
+        height: 400,
+      }),
+    },
+    remoteCursors: [
+      {
+        sessionId: "session-ada",
+        label: "Ada Lovelace",
+        color: "#2563eb",
+        cursor: { anchor: 2, head: 7 },
+      },
+      {
+        sessionId: "session-grace",
+        label: "Grace Hopper",
+        color: "#16a34a",
+        cursor: { anchor: 3, head: 99 },
+      },
+    ],
+  });
+
+  assert.deepEqual(positions, [
+    {
+      sessionId: "session-ada",
+      label: "Ada Lovelace",
+      color: "#2563eb",
+      cursor: { anchor: 2, head: 7 },
+      top: 20,
+      left: 26,
+      selection: {
+        top: 20,
+        left: 6,
+        width: 21,
+        height: 18,
+      },
+    },
+  ]);
+});
+
+test("attachTipTapRemoteCursorPositionSync updates on scroll resize editor events and cleanup", () => {
+  const scrollListeners = new Set<() => void>();
+  const resizeListeners = new Set<() => void>();
+  const editorListeners = new Map<string, Set<() => void>>();
+  const editor = {
+    on: (eventName: string, listener: () => void) => {
+      const listeners = editorListeners.get(eventName) ?? new Set<() => void>();
+      listeners.add(listener);
+      editorListeners.set(eventName, listeners);
+    },
+    off: (eventName: string, listener: () => void) => {
+      editorListeners.get(eventName)?.delete(listener);
+    },
+  };
+  const scrollContainer = {
+    addEventListener: (
+      eventName: string,
+      listener: () => void,
+      options?: AddEventListenerOptions,
+    ) => {
+      assert.equal(eventName, "scroll");
+      assert.deepEqual(options, { passive: true });
+      scrollListeners.add(listener);
+    },
+    removeEventListener: (eventName: string, listener: () => void) => {
+      assert.equal(eventName, "scroll");
+      scrollListeners.delete(listener);
+    },
+  };
+  const viewport = {
+    addEventListener: (eventName: string, listener: () => void) => {
+      assert.equal(eventName, "resize");
+      resizeListeners.add(listener);
+    },
+    removeEventListener: (eventName: string, listener: () => void) => {
+      assert.equal(eventName, "resize");
+      resizeListeners.delete(listener);
+    },
+  };
+  let updateCount = 0;
+
+  const cleanup = attachTipTapRemoteCursorPositionSync({
+    editor,
+    scrollContainer,
+    viewport,
+    updateRemoteCursorPositions: () => {
+      updateCount += 1;
+    },
+  });
+
+  assert.equal(updateCount, 1);
+  assert.equal(scrollListeners.size, 1);
+  assert.equal(resizeListeners.size, 1);
+  assert.equal(editorListeners.get("update")?.size, 1);
+  assert.equal(editorListeners.get("selectionUpdate")?.size, 1);
+
+  scrollListeners.forEach((listener) => listener());
+  resizeListeners.forEach((listener) => listener());
+  editorListeners.get("update")?.forEach((listener) => listener());
+  editorListeners.get("selectionUpdate")?.forEach((listener) => listener());
+
+  assert.equal(updateCount, 5);
+
+  cleanup();
+  assert.equal(scrollListeners.size, 0);
+  assert.equal(resizeListeners.size, 0);
+  assert.equal(editorListeners.get("update")?.size, 0);
+  assert.equal(editorListeners.get("selectionUpdate")?.size, 0);
+
+  scrollListeners.forEach((listener) => listener());
+  resizeListeners.forEach((listener) => listener());
+  editorListeners.get("update")?.forEach((listener) => listener());
+  editorListeners.get("selectionUpdate")?.forEach((listener) => listener());
+
+  assert.equal(updateCount, 5);
 });
 
 test("MediaImagePickerView renders a library-first single-select image flow", () => {

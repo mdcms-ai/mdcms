@@ -12,6 +12,10 @@ import {
 
 import {
   appendMdcmsPreviewTokenToUrl,
+  type CollaborationPresenceCursor,
+  type CollaborationPresenceMode,
+  type CollaborationPresenceSnapshot,
+  type CollaborationPresenceUser,
   isRuntimeErrorLike,
   type MdcmsPreviewDocument,
   RuntimeError,
@@ -19,6 +23,7 @@ import {
   type StudioDocumentRouteMountContext,
   type StudioMountContext,
 } from "@mdcms/shared";
+import type * as Y from "yjs";
 
 import type { StudioDocumentRouteApi } from "../../document-route-api.js";
 import type { StudioSchemaState } from "../../schema-state.js";
@@ -35,15 +40,19 @@ import {
 import { MediaFieldControl } from "../components/editor/media-field-picker.js";
 import {
   TipTapEditor,
+  type TipTapEditorCursorSelection,
   type TipTapEditorHandle,
   type TipTapEditorMediaLibraryState,
   type TipTapEditorMediaUploadState,
+  type TipTapEditorRemoteCursor,
   type TipTapEditorSelectionInfo,
 } from "../components/editor/tiptap-editor.js";
+import { PresenceIndicators } from "../components/presence/presence-indicators.js";
 import { InlineAiBubble } from "../components/editor/inline-ai-bubble.js";
 import {
   createStudioAiRouteApi,
   type StudioAiRouteApi,
+  type StudioAiProposal,
 } from "../../ai-route-api.js";
 import { BreadcrumbTrail } from "../components/layout/page-header.js";
 import { AssistantLauncher } from "../components/assistant/assistant-launcher.js";
@@ -54,6 +63,11 @@ import {
   useAssistant,
   type AssistantActiveDocument,
 } from "../components/assistant/assistant-context.js";
+import {
+  applyAssistantCollaborationProposalDraft,
+  isAssistantCollaborationProposalApplicable,
+  type AssistantCollaborationPriorDraft,
+} from "../components/assistant/assistant-collaboration-apply.js";
 import { Badge } from "../components/ui/badge.js";
 import { Button } from "../components/ui/button.js";
 import {
@@ -94,6 +108,12 @@ import {
   createStudioMediaLibraryApi,
   type StudioMediaLibraryApi,
 } from "../lib/media-library-api.js";
+import { groupPresenceByDocument } from "../lib/collaboration-presence.js";
+import { useCollaborationPresence } from "../hooks/use-collaboration-presence.js";
+import {
+  useDocumentCollaboration,
+  type DocumentCollaborationConnectionStatus,
+} from "../hooks/use-document-collaboration.js";
 import {
   Select,
   SelectContent,
@@ -217,6 +237,223 @@ function replaceBrowserContentDocumentPreviewMode(
   );
 }
 
+export function createContentDocumentPresenceInput({
+  state,
+  cursor,
+}: {
+  state: ContentDocumentPageState;
+  cursor: CollaborationPresenceCursor | null;
+}): {
+  documentId: string | null;
+  mode: CollaborationPresenceMode;
+  cursor: CollaborationPresenceCursor | null;
+} {
+  const isEditingLatestDraft =
+    state.status === "ready" && state.canWrite && !state.viewingVersion;
+
+  return {
+    documentId: state.status === "ready" ? state.documentId : null,
+    mode: isEditingLatestDraft ? "edit" : "view",
+    cursor: isEditingLatestDraft ? cursor : null,
+  };
+}
+
+export function resolveContentDocumentEditorPresence({
+  snapshot,
+  documentId,
+  currentSessionId,
+  currentUser,
+  includeRemoteCursors = true,
+}: {
+  snapshot: CollaborationPresenceSnapshot | null;
+  documentId: string | null;
+  currentSessionId?: string | null;
+  currentUser?: CollaborationPresenceUser | null;
+  includeRemoteCursors?: boolean;
+}): {
+  users: CollaborationPresenceUser[];
+  remoteCursors: TipTapEditorRemoteCursor[];
+} {
+  if (!documentId) {
+    return { users: [], remoteCursors: [] };
+  }
+
+  const users = snapshot
+    ? (groupPresenceByDocument(snapshot.users, {
+        visibleDocumentIds: [documentId],
+      }).get(documentId) ?? [])
+    : [];
+  const visibleUsers =
+    currentUser &&
+    currentUser.documentId === documentId &&
+    !users.some((user) => user.sessionId === currentUser.sessionId)
+      ? [...users, currentUser]
+      : users;
+
+  return {
+    users: visibleUsers,
+    remoteCursors: includeRemoteCursors
+      ? visibleUsers.flatMap((user) =>
+          user.sessionId !== currentSessionId &&
+          user.sessionId !== currentUser?.sessionId &&
+          user.mode === "edit" &&
+          user.cursor
+            ? [
+                {
+                  sessionId: user.sessionId,
+                  label: user.label,
+                  color: user.color,
+                  cursor: user.cursor,
+                },
+              ]
+            : [],
+        )
+      : [],
+  };
+}
+
+type ContentDocumentEditorCollaborationInput = {
+  status: DocumentCollaborationConnectionStatus;
+  body: Y.XmlFragment;
+};
+
+export function resolveContentDocumentEditorCollaboration({
+  documentCollaboration,
+}: {
+  documentCollaboration?: ContentDocumentEditorCollaborationInput;
+}): {
+  editorCollaboration?: { body: Y.XmlFragment };
+  readOnlyBlockedByCollaboration: boolean;
+  publishBlockedByActiveCollaboration: boolean;
+} {
+  return {
+    editorCollaboration:
+      documentCollaboration?.status === "open"
+        ? { body: documentCollaboration.body }
+        : undefined,
+    readOnlyBlockedByCollaboration:
+      documentCollaboration !== undefined &&
+      documentCollaboration.status !== "open",
+    publishBlockedByActiveCollaboration: documentCollaboration !== undefined,
+  };
+}
+
+function getDocumentCollaborationStatusMessage(
+  status: DocumentCollaborationConnectionStatus,
+): string | null {
+  switch (status) {
+    case "connecting":
+      return "Connecting to the collaboration room. Editing is paused until the live session is ready.";
+    case "reconnecting":
+      return "Reconnecting to the collaboration room. Editing is paused until the live session is ready.";
+    case "closed":
+      return "The collaboration room disconnected. Editing is paused while Studio reconnects.";
+    case "error":
+      return "The collaboration room connection failed. Reload the page if editing does not recover.";
+    case "idle":
+    case "open":
+      return null;
+  }
+}
+
+function resolveEditorHandle(
+  ref: React.Ref<TipTapEditorHandle> | undefined,
+): TipTapEditorHandle | null {
+  return ref && typeof ref === "object" && "current" in ref
+    ? ref.current
+    : null;
+}
+
+function replaceCollaborationFrontmatter(
+  map: Y.Map<unknown> | null | undefined,
+  frontmatter: Record<string, unknown>,
+): void {
+  if (!map) {
+    return;
+  }
+
+  const nextKeys = new Set(Object.keys(frontmatter));
+  for (const key of Array.from(map.keys())) {
+    if (!nextKeys.has(key)) {
+      map.delete(key);
+    }
+  }
+
+  for (const [key, value] of Object.entries(frontmatter)) {
+    if (value === undefined) {
+      map.delete(key);
+    } else {
+      map.set(key, value);
+    }
+  }
+}
+
+export function resolveCollaborationDraftSaveSnapshot({
+  editor,
+  fallbackBody,
+  frontmatter,
+}: {
+  editor: Pick<TipTapEditorHandle, "getContent"> | null | undefined;
+  fallbackBody: string;
+  frontmatter: Record<string, unknown>;
+}): {
+  body: string;
+  frontmatter: Record<string, unknown>;
+} {
+  return {
+    body: editor?.getContent() ?? fallbackBody,
+    frontmatter,
+  };
+}
+
+function deriveLocalPresenceLabel(input: {
+  email: string;
+  userId: string;
+}): string {
+  const [localPart] = input.email.split("@", 1);
+  const label = localPart?.trim();
+
+  return label && label.length > 0 ? label : input.userId;
+}
+
+function deriveLocalPresenceColor(userId: string): string {
+  let hash = 0x811c9dc5;
+
+  for (let index = 0; index < userId.length; index += 1) {
+    hash ^= userId.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+
+  return `#${(hash >>> 0).toString(16).padStart(8, "0").slice(0, 6)}`;
+}
+
+function createCurrentEditorPresenceUser({
+  session,
+  documentId,
+  mode,
+  cursor,
+}: {
+  session: { id: string; userId: string; email: string } | null;
+  documentId: string | null;
+  mode: CollaborationPresenceMode;
+  cursor: CollaborationPresenceCursor | null;
+}): CollaborationPresenceUser | null {
+  if (!session || !documentId) {
+    return null;
+  }
+
+  return {
+    userId: session.userId,
+    sessionId: session.id,
+    label: deriveLocalPresenceLabel(session),
+    color: deriveLocalPresenceColor(session.userId),
+    documentId,
+    mode,
+    ...(cursor ? { cursor } : {}),
+    updatedAt: new Date().toISOString(),
+  };
+}
+
 function useLatestCallback<Args extends unknown[], Return>(
   callback: (...args: Args) => Return,
 ): (...args: Args) => Return {
@@ -309,7 +546,11 @@ type ContentDocumentPageViewProps = {
   sidebarOpen?: boolean;
   activeMdxComponent?: MdxPropsPanelSelection | null;
   onDraftChange?: (body: string) => void;
-  onFrontmatterFieldChange?: (fieldName: string, value: unknown) => void;
+  onFrontmatterFieldChange?: (
+    fieldName: string,
+    value: unknown,
+    options?: { syncCollaboration?: boolean },
+  ) => void;
   onActiveMdxComponentChange?: (
     selection: MdxPropsPanelSelection | null,
   ) => void;
@@ -336,6 +577,16 @@ type ContentDocumentPageViewProps = {
   mediaLibrary?: TipTapEditorMediaLibraryState;
   fileFieldMediaUploadApi?: StudioMediaUploadApi | null;
   fileFieldMediaLibraryApi?: Pick<StudioMediaLibraryApi, "get" | "list"> | null;
+  editorPresenceUsers?: CollaborationPresenceUser[];
+  remoteCursors?: TipTapEditorRemoteCursor[];
+  documentCollaboration?: {
+    status: DocumentCollaborationConnectionStatus;
+    body: Y.XmlFragment;
+    frontmatter?: Y.Map<unknown> | null;
+  };
+  onCursorSelectionChange?: (
+    selection: TipTapEditorCursorSelection | null,
+  ) => void;
   aiSelection?: TipTapEditorSelectionInfo | null;
   onAiSelectionChange?: (selection: TipTapEditorSelectionInfo | null) => void;
   aiApi?: StudioAiRouteApi;
@@ -769,7 +1020,11 @@ export function SidebarInfoTab(props: {
 
 function SidebarPropertiesTab(props: {
   state: ContentDocumentPageReadyState;
-  onFrontmatterFieldChange?: (fieldName: string, value: unknown) => void;
+  onFrontmatterFieldChange?: (
+    fieldName: string,
+    value: unknown,
+    options?: { syncCollaboration?: boolean },
+  ) => void;
   fileFieldMediaUploadApi?: StudioMediaUploadApi | null;
   fileFieldMediaLibraryApi?: Pick<StudioMediaLibraryApi, "get" | "list"> | null;
 }) {
@@ -1158,7 +1413,11 @@ function ContentDocumentPageSidebar(props: {
   state: ContentDocumentPageReadyState;
   context?: StudioMountContext;
   activeMdxComponent?: MdxPropsPanelSelection | null;
-  onFrontmatterFieldChange?: (fieldName: string, value: unknown) => void;
+  onFrontmatterFieldChange?: (
+    fieldName: string,
+    value: unknown,
+    options?: { syncCollaboration?: boolean },
+  ) => void;
   fileFieldMediaUploadApi?: StudioMediaUploadApi | null;
   fileFieldMediaLibraryApi?: Pick<StudioMediaLibraryApi, "get" | "list"> | null;
   onViewVersion?: (version: number) => void;
@@ -1883,6 +2142,10 @@ function useContentDocumentPageViewElement({
   mediaLibrary,
   fileFieldMediaUploadApi,
   fileFieldMediaLibraryApi,
+  editorPresenceUsers = [],
+  remoteCursors = [],
+  documentCollaboration,
+  onCursorSelectionChange,
   aiSelection,
   onAiSelectionChange,
   aiApi,
@@ -1956,12 +2219,19 @@ function useContentDocumentPageViewElement({
         ? "enabled"
         : "blocked"
       : "idle";
+  const editorCollaboration = resolveContentDocumentEditorCollaboration({
+    documentCollaboration,
+  });
+  const documentCollaborationStatusMessage = documentCollaboration
+    ? getDocumentCollaborationStatusMessage(documentCollaboration.status)
+    : null;
   const canPublish =
     state.status === "ready" &&
     state.canWrite &&
     state.saveState === "saved" &&
     state.document.hasUnpublishedChanges &&
-    state.publishState !== "publishing";
+    state.publishState !== "publishing" &&
+    !editorCollaboration.publishBlockedByActiveCollaboration;
 
   const canSaveNow =
     state.status === "ready" &&
@@ -1994,6 +2264,103 @@ function useContentDocumentPageViewElement({
     return () => document.removeEventListener("keydown", onKey);
   }, [canSaveNow, triggerSaveShortcut]);
 
+  const applyCollaborationDraft = useLatestCallback(
+    (draft: {
+      body: string;
+      frontmatter: Record<string, unknown>;
+      applyBodyToEditor: boolean;
+    }) => {
+      if (draft.applyBodyToEditor) {
+        resolveEditorHandle(editorRef)?.applyAssistantContent(draft.body);
+      }
+
+      replaceCollaborationFrontmatter(
+        documentCollaboration?.frontmatter,
+        draft.frontmatter,
+      );
+
+      onDraftChange?.(draft.body);
+      const currentFrontmatter =
+        state.status === "ready" ? state.draftFrontmatter : {};
+      for (const key of new Set([
+        ...Object.keys(currentFrontmatter),
+        ...Object.keys(draft.frontmatter),
+      ])) {
+        if (
+          !areJsonValuesEqual(currentFrontmatter[key], draft.frontmatter[key])
+        ) {
+          onFrontmatterFieldChange?.(key, draft.frontmatter[key], {
+            syncCollaboration: false,
+          });
+        }
+      }
+    },
+  );
+
+  const applyCollaborationProposal = useLatestCallback(
+    async ({ proposal }: { proposal: StudioAiProposal }) => {
+      if (
+        state.status !== "ready" ||
+        documentCollaboration?.status !== "open"
+      ) {
+        return null;
+      }
+
+      const editor = resolveEditorHandle(editorRef);
+      const body = editor?.getContent() ?? state.draftBody;
+      if (
+        !isAssistantCollaborationProposalApplicable({
+          proposal,
+          documentId: state.documentId,
+        })
+      ) {
+        return null;
+      }
+
+      const result = applyAssistantCollaborationProposalDraft({
+        proposal,
+        documentId: state.documentId,
+        body,
+        frontmatter: state.draftFrontmatter,
+      });
+
+      applyCollaborationDraft({
+        body: result.body,
+        frontmatter: result.frontmatter,
+        applyBodyToEditor: result.body !== body,
+      });
+
+      return result;
+    },
+  );
+
+  const undoCollaborationProposal = useLatestCallback(
+    async ({
+      priorDraft,
+    }: {
+      proposal: StudioAiProposal;
+      priorDraft: AssistantCollaborationPriorDraft;
+    }) => {
+      if (
+        state.status !== "ready" ||
+        documentCollaboration?.status !== "open"
+      ) {
+        throw new RuntimeError({
+          code: "AI_UNDO_UNAVAILABLE",
+          message:
+            "Undo is only available while the active collaboration room is connected.",
+          statusCode: 409,
+        });
+      }
+
+      applyCollaborationDraft({
+        body: priorDraft.body,
+        frontmatter: priorDraft.frontmatter,
+        applyBodyToEditor: true,
+      });
+    },
+  );
+
   // Publish the active document to the assistant rail so the chat surface
   // can attach the right document context + resolve the schema hash on
   // accept. The live editor selection is included so document chat can
@@ -2017,6 +2384,12 @@ function useContentDocumentPageViewElement({
         schemaHash,
         project: assistantReadyState.route.project,
         environment: assistantReadyState.route.initialEnvironment,
+        ...(documentCollaboration?.status === "open"
+          ? {
+              applyCollaborationProposal,
+              undoCollaborationProposal,
+            }
+          : {}),
         ...(aiSelection
           ? {
               selection: {
@@ -2026,7 +2399,13 @@ function useContentDocumentPageViewElement({
             }
           : {}),
       };
-    }, [assistantReadyState, aiSelection]);
+    }, [
+      assistantReadyState,
+      aiSelection,
+      applyCollaborationProposal,
+      documentCollaboration?.status,
+      undoCollaborationProposal,
+    ]);
 
   return (
     <AssistantActiveDocumentProvider value={assistantActiveDocument}>
@@ -2065,6 +2444,18 @@ function useContentDocumentPageViewElement({
                   mode={activePreviewMode}
                   onModeChange={setPreviewMode}
                 />
+              ) : null}
+
+              {state.status === "ready" && editorPresenceUsers.length > 0 ? (
+                <div
+                  data-mdcms-editor-collaborators="true"
+                  className="flex h-8 items-center"
+                >
+                  <PresenceIndicators
+                    users={editorPresenceUsers}
+                    maxVisible={4}
+                  />
+                </div>
               ) : null}
 
               {state.status === "ready" &&
@@ -2148,6 +2539,9 @@ function useContentDocumentPageViewElement({
                   size="sm"
                   disabled={!canPublish}
                   onClick={() => onPublishDialogOpenChange?.(true)}
+                  data-mdcms-document-publish-disabled={
+                    !canPublish ? "true" : undefined
+                  }
                   data-mdcms-document-unpublished-changes={
                     state.document.hasUnpublishedChanges ? "true" : undefined
                   }
@@ -2258,7 +2652,14 @@ function useContentDocumentPageViewElement({
                         onChange={onDraftChange}
                         onActiveMdxComponentChange={onActiveMdxComponentChange}
                         onSelectionTextChange={onAiSelectionChange}
-                        readOnly={!state.canWrite || !!state.viewingVersion}
+                        onCursorSelectionChange={onCursorSelectionChange}
+                        remoteCursors={remoteCursors}
+                        readOnly={
+                          !state.canWrite ||
+                          !!state.viewingVersion ||
+                          editorCollaboration.readOnlyBlockedByCollaboration
+                        }
+                        collaboration={editorCollaboration.editorCollaboration}
                         forbidden={false}
                         mediaUpload={editorMediaUpload}
                         mediaLibrary={editorMediaLibrary}
@@ -2275,6 +2676,18 @@ function useContentDocumentPageViewElement({
                                     onSchemaSync,
                                   })
                                 : null}
+
+                            {documentCollaboration &&
+                            documentCollaborationStatusMessage ? (
+                              <div
+                                data-mdcms-document-collaboration-status={
+                                  documentCollaboration.status
+                                }
+                                className="rounded-md border border-warning/40 bg-warning-subtle px-4 py-3 text-sm text-foreground"
+                              >
+                                {documentCollaborationStatusMessage}
+                              </div>
+                            ) : null}
 
                             {state.mutationError ? (
                               <div
@@ -2642,6 +3055,8 @@ function useContentDocumentPageController({
     useState<MdxPropsPanelSelection | null>(null);
   const [aiSelection, setAiSelection] =
     useState<TipTapEditorSelectionInfo | null>(null);
+  const [cursorSelection, setCursorSelection] =
+    useState<TipTapEditorCursorSelection | null>(null);
   const [mediaUploadState, setMediaUploadState] =
     useState<MediaUploadControllerState>({ status: "idle" });
   const mediaUploadStateRef = useRef(mediaUploadState);
@@ -2702,6 +3117,56 @@ function useContentDocumentPageController({
   }, [activeContext, route]);
   const stateRef = useRef(state);
   const loadRequestIdRef = useRef(0);
+  const presenceInput = createContentDocumentPresenceInput({
+    state,
+    cursor: cursorSelection,
+  });
+  const collaborationPresence = useCollaborationPresence(presenceInput);
+  const documentCollaboration = useDocumentCollaboration({
+    enabled:
+      state.status === "ready" && state.canWrite && !state.viewingVersion,
+    documentId: state.status === "ready" ? state.documentId : null,
+  });
+  const currentEditorPresenceUser = useMemo(
+    () =>
+      createCurrentEditorPresenceUser({
+        session:
+          session.status === "authenticated" &&
+          collaborationPresence.status === "open"
+            ? session.session
+            : null,
+        documentId: presenceInput.documentId,
+        mode: presenceInput.mode,
+        cursor: presenceInput.cursor,
+      }),
+    [
+      collaborationPresence.status,
+      presenceInput.cursor,
+      presenceInput.documentId,
+      presenceInput.mode,
+      session,
+    ],
+  );
+  const editorPresence = useMemo(
+    () =>
+      resolveContentDocumentEditorPresence({
+        snapshot: collaborationPresence.snapshot,
+        documentId: presenceInput.documentId,
+        currentSessionId: collaborationPresence.currentSessionId,
+        currentUser: currentEditorPresenceUser,
+        includeRemoteCursors: presenceInput.mode === "edit",
+      }),
+    [
+      collaborationPresence.currentSessionId,
+      collaborationPresence.snapshot,
+      currentEditorPresenceUser,
+      presenceInput.documentId,
+      presenceInput.mode,
+    ],
+  );
+  useEffect(() => {
+    setCursorSelection(null);
+  }, [documentId, presenceInput.mode]);
   const canBrowseMediaLibrary =
     state.status === "ready" &&
     state.canWrite &&
@@ -3034,7 +3499,8 @@ function useContentDocumentPageController({
       !api ||
       !requestRoute ||
       currentState.status !== "ready" ||
-      !currentState.canWrite
+      !currentState.canWrite ||
+      documentCollaboration.enabled
     ) {
       return;
     }
@@ -3194,13 +3660,8 @@ function useContentDocumentPageController({
     const currentState = stateRef.current;
     const requestContext = activeContext;
     const requestRoute = route;
-    const api = createRouteApi({
-      context: requestContext,
-      route: requestRoute,
-    });
 
     if (
-      !api ||
       // Fail closed when the embedded host cannot derive the local schema hash
       // required by guarded draft-write routes.
       !requestRoute ||
@@ -3235,6 +3696,86 @@ function useContentDocumentPageController({
       documentId: currentState.documentId,
       route: requestRoute,
     });
+
+    if (documentCollaboration.enabled) {
+      if (documentCollaboration.status !== "open") {
+        return false;
+      }
+
+      setState((current) =>
+        current.status === "ready"
+          ? reduceContentDocumentPageReadyState(current, {
+              type: "saveStarted",
+            })
+          : current,
+      );
+
+      try {
+        const result = await documentCollaboration.flush();
+
+        if (result.status === "error") {
+          setState((current) =>
+            current.status === "ready" &&
+            matchesContentDocumentRouteRequestToken(requestToken, current)
+              ? applyFailedDraftSaveToReadyState({
+                  state: current,
+                  requestBody,
+                  requestFrontmatter,
+                  message: result.message,
+                })
+              : current,
+          );
+          return false;
+        }
+
+        const persistedSnapshot = resolveCollaborationDraftSaveSnapshot({
+          editor: editorRef.current,
+          fallbackBody: requestBody,
+          frontmatter: requestFrontmatter,
+        });
+
+        setState((current) =>
+          current.status === "ready" &&
+          matchesContentDocumentRouteRequestToken(requestToken, current)
+            ? applySuccessfulDraftSaveToReadyState({
+                state: current,
+                requestBody,
+                requestFrontmatter,
+                persistedBody: persistedSnapshot.body,
+                persistedFrontmatter: persistedSnapshot.frontmatter,
+                updatedAt: currentState.document.updatedAt,
+                draftRevision: result.draftRevision,
+              })
+            : current,
+        );
+        return true;
+      } catch (error) {
+        setState((current) =>
+          current.status === "ready" &&
+          matchesContentDocumentRouteRequestToken(requestToken, current)
+            ? applyFailedDraftSaveToReadyState({
+                state: current,
+                requestBody,
+                requestFrontmatter,
+                message:
+                  error instanceof Error
+                    ? error.message
+                    : "Collaboration save failed.",
+              })
+            : current,
+        );
+        return false;
+      }
+    }
+
+    const api = createRouteApi({
+      context: requestContext,
+      route: requestRoute,
+    });
+
+    if (!api) {
+      return false;
+    }
 
     setState((current) =>
       current.status === "ready"
@@ -3834,7 +4375,12 @@ function useContentDocumentPageController({
     return () => {
       clearTimeout(timeout);
     };
-  }, [saveDraft, state]);
+  }, [
+    documentCollaboration.enabled,
+    documentCollaboration.status,
+    saveDraft,
+    state,
+  ]);
 
   useEffect(() => {
     if (
@@ -3881,7 +4427,20 @@ function useContentDocumentPageController({
           : current,
       );
     },
-    onFrontmatterFieldChange: (fieldName, value) => {
+    onFrontmatterFieldChange: (fieldName, value, options) => {
+      if (
+        options?.syncCollaboration !== false &&
+        documentCollaboration.enabled &&
+        documentCollaboration.status === "open" &&
+        documentCollaboration.frontmatter
+      ) {
+        if (value === undefined) {
+          documentCollaboration.frontmatter.delete(fieldName);
+        } else {
+          documentCollaboration.frontmatter.set(fieldName, value);
+        }
+      }
+
       setState((current) =>
         current.status === "ready"
           ? reduceContentDocumentPageReadyState(current, {
@@ -3953,6 +4512,17 @@ function useContentDocumentPageController({
     mediaLibrary,
     fileFieldMediaUploadApi: mediaUploadApi,
     fileFieldMediaLibraryApi: mediaLibraryApi,
+    editorPresenceUsers: editorPresence.users,
+    remoteCursors: editorPresence.remoteCursors,
+    documentCollaboration:
+      documentCollaboration.enabled && documentCollaboration.body
+        ? {
+            status: documentCollaboration.status,
+            body: documentCollaboration.body,
+            frontmatter: documentCollaboration.frontmatter,
+          }
+        : undefined,
+    onCursorSelectionChange: setCursorSelection,
     editorRef,
     onViewVersion: (version) => {
       void handleViewVersion(version);

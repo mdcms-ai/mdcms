@@ -2,7 +2,7 @@
 status: live
 canonical: true
 created: 2026-03-11
-last_updated: 2026-06-10
+last_updated: 2026-06-14
 ---
 
 # SPEC-010 Media, Webhooks, Search, and Integrations
@@ -224,15 +224,15 @@ Validation rules:
 
 ### Events
 
-| Event                 | Trigger                                                                                                                                                                                                      |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `content.created`     | A new document is created                                                                                                                                                                                    |
-| `content.updated`     | Draft content persisted (includes editor auto-save ticks and explicit draft writes). Intended for staging/preview cache invalidation — production consumers should subscribe to `content.published` instead. |
-| `content.published`   | A document is published                                                                                                                                                                                      |
-| `content.unpublished` | A document is unpublished (`published_version` cleared)                                                                                                                                                      |
-| `content.deleted`     | A document is soft-deleted                                                                                                                                                                                   |
-| `content.restored`    | A deleted document is restored                                                                                                                                                                               |
-| `media.uploaded`      | A media file is uploaded                                                                                                                                                                                     |
+| Event                 | Trigger                                                                                                                                                                                                                                                               |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `content.created`     | A new document is created                                                                                                                                                                                                                                             |
+| `content.updated`     | Draft content persisted (includes single-user editor auto-save ticks, active collaboration autosaves/final saves, and explicit draft writes). Intended for staging/preview cache invalidation — production consumers should subscribe to `content.published` instead. |
+| `content.published`   | A document is published                                                                                                                                                                                                                                               |
+| `content.unpublished` | A document is unpublished (`published_version` cleared)                                                                                                                                                                                                               |
+| `content.deleted`     | A document is soft-deleted                                                                                                                                                                                                                                            |
+| `content.restored`    | A deleted document is restored                                                                                                                                                                                                                                        |
+| `media.uploaded`      | A media file is uploaded                                                                                                                                                                                                                                              |
 
 ### Payload Format
 

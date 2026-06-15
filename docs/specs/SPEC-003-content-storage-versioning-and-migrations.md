@@ -2,7 +2,7 @@
 status: live
 canonical: true
 created: 2026-03-11
-last_updated: 2026-06-11
+last_updated: 2026-06-14
 ---
 
 # SPEC-003 Content Storage, Versioning, and Migrations
@@ -146,8 +146,8 @@ flowchart LR
 Studio draft persistence depends on the active editor mode:
 
 - **Single-user draft auto-save** serializes the current editor state to markdown/MDX and persists it to the `documents` row (for example, after the last change or on editor blur).
-- **Collaborative editing** stores active Yjs state in Redis and persists to PostgreSQL only on the last-disconnect final save. Periodic/debounced PostgreSQL autosave from active collaboration rooms is deferred.
-- Single-user HTTP draft auto-save and collaboration final-save DB writes are silent draft `UPDATE`s — they never create version rows and never pollute history.
+- **Collaborative editing** stores active Yjs state in Redis and persists durable draft state to PostgreSQL through server-owned active collaboration autosave and last-disconnect final save. Active collaboration autosave serializes the current Y.Doc to markdown/MDX, combines it with the room's current frontmatter draft state, updates the `documents` row, increments `draft_revision`, and emits `content.updated` only when the draft head changes.
+- Single-user HTTP draft auto-save, collaboration autosave, and collaboration final-save DB writes are silent draft `UPDATE`s — they never create version rows and never pollute history.
 - If Redis is lost (crash, flush), the last saved draft in PostgreSQL is the recovery point.
 
 ### Soft Delete
@@ -654,7 +654,7 @@ The deterministic error contract for a blocked existing-document mutation is:
 - Code: `DOCUMENT_COLLABORATION_ACTIVE`
 - Details: `{ documentId }`
 
-The active collaboration lock is separate from the inactive Yjs cache. A Yjs state cache may remain in Redis for 30 minutes after the last collaborator disconnects, but that inactive cache must not block content mutations.
+The active collaboration lock is separate from the inactive Yjs cache. A Yjs state cache may remain in Redis for 30 minutes after the last collaborator disconnects, but that inactive cache must not block content mutations. Any successful existing-document content mutation that changes or deletes the draft head while no active collaboration lock exists must invalidate the inactive Yjs state and metadata for that document after the database transaction succeeds. This includes CLI-driven `cms push` updates/deletes and equivalent server content-store writes. If Redis invalidation fails after the database commit, the mutation remains successful; the next collaboration room load must still reject stale cache through draft-revision/body-hash metadata checks and rebuild from PostgreSQL.
 
 ### CMS ↔ CLI (Draft-Revision Optimistic Concurrency)
 
