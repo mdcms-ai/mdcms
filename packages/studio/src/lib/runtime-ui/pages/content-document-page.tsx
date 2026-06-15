@@ -332,6 +332,24 @@ export function resolveContentDocumentEditorCollaboration({
   };
 }
 
+function getDocumentCollaborationStatusMessage(
+  status: DocumentCollaborationConnectionStatus,
+): string | null {
+  switch (status) {
+    case "connecting":
+      return "Connecting to the collaboration room. Editing is paused until the live session is ready.";
+    case "reconnecting":
+      return "Reconnecting to the collaboration room. Editing is paused until the live session is ready.";
+    case "closed":
+      return "The collaboration room disconnected. Editing is paused while Studio reconnects.";
+    case "error":
+      return "The collaboration room connection failed. Reload the page if editing does not recover.";
+    case "idle":
+    case "open":
+      return null;
+  }
+}
+
 export function resolveCollaborationDraftSaveSnapshot({
   editor,
   fallbackBody,
@@ -2153,6 +2171,9 @@ function useContentDocumentPageViewElement({
   const editorCollaboration = resolveContentDocumentEditorCollaboration({
     documentCollaboration,
   });
+  const documentCollaborationStatusMessage = documentCollaboration
+    ? getDocumentCollaborationStatusMessage(documentCollaboration.status)
+    : null;
   const canPublish =
     state.status === "ready" &&
     state.canWrite &&
@@ -2495,6 +2516,18 @@ function useContentDocumentPageViewElement({
                                     onSchemaSync,
                                   })
                                 : null}
+
+                            {documentCollaboration &&
+                            documentCollaborationStatusMessage ? (
+                              <div
+                                data-mdcms-document-collaboration-status={
+                                  documentCollaboration.status
+                                }
+                                className="rounded-md border border-warning/40 bg-warning-subtle px-4 py-3 text-sm text-foreground"
+                              >
+                                {documentCollaborationStatusMessage}
+                              </div>
+                            ) : null}
 
                             {state.mutationError ? (
                               <div

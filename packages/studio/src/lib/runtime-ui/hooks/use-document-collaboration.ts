@@ -19,10 +19,15 @@ import {
   parseCollaborationFlushResult,
   type CollaborationFlushResult,
 } from "../lib/collaboration-document.js";
+import {
+  getCollaborationReconnectDelayMs,
+  isCollaborationCloseRetryable,
+} from "../lib/collaboration-reconnect.js";
 
 export type DocumentCollaborationConnectionStatus =
   | "idle"
   | "connecting"
+  | "reconnecting"
   | "open"
   | "closed"
   | "error";
@@ -193,13 +198,13 @@ export function useDocumentCollaboration({
     }
 
     let disposed = false;
-    const socket = new WebSocket(connectionConfig.webSocketUrl);
-    socket.binaryType = "arraybuffer";
-    socketRef.current = socket;
-    setStatus("connecting");
+    let fatalClose = false;
+    let reconnectAttempt = 0;
+    let reconnectTimeout: ReturnType<typeof setTimeout> | undefined;
 
     const sendIfOpen = (data: Uint8Array | string) => {
-      if (!disposed && socket.readyState === WebSocket.OPEN) {
+      const socket = socketRef.current;
+      if (!disposed && socket?.readyState === WebSocket.OPEN) {
         socket.send(data);
       }
     };
@@ -216,107 +221,168 @@ export function useDocumentCollaboration({
 
     documentState.document.on("update", onLocalUpdate);
 
-    socket.onopen = () => {
+    const clearReconnect = () => {
+      if (reconnectTimeout !== undefined) {
+        clearTimeout(reconnectTimeout);
+        reconnectTimeout = undefined;
+      }
+    };
+
+    let connect: () => void;
+    const scheduleReconnect = () => {
       if (disposed) {
         return;
       }
 
-      socket.send(
-        encodeCollaborationAuthMessage(connectionConfig.documentName),
-      );
-      socket.send(
-        encodeCollaborationSyncStep1Message(
-          connectionConfig.documentName,
-          documentState.document,
-        ),
-      );
+      const delayMs = getCollaborationReconnectDelayMs(reconnectAttempt);
+      reconnectAttempt += 1;
+      setStatus("reconnecting");
+      reconnectTimeout = setTimeout(() => {
+        reconnectTimeout = undefined;
+        connect();
+      }, delayMs);
     };
 
-    socket.onmessage = (event) => {
-      void (async () => {
-        const data = await readWebSocketMessageData(event.data);
+    connect = () => {
+      if (disposed) {
+        return;
+      }
 
-        if (disposed || data === null) {
+      const socket = new WebSocket(connectionConfig.webSocketUrl);
+      socket.binaryType = "arraybuffer";
+      socketRef.current = socket;
+      setStatus(reconnectAttempt === 0 ? "connecting" : "reconnecting");
+
+      socket.onopen = () => {
+        if (disposed) {
           return;
         }
 
-        if (typeof data === "string") {
-          const flushResult = parseCollaborationFlushResult(data);
+        reconnectAttempt = 0;
+        socket.send(
+          encodeCollaborationAuthMessage(connectionConfig.documentName),
+        );
+        socket.send(
+          encodeCollaborationSyncStep1Message(
+            connectionConfig.documentName,
+            documentState.document,
+          ),
+        );
+      };
 
-          if (flushResult) {
-            const pending = pendingFlushesRef.current.get(
-              flushResult.requestId,
-            );
+      socket.onmessage = (event) => {
+        void (async () => {
+          const data = await readWebSocketMessageData(event.data);
 
-            if (pending) {
-              clearTimeout(pending.timeout);
-              pendingFlushesRef.current.delete(flushResult.requestId);
-              pending.resolve(flushResult);
-            }
+          if (disposed || data === null) {
+            return;
           }
 
+          if (typeof data === "string") {
+            const flushResult = parseCollaborationFlushResult(data);
+
+            if (flushResult) {
+              const pending = pendingFlushesRef.current.get(
+                flushResult.requestId,
+              );
+
+              if (pending) {
+                clearTimeout(pending.timeout);
+                pendingFlushesRef.current.delete(flushResult.requestId);
+                pending.resolve(flushResult);
+              }
+            }
+
+            return;
+          }
+
+          const result = handleCollaborationSyncMessage({
+            documentName: connectionConfig.documentName,
+            document: documentState.document,
+            data,
+            transactionOrigin: SOCKET_UPDATE_ORIGIN,
+            send: sendIfOpen,
+          });
+
+          if (result.type === "sync") {
+            setStatus("open");
+          }
+
+          if (result.type === "permission-denied" || result.type === "close") {
+            fatalClose = true;
+            setStatus("error");
+            rejectPendingFlushes(
+              pendingFlushesRef.current,
+              new Error("Document collaboration socket failed."),
+            );
+            if (
+              socket.readyState === WebSocket.OPEN ||
+              socket.readyState === WebSocket.CONNECTING
+            ) {
+              socket.close();
+            }
+          }
+        })();
+      };
+
+      socket.onclose = (event) => {
+        if (disposed) {
           return;
         }
 
-        const result = handleCollaborationSyncMessage({
-          documentName: connectionConfig.documentName,
-          document: documentState.document,
-          data,
-          transactionOrigin: SOCKET_UPDATE_ORIGIN,
-          send: sendIfOpen,
-        });
-
-        if (result.type === "sync") {
-          setStatus("open");
+        if (socketRef.current === socket) {
+          socketRef.current = null;
         }
 
-        if (result.type === "permission-denied" || result.type === "close") {
+        rejectPendingFlushes(
+          pendingFlushesRef.current,
+          new Error("Document collaboration socket closed."),
+        );
+
+        const shouldReconnect =
+          !fatalClose && isCollaborationCloseRetryable({ code: event.code });
+        if (shouldReconnect) {
+          scheduleReconnect();
+        } else {
           setStatus("error");
         }
-      })();
+      };
+
+      socket.onerror = () => {
+        if (disposed) {
+          return;
+        }
+
+        setStatus("reconnecting");
+        rejectPendingFlushes(
+          pendingFlushesRef.current,
+          new Error("Document collaboration socket failed."),
+        );
+        if (
+          socket.readyState === WebSocket.OPEN ||
+          socket.readyState === WebSocket.CONNECTING
+        ) {
+          socket.close();
+        }
+      };
     };
 
-    socket.onclose = () => {
-      if (disposed) {
-        return;
-      }
-
-      setStatus("closed");
-      rejectPendingFlushes(
-        pendingFlushesRef.current,
-        new Error("Document collaboration socket closed."),
-      );
-    };
-
-    socket.onerror = () => {
-      if (disposed) {
-        return;
-      }
-
-      setStatus("error");
-      rejectPendingFlushes(
-        pendingFlushesRef.current,
-        new Error("Document collaboration socket failed."),
-      );
-    };
+    connect();
 
     return () => {
       disposed = true;
+      fatalClose = true;
+      clearReconnect();
       documentState.document.off("update", onLocalUpdate);
       rejectPendingFlushes(
         pendingFlushesRef.current,
         new Error("Document collaboration disconnected."),
       );
 
-      if (
-        socket.readyState === WebSocket.OPEN ||
-        socket.readyState === WebSocket.CONNECTING
-      ) {
-        socket.close();
-      }
-
-      if (socketRef.current === socket) {
+      const socket = socketRef.current;
+      if (socket) {
         socketRef.current = null;
+        socket.close();
       }
     };
   }, [connectionConfig, documentState]);

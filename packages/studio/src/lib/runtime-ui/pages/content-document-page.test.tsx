@@ -673,6 +673,20 @@ test("ContentDocumentPageView disables publish while a collaboration room is act
   assert.match(markup, /disabled=""/);
 });
 
+test("ContentDocumentPageView renders document collaboration reconnect status", () => {
+  const document = new Y.Doc();
+  const body = document.getXmlFragment("default");
+  const markup = renderPageMarkup(createReadyState(), {
+    documentCollaboration: { status: "reconnecting", body },
+  });
+
+  assert.match(
+    markup,
+    /data-mdcms-document-collaboration-status="reconnecting"/,
+  );
+  assert.match(markup, /Reconnecting to the collaboration room/);
+});
+
 test("ContentDocumentPageView renders document route loading and failure states", () => {
   const loadingMarkup = renderPageMarkup(
     createContentDocumentPageState({

@@ -58,6 +58,11 @@ Active collaboration transport contract:
     presence heartbeat for one Studio session
 - The active-room key is a heartbeat lease held only while collaborators are connected. It is distinct from the inactive Yjs cache, which may remain for 30 minutes after the last disconnect.
 - If Redis is unavailable, collaboration upgrade requests fail before upgrade with `503` and error code `COLLABORATION_UNAVAILABLE`; the rest of the HTTP API can still boot and serve non-collaboration traffic.
+- Studio clients treat transient document-room and target-presence WebSocket
+  closes as recoverable and reconnect with bounded backoff. Authorization
+  failures (`4401`/`4403`) fail closed. During document-room reconnect, Studio
+  visibly reports the degraded connection state and keeps the editor read-only
+  until the room is synchronized again.
 
 #### Collaboration Authorization Flow
 

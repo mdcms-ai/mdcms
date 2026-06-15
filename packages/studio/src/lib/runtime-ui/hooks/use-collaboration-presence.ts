@@ -14,12 +14,17 @@ import {
   PRESENCE_HEARTBEAT_INTERVAL_MS,
   parsePresenceSnapshot,
 } from "../lib/collaboration-presence.js";
+import {
+  getCollaborationReconnectDelayMs,
+  isCollaborationCloseRetryable,
+} from "../lib/collaboration-reconnect.js";
 import { useStudioMountInfo } from "../app/admin/mount-info-context.js";
 import { useStudioSession } from "../app/admin/session-context.js";
 
 export type CollaborationPresenceConnectionStatus =
   | "idle"
   | "connecting"
+  | "reconnecting"
   | "open"
   | "closed"
   | "error";
@@ -124,13 +129,19 @@ export function useCollaborationPresence({
     }
 
     let disposed = false;
-    const socket = new WebSocket(webSocketUrl);
+    let reconnectAttempt = 0;
+    let reconnectTimeout: ReturnType<typeof setTimeout> | undefined;
     let heartbeatInterval: ReturnType<typeof setInterval> | undefined;
-    socketRef.current = socket;
     setSnapshot(null);
-    setStatus("connecting");
 
-    const sendPresenceUpdate = () => {
+    const clearReconnect = () => {
+      if (reconnectTimeout !== undefined) {
+        clearTimeout(reconnectTimeout);
+        reconnectTimeout = undefined;
+      }
+    };
+
+    const sendPresenceUpdate = (socket: WebSocket) => {
       if (socket.readyState === WebSocket.OPEN) {
         socket.send(updateMessageRef.current);
       }
@@ -143,57 +154,99 @@ export function useCollaborationPresence({
       }
     };
 
-    socket.addEventListener("open", () => {
+    const scheduleReconnect = () => {
       if (disposed) {
         return;
       }
 
-      setStatus("open");
-      sendPresenceUpdate();
-      heartbeatInterval = setInterval(
-        sendPresenceUpdate,
-        PRESENCE_HEARTBEAT_INTERVAL_MS,
-      );
-    });
+      const delayMs = getCollaborationReconnectDelayMs(reconnectAttempt);
+      reconnectAttempt += 1;
+      setSnapshot(null);
+      setStatus("reconnecting");
+      reconnectTimeout = setTimeout(() => {
+        reconnectTimeout = undefined;
+        connect();
+      }, delayMs);
+    };
 
-    socket.addEventListener("message", (event) => {
+    const connect = () => {
       if (disposed) {
         return;
       }
 
-      const nextSnapshot = parsePresenceSnapshot(event.data);
-      if (nextSnapshot) {
-        setSnapshot(nextSnapshot);
-      }
-    });
+      const socket = new WebSocket(webSocketUrl);
+      socketRef.current = socket;
+      setStatus(reconnectAttempt === 0 ? "connecting" : "reconnecting");
 
-    socket.addEventListener("error", () => {
-      if (disposed) {
-        return;
-      }
+      socket.addEventListener("open", () => {
+        if (disposed) {
+          return;
+        }
 
-      setStatus("error");
-    });
+        reconnectAttempt = 0;
+        setStatus("open");
+        sendPresenceUpdate(socket);
+        heartbeatInterval = setInterval(
+          () => sendPresenceUpdate(socket),
+          PRESENCE_HEARTBEAT_INTERVAL_MS,
+        );
+      });
 
-    socket.addEventListener("close", () => {
-      if (disposed) {
-        return;
-      }
+      socket.addEventListener("message", (event) => {
+        if (disposed) {
+          return;
+        }
 
-      clearHeartbeat();
-      if (socketRef.current === socket) {
-        socketRef.current = null;
-      }
-      setStatus("closed");
-    });
+        const nextSnapshot = parsePresenceSnapshot(event.data);
+        if (nextSnapshot) {
+          setSnapshot(nextSnapshot);
+        }
+      });
+
+      socket.addEventListener("error", () => {
+        if (disposed) {
+          return;
+        }
+
+        setStatus("reconnecting");
+        if (
+          socket.readyState === WebSocket.OPEN ||
+          socket.readyState === WebSocket.CONNECTING
+        ) {
+          socket.close();
+        }
+      });
+
+      socket.addEventListener("close", (event) => {
+        if (disposed) {
+          return;
+        }
+
+        clearHeartbeat();
+        if (socketRef.current === socket) {
+          socketRef.current = null;
+        }
+
+        if (isCollaborationCloseRetryable({ code: event.code })) {
+          scheduleReconnect();
+        } else {
+          setSnapshot(null);
+          setStatus("error");
+        }
+      });
+    };
+
+    connect();
 
     return () => {
       disposed = true;
       clearHeartbeat();
-      if (socketRef.current === socket) {
+      clearReconnect();
+      const socket = socketRef.current;
+      if (socket) {
         socketRef.current = null;
+        socket.close();
       }
-      socket.close();
     };
   }, [connectionKey, webSocketUrl]);
 
