@@ -156,6 +156,7 @@ import { cn } from "../../lib/utils.js";
 export interface TipTapEditorHandle {
   getContent: () => string | null;
   setContent: (markdown: string) => void;
+  applyAssistantContent: (markdown: string) => void;
   /**
    * Returns the markdown serialization of the document slice between
    * `from` and `to`, plus the mode the caller should use when
@@ -2236,6 +2237,32 @@ function useTipTapEditorElement({
 
         // Refresh derived UI state that onUpdate would normally handle,
         // since we suppressed the update event above.
+        publishSelectedMdxComponent(editor);
+        syncSlashTrigger(editor);
+      },
+      applyAssistantContent(markdown: string) {
+        if (!editor || editor.isDestroyed) {
+          return;
+        }
+
+        const currentMarkdown = extractMarkdownFromEditor(editor);
+
+        if (currentMarkdown === markdown) {
+          lastEmittedMarkdownRef.current = currentMarkdown;
+          return;
+        }
+
+        if (markdownEmitTimerRef.current !== null) {
+          clearTimeout(markdownEmitTimerRef.current);
+          markdownEmitTimerRef.current = null;
+        }
+
+        mediaUploadInsertionTargetsRef.current.clear();
+        editor.commands.setContent(parseMarkdownToDocument(markdown), {
+          contentType: "json",
+          emitUpdate: true,
+        });
+        handleEditorUpdate(editor);
         publishSelectedMdxComponent(editor);
         syncSlashTrigger(editor);
       },

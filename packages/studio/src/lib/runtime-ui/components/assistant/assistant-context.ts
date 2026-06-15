@@ -16,6 +16,10 @@ import type {
   StudioAiRouteApi,
 } from "../../../ai-route-api.js";
 import type {
+  AssistantCollaborationPriorDraft,
+  AssistantCollaborationProposalDraftResult,
+} from "./assistant-collaboration-apply.js";
+import type {
   AssistantContextDoc,
   AssistantMessage,
   AssistantMessageContextSnapshot,
@@ -141,6 +145,11 @@ type AssistantAction =
       priorDraft?: { body: string; frontmatter: Record<string, unknown> };
       /** Draft revision the apply call produced. */
       postApplyDraftRevision?: number;
+      /**
+       * Proposal landed through the active collaboration room instead of
+       * the server apply endpoint.
+       */
+      acceptedViaCollaboration?: boolean;
     }
   | {
       /**
@@ -502,6 +511,13 @@ export type AssistantActiveDocument = {
     /** AI-facing selected span; complete block selections preserve markdown markers. */
     text: string;
   };
+  applyCollaborationProposal?: (input: {
+    proposal: StudioAiProposal;
+  }) => Promise<AssistantCollaborationProposalDraftResult | null>;
+  undoCollaborationProposal?: (input: {
+    proposal: StudioAiProposal;
+    priorDraft: AssistantCollaborationPriorDraft;
+  }) => Promise<void>;
 };
 
 function addDocumentPath(
@@ -1094,6 +1110,9 @@ function reducer(
                 : {}),
               ...(action.postApplyDraftRevision !== undefined
                 ? { postApplyDraftRevision: action.postApplyDraftRevision }
+                : {}),
+              ...(action.acceptedViaCollaboration !== undefined
+                ? { acceptedViaCollaboration: action.acceptedViaCollaboration }
                 : {}),
             },
           }
@@ -1862,12 +1881,50 @@ function useAssistantProviderModel({
       acceptProposal: (proposal) => {
         void (async () => {
           const liveApi = apiRef.current;
+          const liveDoc = activeDocumentRef.current;
+          const wireProposal = state.store.wireProposals[
+            proposal.proposalId
+          ] as StudioAiProposal | undefined;
           const placeholderUser: AssistantMessage = {
             id: `m-accept-${Date.now().toString(36)}`,
             role: "user",
             at: new Date().toISOString(),
             text: `Accept ${proposal.proposalId}`,
           };
+          try {
+            const collaborationApplyResult =
+              wireProposal && liveDoc?.applyCollaborationProposal
+                ? await liveDoc.applyCollaborationProposal({
+                    proposal: wireProposal,
+                  })
+                : null;
+
+            if (collaborationApplyResult && liveDoc) {
+              const acceptedAt = new Date().toISOString();
+              const hiddenMessage: AssistantMessage = {
+                id: `m-accept-signal-${Date.now().toString(36)}`,
+                role: "user",
+                at: acceptedAt,
+                text: describeAcceptanceForAgent(proposal),
+                hidden: true,
+              };
+              dispatch({
+                type: "mark-proposal-accepted",
+                threadId: state.activeThreadId,
+                proposalId: proposal.proposalId,
+                acceptedAt,
+                hiddenMessage,
+                acceptedDocumentId: liveDoc.documentId,
+                priorDraft: collaborationApplyResult.priorDraft,
+                acceptedViaCollaboration: true,
+              });
+              return;
+            }
+          } catch (error) {
+            appendErrorTurn(placeholderUser, error);
+            return;
+          }
+
           if (!liveApi) {
             appendErrorTurn(
               placeholderUser,
@@ -1898,12 +1955,6 @@ function useAssistantProviderModel({
             );
             return;
           }
-          // Send the wire-shape proposal body so the server doesn't
-          // need to look it up in its in-memory store — chat proposals
-          // live entirely client-side.
-          const wireProposal = state.store.wireProposals[
-            proposal.proposalId
-          ] as StudioAiProposal | undefined;
           try {
             const applyResult = await liveApi.applyProposal({
               proposalId: proposal.proposalId,
@@ -1969,12 +2020,51 @@ function useAssistantProviderModel({
         // can stay mounted and render an inline error — SPEC-014
         // says undo errors do NOT become chat error turns.
         const liveApi = apiRef.current;
+        const liveDoc = activeDocumentRef.current;
         if (!proposal.acceptedAt || !proposal.acceptedDocumentId) {
           throw new RuntimeError({
             code: "AI_UNDO_UNAVAILABLE",
             message: "Undo is not available for this proposal.",
             statusCode: 400,
           });
+        }
+        const wireProposal = state.store.wireProposals[proposal.proposalId] as
+          | StudioAiProposal
+          | undefined;
+        if (proposal.acceptedViaCollaboration) {
+          if (
+            !wireProposal ||
+            !proposal.priorDraft ||
+            !liveDoc?.undoCollaborationProposal
+          ) {
+            throw new RuntimeError({
+              code: "AI_UNDO_UNAVAILABLE",
+              message:
+                "Undo is only available while the active collaboration room is connected.",
+              statusCode: 409,
+            });
+          }
+
+          await liveDoc.undoCollaborationProposal({
+            proposal: wireProposal,
+            priorDraft: proposal.priorDraft,
+          });
+          const undoneAt = new Date().toISOString();
+          const hiddenMessage: AssistantMessage = {
+            id: `m-undo-signal-${Date.now().toString(36)}`,
+            role: "user",
+            at: undoneAt,
+            text: describeUndoForAgent(proposal),
+            hidden: true,
+          };
+          dispatch({
+            type: "mark-proposal-undone",
+            threadId: state.activeThreadId,
+            proposalId: proposal.proposalId,
+            undoneAt,
+            hiddenMessage,
+          });
+          return;
         }
         if (!liveApi) {
           throw new RuntimeError({
@@ -1993,9 +2083,6 @@ function useAssistantProviderModel({
             statusCode: 503,
           });
         }
-        const wireProposal = state.store.wireProposals[proposal.proposalId] as
-          | StudioAiProposal
-          | undefined;
         if (!wireProposal) {
           throw new RuntimeError({
             code: "AI_UNDO_UNAVAILABLE",

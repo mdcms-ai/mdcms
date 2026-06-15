@@ -52,6 +52,7 @@ import { InlineAiBubble } from "../components/editor/inline-ai-bubble.js";
 import {
   createStudioAiRouteApi,
   type StudioAiRouteApi,
+  type StudioAiProposal,
 } from "../../ai-route-api.js";
 import { BreadcrumbTrail } from "../components/layout/page-header.js";
 import { AssistantLauncher } from "../components/assistant/assistant-launcher.js";
@@ -62,6 +63,11 @@ import {
   useAssistant,
   type AssistantActiveDocument,
 } from "../components/assistant/assistant-context.js";
+import {
+  applyAssistantCollaborationProposalDraft,
+  isAssistantCollaborationProposalApplicable,
+  type AssistantCollaborationPriorDraft,
+} from "../components/assistant/assistant-collaboration-apply.js";
 import { Badge } from "../components/ui/badge.js";
 import { Button } from "../components/ui/button.js";
 import {
@@ -350,6 +356,38 @@ function getDocumentCollaborationStatusMessage(
   }
 }
 
+function resolveEditorHandle(
+  ref: React.Ref<TipTapEditorHandle> | undefined,
+): TipTapEditorHandle | null {
+  return ref && typeof ref === "object" && "current" in ref
+    ? ref.current
+    : null;
+}
+
+function replaceCollaborationFrontmatter(
+  map: Y.Map<unknown> | null | undefined,
+  frontmatter: Record<string, unknown>,
+): void {
+  if (!map) {
+    return;
+  }
+
+  const nextKeys = new Set(Object.keys(frontmatter));
+  for (const key of Array.from(map.keys())) {
+    if (!nextKeys.has(key)) {
+      map.delete(key);
+    }
+  }
+
+  for (const [key, value] of Object.entries(frontmatter)) {
+    if (value === undefined) {
+      map.delete(key);
+    } else {
+      map.set(key, value);
+    }
+  }
+}
+
 export function resolveCollaborationDraftSaveSnapshot({
   editor,
   fallbackBody,
@@ -540,6 +578,7 @@ type ContentDocumentPageViewProps = {
   documentCollaboration?: {
     status: DocumentCollaborationConnectionStatus;
     body: Y.XmlFragment;
+    frontmatter?: Y.Map<unknown> | null;
   };
   onCursorSelectionChange?: (
     selection: TipTapEditorCursorSelection | null,
@@ -2213,6 +2252,101 @@ function useContentDocumentPageViewElement({
     return () => document.removeEventListener("keydown", onKey);
   }, [canSaveNow, triggerSaveShortcut]);
 
+  const applyCollaborationDraft = useLatestCallback(
+    (draft: {
+      body: string;
+      frontmatter: Record<string, unknown>;
+      applyBodyToEditor: boolean;
+    }) => {
+      if (draft.applyBodyToEditor) {
+        resolveEditorHandle(editorRef)?.applyAssistantContent(draft.body);
+      }
+
+      replaceCollaborationFrontmatter(
+        documentCollaboration?.frontmatter,
+        draft.frontmatter,
+      );
+
+      onDraftChange?.(draft.body);
+      const currentFrontmatter =
+        state.status === "ready" ? state.draftFrontmatter : {};
+      for (const key of new Set([
+        ...Object.keys(currentFrontmatter),
+        ...Object.keys(draft.frontmatter),
+      ])) {
+        if (
+          !areJsonValuesEqual(currentFrontmatter[key], draft.frontmatter[key])
+        ) {
+          onFrontmatterFieldChange?.(key, draft.frontmatter[key]);
+        }
+      }
+    },
+  );
+
+  const applyCollaborationProposal = useLatestCallback(
+    async ({ proposal }: { proposal: StudioAiProposal }) => {
+      if (
+        state.status !== "ready" ||
+        documentCollaboration?.status !== "open"
+      ) {
+        return null;
+      }
+
+      const editor = resolveEditorHandle(editorRef);
+      const body = editor?.getContent() ?? state.draftBody;
+      if (
+        !isAssistantCollaborationProposalApplicable({
+          proposal,
+          documentId: state.documentId,
+        })
+      ) {
+        return null;
+      }
+
+      const result = applyAssistantCollaborationProposalDraft({
+        proposal,
+        documentId: state.documentId,
+        body,
+        frontmatter: state.draftFrontmatter,
+      });
+
+      applyCollaborationDraft({
+        body: result.body,
+        frontmatter: result.frontmatter,
+        applyBodyToEditor: result.body !== body,
+      });
+
+      return result;
+    },
+  );
+
+  const undoCollaborationProposal = useLatestCallback(
+    async ({
+      priorDraft,
+    }: {
+      proposal: StudioAiProposal;
+      priorDraft: AssistantCollaborationPriorDraft;
+    }) => {
+      if (
+        state.status !== "ready" ||
+        documentCollaboration?.status !== "open"
+      ) {
+        throw new RuntimeError({
+          code: "AI_UNDO_UNAVAILABLE",
+          message:
+            "Undo is only available while the active collaboration room is connected.",
+          statusCode: 409,
+        });
+      }
+
+      applyCollaborationDraft({
+        body: priorDraft.body,
+        frontmatter: priorDraft.frontmatter,
+        applyBodyToEditor: true,
+      });
+    },
+  );
+
   // Publish the active document to the assistant rail so the chat surface
   // can attach the right document context + resolve the schema hash on
   // accept. The live editor selection is included so document chat can
@@ -2236,6 +2370,12 @@ function useContentDocumentPageViewElement({
         schemaHash,
         project: assistantReadyState.route.project,
         environment: assistantReadyState.route.initialEnvironment,
+        ...(documentCollaboration?.status === "open"
+          ? {
+              applyCollaborationProposal,
+              undoCollaborationProposal,
+            }
+          : {}),
         ...(aiSelection
           ? {
               selection: {
@@ -2245,7 +2385,13 @@ function useContentDocumentPageViewElement({
             }
           : {}),
       };
-    }, [assistantReadyState, aiSelection]);
+    }, [
+      assistantReadyState,
+      aiSelection,
+      applyCollaborationProposal,
+      documentCollaboration?.status,
+      undoCollaborationProposal,
+    ]);
 
   return (
     <AssistantActiveDocumentProvider value={assistantActiveDocument}>
@@ -4358,6 +4504,7 @@ function useContentDocumentPageController({
         ? {
             status: documentCollaboration.status,
             body: documentCollaboration.body,
+            frontmatter: documentCollaboration.frontmatter,
           }
         : undefined,
     onCursorSelectionChange: setCursorSelection,
