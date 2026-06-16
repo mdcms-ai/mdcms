@@ -10,6 +10,7 @@ import {
   useState,
 } from "react";
 
+import { useQueryClient } from "@tanstack/react-query";
 import {
   appendMdcmsPreviewTokenToUrl,
   type CollaborationPresenceCursor,
@@ -114,6 +115,8 @@ import {
   useDocumentCollaboration,
   type DocumentCollaborationConnectionStatus,
 } from "../hooks/use-document-collaboration.js";
+import { getContentTypeListQueryKey } from "../hooks/use-content-type-list.js";
+import { getContentTranslationCoverageQueryKey } from "../lib/content-translation-coverage.js";
 import {
   Select,
   SelectContent,
@@ -175,6 +178,21 @@ type ContentDocumentPreviewMode = "edit" | "split" | "preview";
 const CONTENT_DOCUMENT_PREVIEW_MODE_QUERY_PARAM = "previewMode";
 export const LIVE_PREVIEW_IFRAME_SANDBOX =
   "allow-scripts allow-forms allow-same-origin";
+
+export function getContentDocumentListInvalidationKeys({
+  project,
+  environment,
+  typeId,
+}: {
+  project: string | null | undefined;
+  environment: string | null | undefined;
+  typeId: string;
+}) {
+  return [
+    getContentTypeListQueryKey(project, environment, typeId),
+    getContentTranslationCoverageQueryKey(project, environment, typeId),
+  ] as const;
+}
 
 function isContentDocumentPreviewMode(
   value: unknown,
@@ -2982,6 +3000,7 @@ function useContentDocumentPageController({
   const session = useStudioSession();
   const params = useParams();
   const { back, push } = useRouter();
+  const queryClient = useQueryClient();
   const typeId = (params.type as string) || "content";
   const documentId = (params.documentId as string) || "";
   const typeLabel = typeId;
@@ -3005,6 +3024,19 @@ function useContentDocumentPageController({
         : context,
     [context, route],
   );
+  const invalidateDocumentListQueries = useLatestCallback(() => {
+    if (!route) {
+      return;
+    }
+
+    for (const queryKey of getContentDocumentListInvalidationKeys({
+      project: route.project,
+      environment: route.initialEnvironment,
+      typeId,
+    })) {
+      void queryClient.invalidateQueries({ queryKey });
+    }
+  });
 
   const [state, setState] = useState<ContentDocumentPageState>(() =>
     route
@@ -3569,6 +3601,7 @@ function useContentDocumentPageController({
             })
           : current,
       );
+      invalidateDocumentListQueries();
     } catch (error) {
       const message = toRouteErrorMessage(error, "Failed to publish document.");
 
@@ -3748,6 +3781,7 @@ function useContentDocumentPageController({
               })
             : current,
         );
+        invalidateDocumentListQueries();
         return true;
       } catch (error) {
         setState((current) =>
@@ -3858,6 +3892,7 @@ function useContentDocumentPageController({
           })
         : current,
     );
+    invalidateDocumentListQueries();
     return true;
   });
 

@@ -22,6 +22,7 @@ import {
   SidebarInfoTab,
   createLivePreviewIframeRoute,
   createContentDocumentPresenceInput,
+  getContentDocumentListInvalidationKeys,
   getLivePreviewViewportFrame,
   isLivePreviewReadyMessage,
   readContentDocumentPreviewModeSearchParam,
@@ -1246,6 +1247,20 @@ test("reduceContentDocumentPageReadyState moves draft edits through unsaved, sav
   assert.equal(saved.saveState, "saved");
   assert.equal(saved.document.updatedAt, "2026-03-27T12:05:00.000Z");
   assert.equal(saved.draftBody, "# Launch Notes\nUpdated");
+});
+
+test("getContentDocumentListInvalidationKeys returns active list caches for saved editor changes", () => {
+  assert.deepEqual(
+    getContentDocumentListInvalidationKeys({
+      project: "marketing-site",
+      environment: "staging",
+      typeId: "page",
+    }),
+    [
+      ["content-list", "marketing-site", "staging", "page"],
+      ["content-translation-coverage", "marketing-site", "staging", "page"],
+    ],
+  );
 });
 
 test("createContentDocumentPageState keeps routed frontmatter and format in ready state", () => {
