@@ -1070,6 +1070,55 @@ test("collaboration route returns 426 after successful handshake authorization",
   assert.equal(response.status, 426);
 });
 
+test("collaboration route maps missing Studio session to 401", async () => {
+  const handler = createServerRequestHandler({
+    env: {
+      NODE_ENV: "test",
+      LOG_LEVEL: "debug",
+      APP_VERSION: "0.0.0",
+      PORT: "4000",
+      SERVICE_NAME: "mdcms-server",
+      MDCMS_COLLAB_ALLOWED_ORIGINS: "http://localhost:4173",
+    },
+    configureApp(app) {
+      mountCollaborationRoutes(app, {
+        authService: createAuthServiceStub({
+          async authorizeRequest() {
+            throw new RuntimeError({
+              code: "UNAUTHORIZED",
+              message: "A valid Studio session is required.",
+              statusCode: 401,
+            });
+          },
+        }),
+        resolveDocument: async () => ({ path: "blog/post-1" }),
+        env: {
+          MDCMS_COLLAB_ALLOWED_ORIGINS: "http://localhost:4173",
+        },
+      });
+    },
+  });
+
+  const response = await handler(
+    new Request(
+      `http://localhost/api/v1/collaboration?project=marketing&environment=staging&documentId=${DOCUMENT_ID}`,
+      {
+        headers: {
+          origin: "http://localhost:4173",
+        },
+      },
+    ),
+  );
+  const body = (await response.json()) as {
+    code?: string;
+    details?: { closeCode?: number };
+  };
+
+  assert.equal(response.status, 401);
+  assert.equal(body.code, "UNAUTHORIZED");
+  assert.equal(body.details?.closeCode, 4401);
+});
+
 test("collaboration presence route returns 426 after successful handshake authorization", async () => {
   const handler = createServerRequestHandler({
     env: {
@@ -1132,4 +1181,53 @@ test("collaboration presence route returns 426 after successful handshake author
     color: body.data?.context?.color,
   });
   assert.match(body.data?.context?.color ?? "", /^#[0-9a-f]{6}$/);
+});
+
+test("collaboration presence route maps missing Studio session to 401", async () => {
+  const handler = createServerRequestHandler({
+    env: {
+      NODE_ENV: "test",
+      LOG_LEVEL: "debug",
+      APP_VERSION: "0.0.0",
+      PORT: "4000",
+      SERVICE_NAME: "mdcms-server",
+      MDCMS_COLLAB_ALLOWED_ORIGINS: "http://localhost:4173",
+    },
+    configureApp(app) {
+      mountCollaborationRoutes(app, {
+        authService: createAuthServiceStub({
+          async authorizeRequest() {
+            throw new RuntimeError({
+              code: "UNAUTHORIZED",
+              message: "A valid Studio session is required.",
+              statusCode: 401,
+            });
+          },
+        }),
+        resolveDocument: async () => ({ path: "blog/post-1" }),
+        env: {
+          MDCMS_COLLAB_ALLOWED_ORIGINS: "http://localhost:4173",
+        },
+      });
+    },
+  });
+
+  const response = await handler(
+    new Request(
+      "http://localhost/api/v1/collaboration/presence?project=marketing&environment=staging",
+      {
+        headers: {
+          origin: "http://localhost:4173",
+        },
+      },
+    ),
+  );
+  const body = (await response.json()) as {
+    code?: string;
+    details?: { closeCode?: number };
+  };
+
+  assert.equal(response.status, 401);
+  assert.equal(body.code, "UNAUTHORIZED");
+  assert.equal(body.details?.closeCode, 4401);
 });

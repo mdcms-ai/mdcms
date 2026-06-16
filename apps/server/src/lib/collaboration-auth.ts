@@ -14,6 +14,7 @@ import type {
   SessionPrincipal,
   StudioSession,
 } from "./auth.js";
+import { executeWithRuntimeErrorsHandled } from "./http-utils.js";
 
 const CollaborationQuerySchema = z.object({
   project: z.string().trim().min(1),
@@ -656,45 +657,46 @@ export function mountCollaborationRoutes(
       ),
     });
 
-  collabApp.get?.("/api/v1/collaboration", async ({ request }: any) => {
-    const result = await guard.authorizeHandshake(request);
+  collabApp.get?.("/api/v1/collaboration", async ({ request }: any) =>
+    executeWithRuntimeErrorsHandled(request, async () => {
+      const result = await guard.authorizeHandshake(request);
 
-    if (!result.ok) {
-      const status = result.closeCode === 4401 ? 401 : 403;
-      throw new RuntimeError({
-        code:
-          result.closeCode === 4401
-            ? "UNAUTHORIZED"
-            : "COLLABORATION_FORBIDDEN",
-        message: result.message,
-        statusCode: status,
-        details: {
-          closeCode: result.closeCode,
-        },
-      });
-    }
+      if (!result.ok) {
+        const status = result.closeCode === 4401 ? 401 : 403;
+        throw new RuntimeError({
+          code:
+            result.closeCode === 4401
+              ? "UNAUTHORIZED"
+              : "COLLABORATION_FORBIDDEN",
+          message: result.message,
+          statusCode: status,
+          details: {
+            closeCode: result.closeCode,
+          },
+        });
+      }
 
-    return new Response(
-      JSON.stringify({
-        data: {
-          status: "handshake_authorized",
-          closeCodeOnSessionInvalid: 4401,
-          closeCodeOnForbidden: 4403,
-          context: result.context,
+      return new Response(
+        JSON.stringify({
+          data: {
+            status: "handshake_authorized",
+            closeCodeOnSessionInvalid: 4401,
+            closeCodeOnForbidden: 4403,
+            context: result.context,
+          },
+        }),
+        {
+          status: 426,
+          headers: {
+            "content-type": "application/json; charset=utf-8",
+          },
         },
-      }),
-      {
-        status: 426,
-        headers: {
-          "content-type": "application/json; charset=utf-8",
-        },
-      },
-    );
-  });
+      );
+    }),
+  );
 
-  collabApp.get?.(
-    "/api/v1/collaboration/presence",
-    async ({ request }: any) => {
+  collabApp.get?.("/api/v1/collaboration/presence", async ({ request }: any) =>
+    executeWithRuntimeErrorsHandled(request, async () => {
       const result = await guard.authorizePresenceHandshake(request);
 
       if (!result.ok) {
@@ -728,6 +730,6 @@ export function mountCollaborationRoutes(
           },
         },
       );
-    },
+    }),
   );
 }
