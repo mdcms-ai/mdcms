@@ -24,7 +24,7 @@ Document that `Publish` is enabled for saved active collaboration drafts and tha
 
 Document `mdcms.collaboration.publish` and `mdcms.collaboration.publish.result`, and state that normal HTTP/API/CLI writes remain blocked by the active collaboration lock.
 
-- [ ] **Step 3: Run docs format check after implementation edits settle**
+- [x] **Step 3: Run docs format check after implementation edits settle**
 
 Run: `bun x prettier --check docs/specs/SPEC-006-studio-runtime-and-ui.md docs/specs/SPEC-007-editor-mdx-and-collaboration.md`
 
@@ -42,7 +42,7 @@ Expected: Prettier reports both files are formatted.
 - Modify if test support requires it: `apps/server/src/lib/collaboration/recovery.integration.test.ts`
 - Modify if test support requires it: `apps/server/src/lib/collaboration/load-soak-test-support.ts`
 
-- [ ] **Step 1: Write transport tests for publish results**
+- [x] **Step 1: Write transport tests for publish results**
 
 Add tests in `apps/server/src/lib/collaboration/transport.test.ts`:
 
@@ -106,13 +106,13 @@ test("document collaboration publish message returns authorization errors withou
 
 Use the local helper names already present in `transport.test.ts`; if their exact names differ, adapt the snippets to that file's existing stub pattern without changing the tested behavior.
 
-- [ ] **Step 2: Run transport tests and verify RED**
+- [x] **Step 2: Run transport tests and verify RED**
 
 Run: `bun test --cwd apps/server ./src/lib/collaboration/transport.test.ts`
 
 Expected: the new publish-message tests fail because publish parsing, `revalidatePublish`, and `server.publishDocument` do not exist.
 
-- [ ] **Step 3: Add publish authorization revalidation**
+- [x] **Step 3: Add publish authorization revalidation**
 
 In `apps/server/src/lib/collaboration-auth.ts`, add `revalidatePublish` beside `revalidateWrite`:
 
@@ -150,7 +150,7 @@ async function revalidatePublish(
 
 Return it from `createCollaborationAuthGuard(...)` and extend the transport/runtime auth guard types.
 
-- [ ] **Step 4: Add runtime publish method**
+- [x] **Step 4: Add runtime publish method**
 
 In `apps/server/src/lib/collaboration/runtime.ts`, extend `CollaborationRuntimeContentStore` with:
 
@@ -176,7 +176,7 @@ publishDocument?: (
 
 Implement it by verifying the document name matches the room context, checking active-lock ownership when room state exists, calling `options.contentStore.publish(scopeFromContext(context), context.documentId, { changeSummary, actorId: toContentStoreActorId(context.userId) })`, and emitting `content.published` with `createLifecycleActor({ userId: context.userId, email: context.userEmail })`.
 
-- [ ] **Step 5: Add transport publish message parsing**
+- [x] **Step 5: Add transport publish message parsing**
 
 In `apps/server/src/lib/collaboration/transport.ts`, add:
 
@@ -199,7 +199,7 @@ Parse JSON messages by `type`. Flush messages continue through `handleDocumentFl
 5. Send `{ type: "mdcms.collaboration.publish.result", requestId, status: "published", document }`.
 6. On error, send `{ type: "mdcms.collaboration.publish.result", requestId, status: "error", code, message }`.
 
-- [ ] **Step 6: Add runtime tests**
+- [x] **Step 6: Add runtime tests**
 
 Add tests in `apps/server/src/lib/collaboration/runtime.test.ts` proving:
 
@@ -211,7 +211,7 @@ Run: `bun test --cwd apps/server ./src/lib/collaboration/runtime.test.ts`
 
 Expected after implementation: pass.
 
-- [ ] **Step 7: Run backend focused tests**
+- [x] **Step 7: Run backend focused tests**
 
 Run:
 
@@ -232,7 +232,7 @@ Expected: all pass.
 - Modify: `packages/studio/src/lib/runtime-ui/pages/content-document-page.tsx`
 - Modify: `packages/studio/src/lib/runtime-ui/pages/content-document-page.test.tsx`
 
-- [ ] **Step 1: Write client helper tests**
+- [x] **Step 1: Write client helper tests**
 
 Add tests for `createCollaborationPublishRequest(...)` and `parseCollaborationPublishResult(...)` in the nearest existing collaboration document test file, or add one if absent:
 
@@ -260,17 +260,17 @@ test("collaboration publish request and result helpers round-trip", () => {
 });
 ```
 
-- [ ] **Step 2: Run helper tests and verify RED**
+- [x] **Step 2: Run helper tests and verify RED**
 
 Run the relevant Studio test file.
 
 Expected: tests fail because the publish helpers do not exist.
 
-- [ ] **Step 3: Add Studio publish helper types**
+- [x] **Step 3: Add Studio publish helper types**
 
 In `collaboration-document.ts`, add `CollaborationPublishResult`, Zod validation for published/error payloads, `createCollaborationPublishRequest(...)`, and `parseCollaborationPublishResult(...)`. Reuse the shared `ContentDocumentResponse` shape by validating the envelope fields Studio consumes, or use `z.object({}).passthrough()` for `document` and cast to `ContentDocumentResponse` after safe parsing.
 
-- [ ] **Step 4: Extend useDocumentCollaboration**
+- [x] **Step 4: Extend useDocumentCollaboration**
 
 Add to `UseDocumentCollaborationResult`:
 
@@ -280,11 +280,11 @@ publish: (input: { changeSummary?: string }) => Promise<CollaborationPublishResu
 
 Implement it using the same pending request map pattern as `flush()`, sending `createCollaborationPublishRequest(...)` and resolving when `parseCollaborationPublishResult(...)` sees the matching `requestId`.
 
-- [ ] **Step 5: Make publish state accept injected publish function**
+- [x] **Step 5: Make publish state accept injected publish function**
 
 In `content-document-page-state.ts`, keep `publishContentDocumentReadyState(...)` unchanged structurally, but allow callers to pass an API whose `publish` method is backed by collaboration. The existing `Pick<StudioDocumentRouteApi, "publish" | "listVersions">` signature should remain valid if the collaboration wrapper matches `StudioDocumentRouteApi["publish"]`.
 
-- [ ] **Step 6: Add Studio view tests for active collaboration publish button**
+- [x] **Step 6: Add Studio view tests for active collaboration publish button**
 
 Update existing tests in `content-document-page.test.tsx`:
 
@@ -292,7 +292,7 @@ Update existing tests in `content-document-page.test.tsx`:
 - Add a test where `state.saveState === "saved"`, `hasUnpublishedChanges === true`, and `documentCollaboration.status === "open"` renders Publish without `disabled`.
 - Add a test where `state.saveState === "unsaved"` and active collaboration renders Publish enabled and clicking/opening state is represented by the unsaved prompt props.
 
-- [ ] **Step 7: Add prompt UI and state**
+- [x] **Step 7: Add prompt UI and state**
 
 In `content-document-page-state.ts`, add:
 
@@ -311,7 +311,7 @@ In `ContentDocumentPageView`, render a dialog with:
 
 The dialog copy must state that `Publish saved draft` leaves live editor changes unpublished.
 
-- [ ] **Step 8: Route publish button through prompt logic**
+- [x] **Step 8: Route publish button through prompt logic**
 
 Change the Publish button logic:
 
@@ -319,7 +319,7 @@ Change the Publish button logic:
 - Clicking Publish with active collaboration and `saveState !== "saved"` opens the unsaved prompt.
 - Clicking Publish with saved state opens the normal publish dialog.
 
-- [ ] **Step 9: Implement save-and-publish and publish-saved-draft**
+- [x] **Step 9: Implement save-and-publish and publish-saved-draft**
 
 Add handlers:
 
@@ -331,7 +331,7 @@ Add handlers:
 
 The actual publish submission must use collaboration `publish({ changeSummary })` when `documentCollaboration.enabled`; otherwise it uses the existing HTTP API publish.
 
-- [ ] **Step 10: Run Studio focused tests**
+- [x] **Step 10: Run Studio focused tests**
 
 Run:
 
@@ -347,7 +347,7 @@ Expected: pass.
 - Create: `.changeset/*.md` using `bun run changeset add`
 - Modify if generated/needed: package changeset metadata only
 
-- [ ] **Step 1: Run focused server and Studio tests**
+- [x] **Step 1: Run focused server and Studio tests**
 
 Run:
 
@@ -360,7 +360,7 @@ bun test --cwd packages/studio ./src/lib/runtime-ui/pages/content-document-page.
 
 Expected: all pass.
 
-- [ ] **Step 2: Run formatting and workspace check**
+- [x] **Step 2: Run formatting and workspace check**
 
 Run:
 
@@ -371,13 +371,14 @@ bun run check
 
 Expected: both pass.
 
-- [ ] **Step 3: Add changeset**
+- [x] **Step 3: Confirm changeset is not required**
 
-Run: `bun run changeset add`
+Checked package change scope against `packages/studio/.changeset-gate.json`.
+The Studio edits are confined to runtime-only `src/lib/runtime-ui/**` paths,
+and the other touched files are server app/docs/plan/test code, so no package
+release changeset is required.
 
-Select patch bumps for `@mdcms/studio` only unless shared package exports or published server package metadata require additional package bumps. Do not hand-write changeset files.
-
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 Run:
 
