@@ -1035,6 +1035,85 @@ test("collaboration write revalidation checks draft-read and write permissions",
   assert.deepEqual(requiredScopes, ["content:read:draft", "content:write"]);
 });
 
+test("collaboration publish revalidation checks draft-read and publish permissions", async () => {
+  const requiredScopes: string[] = [];
+  const guard = createCollaborationAuthGuard({
+    authService: createAuthServiceStub({
+      async authorizeRequest(_request, requirement) {
+        requiredScopes.push(requirement.requiredScope);
+        return {
+          mode: "session",
+          principal: {
+            type: "session",
+            session: createSession("publisher-1"),
+            role: "editor",
+          },
+        };
+      },
+    }),
+    allowedOrigins: ["http://localhost:4173"],
+    resolveDocument: async () => ({ path: "blog/post-1" }),
+  });
+  const result = await guard.revalidatePublish(
+    new Request("http://localhost/api/v1/collaboration", {
+      headers: {
+        origin: "http://localhost:4173",
+      },
+    }),
+    {
+      userId: "user-1",
+      sessionId: "session-1",
+      project: "marketing",
+      environment: "staging",
+      documentId: DOCUMENT_ID,
+      documentPath: "blog/post-1",
+      role: "editor",
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(requiredScopes, ["content:read:draft", "content:publish"]);
+});
+
+test("collaboration publish revalidation closes with 4403 on RBAC deny", async () => {
+  const guard = createCollaborationAuthGuard({
+    authService: createAuthServiceStub({
+      async authorizeRequest() {
+        throw new RuntimeError({
+          code: "FORBIDDEN",
+          message: "Denied",
+          statusCode: 403,
+        });
+      },
+    }),
+    allowedOrigins: ["http://localhost:4173"],
+    resolveDocument: async () => ({ path: "blog/post-1" }),
+  });
+  const result = await guard.revalidatePublish(
+    new Request("http://localhost/api/v1/collaboration", {
+      headers: {
+        origin: "http://localhost:4173",
+      },
+    }),
+    {
+      userId: "user-1",
+      sessionId: "session-1",
+      project: "marketing",
+      environment: "staging",
+      documentId: DOCUMENT_ID,
+      documentPath: "blog/post-1",
+      role: "editor",
+    },
+  );
+
+  assert.equal(result.ok, false);
+  if (result.ok) {
+    return;
+  }
+
+  assert.equal(result.closeCode, 4403);
+});
+
 test("collaboration route returns 426 after successful handshake authorization", async () => {
   const handler = createServerRequestHandler({
     env: {

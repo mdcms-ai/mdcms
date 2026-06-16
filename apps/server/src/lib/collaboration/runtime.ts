@@ -7,7 +7,7 @@ import {
   parseMarkdownToDocument,
   serializeDocumentToMarkdown,
 } from "@mdcms/editor-core";
-import { RuntimeError } from "@mdcms/shared";
+import { RuntimeError, type ContentDocumentResponse } from "@mdcms/shared";
 import * as Y from "yjs";
 
 import type {
@@ -20,6 +20,7 @@ import {
   type ContentLifecycleEventSink,
   type ContentScope,
 } from "../content-api/types.js";
+import { toDocumentResponse } from "../content-api/responses.js";
 
 import {
   createCollaborationUnavailableError,
@@ -50,6 +51,17 @@ export type CollaborationDocumentFlushResult = {
   status: "saved" | "unchanged";
   draftRevision: number;
 };
+
+export type CollaborationDocumentPublishResult = {
+  document: ContentDocumentResponse;
+};
+
+export type CollaborationPublishedDocumentShaper = (input: {
+  context: CollaborationRuntimeContext;
+  document: ContentDocument;
+  request: Request;
+  scope: ContentScope;
+}) => Promise<ContentDocumentResponse>;
 
 export type CollaborationRuntimeLastWriter = {
   userId: string;
@@ -90,6 +102,11 @@ export type CollaborationRuntimeContentStore = {
       updatedBy: string;
     },
     options?: { expectedDraftRevision?: number },
+  ) => Promise<ContentDocument>;
+  publish: (
+    scope: ContentScope,
+    documentId: string,
+    input: { changeSummary?: string; actorId?: string },
   ) => Promise<ContentDocument>;
 };
 
@@ -162,6 +179,7 @@ export type CreateCollaborationRuntimeHooksOptions = {
   clearFinalizedRoomLeaseTimeout?: (timer: unknown) => void;
   closeRoom?: (documentName: string) => Promise<void> | void;
   createRoomLeaseValue?: () => string;
+  shapePublishedDocument?: CollaborationPublishedDocumentShaper;
   convertMarkdownToYjsUpdate?: (
     markdown: string,
     frontmatter?: Record<string, unknown>,
@@ -187,6 +205,13 @@ export type CollaborationRuntime = {
     flushDocument?: (
       documentName: string,
     ) => Promise<CollaborationDocumentFlushResult>;
+    publishDocument?: (
+      documentName: string,
+      input: {
+        context: CollaborationRuntimeContext;
+        changeSummary?: string;
+      },
+    ) => Promise<CollaborationDocumentPublishResult>;
   };
 };
 
@@ -213,6 +238,13 @@ type FlushableHocuspocusServer = Hocuspocus<CollaborationRuntimeContext> & {
   flushDocument?: (
     documentName: string,
   ) => Promise<CollaborationDocumentFlushResult>;
+  publishDocument?: (
+    documentName: string,
+    input: {
+      context: CollaborationRuntimeContext;
+      changeSummary?: string;
+    },
+  ) => Promise<CollaborationDocumentPublishResult>;
 };
 
 const COLLABORATION_FLUSH_POLL_INTERVAL_MS = 10;
@@ -1003,6 +1035,78 @@ export function createCollaborationRuntimeHooks(
       };
     },
 
+    async publishDocument(
+      documentName: string,
+      input: {
+        context: CollaborationRuntimeContext;
+        changeSummary?: string;
+      },
+    ): Promise<CollaborationDocumentPublishResult> {
+      const context = requireRuntimeContext({
+        context: input.context,
+        documentName,
+      });
+      const key = roomKey(context);
+      const state = roomStates.get(key);
+
+      if (!state) {
+        throw new RuntimeError({
+          code: "COLLABORATION_ROOM_NOT_LOADED",
+          message: "Collaboration room is not loaded.",
+          statusCode: 409,
+          details: { documentName },
+        });
+      }
+
+      assertActiveLockHeld(state);
+      await verifyActiveLockOwnership({
+        documentId: context.documentId,
+        documentName,
+        key,
+        leaseValue: state.roomLeaseValue,
+        state,
+      });
+
+      const scope = scopeFromContext(context);
+      const document = await options.contentStore.publish(
+        scope,
+        context.documentId,
+        {
+          actorId: toContentStoreActorId(context.userId),
+          changeSummary: input.changeSummary,
+        },
+      );
+
+      void options.lifecycleEvents
+        ?.emitContentEvent({
+          event: "content.published",
+          scope,
+          document,
+          actor: createLifecycleActor({
+            userId: context.userId,
+            ...(context.userEmail ? { email: context.userEmail } : {}),
+          }),
+        })
+        .catch(() => {
+          // Publishing is already committed. Lifecycle side effects follow the
+          // HTTP mutation behavior and must not turn the socket result into a
+          // failed publish.
+        });
+
+      const responseDocument = options.shapePublishedDocument
+        ? await options.shapePublishedDocument({
+            context,
+            document,
+            request:
+              context.request ??
+              new Request("http://localhost/api/v1/collaboration"),
+            scope,
+          })
+        : toDocumentResponse(document);
+
+      return { document: responseDocument };
+    },
+
     async onLoadDocument(payload: RuntimeHookPayload): Promise<Uint8Array> {
       const context = requireRuntimeContext(payload);
       const draft = await loadDraftDocument(options.contentStore, context);
@@ -1354,6 +1458,8 @@ export function createCollaborationRuntime(
       draftRevision: after,
     };
   };
+  hocuspocusServer.publishDocument = (documentName, input) =>
+    hooks.publishDocument(documentName, input);
   server = hocuspocusServer;
 
   return {

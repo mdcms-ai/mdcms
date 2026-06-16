@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "bun:test";
 
-import { RuntimeError } from "@mdcms/shared";
+import { RuntimeError, type ContentDocumentResponse } from "@mdcms/shared";
 
 import type { CollaborationSessionContext } from "../collaboration-auth.js";
 import {
@@ -75,6 +75,7 @@ function createContext(
 class FakeContentStore implements CollaborationRuntimeContentStore {
   document: ContentDocument;
   updateError: unknown;
+  publishError: unknown;
   readonly updates: Array<{
     scope: ContentScope;
     documentId: string;
@@ -84,6 +85,14 @@ class FakeContentStore implements CollaborationRuntimeContentStore {
       updatedBy?: string;
     };
     options?: { expectedDraftRevision?: number };
+  }> = [];
+  readonly publishes: Array<{
+    scope: ContentScope;
+    documentId: string;
+    input: {
+      changeSummary?: string;
+      actorId?: string;
+    };
   }> = [];
 
   constructor(document: ContentDocument = createDocument()) {
@@ -143,6 +152,34 @@ class FakeContentStore implements CollaborationRuntimeContentStore {
       draftRevision: this.document.draftRevision + 1,
       updatedBy: payload.updatedBy ?? this.document.updatedBy,
       updatedAt: "2026-06-11T10:01:00.000Z",
+    };
+
+    return this.document;
+  }
+
+  async publish(
+    scope: ContentScope,
+    documentId: string,
+    input: {
+      changeSummary?: string;
+      actorId?: string;
+    },
+  ): Promise<ContentDocument> {
+    this.publishes.push({ scope, documentId, input });
+
+    if (this.publishError) {
+      throw this.publishError;
+    }
+
+    const nextVersion = (this.document.publishedVersion ?? 0) + 1;
+
+    this.document = {
+      ...this.document,
+      version: nextVersion,
+      publishedVersion: nextVersion,
+      hasUnpublishedChanges: false,
+      updatedBy: input.actorId ?? this.document.updatedBy,
+      updatedAt: "2026-06-11T10:02:00.000Z",
     };
 
     return this.document;
@@ -258,6 +295,7 @@ class FakeAuthGuard implements CollaborationRuntimeAuthGuard {
 }
 
 class FakeLifecycleEvents implements ContentLifecycleEventSink {
+  error: unknown;
   readonly events: Parameters<
     ContentLifecycleEventSink["emitContentEvent"]
   >[0][] = [];
@@ -266,6 +304,10 @@ class FakeLifecycleEvents implements ContentLifecycleEventSink {
     input: Parameters<ContentLifecycleEventSink["emitContentEvent"]>[0],
   ): Promise<void> {
     this.events.push(input);
+
+    if (this.error) {
+      throw this.error;
+    }
   }
 }
 
@@ -345,6 +387,12 @@ function createHarness(
     closeRoom?: (documentName: string) => void | Promise<void>;
     finalizedRoomLeaseTtlMs?: number;
     heartbeatScheduler?: FakeHeartbeatScheduler;
+    shapePublishedDocument?: (input: {
+      context: CollaborationRuntimeContext;
+      document: ContentDocument;
+      request: Request;
+      scope: ContentScope;
+    }) => Promise<ContentDocumentResponse>;
     timeoutScheduler?: FakeTimeoutScheduler;
   } = {},
 ) {
@@ -362,6 +410,7 @@ function createHarness(
     redisStore,
     authGuard,
     lifecycleEvents,
+    shapePublishedDocument: options.shapePublishedDocument,
     createRoomLeaseValue: () => "lease-1",
     setActiveLockHeartbeat: heartbeatScheduler.set,
     clearActiveLockHeartbeat: heartbeatScheduler.clear,
@@ -400,6 +449,249 @@ test("createCollaborationRuntime returns explicit Hocuspocus debounce config", (
   assert.equal(typeof runtime.config.onLoadDocument, "function");
   assert.equal(typeof runtime.config.onChange, "function");
   assert.ok(runtime.server);
+});
+
+test("server.publishDocument publishes active room draft and keeps active lock", async () => {
+  const document = createDocument({
+    hasUnpublishedChanges: true,
+    publishedVersion: 5,
+  });
+  const { contentStore, redisStore, authGuard, lifecycleEvents } =
+    createHarness(document);
+  const runtime = createCollaborationRuntime({
+    contentStore,
+    redisStore,
+    authGuard,
+    createRoomLeaseValue: () => "lease-1",
+    lifecycleEvents,
+  });
+  const context = createContext({
+    userId: "018f0c6d-98da-4f25-89fe-7c7ef5e8597d",
+    userEmail: "editor@example.com",
+  });
+  const documentName = createCollaborationDocumentName(context);
+
+  await runtime.hooks.onLoadDocument({ context, documentName });
+
+  const publishDocument = (
+    runtime.server as {
+      publishDocument?: (
+        documentName: string,
+        input: {
+          context: CollaborationRuntimeContext;
+          changeSummary?: string;
+        },
+      ) => Promise<{ document: ContentDocument }>;
+    }
+  ).publishDocument;
+
+  assert.ok(publishDocument);
+
+  const result = await publishDocument(documentName, {
+    context,
+    changeSummary: "Ready for launch.",
+  });
+
+  assert.equal(result.document.publishedVersion, 6);
+  assert.equal(result.document.hasUnpublishedChanges, false);
+  assert.deepEqual(contentStore.publishes, [
+    {
+      scope: { project: "marketing", environment: "draft" },
+      documentId: DOCUMENT_ID,
+      input: {
+        actorId: "018f0c6d-98da-4f25-89fe-7c7ef5e8597d",
+        changeSummary: "Ready for launch.",
+      },
+    },
+  ]);
+  assert.equal(lifecycleEvents.events.length, 1);
+  assert.equal(lifecycleEvents.events[0]?.event, "content.published");
+  assert.equal(lifecycleEvents.events[0]?.actor.id, context.userId);
+  assert.equal(lifecycleEvents.events[0]?.actor.email, "editor@example.com");
+  assert.equal(
+    runtime.hooks.getDocumentFlushState(documentName).draftRevision,
+    document.draftRevision,
+  );
+  assert.deepEqual(
+    redisStore.calls
+      .filter((call) =>
+        ["releaseActiveLock", "finalizeInactiveRoom"].includes(call.method),
+      )
+      .map((call) => call.method),
+    [],
+  );
+  assert.equal(
+    redisStore.calls.some((call) => call.method === "heartbeatActiveLock"),
+    true,
+  );
+});
+
+test("server.publishDocument keeps committed publish when lifecycle emission fails", async () => {
+  const document = createDocument({
+    hasUnpublishedChanges: true,
+    publishedVersion: 5,
+  });
+  const { contentStore, redisStore, authGuard, lifecycleEvents } =
+    createHarness(document);
+  lifecycleEvents.error = new Error("webhook sink unavailable");
+  const runtime = createCollaborationRuntime({
+    contentStore,
+    redisStore,
+    authGuard,
+    createRoomLeaseValue: () => "lease-1",
+    lifecycleEvents,
+  });
+  const context = createContext({
+    userId: "018f0c6d-98da-4f25-89fe-7c7ef5e8597d",
+    userEmail: "editor@example.com",
+  });
+  const documentName = createCollaborationDocumentName(context);
+
+  await runtime.hooks.onLoadDocument({ context, documentName });
+
+  const publishDocument = (
+    runtime.server as {
+      publishDocument?: (
+        documentName: string,
+        input: {
+          context: CollaborationRuntimeContext;
+          changeSummary?: string;
+        },
+      ) => Promise<{ document: ContentDocument }>;
+    }
+  ).publishDocument;
+
+  assert.ok(publishDocument);
+
+  const result = await publishDocument(documentName, {
+    context,
+    changeSummary: "Ready for launch.",
+  });
+
+  assert.equal(result.document.publishedVersion, 6);
+  assert.equal(result.document.hasUnpublishedChanges, false);
+  assert.equal(contentStore.publishes.length, 1);
+  assert.equal(lifecycleEvents.events.length, 1);
+});
+
+test("server.publishDocument shapes the socket publish response through the configured shaper", async () => {
+  const document = createDocument({
+    frontmatter: {
+      title: "Kept",
+      internalOnly: "strip me",
+    },
+    hasUnpublishedChanges: true,
+    publishedVersion: 5,
+  });
+  const shapeCalls: Array<{
+    context: CollaborationRuntimeContext;
+    document: ContentDocument;
+    request: Request;
+    scope: ContentScope;
+  }> = [];
+  const { contentStore, redisStore, authGuard } = createHarness(document, {
+    shapePublishedDocument: async (input) => {
+      shapeCalls.push(input);
+      return {
+        ...input.document,
+        frontmatter: {
+          title: "Kept",
+        },
+      };
+    },
+  });
+  const runtime = createCollaborationRuntime({
+    contentStore,
+    redisStore,
+    authGuard,
+    createRoomLeaseValue: () => "lease-1",
+    shapePublishedDocument: async (input) => {
+      shapeCalls.push(input);
+      return {
+        ...input.document,
+        frontmatter: {
+          title: "Kept",
+        },
+      };
+    },
+  });
+  const request = new Request(
+    "http://localhost:4000/api/v1/collaboration?project=marketing&environment=draft&documentId=5ad76d8b-4de0-48e7-9370-8f5d2df3b1d1",
+  );
+  const context = createContext({ request });
+  const documentName = createCollaborationDocumentName(context);
+
+  await runtime.hooks.onLoadDocument({ context, documentName });
+
+  const publishDocument = (
+    runtime.server as {
+      publishDocument?: (
+        documentName: string,
+        input: {
+          context: CollaborationRuntimeContext;
+          changeSummary?: string;
+        },
+      ) => Promise<{ document: ContentDocumentResponse }>;
+    }
+  ).publishDocument;
+
+  assert.ok(publishDocument);
+
+  const result = await publishDocument(documentName, {
+    context,
+    changeSummary: "Ready for launch.",
+  });
+
+  assert.equal(shapeCalls.length, 1);
+  assert.equal(shapeCalls[0]?.request, request);
+  assert.deepEqual(shapeCalls[0]?.scope, {
+    project: "marketing",
+    environment: "draft",
+  });
+  assert.deepEqual(result.document.frontmatter, {
+    title: "Kept",
+  });
+});
+
+test("server.publishDocument rejects room name mismatches without publishing", async () => {
+  const { contentStore, redisStore, authGuard, lifecycleEvents } =
+    createHarness();
+  const runtime = createCollaborationRuntime({
+    contentStore,
+    redisStore,
+    authGuard,
+    createRoomLeaseValue: () => "lease-1",
+    lifecycleEvents,
+  });
+  const context = createContext();
+  const documentName = createCollaborationDocumentName(context);
+  const publishDocument = (
+    runtime.server as {
+      publishDocument?: (
+        documentName: string,
+        input: {
+          context: CollaborationRuntimeContext;
+          changeSummary?: string;
+        },
+      ) => Promise<{ document: ContentDocument }>;
+    }
+  ).publishDocument;
+
+  await runtime.hooks.onLoadDocument({ context, documentName });
+  assert.ok(publishDocument);
+
+  await assert.rejects(
+    () =>
+      publishDocument("marketing:draft:00000000-0000-4000-8000-000000000000", {
+        context,
+      }),
+    (error: unknown) =>
+      error instanceof RuntimeError &&
+      error.code === "COLLABORATION_ROOM_MISMATCH",
+  );
+
+  assert.equal(contentStore.publishes.length, 0);
+  assert.equal(lifecycleEvents.events.length, 0);
 });
 
 test("createCollaborationRuntime fails with collaboration unavailable when Redis is unavailable", () => {

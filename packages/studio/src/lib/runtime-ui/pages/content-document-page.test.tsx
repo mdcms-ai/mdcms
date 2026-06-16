@@ -20,6 +20,7 @@ import {
   LIVE_PREVIEW_IFRAME_SANDBOX,
   MDCMS_LIVE_PREVIEW_READY_MESSAGE,
   SidebarInfoTab,
+  canPublishContentDocumentReadyState,
   createLivePreviewIframeRoute,
   createContentDocumentPresenceInput,
   getContentDocumentListInvalidationKeys,
@@ -31,6 +32,7 @@ import {
   resolveContentDocumentEditorPresence,
   resolveLivePreviewDocument,
   runLivePreviewRefresh,
+  shouldForceCollaborationDraftFlush,
   shouldPersistBeforeLivePreviewRefresh,
   writeContentDocumentPreviewModeSearchParam,
 } from "./content-document-page.js";
@@ -615,7 +617,7 @@ test("resolveContentDocumentEditorCollaboration waits for room sync before bindi
   });
   assert.equal(open.editorCollaboration?.body, body);
   assert.equal(open.readOnlyBlockedByCollaboration, false);
-  assert.equal(open.publishBlockedByActiveCollaboration, true);
+  assert.equal(open.publishBlockedByActiveCollaboration, false);
 });
 
 test("resolveCollaborationDraftSaveSnapshot reads the live editor body after collaboration flush", () => {
@@ -663,15 +665,100 @@ test("ContentDocumentPageView renders editor collaborator indicators", () => {
   assert.match(markup, /Ada Lovelace editing/);
 });
 
-test("ContentDocumentPageView disables publish while a collaboration room is active", () => {
+test("ContentDocumentPageView keeps publish enabled for saved active collaboration drafts", () => {
   const document = new Y.Doc();
   const body = document.getXmlFragment("default");
   const markup = renderPageMarkup(createReadyState(), {
     documentCollaboration: { status: "open", body },
   });
 
-  assert.match(markup, /data-mdcms-document-publish-disabled="true"/);
-  assert.match(markup, /disabled=""/);
+  assert.doesNotMatch(markup, /data-mdcms-document-publish-disabled="true"/);
+});
+
+test("ContentDocumentPageView enables publish for published documents with unsaved live collaboration edits", () => {
+  const document = new Y.Doc();
+  const body = document.getXmlFragment("default");
+  const markup = renderPageMarkup(
+    createReadyState({
+      document: {
+        ...createReadyState().document,
+        hasUnpublishedChanges: false,
+        publishedVersion: 5,
+      },
+      draftBody: "# Live collaboration edit",
+      saveState: "unsaved",
+    }),
+    {
+      documentCollaboration: { status: "open", body },
+    },
+  );
+
+  assert.doesNotMatch(markup, /data-mdcms-document-publish-disabled="true"/);
+});
+
+test("ContentDocumentPageView renders the unsaved collaboration publish prompt", () => {
+  const document = new Y.Doc();
+  const body = document.getXmlFragment("default");
+  const markup = renderPageMarkup(
+    {
+      ...createReadyState(),
+      draftBody: "# Unsaved collaboration body",
+      saveState: "unsaved",
+      publishUnsavedPromptOpen: true,
+    },
+    {
+      documentCollaboration: { status: "open", body },
+    },
+  );
+
+  assert.doesNotMatch(markup, /data-mdcms-document-publish-disabled="true"/);
+  assert.match(markup, /Publish unsaved changes\?/);
+  assert.match(markup, />Save and publish</);
+  assert.match(markup, />Publish saved draft</);
+  assert.match(markup, />Cancel</);
+  assert.match(markup, /live editor changes/);
+});
+
+test("canPublishContentDocumentReadyState includes unsaved live collaboration edits", () => {
+  const state = createReadyState({
+    document: {
+      ...createReadyState().document,
+      hasUnpublishedChanges: false,
+      publishedVersion: 5,
+    },
+    draftBody: "# Live collaboration edit",
+    saveState: "unsaved",
+  });
+
+  assert.equal(
+    canPublishContentDocumentReadyState({
+      state,
+      activeDocumentCollaborationOpen: true,
+      publishBlockedByActiveCollaboration: false,
+    }),
+    true,
+  );
+});
+
+test("shouldForceCollaborationDraftFlush allows save-and-publish to flush an in-flight save", () => {
+  assert.equal(
+    shouldForceCollaborationDraftFlush({
+      collaborationEnabled: true,
+      collaborationStatus: "open",
+      saveState: "saving",
+      allowSavingCollaborationDraft: true,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldForceCollaborationDraftFlush({
+      collaborationEnabled: true,
+      collaborationStatus: "open",
+      saveState: "saving",
+      allowSavingCollaborationDraft: false,
+    }),
+    false,
+  );
 });
 
 test("ContentDocumentPageView renders document collaboration reconnect status", () => {
@@ -1949,6 +2036,45 @@ test("applySuccessfulPublishToReadyState preserves newer local edits made while 
     leftVersion: 5,
     rightVersion: 6,
   });
+});
+
+test("applySuccessfulDraftSaveToReadyState ignores a stale save that resolves after publish", () => {
+  const state = createReadyState({
+    document: createDocumentResponse({
+      body: "# Published body",
+      frontmatter: {
+        title: "Published title",
+      },
+      hasUnpublishedChanges: false,
+      publishedVersion: 6,
+      version: 6,
+      draftRevision: 10,
+    }),
+    draftBody: "# Published body",
+    draftFrontmatter: {
+      title: "Published title",
+    },
+    saveState: "saved",
+  });
+
+  const next = applySuccessfulDraftSaveToReadyState({
+    state,
+    requestBody: "# Published body",
+    requestFrontmatter: {
+      title: "Published title",
+    },
+    persistedBody: "# Published body",
+    persistedFrontmatter: {
+      title: "Published title",
+    },
+    updatedAt: "2026-03-27T12:12:00.000Z",
+    draftRevision: 10,
+  });
+
+  assert.equal(next.document.hasUnpublishedChanges, false);
+  assert.equal(next.document.publishedVersion, 6);
+  assert.equal(next.document.updatedAt, state.document.updatedAt);
+  assert.equal(next.saveState, "saved");
 });
 
 test("applyFailedDraftSaveToReadyState keeps the same draft eligible for autosave retry", async () => {

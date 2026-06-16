@@ -25,6 +25,7 @@ import { createCollaborationUnavailableError } from "./errors.js";
 import {
   createCollaborationDocumentName,
   type CollaborationDocumentFlushResult,
+  type CollaborationDocumentPublishResult,
   type CollaborationRuntimeContext,
 } from "./runtime.js";
 
@@ -48,6 +49,13 @@ type HocuspocusConnectionServer = {
   flushDocument?: (
     documentName: string,
   ) => Promise<CollaborationDocumentFlushResult>;
+  publishDocument?: (
+    documentName: string,
+    input: {
+      context: CollaborationRuntimeContext;
+      changeSummary?: string;
+    },
+  ) => Promise<CollaborationDocumentPublishResult>;
   getDocumentsCount?: () => number;
 };
 
@@ -69,6 +77,10 @@ export type CollaborationAuthHandshakeGuard = {
     users: CollaborationPresenceUser[],
   ) => Promise<CollaborationPresenceUser[]>;
   revalidateWrite: (
+    request: Request,
+    context: CollaborationSessionContext,
+  ) => Promise<{ ok: true } | { ok: false; closeCode: CollaborationCloseCode }>;
+  revalidatePublish: (
     request: Request,
     context: CollaborationSessionContext,
   ) => Promise<{ ok: true } | { ok: false; closeCode: CollaborationCloseCode }>;
@@ -115,6 +127,8 @@ const COLLABORATION_SESSION_INVALID_REASON =
   "Collaboration session is no longer valid.";
 const COLLABORATION_WRITE_FORBIDDEN_REASON =
   "Collaboration write access is no longer allowed.";
+const COLLABORATION_PUBLISH_FORBIDDEN_REASON =
+  "Collaboration publish access is no longer allowed.";
 const COLLABORATION_PRESENCE_INVALID_UPDATE_REASON = "Invalid presence update.";
 const COLLABORATION_PRESENCE_UNAUTHORIZED_UPDATE_REASON =
   "Presence update is no longer authorized.";
@@ -139,6 +153,27 @@ type CollaborationFlushResultPayload =
     }
   | {
       type: "mdcms.collaboration.flush.result";
+      requestId: string;
+      status: "error";
+      code: string;
+      message: string;
+    };
+
+type CollaborationPublishRequest = {
+  type: "mdcms.collaboration.publish";
+  requestId: string;
+  changeSummary?: string;
+};
+
+type CollaborationPublishResultPayload =
+  | {
+      type: "mdcms.collaboration.publish.result";
+      requestId: string;
+      status: "published";
+      document: CollaborationDocumentPublishResult["document"];
+    }
+  | {
+      type: "mdcms.collaboration.publish.result";
       requestId: string;
       status: "error";
       code: string;
@@ -304,6 +339,42 @@ function parseCollaborationFlushRequest(
   }
 
   return payload as CollaborationFlushRequest;
+}
+
+function parseCollaborationPublishRequest(
+  message: Message,
+): CollaborationPublishRequest | null {
+  const text = readStringMessage(message);
+
+  if (!text) {
+    return null;
+  }
+
+  let payload: unknown;
+
+  try {
+    payload = JSON.parse(text) as unknown;
+  } catch {
+    return null;
+  }
+
+  if (
+    typeof payload !== "object" ||
+    payload === null ||
+    (payload as { type?: unknown }).type !== "mdcms.collaboration.publish" ||
+    typeof (payload as { requestId?: unknown }).requestId !== "string"
+  ) {
+    return null;
+  }
+
+  if (
+    (payload as { changeSummary?: unknown }).changeSummary !== undefined &&
+    typeof (payload as { changeSummary?: unknown }).changeSummary !== "string"
+  ) {
+    return null;
+  }
+
+  return payload as CollaborationPublishRequest;
 }
 
 function createRuntimeContext(
@@ -528,6 +599,75 @@ export function createCollaborationWebSocketTransport(
           error instanceof Error
             ? error.message
             : "Collaboration flush failed.",
+      };
+    }
+
+    peer.send(JSON.stringify(payload));
+  }
+
+  async function handleDocumentPublishMessage(
+    peer: Peer,
+    context: CollaborationSessionContext,
+    connection: HocuspocusClientConnection | undefined,
+    request: CollaborationPublishRequest,
+  ): Promise<void> {
+    const server = options.runtime?.server;
+    let payload: CollaborationPublishResultPayload;
+
+    try {
+      if (!server?.publishDocument) {
+        throw new RuntimeError({
+          code: "COLLABORATION_PUBLISH_UNAVAILABLE",
+          message: "Collaboration publish is unavailable.",
+          statusCode: 503,
+        });
+      }
+
+      await connection?.waitForPendingMessages?.();
+
+      const authorization = await options.authGuard.revalidatePublish(
+        peer.request,
+        context,
+      );
+
+      if (!authorization.ok) {
+        throw new RuntimeError({
+          code: authorization.closeCode === 4401 ? "UNAUTHORIZED" : "FORBIDDEN",
+          message:
+            authorization.closeCode === 4401
+              ? COLLABORATION_SESSION_INVALID_REASON
+              : COLLABORATION_PUBLISH_FORBIDDEN_REASON,
+          statusCode: authorization.closeCode === 4401 ? 401 : 403,
+        });
+      }
+
+      const result = await server.publishDocument(
+        createDocumentNameFromContext(context),
+        {
+          context: createRuntimeContext(peer.request, context),
+          changeSummary: request.changeSummary,
+        },
+      );
+
+      payload = {
+        type: "mdcms.collaboration.publish.result",
+        requestId: request.requestId,
+        status: "published",
+        document: result.document,
+      };
+    } catch (error) {
+      payload = {
+        type: "mdcms.collaboration.publish.result",
+        requestId: request.requestId,
+        status: "error",
+        code:
+          error instanceof RuntimeError
+            ? error.code
+            : "COLLABORATION_PUBLISH_FAILED",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Collaboration publish failed.",
       };
     }
 
@@ -903,6 +1043,7 @@ export function createCollaborationWebSocketTransport(
 
         const context = collaborationContextFromPeer(peer);
         const flushRequest = parseCollaborationFlushRequest(message);
+        const publishRequest = parseCollaborationPublishRequest(message);
 
         if (context && flushRequest) {
           trackDocumentTask(
@@ -911,6 +1052,18 @@ export function createCollaborationWebSocketTransport(
               context,
               peerConnections.get(peer),
               flushRequest,
+            ),
+          );
+          return;
+        }
+
+        if (context && publishRequest) {
+          trackDocumentTask(
+            handleDocumentPublishMessage(
+              peer,
+              context,
+              peerConnections.get(peer),
+              publishRequest,
             ),
           );
           return;

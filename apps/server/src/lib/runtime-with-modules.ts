@@ -21,6 +21,12 @@ import {
   type ContentActiveCollaborationChecker,
   type ContentInactiveCollaborationCacheInvalidator,
 } from "./content-api.js";
+import {
+  parseFileFieldReadMode,
+  shapeContentDocumentResponse,
+} from "./content-api/routes.js";
+import { createCachedMediaAssetLookup } from "./content-api/media-field-expansion.js";
+import { toDocumentResponse } from "./content-api/responses.js";
 import { createCollaborationRedisDependency } from "./collaboration/redis-client.js";
 import { createDocumentCollaborationActiveError } from "./collaboration/errors.js";
 import { createCollaborationRedisStore } from "./collaboration/redis-store.js";
@@ -360,6 +366,22 @@ export function createServerRequestHandlerWithModules(
         redisStore: collaborationRedisStore,
         authGuard: collaborationAuthGuard,
         lifecycleEvents: webhookRuntime.dispatcher,
+        shapePublishedDocument: async ({ document, request, scope }) =>
+          shapeContentDocumentResponse({
+            authorize: (request, requirement) =>
+              authService.authorizeRequest(request, requirement),
+            request,
+            requiredScope: "content:publish",
+            scope,
+            store: contentStore,
+            draft: true,
+            document: toDocumentResponse(document),
+            schema: await contentStore.getSchema(scope, document.type),
+            fileFieldMode: parseFileFieldReadMode(request),
+            lookupMediaAsset: createCachedMediaAssetLookup((scope, id) =>
+              mediaStore.getAsset(scope, id),
+            ),
+          }),
       })
     : undefined;
   const collaborationWebSocketTransport = createCollaborationWebSocketTransport(

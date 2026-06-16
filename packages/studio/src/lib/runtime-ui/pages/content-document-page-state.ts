@@ -116,6 +116,7 @@ export type ContentDocumentPageReadyState = {
   canReadMedia: boolean;
   canUploadMedia: boolean;
   publishDialogOpen: boolean;
+  publishUnsavedPromptOpen: boolean;
   publishChangeSummary: string;
   publishState: "idle" | "publishing";
   publishError?: string;
@@ -819,6 +820,7 @@ function createReadyState(input: {
     canReadMedia,
     canUploadMedia,
     publishDialogOpen: false,
+    publishUnsavedPromptOpen: false,
     publishChangeSummary: "",
     publishState: "idle",
     restoreVersionState: "idle",
@@ -977,6 +979,7 @@ export function applyGuardedPublishFailureToReadyState(input: {
   return {
     ...applySchemaStateToReadyState(input),
     publishDialogOpen: false,
+    publishUnsavedPromptOpen: false,
     publishState: "idle",
     publishError: undefined,
   };
@@ -1135,6 +1138,7 @@ export async function publishContentDocumentReadyState(input: {
   const nextState = {
     ...applyDocumentResponseToReadyState(input.state, document),
     publishDialogOpen: false,
+    publishUnsavedPromptOpen: false,
     publishChangeSummary: "",
     publishState: "idle" as const,
     publishError: undefined,
@@ -1678,6 +1682,10 @@ export function applySuccessfulDraftSaveToReadyState(input: {
   });
   const persistedBody = input.persistedBody ?? input.requestBody;
   const persistedFrontmatter = input.persistedFrontmatter ?? requestFrontmatter;
+  const staleSaveAlreadyPublished =
+    !input.state.document.hasUnpublishedChanges &&
+    input.state.document.body === persistedBody &&
+    areJsonValuesEqual(input.state.document.frontmatter, persistedFrontmatter);
   const draftBody =
     input.state.draftBody === input.requestBody
       ? persistedBody
@@ -1688,6 +1696,25 @@ export function applySuccessfulDraftSaveToReadyState(input: {
   )
     ? cloneFrontmatter(persistedFrontmatter)
     : input.state.draftFrontmatter;
+
+  if (staleSaveAlreadyPublished) {
+    return {
+      ...input.state,
+      mutationError: undefined,
+      fieldErrors: undefined,
+      saveRequestBody: hasNewerSaveInFlight
+        ? input.state.saveRequestBody
+        : undefined,
+      saveRequestFrontmatter: hasNewerSaveInFlight
+        ? input.state.saveRequestFrontmatter
+        : undefined,
+      saveState: hasNewerSaveInFlight
+        ? input.state.saveState
+        : isDraftPersisted(input.state)
+          ? "saved"
+          : input.state.saveState,
+    };
+  }
 
   return {
     ...input.state,
