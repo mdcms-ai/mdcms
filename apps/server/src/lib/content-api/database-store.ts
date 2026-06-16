@@ -52,12 +52,17 @@ import {
 import { groupDocumentsByTranslationGroup } from "./grouped-list.js";
 import { validateMediaFieldIdentities } from "./media-field-validation.js";
 import { validateReferenceFieldIdentities } from "./reference-validation.js";
+import { createPostgresContentSearchBackend } from "./search.js";
 import { matchesDeletedListVisibility } from "./visibility.js";
 
 export function createDatabaseContentStore(
   options: CreateDatabaseContentStoreOptions,
 ): ContentStore {
-  const { db, lookupMediaAsset } = options;
+  const {
+    db,
+    lookupMediaAsset,
+    searchBackend = createPostgresContentSearchBackend(),
+  } = options;
 
   async function resolveScopeIds(
     scope: ContentScope,
@@ -294,6 +299,69 @@ export function createDatabaseContentStore(
     };
   }
 
+  async function resolvePublishedSearchLocale(
+    executor: DrizzleDatabase,
+    scopeIds: { projectId: string; environmentId: string },
+    headRow: typeof documents.$inferSelect,
+  ): Promise<string> {
+    if (headRow.publishedVersion === null) {
+      return headRow.locale;
+    }
+
+    const [versionRow] = await executor
+      .select({
+        locale: documentVersions.locale,
+      })
+      .from(documentVersions)
+      .where(
+        and(
+          eq(documentVersions.projectId, scopeIds.projectId),
+          eq(documentVersions.environmentId, scopeIds.environmentId),
+          eq(documentVersions.documentId, headRow.documentId),
+          eq(documentVersions.version, headRow.publishedVersion),
+        ),
+      );
+
+    return versionRow?.locale ?? headRow.locale;
+  }
+
+  async function upsertPublishedSearchDocument(
+    executor: DrizzleDatabase,
+    scopeIds: { projectId: string; environmentId: string },
+    headRow: typeof documents.$inferSelect,
+  ): Promise<void> {
+    if (headRow.publishedVersion === null) {
+      return;
+    }
+
+    const [versionRow] = await executor
+      .select()
+      .from(documentVersions)
+      .where(
+        and(
+          eq(documentVersions.projectId, scopeIds.projectId),
+          eq(documentVersions.environmentId, scopeIds.environmentId),
+          eq(documentVersions.documentId, headRow.documentId),
+          eq(documentVersions.version, headRow.publishedVersion),
+        ),
+      );
+
+    if (!versionRow) {
+      return;
+    }
+
+    await searchBackend.upsertPublishedDocument(executor, {
+      projectId: scopeIds.projectId,
+      environmentId: scopeIds.environmentId,
+      documentId: headRow.documentId,
+      path: versionRow.path,
+      type: versionRow.schemaType,
+      locale: versionRow.locale,
+      frontmatter: versionRow.frontmatter as Record<string, unknown>,
+      body: versionRow.body,
+    });
+  }
+
   async function resolveHeadRow(
     scopeIds: { projectId: string; environmentId: string },
     documentId: string,
@@ -367,6 +435,16 @@ export function createDatabaseContentStore(
       version: input.version,
       publishedBy: input.actorId,
       changeSummary: input.changeSummary ?? null,
+    });
+    await searchBackend.upsertPublishedDocument(tx, {
+      projectId: input.headRow.projectId,
+      environmentId: input.headRow.environmentId,
+      documentId: input.headRow.documentId,
+      path: input.snapshot.path,
+      type: input.snapshot.type,
+      locale: input.snapshot.locale,
+      frontmatter: input.snapshot.frontmatter,
+      body: input.snapshot.body,
     });
   }
 
@@ -1280,34 +1358,74 @@ export function createDatabaseContentStore(
         });
       }
 
-      const [updated] = await db
-        .update(documents)
-        .set({
-          isDeleted: true,
-          hasUnpublishedChanges: true,
-          draftRevision: sql`${documents.draftRevision} + 1`,
-          updatedBy: DEFAULT_ACTOR,
-          updatedAt: new Date(),
-        })
-        .where(
-          and(
-            eq(documents.projectId, scopeIds.projectId),
-            eq(documents.environmentId, scopeIds.environmentId),
-            eq(documents.documentId, normalizedDocumentId),
-          ),
-        )
-        .returning();
+      const updated = await db.transaction(async (tx) => {
+        const txDb = tx as unknown as DrizzleDatabase;
+        const [existing] = await tx
+          .select()
+          .from(documents)
+          .where(
+            and(
+              eq(documents.projectId, scopeIds.projectId),
+              eq(documents.environmentId, scopeIds.environmentId),
+              eq(documents.documentId, normalizedDocumentId),
+            ),
+          )
+          .for("update");
 
-      if (!updated) {
-        throw new RuntimeError({
-          code: "NOT_FOUND",
-          message: "Document not found.",
-          statusCode: 404,
-          details: {
-            documentId: normalizedDocumentId,
-          },
+        if (!existing) {
+          throw new RuntimeError({
+            code: "NOT_FOUND",
+            message: "Document not found.",
+            statusCode: 404,
+            details: {
+              documentId: normalizedDocumentId,
+            },
+          });
+        }
+
+        const publishedLocale = await resolvePublishedSearchLocale(
+          txDb,
+          scopeIds,
+          existing,
+        );
+        const [updated] = await tx
+          .update(documents)
+          .set({
+            isDeleted: true,
+            hasUnpublishedChanges: true,
+            draftRevision: sql`${documents.draftRevision} + 1`,
+            updatedBy: DEFAULT_ACTOR,
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(documents.projectId, scopeIds.projectId),
+              eq(documents.environmentId, scopeIds.environmentId),
+              eq(documents.documentId, normalizedDocumentId),
+            ),
+          )
+          .returning();
+
+        if (!updated) {
+          throw new RuntimeError({
+            code: "NOT_FOUND",
+            message: "Document not found.",
+            statusCode: 404,
+            details: {
+              documentId: normalizedDocumentId,
+            },
+          });
+        }
+
+        await searchBackend.removePublishedDocument(txDb, {
+          projectId: scopeIds.projectId,
+          environmentId: scopeIds.environmentId,
+          documentId: normalizedDocumentId,
+          locale: publishedLocale,
         });
-      }
+
+        return updated;
+      });
 
       return toContentDocument(scope, updated);
     },
@@ -1361,32 +1479,39 @@ export function createDatabaseContentStore(
         return toContentDocument(scope, existing);
       }
 
-      const [updated] = await db
-        .update(documents)
-        .set({
-          isDeleted: false,
-          updatedBy: DEFAULT_ACTOR,
-          updatedAt: new Date(),
-        })
-        .where(
-          and(
-            eq(documents.projectId, scopeIds.projectId),
-            eq(documents.environmentId, scopeIds.environmentId),
-            eq(documents.documentId, normalizedDocumentId),
-          ),
-        )
-        .returning();
+      const updated = await db.transaction(async (tx) => {
+        const txDb = tx as unknown as DrizzleDatabase;
+        const [restored] = await tx
+          .update(documents)
+          .set({
+            isDeleted: false,
+            updatedBy: DEFAULT_ACTOR,
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(documents.projectId, scopeIds.projectId),
+              eq(documents.environmentId, scopeIds.environmentId),
+              eq(documents.documentId, normalizedDocumentId),
+            ),
+          )
+          .returning();
 
-      if (!updated) {
-        throw new RuntimeError({
-          code: "NOT_FOUND",
-          message: "Document not found.",
-          statusCode: 404,
-          details: {
-            documentId: normalizedDocumentId,
-          },
-        });
-      }
+        if (!restored) {
+          throw new RuntimeError({
+            code: "NOT_FOUND",
+            message: "Document not found.",
+            statusCode: 404,
+            details: {
+              documentId: normalizedDocumentId,
+            },
+          });
+        }
+
+        await upsertPublishedSearchDocument(txDb, scopeIds, restored);
+
+        return restored;
+      });
 
       return toContentDocument(scope, updated);
     },
@@ -1782,34 +1907,75 @@ export function createDatabaseContentStore(
       }
 
       const actorId = input.actorId?.trim() || DEFAULT_ACTOR;
-      const [updated] = await db
-        .update(documents)
-        .set({
-          publishedVersion: null,
-          hasUnpublishedChanges: true,
-          updatedBy: actorId,
-          updatedAt: new Date(),
-        })
-        .where(
-          and(
-            eq(documents.projectId, scopeIds.projectId),
-            eq(documents.environmentId, scopeIds.environmentId),
-            eq(documents.documentId, normalizedDocumentId),
-            eq(documents.isDeleted, false),
-          ),
-        )
-        .returning();
+      const updated = await db.transaction(async (tx) => {
+        const txDb = tx as unknown as DrizzleDatabase;
+        const [existing] = await tx
+          .select()
+          .from(documents)
+          .where(
+            and(
+              eq(documents.projectId, scopeIds.projectId),
+              eq(documents.environmentId, scopeIds.environmentId),
+              eq(documents.documentId, normalizedDocumentId),
+              eq(documents.isDeleted, false),
+            ),
+          )
+          .for("update");
 
-      if (!updated) {
-        throw new RuntimeError({
-          code: "NOT_FOUND",
-          message: "Document not found.",
-          statusCode: 404,
-          details: {
-            documentId: normalizedDocumentId,
-          },
+        if (!existing) {
+          throw new RuntimeError({
+            code: "NOT_FOUND",
+            message: "Document not found.",
+            statusCode: 404,
+            details: {
+              documentId: normalizedDocumentId,
+            },
+          });
+        }
+
+        const publishedLocale = await resolvePublishedSearchLocale(
+          txDb,
+          scopeIds,
+          existing,
+        );
+        const [updated] = await tx
+          .update(documents)
+          .set({
+            publishedVersion: null,
+            hasUnpublishedChanges: true,
+            updatedBy: actorId,
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(documents.projectId, scopeIds.projectId),
+              eq(documents.environmentId, scopeIds.environmentId),
+              eq(documents.documentId, normalizedDocumentId),
+              eq(documents.isDeleted, false),
+            ),
+          )
+          .returning();
+
+        if (!updated) {
+          throw new RuntimeError({
+            code: "NOT_FOUND",
+            message: "Document not found.",
+            statusCode: 404,
+            details: {
+              documentId: normalizedDocumentId,
+            },
+          });
+        }
+
+        await searchBackend.removePublishedDocument(txDb, {
+          projectId: scopeIds.projectId,
+          environmentId: scopeIds.environmentId,
+          documentId: normalizedDocumentId,
+          locale: publishedLocale,
         });
-      }
+
+        return updated;
+      });
 
       return toContentDocument(scope, updated);
     },

@@ -50,6 +50,45 @@ export type ContentMediaAssetLookup = (
   id: string,
 ) => Promise<MediaAsset | undefined>;
 
+export type ContentSearchScopeIds = {
+  projectId: string;
+  environmentId: string;
+};
+
+export type ContentSearchFilters = {
+  query?: string;
+  type?: string;
+  locale?: string;
+};
+
+export type ContentSearchIndexedDocument = ContentSearchScopeIds & {
+  documentId: string;
+  path: string;
+  type: string;
+  locale: string;
+  frontmatter: Record<string, unknown>;
+  body: string;
+};
+
+export type ContentSearchBackend = {
+  searchPublishedDocumentIds: (
+    scopeIds: ContentSearchScopeIds,
+    filters: ContentSearchFilters,
+  ) => Promise<Set<string>>;
+  searchDraftDocumentIds: (
+    scopeIds: ContentSearchScopeIds,
+    filters: ContentSearchFilters,
+  ) => Promise<Set<string>>;
+  upsertPublishedDocument: (
+    tx: DrizzleDatabase,
+    document: ContentSearchIndexedDocument,
+  ) => Promise<void>;
+  removePublishedDocument: (
+    tx: DrizzleDatabase,
+    input: ContentSearchScopeIds & { documentId: string; locale: string },
+  ) => Promise<void>;
+};
+
 export type ContentWriteSchemaSyncState = {
   schemaHash: string;
 };
@@ -253,6 +292,7 @@ export type ContentStore = {
 export type CreateDatabaseContentStoreOptions = {
   db: DrizzleDatabase;
   lookupMediaAsset?: ContentMediaAssetLookup;
+  searchBackend?: ContentSearchBackend;
 };
 
 export type InMemoryContentSchemaScope = {

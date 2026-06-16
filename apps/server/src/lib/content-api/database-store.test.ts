@@ -145,3 +145,106 @@ testWithDatabase(
     }
   },
 );
+
+testWithDatabase(
+  "database content store syncs the published search backend during lifecycle changes",
+  async () => {
+    const dbConnection = createDatabaseConnection({ env: dbEnv });
+    const scope = {
+      project: `db-search-sync-${stableFixtureName(randomUUID())}`,
+      environment: "production",
+    };
+    const calls: Array<{ type: string; documentId: string; body?: string }> =
+      [];
+
+    try {
+      const { schemaHash } = await seedSchemaRegistryScope(dbConnection.db, {
+        scope,
+        entries: [
+          {
+            type: "BlogPost",
+            directory: "content/blog",
+            localized: true,
+          },
+        ],
+      });
+      const store = createDatabaseContentStore({
+        db: dbConnection.db,
+        searchBackend: {
+          searchPublishedDocumentIds: async () => new Set<string>(),
+          searchDraftDocumentIds: async () => new Set<string>(),
+          upsertPublishedDocument: async (_tx, document) => {
+            calls.push({
+              type: "upsert",
+              documentId: document.documentId,
+              body: document.body,
+            });
+          },
+          removePublishedDocument: async (_tx, input) => {
+            calls.push({
+              type: "remove",
+              documentId: input.documentId,
+            });
+          },
+        },
+      });
+
+      const created = await store.create(
+        scope,
+        {
+          path: "content/blog/search-sync",
+          type: "BlogPost",
+          locale: "en",
+          format: "md",
+          frontmatter: { slug: "search-sync", title: "Search Sync" },
+          body: "published body",
+        },
+        { expectedSchemaHash: schemaHash },
+      );
+
+      await store.publish(scope, created.documentId, {
+        changeSummary: "Publish for search",
+      });
+      await store.update(
+        scope,
+        created.documentId,
+        { body: "latest published body" },
+        { expectedSchemaHash: schemaHash },
+      );
+      await store.publish(scope, created.documentId, {
+        changeSummary: "Republish for search",
+      });
+      await store.update(
+        scope,
+        created.documentId,
+        { body: "draft-only body" },
+        { expectedSchemaHash: schemaHash },
+      );
+      await store.softDelete(scope, created.documentId);
+      await store.restore(scope, created.documentId);
+      await store.unpublish(scope, created.documentId, {});
+      await store.restoreVersion(scope, created.documentId, 1, {
+        targetStatus: "published",
+        changeSummary: "Restore version for search",
+      });
+
+      assert.deepEqual(
+        calls.map((call) => call.type),
+        ["upsert", "upsert", "remove", "upsert", "remove", "upsert"],
+      );
+      assert.deepEqual(
+        calls.map((call) => call.body),
+        [
+          "published body",
+          "latest published body",
+          undefined,
+          "latest published body",
+          undefined,
+          "published body",
+        ],
+      );
+    } finally {
+      await dbConnection.close();
+    }
+  },
+);
