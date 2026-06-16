@@ -76,6 +76,7 @@ SELECT
     concat_ws(
       E'\n',
       "document_versions"."path",
+      regexp_replace("document_versions"."path", '[/._-]+', ' ', 'g'),
       "document_versions"."body",
       "document_versions"."frontmatter"::text
     )

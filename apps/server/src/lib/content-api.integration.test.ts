@@ -1283,6 +1283,127 @@ testWithDatabase(
 );
 
 testWithDatabase(
+  "content API DB restore version to draft restores the published search index",
+  async () => {
+    const { handler, dbConnection, cookie, csrfHeaders } =
+      await createDatabaseTestContext(
+        "test:content-api-db-restore-version-draft-search",
+      );
+
+    try {
+      const createResponse = await handler(
+        new Request("http://localhost/api/v1/content", {
+          method: "POST",
+          headers: csrfHeaders({
+            ...scopeHeaders,
+            "content-type": "application/json",
+          }),
+          body: JSON.stringify({
+            path: stableFixturePath("blog", "restore-search-needle"),
+            type: "BlogPost",
+            locale: "en",
+            format: "md",
+            frontmatter: { slug: "restore-search-needle" },
+            body: "published restore-search-body marker",
+          }),
+        }),
+      );
+      const created = (await createResponse.json()) as {
+        data: { documentId: string };
+      };
+
+      assert.equal(createResponse.status, 200);
+
+      await publishContentDocument(
+        handler,
+        csrfHeaders,
+        { ...scopeHeaders, cookie },
+        created.data.documentId,
+      );
+
+      const deleteResponse = await handler(
+        new Request(
+          `http://localhost/api/v1/content/${created.data.documentId}`,
+          {
+            method: "DELETE",
+            headers: csrfHeaders(scopeHeaders),
+          },
+        ),
+      );
+
+      assert.equal(deleteResponse.status, 200);
+
+      const deletedSearchResponse = await handler(
+        new Request(
+          "http://localhost/api/v1/content?q=restore-search-body&limit=1&offset=0",
+          {
+            headers: {
+              ...scopeHeaders,
+              cookie,
+            },
+          },
+        ),
+      );
+      const deletedSearchBody = (await deletedSearchResponse.json()) as {
+        data: Array<{ documentId: string }>;
+        pagination: { total: number };
+      };
+
+      assert.equal(deletedSearchResponse.status, 200);
+      assert.deepEqual(deletedSearchBody.data, []);
+      assert.equal(deletedSearchBody.pagination.total, 0);
+
+      const restoreResponse = await handler(
+        new Request(
+          `http://localhost/api/v1/content/${created.data.documentId}/versions/1/restore`,
+          {
+            method: "POST",
+            headers: csrfHeaders({
+              ...scopeHeaders,
+              "content-type": "application/json",
+            }),
+            body: JSON.stringify({
+              targetStatus: "draft",
+            }),
+          },
+        ),
+      );
+
+      assert.equal(restoreResponse.status, 200);
+
+      const restoredSearchResponse = await handler(
+        new Request(
+          "http://localhost/api/v1/content?q=restore-search-body&limit=1&offset=0",
+          {
+            headers: {
+              ...scopeHeaders,
+              cookie,
+            },
+          },
+        ),
+      );
+      const restoredSearchBody = (await restoredSearchResponse.json()) as {
+        data: Array<{ documentId: string; body: string }>;
+        pagination: { total: number };
+      };
+
+      assert.equal(restoredSearchResponse.status, 200);
+      assert.deepEqual(
+        restoredSearchBody.data.map((document) => document.documentId),
+        [created.data.documentId],
+      );
+      assert.equal(
+        restoredSearchBody.data[0]?.body,
+        "published restore-search-body marker",
+      );
+      assert.equal(restoredSearchBody.pagination.total, 1);
+    } finally {
+      await dbConnection.close();
+    }
+  },
+);
+
+testWithDatabase(
   "content API keeps documents isolated across routed projects",
   async () => {
     const { handler, dbConnection, cookie, csrfHeaders } =

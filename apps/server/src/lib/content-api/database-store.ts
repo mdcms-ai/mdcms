@@ -1710,6 +1710,7 @@ export function createDatabaseContentStore(
 
       const actorId = input.actorId?.trim() || DEFAULT_ACTOR;
       const restoredDocument = await db.transaction(async (tx) => {
+        const txDb = tx as unknown as DrizzleDatabase;
         const baseUpdate = {
           path: versionRow.path,
           schemaType: versionRow.schemaType,
@@ -1725,11 +1726,11 @@ export function createDatabaseContentStore(
 
         if (input.targetStatus === "published") {
           const nextVersion = await getNextVersionNumber(
-            tx as unknown as DrizzleDatabase,
+            txDb,
             normalizedDocumentId,
           );
 
-          await insertPublishedVersionRow(tx as unknown as DrizzleDatabase, {
+          await insertPublishedVersionRow(txDb, {
             headRow: existing,
             snapshot: {
               path: versionRow.path,
@@ -1799,6 +1800,8 @@ export function createDatabaseContentStore(
             },
           });
         }
+
+        await upsertPublishedSearchDocument(txDb, scopeIds, updated);
 
         return updated;
       });

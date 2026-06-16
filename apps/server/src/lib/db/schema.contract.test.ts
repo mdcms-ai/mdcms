@@ -872,7 +872,7 @@ test("migration SQL encodes published-version delete restriction and no extensio
   );
   assert.match(
     allMigrationSql,
-    /concat_ws\(\s+E'\\n',\s+"document_versions"\."path",\s+"document_versions"\."body",\s+"document_versions"\."frontmatter"::text\s+\)/i,
-    "expected backfill vector text to include path, body, and frontmatter",
+    /concat_ws\(\s+E'\\n',\s+"document_versions"\."path",\s+regexp_replace\("document_versions"\."path",\s+'\[\/\._-\]\+',\s+' ',\s+'g'\),\s+"document_versions"\."body",\s+"document_versions"\."frontmatter"::text\s+\)/i,
+    "expected backfill vector text to include separator-normalized path segments",
   );
 });
