@@ -10,6 +10,20 @@ type DrizzleJournal = {
   }>;
 };
 
+type SnapshotIndex = {
+  columns?: Array<{
+    expression?: string;
+  }>;
+  isUnique?: boolean;
+  method?: string;
+};
+
+type SnapshotKey = {
+  columns?: string[];
+  name?: string;
+  nullsNotDistinct?: boolean;
+};
+
 type DrizzleSnapshot = {
   tables: Record<
     string,
@@ -23,21 +37,28 @@ type DrizzleSnapshot = {
           type?: string;
         }
       >;
-      indexes: Record<string, unknown>;
+      indexes: Record<string, SnapshotIndex>;
       foreignKeys: Record<
         string,
         {
           columnsFrom?: string[];
           columnsTo?: string[];
+          onDelete?: string;
+          onUpdate?: string;
           tableFrom?: string;
           tableTo?: string;
         }
       >;
-      uniqueConstraints: Record<string, unknown>;
+      compositePrimaryKeys: Record<string, SnapshotKey>;
+      uniqueConstraints: Record<string, SnapshotKey>;
       checkConstraints: Record<string, { value?: string }>;
     }
   >;
 };
+
+function indexColumnExpressions(index: SnapshotIndex): string[] {
+  return index.columns?.map((column) => column.expression ?? "") ?? [];
+}
 
 function readLatestArtifacts(): {
   allMigrationSql: string;
@@ -226,6 +247,15 @@ test("schema snapshot includes CMS-11/CMS-12 core tables and columns", () => {
       "published_at",
       "change_summary",
     ],
+    "public.published_search_index": [
+      "project_id",
+      "environment_id",
+      "document_id",
+      "locale",
+      "schema_type",
+      "search_config",
+      "search_vector",
+    ],
     "public.media": [
       "id",
       "project_id",
@@ -401,6 +431,8 @@ test("snapshot includes required named constraints and indexes", () => {
     snapshot.tables["public.schema_registry_entries"];
   const projectMediaSettingsTable =
     snapshot.tables["public.project_media_settings"];
+  const publishedSearchIndexTable =
+    snapshot.tables["public.published_search_index"];
 
   assert.ok(documentsTable, "expected documents table in snapshot");
   assert.ok(
@@ -440,6 +472,10 @@ test("snapshot includes required named constraints and indexes", () => {
     projectMediaSettingsTable,
     "expected project_media_settings table in snapshot",
   );
+  assert.ok(
+    publishedSearchIndexTable,
+    "expected published_search_index table in snapshot",
+  );
 
   for (const indexName of [
     "idx_documents_active_scope_type_locale_path",
@@ -464,6 +500,15 @@ test("snapshot includes required named constraints and indexes", () => {
       `expected foreign key ${foreignKeyName} on documents`,
     );
   }
+  assert.deepEqual(
+    documentsTable.uniqueConstraints.unique_document_scope,
+    {
+      name: "unique_document_scope",
+      nullsNotDistinct: false,
+      columns: ["document_id", "project_id", "environment_id"],
+    },
+    "expected documents to expose document/project/environment scope for composite foreign keys",
+  );
 
   for (const indexName of ["idx_versions_document", "idx_versions_scope"]) {
     assert.ok(
@@ -644,6 +689,97 @@ test("snapshot includes required named constraints and indexes", () => {
     '"project_media_settings"."image_max_upload_size_bytes" is null or "project_media_settings"."image_max_upload_size_bytes" > 0',
     "expected image max upload size constraint to allow null or positive values only",
   );
+  assert.deepEqual(
+    publishedSearchIndexTable.columns.search_config,
+    {
+      name: "search_config",
+      type: "regconfig",
+      primaryKey: false,
+      notNull: true,
+    },
+    "expected published_search_index.search_config to be non-null REGCONFIG",
+  );
+  assert.deepEqual(
+    publishedSearchIndexTable.columns.search_vector,
+    {
+      name: "search_vector",
+      type: "tsvector",
+      primaryKey: false,
+      notNull: true,
+    },
+    "expected published_search_index.search_vector to be non-null TSVECTOR",
+  );
+  assert.equal(
+    publishedSearchIndexTable.indexes.idx_published_search_vector.method,
+    "gin",
+    "expected idx_published_search_vector to use GIN",
+  );
+  assert.deepEqual(
+    indexColumnExpressions(
+      publishedSearchIndexTable.indexes.idx_published_search_vector,
+    ),
+    ["search_vector"],
+    "expected idx_published_search_vector to cover only search_vector",
+  );
+  assert.ok(
+    publishedSearchIndexTable.indexes.idx_published_search_scope_type_locale,
+    "expected scope/type/locale index on published_search_index",
+  );
+  assert.deepEqual(
+    indexColumnExpressions(
+      publishedSearchIndexTable.indexes.idx_published_search_scope_type_locale,
+    ),
+    ["project_id", "environment_id", "schema_type", "locale"],
+    "expected published search scope/type/locale index column order",
+  );
+  assert.deepEqual(
+    publishedSearchIndexTable.compositePrimaryKeys.published_search_index_pkey,
+    {
+      name: "published_search_index_pkey",
+      columns: ["project_id", "environment_id", "document_id", "locale"],
+    },
+    "expected published_search_index primary key column order",
+  );
+  assert.deepEqual(
+    publishedSearchIndexTable.foreignKeys.fk_published_search_index_document,
+    {
+      name: "fk_published_search_index_document",
+      tableFrom: "published_search_index",
+      tableTo: "documents",
+      columnsFrom: ["document_id"],
+      columnsTo: ["document_id"],
+      onDelete: "cascade",
+      onUpdate: "no action",
+    },
+    "expected published_search_index.document_id to cascade with documents",
+  );
+  assert.deepEqual(
+    publishedSearchIndexTable.foreignKeys
+      .fk_published_search_index_document_scope,
+    {
+      name: "fk_published_search_index_document_scope",
+      tableFrom: "published_search_index",
+      tableTo: "documents",
+      columnsFrom: ["document_id", "project_id", "environment_id"],
+      columnsTo: ["document_id", "project_id", "environment_id"],
+      onDelete: "cascade",
+      onUpdate: "no action",
+    },
+    "expected published_search_index scope to match the referenced document",
+  );
+  assert.deepEqual(
+    publishedSearchIndexTable.foreignKeys.fk_published_search_index_env_project,
+    {
+      name: "fk_published_search_index_env_project",
+      tableFrom: "published_search_index",
+      tableTo: "environments",
+      columnsFrom: ["environment_id", "project_id"],
+      columnsTo: ["id", "project_id"],
+      onDelete: "no action",
+      onUpdate: "no action",
+    },
+    "expected published_search_index environment to belong to the indexed project",
+  );
 });
 
 test("migration SQL encodes published-version delete restriction and no extension setup", () => {
@@ -668,5 +804,75 @@ test("migration SQL encodes published-version delete restriction and no extensio
     /pgcrypto/i.test(allMigrationSql),
     false,
     "migration SQL must not depend on pgcrypto",
+  );
+  assert.match(
+    allMigrationSql,
+    /CREATE TABLE "published_search_index"/i,
+    "expected migration SQL to create published_search_index",
+  );
+  assert.match(
+    allMigrationSql,
+    /CONSTRAINT "published_search_index_pkey" PRIMARY KEY\("project_id","environment_id","document_id","locale"\)/i,
+    "expected published_search_index primary key column order in SQL",
+  );
+  assert.match(
+    allMigrationSql,
+    /"search_config" regconfig NOT NULL/i,
+    "expected migration SQL to use REGCONFIG",
+  );
+  assert.match(
+    allMigrationSql,
+    /"search_vector" tsvector NOT NULL/i,
+    "expected migration SQL to use TSVECTOR",
+  );
+  assert.match(
+    allMigrationSql,
+    /CREATE INDEX "idx_published_search_vector" ON "published_search_index" USING gin \("search_vector"\)/i,
+    "expected migration SQL to create GIN search_vector index",
+  );
+  assert.match(
+    allMigrationSql,
+    /CREATE INDEX "idx_published_search_scope_type_locale" ON "published_search_index" USING btree \("project_id","environment_id","schema_type","locale"\)/i,
+    "expected migration SQL to create scope/type/locale index with stable column order",
+  );
+  assert.match(
+    allMigrationSql,
+    /ALTER TABLE "documents" ADD CONSTRAINT "unique_document_scope" UNIQUE\("document_id","project_id","environment_id"\)/i,
+    "expected migration SQL to add document scope uniqueness for composite foreign keys",
+  );
+  assert.match(
+    allMigrationSql,
+    /ALTER TABLE "published_search_index" ADD CONSTRAINT "fk_published_search_index_env_project" FOREIGN KEY \("environment_id","project_id"\) REFERENCES "public"."environments"\("id","project_id"\) ON DELETE no action ON UPDATE no action/i,
+    "expected migration SQL to enforce published_search_index environment/project scope",
+  );
+  assert.match(
+    allMigrationSql,
+    /ALTER TABLE "published_search_index" ADD CONSTRAINT "fk_published_search_index_document_scope" FOREIGN KEY \("document_id","project_id","environment_id"\) REFERENCES "public"."documents"\("document_id","project_id","environment_id"\) ON DELETE cascade ON UPDATE no action/i,
+    "expected migration SQL to enforce published_search_index document scope",
+  );
+  assert.match(
+    allMigrationSql,
+    /INSERT INTO "published_search_index"/i,
+    "expected migration SQL to backfill published search index rows",
+  );
+  assert.match(
+    allMigrationSql,
+    /INSERT INTO "published_search_index"[\s\S]+SELECT\s+"documents"\."project_id",\s+"documents"\."environment_id",\s+"document_versions"\."document_id",\s+"document_versions"\."locale",\s+"document_versions"\."schema_type"/i,
+    "expected backfill to source constrained scope from documents while preserving published snapshot fields from document_versions",
+  );
+  assert.match(
+    allMigrationSql,
+    /INSERT INTO "published_search_index"[\s\S]+FROM "documents"\s+INNER JOIN "document_versions"[\s\S]+"document_versions"\."version" = "documents"\."published_version"/i,
+    "expected backfill to join document_versions through documents.published_version",
+  );
+  assert.match(
+    allMigrationSql,
+    /WHERE "documents"\."is_deleted" = false\s+AND "documents"\."published_version" IS NOT NULL/i,
+    "expected backfill to include only non-deleted documents with a published version",
+  );
+  assert.match(
+    allMigrationSql,
+    /concat_ws\(\s+E'\\n',\s+"document_versions"\."path",\s+"document_versions"\."body",\s+"document_versions"\."frontmatter"::text\s+\)/i,
+    "expected backfill vector text to include path, body, and frontmatter",
   );
 });

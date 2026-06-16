@@ -113,6 +113,13 @@
       "when": 1780694795816,
       "tag": "0015_yellow_wasp",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1781575562356,
+      "tag": "0016_dashing_magus",
+      "breakpoints": true
     }
   ]
 }
