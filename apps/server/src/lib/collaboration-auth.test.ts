@@ -11,6 +11,7 @@ import {
 import {
   createCollaborationAuthGuard,
   mountCollaborationRoutes,
+  resolveCollaborationAllowedOrigins,
 } from "./collaboration-auth.js";
 import type {
   ApiKeyMetadata,
@@ -295,6 +296,22 @@ test("collaboration handshake rejects API key auth with 4403", async () => {
   }
 
   assert.equal(result.closeCode, 4403);
+});
+
+test("collaboration origin allowlist uses the documented Studio browser origins in production", () => {
+  assert.deepEqual(
+    resolveCollaborationAllowedOrigins({
+      NODE_ENV: "production",
+      MDCMS_SERVER_URL: "https://cms-api.up.railway.app",
+      MDCMS_STUDIO_ALLOWED_ORIGINS:
+        "https://mdcms-demo.up.railway.app, https://admin.example.com",
+    }),
+    [
+      "https://mdcms-demo.up.railway.app",
+      "https://admin.example.com",
+      "https://cms-api.up.railway.app",
+    ],
+  );
 });
 
 test("collaboration handshake rejects missing documentId with 4403", async () => {

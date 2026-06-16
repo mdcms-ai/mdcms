@@ -177,24 +177,32 @@ function derivePresenceColor(userId: string): string {
 }
 
 /**
- * Loopback origins implicitly trusted for the collaboration handshake
- * when running outside production. Production deployments must rely on
- * an explicit `MDCMS_COLLAB_ALLOWED_ORIGINS` allowlist so the dev-time
- * convenience never leaks into a deployed environment.
+ * Loopback origins are implicitly trusted for the collaboration handshake when
+ * running outside production. Production deployments use the documented Studio
+ * browser allowlist, with the collaboration-specific allowlist kept as an
+ * additive override for operators that need a narrower or transitional setup.
  */
 const COLLAB_LOOPBACK_DEV_ORIGINS = [
   "http://127.0.0.1:4173",
   "http://localhost:4173",
 ] as const;
 
-export function resolveCollaborationAllowedOrigins(
-  env: NodeJS.ProcessEnv,
-): string[] {
-  const configured = env.MDCMS_COLLAB_ALLOWED_ORIGINS ?? "";
-  const origins = configured
+function parseAllowedOriginList(rawValue: string | undefined): string[] {
+  return (rawValue ?? "")
     .split(",")
     .map((value) => value.trim())
     .filter((value) => value.length > 0);
+}
+
+export function resolveCollaborationAllowedOrigins(
+  env: NodeJS.ProcessEnv,
+): string[] {
+  const studioOrigins = parseAllowedOriginList(
+    env.MDCMS_STUDIO_ALLOWED_ORIGINS,
+  );
+  const collaborationOrigins = parseAllowedOriginList(
+    env.MDCMS_COLLAB_ALLOWED_ORIGINS,
+  );
   const fallback = env.MDCMS_SERVER_URL
     ? [new URL(env.MDCMS_SERVER_URL).origin]
     : [];
@@ -202,7 +210,8 @@ export function resolveCollaborationAllowedOrigins(
 
   return [
     ...new Set([
-      ...origins,
+      ...studioOrigins,
+      ...collaborationOrigins,
       ...fallback,
       ...(includeLoopback ? COLLAB_LOOPBACK_DEV_ORIGINS : []),
     ]),
