@@ -78,7 +78,7 @@ WebSocket connect (`/api/v1/collaboration?project=...&environment=...&documentId
 
 ### State Management
 
-**Source of truth hierarchy:** PostgreSQL `body` (markdown/MDX) and `frontmatter` are the canonical durable draft source of truth. During an active document room, Redis holds ephemeral Yjs state for real-time editing and presence heartbeats for online indicators. PostgreSQL is updated by server-owned active collaboration autosave and by the final save after the last collaborator disconnects. Publish flows read from PostgreSQL and remain blocked while the active collaboration lock exists.
+**Source of truth hierarchy:** PostgreSQL `body` (markdown/MDX) and `frontmatter` are the canonical durable draft source of truth. During an active document room, Redis holds ephemeral Yjs state for real-time editing and presence heartbeats for online indicators. PostgreSQL is updated by server-owned active collaboration autosave and by the final save after the last collaborator disconnects. Publish flows always create versions from the current PostgreSQL draft head. Studio publish actions from an active document room use the collaboration socket control-message contract defined below; external content mutations remain blocked while the active collaboration lock exists.
 
 **Single-user document load/save cycle:**
 
@@ -109,7 +109,7 @@ WebSocket connect (`/api/v1/collaboration?project=...&environment=...&documentId
 
 #### Active Collaboration Lock
 
-Existing-document mutations must fail while `mdcms:collaboration:active:{documentId}` exists. The lock applies to update, move, restore, restore-version, publish, unpublish, delete, bulk equivalents, and server content-store writes from AI or module surfaces. Reads and new document creation remain allowed. The content API error contract is defined in SPEC-003.
+Existing-document mutations must fail while `mdcms:collaboration:active:{documentId}` exists unless they are explicitly routed through the active document room control-message contract. The lock applies to update, move, restore, restore-version, normal HTTP publish, normal HTTP unpublish, delete, bulk equivalents, and server content-store writes from AI or module surfaces. Reads and new document creation remain allowed. The content API error contract is defined in SPEC-003.
 
 ### Presence Awareness
 
@@ -167,14 +167,23 @@ collaboration lock exists, never through a normal HTTP draft `PUT`.
 **Publish (versioned):**
 
 - Explicit user action (Publish button).
-- The client invokes the publish endpoint with the document identity and the
-  optional change summary; it does not upload the body/frontmatter snapshot as
-  part of the publish request in MVP.
+- In non-collaborative operation, the client invokes the publish endpoint with
+  the document identity and the optional change summary.
+- In an active document room, Studio invokes the collaboration publish control
+  message on the existing document room socket. The message carries the same
+  optional change summary as normal publish and never uploads a
+  body/frontmatter snapshot.
+- Before collaboration publish, Studio may send a collaboration flush control
+  message when the user chooses to save live room changes first. If the flush
+  fails, publish must not run.
 - The server copies the current mutable draft body and frontmatter from the
   `documents` head row into a new immutable row in `document_versions` at the
   moment publish succeeds.
 - Optionally includes a change summary entered by the user.
 - This is the only action that creates version history.
+- The document room remains active after collaboration publish. Edits that
+  arrive after the published draft head remain draft changes and may make the
+  document show unpublished changes again.
 
 ---
 
@@ -975,12 +984,39 @@ type CollaborationFlushResult =
       code: string;
       message: string;
     };
+
+type CollaborationPublishRequest = {
+  type: "mdcms.collaboration.publish";
+  requestId: string;
+  changeSummary?: string;
+};
+
+type CollaborationPublishResult =
+  | {
+      type: "mdcms.collaboration.publish.result";
+      requestId: string;
+      status: "published";
+      document: ContentDocumentResponse;
+    }
+  | {
+      type: "mdcms.collaboration.publish.result";
+      requestId: string;
+      status: "error";
+      code: string;
+      message: string;
+    };
 ```
 
 - A successful flush performs the same authorization revalidation and
   optimistic draft-revision checks as active collaboration autosave. `saved`
   means PostgreSQL changed and `draft_revision` advanced; `unchanged` means the
   room snapshot already matched the PostgreSQL draft head.
+- A collaboration publish request is accepted only on the active document room
+  socket. The server must revalidate the Session, require publish access for the
+  target document path, wait for pending socket messages to be applied, and
+  publish the current PostgreSQL draft head without clearing the active
+  collaboration lock. The response document uses the same response shape as the
+  normal content publish endpoint.
 
 Presence stream contract:
 

@@ -757,9 +757,24 @@ Normative behavior:
   auto-save. Active collaboration autosave continues to run through the
   collaboration runtime and must not be represented as independent HTTP `PUT`
   auto-save while the active collaboration lock exists.
-- `Publish` opens the publish dialog and is disabled until the draft is
-  saved, has unpublished changes, a publish is not already running, and the
-  document is not blocked by an active collaboration lock.
+- `Publish` opens the publish dialog when the draft is saved, has unpublished
+  changes, a publish is not already running, and the current user can publish.
+  In non-collaborative operation Studio submits the normal content publish
+  request. In an active collaboration document room, Studio submits publish
+  through the collaboration socket so the operation is authorized against the
+  active room context and publishes the current PostgreSQL draft head without
+  requiring the editor to disconnect.
+- If the active editor has unsaved or in-flight collaboration changes when the
+  user clicks `Publish`, Studio must show a choice prompt before opening or
+  submitting the publish dialog:
+  - `Save and publish` sends a collaboration flush, waits for the server to
+    persist the room snapshot, and then publishes the newly saved draft head.
+  - `Publish saved draft` skips the flush and publishes the current PostgreSQL
+    draft head; live editor changes that have not reached PostgreSQL remain
+    unpublished and may later autosave as new unpublished changes.
+  - `Cancel` closes the prompt without saving or publishing.
+    If the collaboration flush fails or times out, Studio must not publish and
+    must surface the collaboration save error in the document editor.
 - The redundant workflow status pill (`Draft` / `Changed` / `Published`) and
   the redundant `v{publishedVersion}` chip are NOT shown in the topbar; both
   facts are surfaced via the `UNPUBLISHED CHANGES` badge and the inspector's
