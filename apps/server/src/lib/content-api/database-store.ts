@@ -31,6 +31,7 @@ import {
   assertRequiredString,
   parseBoolean,
   parseContentListGroupBy,
+  parseContentSearchQuery,
   parseContentFormat,
   parseOptionalString,
   parsePositiveInt,
@@ -58,11 +59,9 @@ import { matchesDeletedListVisibility } from "./visibility.js";
 export function createDatabaseContentStore(
   options: CreateDatabaseContentStoreOptions,
 ): ContentStore {
-  const {
-    db,
-    lookupMediaAsset,
-    searchBackend = createPostgresContentSearchBackend(),
-  } = options;
+  const { db, lookupMediaAsset } = options;
+  const searchBackend =
+    options.searchBackend ?? createPostgresContentSearchBackend(db);
 
   async function resolveScopeIds(
     scope: ContentScope,
@@ -459,7 +458,7 @@ export function createDatabaseContentStore(
       published?: boolean;
       isDeleted?: boolean;
       hasUnpublishedChanges?: boolean;
-      q?: string;
+      matchingSearchDocumentIds?: Set<string>;
     },
   ): boolean {
     if (query.type && document.type !== query.type) {
@@ -500,13 +499,11 @@ export function createDatabaseContentStore(
       return false;
     }
 
-    if (query.q) {
-      const haystack =
-        `${document.path}\n${document.body}\n${JSON.stringify(document.frontmatter)}`.toLowerCase();
-
-      if (!haystack.includes(query.q)) {
-        return false;
-      }
+    if (
+      query.matchingSearchDocumentIds &&
+      !query.matchingSearchDocumentIds.has(document.documentId)
+    ) {
+      return false;
     }
 
     return true;
@@ -873,7 +870,7 @@ export function createDatabaseContentStore(
       const normalizedPath = query.path?.trim();
       const normalizedLocale = query.locale?.trim();
       const normalizedSlug = query.slug?.trim();
-      const normalizedQ = query.q?.trim().toLowerCase();
+      const normalizedQ = parseContentSearchQuery(query.q);
       const groupBy = parseContentListGroupBy(query.groupBy);
       const scopeIds = await resolveScopeIds(scope, false);
 
@@ -885,6 +882,21 @@ export function createDatabaseContentStore(
           offset,
         };
       }
+
+      const matchingSearchDocumentIds = normalizedQ
+        ? draft
+          ? await searchBackend.searchDraftDocumentIds(scopeIds, {
+              query: normalizedQ,
+              type: normalizedType,
+              locale: normalizedLocale,
+              isDeleted,
+            })
+          : await searchBackend.searchPublishedDocumentIds(scopeIds, {
+              query: normalizedQ,
+              type: normalizedType,
+              locale: normalizedLocale,
+            })
+        : undefined;
 
       const headRows = await db
         .select()
@@ -925,7 +937,7 @@ export function createDatabaseContentStore(
           published,
           isDeleted,
           hasUnpublishedChanges,
-          q: normalizedQ,
+          matchingSearchDocumentIds,
         }),
       );
 

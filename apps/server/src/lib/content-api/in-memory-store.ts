@@ -22,6 +22,7 @@ import {
   assertRequiredString,
   parseBoolean,
   parseContentListGroupBy,
+  parseContentSearchQuery,
   parseContentFormat,
   parseOptionalString,
   parsePositiveInt,
@@ -423,7 +424,7 @@ export function createInMemoryContentStore(
       const normalizedPath = query.path?.trim();
       const normalizedLocale = query.locale?.trim();
       const normalizedSlug = query.slug?.trim();
-      const normalizedQ = query.q?.trim().toLowerCase();
+      const normalizedQ = parseContentSearchQuery(query.q)?.toLowerCase();
       const groupBy = parseContentListGroupBy(query.groupBy);
 
       const rows = [...store.values()]

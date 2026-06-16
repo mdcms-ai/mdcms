@@ -1,6 +1,7 @@
-import { and, eq, ne, sql } from "drizzle-orm";
+import { and, eq, ne, sql, type SQL } from "drizzle-orm";
 
-import { publishedSearchIndex } from "../db/schema.js";
+import type { DrizzleDatabase } from "../db.js";
+import { documents, publishedSearchIndex } from "../db/schema.js";
 import type { ContentSearchBackend } from "./types.js";
 
 const SEARCH_CONFIG_BY_PRIMARY_LOCALE: Record<string, string> = {
@@ -37,14 +38,98 @@ export function buildContentSearchText(input: {
   return `${input.path}\n${input.body}\n${JSON.stringify(input.frontmatter)}`;
 }
 
-export function createPostgresContentSearchBackend(): ContentSearchBackend {
+function postgresSearchConfigForLocaleColumn(): SQL {
+  return sql`CASE lower(split_part(${documents.locale}, '-', 1))
+    WHEN 'da' THEN 'danish'::regconfig
+    WHEN 'de' THEN 'german'::regconfig
+    WHEN 'en' THEN 'english'::regconfig
+    WHEN 'es' THEN 'spanish'::regconfig
+    WHEN 'fi' THEN 'finnish'::regconfig
+    WHEN 'fr' THEN 'french'::regconfig
+    WHEN 'hu' THEN 'hungarian'::regconfig
+    WHEN 'it' THEN 'italian'::regconfig
+    WHEN 'nl' THEN 'dutch'::regconfig
+    WHEN 'no' THEN 'norwegian'::regconfig
+    WHEN 'nb' THEN 'norwegian'::regconfig
+    WHEN 'nn' THEN 'norwegian'::regconfig
+    WHEN 'pt' THEN 'portuguese'::regconfig
+    WHEN 'ro' THEN 'romanian'::regconfig
+    WHEN 'ru' THEN 'russian'::regconfig
+    WHEN 'sv' THEN 'swedish'::regconfig
+    WHEN 'tr' THEN 'turkish'::regconfig
+    ELSE 'simple'::regconfig
+  END`;
+}
+
+export function createPostgresContentSearchBackend(
+  db: DrizzleDatabase,
+): ContentSearchBackend {
   return {
-    async searchPublishedDocumentIds(_scopeIds, _filters) {
-      return new Set<string>();
+    async searchPublishedDocumentIds(scopeIds, filters) {
+      const query = filters.query?.trim();
+
+      if (!query) {
+        return new Set<string>();
+      }
+
+      const conditions: SQL[] = [
+        eq(publishedSearchIndex.projectId, scopeIds.projectId),
+        eq(publishedSearchIndex.environmentId, scopeIds.environmentId),
+        sql`${publishedSearchIndex.searchVector} @@ websearch_to_tsquery(${publishedSearchIndex.searchConfig}, ${query})`,
+      ];
+      const type = filters.type?.trim();
+      const locale = filters.locale?.trim();
+
+      if (type) {
+        conditions.push(eq(publishedSearchIndex.schemaType, type));
+      }
+
+      if (locale) {
+        conditions.push(eq(publishedSearchIndex.locale, locale));
+      }
+
+      const rows = await db
+        .select({ documentId: publishedSearchIndex.documentId })
+        .from(publishedSearchIndex)
+        .where(and(...conditions));
+
+      return new Set(rows.map((row) => row.documentId));
     },
 
-    async searchDraftDocumentIds(_scopeIds, _filters) {
-      return new Set<string>();
+    async searchDraftDocumentIds(scopeIds, filters) {
+      const query = filters.query?.trim();
+
+      if (!query) {
+        return new Set<string>();
+      }
+
+      const searchConfig = postgresSearchConfigForLocaleColumn();
+      const conditions: SQL[] = [
+        eq(documents.projectId, scopeIds.projectId),
+        eq(documents.environmentId, scopeIds.environmentId),
+        eq(documents.isDeleted, filters.isDeleted ?? false),
+        sql`to_tsvector(
+          ${searchConfig},
+          concat_ws(E'\n', ${documents.path}, ${documents.body}, ${documents.frontmatter}::text)
+        ) @@ websearch_to_tsquery(${searchConfig}, ${query})`,
+      ];
+      const type = filters.type?.trim();
+      const locale = filters.locale?.trim();
+
+      if (type) {
+        conditions.push(eq(documents.schemaType, type));
+      }
+
+      if (locale) {
+        conditions.push(eq(documents.locale, locale));
+      }
+
+      const rows = await db
+        .select({ documentId: documents.documentId })
+        .from(documents)
+        .where(and(...conditions));
+
+      return new Set(rows.map((row) => row.documentId));
     },
 
     async upsertPublishedDocument(tx, document) {

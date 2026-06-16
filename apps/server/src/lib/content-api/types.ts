@@ -59,6 +59,7 @@ export type ContentSearchFilters = {
   query?: string;
   type?: string;
   locale?: string;
+  isDeleted?: boolean;
 };
 
 export type ContentSearchIndexedDocument = ContentSearchScopeIds & {

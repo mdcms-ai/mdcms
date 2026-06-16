@@ -22,6 +22,8 @@ import {
   createCms28BlogPostPayload,
   inMemorySchemaHash,
   scopeHeaders,
+  stableFixtureName,
+  testWithDatabase,
   wrapHandlerWithAutoSchemaHash,
 } from "./content-api-test-support.js";
 import { createServerRequestHandler } from "./server.js";
@@ -3558,6 +3560,61 @@ test("content API authorizes list reads before validating translation grouping",
   assert.equal(schemaReads, 0);
 });
 
+test("content API authorizes draft search before listing content", async () => {
+  let listCalls = 0;
+  const store = createInMemoryContentStore({
+    schemaScopes: [
+      {
+        project: scopeHeaders["x-mdcms-project"],
+        environment: scopeHeaders["x-mdcms-environment"],
+        schemas: createCms26ResolvedSchemas(),
+      },
+    ],
+  });
+  const rawHandler = createServerRequestHandler({
+    env: baseEnv,
+    configureApp: (app) => {
+      mountContentApiRoutes(app, {
+        store: {
+          ...store,
+          async list(scope, query) {
+            listCalls += 1;
+            return store.list(scope, query);
+          },
+        },
+        authorize: async (_request, requirement) => {
+          assert.equal(requirement.requiredScope, "content:read:draft");
+          throw new RuntimeError({
+            code: "FORBIDDEN",
+            message: "Forbidden",
+            statusCode: 403,
+          });
+        },
+        requireCsrf: async () => undefined,
+        getWriteSchemaSyncState: async () => ({
+          schemaHash: inMemorySchemaHash,
+        }),
+      });
+    },
+    now: () => new Date("2026-03-02T10:00:00.000Z"),
+  });
+  const handler = wrapHandlerWithAutoSchemaHash(
+    rawHandler,
+    () => inMemorySchemaHash,
+  );
+
+  const response = await handler(
+    new Request("http://localhost/api/v1/content?draft=true&q=secret", {
+      headers: scopeHeaders,
+    }),
+  );
+  const body = (await response.json()) as { code: string };
+
+  assert.equal(response.status, 403);
+  assert.equal(body.code, "FORBIDDEN");
+  assert.equal(listCalls, 0);
+});
+
 test("content API preview token endpoint signs document-bound draft preview tokens", async () => {
   const scope = {
     project: scopeHeaders["x-mdcms-project"],
@@ -4762,6 +4819,78 @@ test("content API list uses published snapshots by default and hides deleted dra
   );
 });
 
+testWithDatabase(
+  "database content API draft search includes explicitly requested deleted documents",
+  async () => {
+    const context = await createDatabaseTestContext(
+      "test:content-api-draft-search-deleted",
+    );
+    const project = `db-draft-search-${stableFixtureName(randomUUID())}`;
+    const testScopeHeaders = {
+      ...scopeHeaders,
+      "x-mdcms-project": project,
+    };
+
+    try {
+      const deleted = (await createContentDocument(
+        context.handler,
+        context.csrfHeaders,
+        testScopeHeaders,
+        {
+          path: `blog/${stableFixtureName("deleted draft search")}`,
+          type: "BlogPost",
+          locale: "en",
+          format: "md",
+          frontmatter: { slug: "deleted-draft-search" },
+          body: "soft deleted draft search body",
+        },
+      )) as { documentId: string };
+
+      const deleteResponse = await context.handler(
+        new Request(`http://localhost/api/v1/content/${deleted.documentId}`, {
+          method: "DELETE",
+          headers: context.csrfHeaders(testScopeHeaders),
+        }),
+      );
+      assert.equal(deleteResponse.status, 200);
+
+      const searchResponse = await context.handler(
+        new Request(
+          "http://localhost/api/v1/content?draft=true&isDeleted=true&q=soft%20deleted%20draft%20search&sort=path&order=asc",
+          {
+            headers: context.csrfHeaders(testScopeHeaders),
+          },
+        ),
+      );
+      const searchBody = (await searchResponse.json()) as {
+        data: Array<{
+          documentId: string;
+          body: string;
+          isDeleted: boolean;
+        }>;
+      };
+
+      assert.equal(searchResponse.status, 200);
+      assert.deepEqual(
+        searchBody.data.map((document) => ({
+          documentId: document.documentId,
+          body: document.body,
+          isDeleted: document.isDeleted,
+        })),
+        [
+          {
+            documentId: deleted.documentId,
+            body: "soft deleted draft search body",
+            isDeleted: true,
+          },
+        ],
+      );
+    } finally {
+      await context.dbConnection.close();
+    }
+  },
+);
+
 test("content API restore undeletes the current head without appending a version", async () => {
   const handler = createHandler();
 
@@ -5563,6 +5692,20 @@ test("content API enforces list query validation and routing requirements", asyn
 
   assert.equal(malformedLimitResponse.status, 400);
   assert.equal(malformedLimitBody.code, "INVALID_QUERY_PARAM");
+
+  const longSearchResponse = await handler(
+    new Request(`http://localhost/api/v1/content?q=${"x".repeat(201)}`, {
+      headers: scopeHeaders,
+    }),
+  );
+  const longSearchBody = (await longSearchResponse.json()) as {
+    code: string;
+    details?: Record<string, unknown>;
+  };
+
+  assert.equal(longSearchResponse.status, 400);
+  assert.equal(longSearchBody.code, "INVALID_QUERY_PARAM");
+  assert.equal(longSearchBody.details?.field, "q");
 
   const missingScopeResponse = await handler(
     new Request("http://localhost/api/v1/content"),

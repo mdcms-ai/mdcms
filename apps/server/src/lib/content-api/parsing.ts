@@ -39,6 +39,40 @@ export function parseQueryParam<T>(
   });
 }
 
+export const MAX_CONTENT_SEARCH_QUERY_LENGTH = 200;
+
+export function parseContentSearchQuery(
+  value: string | undefined,
+): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+
+  const result = z
+    .string()
+    .max(MAX_CONTENT_SEARCH_QUERY_LENGTH, {
+      message: `must be <= ${MAX_CONTENT_SEARCH_QUERY_LENGTH} characters`,
+    })
+    .safeParse(trimmed);
+
+  if (result.success) {
+    return result.data;
+  }
+
+  throw new RuntimeError({
+    code: "INVALID_QUERY_PARAM",
+    message: `Query parameter "q" must be <= ${MAX_CONTENT_SEARCH_QUERY_LENGTH} characters.`,
+    statusCode: 400,
+    details: { field: "q", value },
+  });
+}
+
 export function parseInputField<T>(
   schema: z.ZodType<T>,
   value: unknown,
