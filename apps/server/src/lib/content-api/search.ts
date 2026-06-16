@@ -23,6 +23,14 @@ const SEARCH_CONFIG_BY_PRIMARY_LOCALE: Record<string, string> = {
   sv: "swedish",
   tr: "turkish",
 };
+const SEARCH_PATH_SEPARATOR_PATTERN = "[/._-]+";
+
+function normalizeContentSearchPath(path: string): string {
+  return path
+    .replace(/[\/._-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
 export function resolvePostgresSearchConfig(locale: string): string {
   const primarySubtag = locale.trim().toLowerCase().split("-")[0] ?? "";
@@ -35,7 +43,7 @@ export function buildContentSearchText(input: {
   body: string;
   frontmatter: Record<string, unknown>;
 }): string {
-  return `${input.path}\n${input.body}\n${JSON.stringify(input.frontmatter)}`;
+  return `${input.path}\n${normalizeContentSearchPath(input.path)}\n${input.body}\n${JSON.stringify(input.frontmatter)}`;
 }
 
 function postgresSearchConfigForLocaleColumn(): SQL {
@@ -104,13 +112,14 @@ export function createPostgresContentSearchBackend(
       }
 
       const searchConfig = postgresSearchConfigForLocaleColumn();
+      const normalizedPath = sql`regexp_replace(${documents.path}, ${SEARCH_PATH_SEPARATOR_PATTERN}, ${" "}, ${"g"})`;
       const conditions: SQL[] = [
         eq(documents.projectId, scopeIds.projectId),
         eq(documents.environmentId, scopeIds.environmentId),
         eq(documents.isDeleted, filters.isDeleted ?? false),
         sql`to_tsvector(
           ${searchConfig},
-          concat_ws(E'\n', ${documents.path}, ${documents.body}, ${documents.frontmatter}::text)
+          concat_ws(E'\n', ${documents.path}, ${normalizedPath}, ${documents.body}, ${documents.frontmatter}::text)
         ) @@ websearch_to_tsquery(${searchConfig}, ${query})`,
       ];
       const type = filters.type?.trim();

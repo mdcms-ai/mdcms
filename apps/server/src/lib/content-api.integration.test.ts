@@ -357,6 +357,188 @@ testWithDatabase(
 );
 
 testWithDatabase(
+  "content API DB search uses published index by default and draft rows only with draft access",
+  async () => {
+    const { handler, dbConnection, cookie, csrfHeaders } =
+      await createDatabaseTestContext("test:content-api-db-search");
+    const testScopeHeaders = {
+      ...scopeHeaders,
+      "x-mdcms-project": stableFixtureName("content-db-search"),
+      "x-mdcms-environment": "production",
+    };
+
+    try {
+      await resetDatabaseTestScope(dbConnection.db, {
+        project: testScopeHeaders["x-mdcms-project"],
+        environment: testScopeHeaders["x-mdcms-environment"],
+      });
+
+      const firstCreateResponse = await handler(
+        new Request("http://localhost/api/v1/content", {
+          method: "POST",
+          headers: csrfHeaders({
+            ...testScopeHeaders,
+            "content-type": "application/json",
+          }),
+          body: JSON.stringify({
+            path: stableFixturePath("blog", "pathneedle"),
+            type: "BlogPost",
+            locale: "en",
+            format: "md",
+            frontmatter: {
+              slug: "search-launch",
+              title: "frontmatterneedle Launch Plan",
+            },
+            body: "published bodyneedle search marker",
+          }),
+        }),
+      );
+      const firstCreated = (await firstCreateResponse.json()) as {
+        data: { documentId: string; path: string };
+      };
+      assert.equal(firstCreateResponse.status, 200);
+
+      await publishContentDocument(
+        handler,
+        csrfHeaders,
+        { ...testScopeHeaders, cookie },
+        firstCreated.data.documentId,
+      );
+
+      const updateResponse = await handler(
+        new Request(
+          `http://localhost/api/v1/content/${firstCreated.data.documentId}`,
+          {
+            method: "PUT",
+            headers: csrfHeaders({
+              ...testScopeHeaders,
+              "content-type": "application/json",
+            }),
+            body: JSON.stringify({
+              body: "draft-only search needle",
+            }),
+          },
+        ),
+      );
+      assert.equal(updateResponse.status, 200);
+
+      const secondCreateResponse = await handler(
+        new Request("http://localhost/api/v1/content", {
+          method: "POST",
+          headers: csrfHeaders({
+            ...testScopeHeaders,
+            "content-type": "application/json",
+          }),
+          body: JSON.stringify({
+            path: stableFixturePath("blog", "search-unmatched"),
+            type: "BlogPost",
+            locale: "en",
+            format: "md",
+            frontmatter: { slug: "search-unmatched", title: "Other" },
+            body: "unmatched body",
+          }),
+        }),
+      );
+      const secondCreated = (await secondCreateResponse.json()) as {
+        data: { documentId: string };
+      };
+      assert.equal(secondCreateResponse.status, 200);
+
+      await publishContentDocument(
+        handler,
+        csrfHeaders,
+        { ...testScopeHeaders, cookie },
+        secondCreated.data.documentId,
+      );
+
+      async function assertPublishedSearchMatches(query: string) {
+        const response = await handler(
+          new Request(
+            `http://localhost/api/v1/content?type=BlogPost&q=${query}&limit=1&offset=0&sort=path&order=asc`,
+            {
+              headers: {
+                ...testScopeHeaders,
+                cookie,
+              },
+            },
+          ),
+        );
+        const body = (await response.json()) as {
+          data: Array<{ documentId: string; body: string; path: string }>;
+          pagination: { total: number; limit: number; offset: number };
+        };
+
+        assert.equal(response.status, 200);
+        assert.deepEqual(
+          body.data.map((document) => document.documentId),
+          [firstCreated.data.documentId],
+        );
+        assert.equal(body.data[0]?.body, "published bodyneedle search marker");
+        assert.equal(body.data[0]?.path, firstCreated.data.path);
+        assert.equal(body.pagination.total, 1);
+        assert.equal(body.pagination.limit, 1);
+        assert.equal(body.pagination.offset, 0);
+      }
+
+      await assertPublishedSearchMatches("bodyneedle");
+      await assertPublishedSearchMatches("frontmatterneedle");
+      await assertPublishedSearchMatches("pathneedle");
+
+      const publishedDraftNeedleResponse = await handler(
+        new Request(
+          "http://localhost/api/v1/content?q=draft-only&limit=1&offset=0&sort=path&order=asc",
+          {
+            headers: {
+              ...testScopeHeaders,
+              cookie,
+            },
+          },
+        ),
+      );
+      const publishedDraftNeedleBody =
+        (await publishedDraftNeedleResponse.json()) as {
+          data: Array<{ documentId: string }>;
+          pagination: { total: number; limit: number; offset: number };
+        };
+
+      assert.equal(publishedDraftNeedleResponse.status, 200);
+      assert.deepEqual(publishedDraftNeedleBody.data, []);
+      assert.equal(publishedDraftNeedleBody.pagination.total, 0);
+      assert.equal(publishedDraftNeedleBody.pagination.limit, 1);
+      assert.equal(publishedDraftNeedleBody.pagination.offset, 0);
+
+      const draftSearchResponse = await handler(
+        new Request(
+          "http://localhost/api/v1/content?draft=true&q=draft-only&limit=1&offset=0&sort=path&order=asc",
+          {
+            headers: {
+              ...testScopeHeaders,
+              cookie,
+            },
+          },
+        ),
+      );
+      const draftSearchBody = (await draftSearchResponse.json()) as {
+        data: Array<{ documentId: string; body: string }>;
+        pagination: { total: number; limit: number; offset: number };
+      };
+
+      assert.equal(draftSearchResponse.status, 200);
+      assert.deepEqual(
+        draftSearchBody.data.map((document) => document.documentId),
+        [firstCreated.data.documentId],
+      );
+      assert.equal(draftSearchBody.data[0]?.body, "draft-only search needle");
+      assert.equal(draftSearchBody.pagination.total, 1);
+      assert.equal(draftSearchBody.pagination.limit, 1);
+      assert.equal(draftSearchBody.pagination.offset, 0);
+    } finally {
+      await dbConnection.close();
+    }
+  },
+);
+
+testWithDatabase(
   "content API DB list can group localized variants into logical translation rows",
   async () => {
     const { handler, dbConnection, cookie, csrfHeaders } =

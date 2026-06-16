@@ -215,6 +215,31 @@ test("createClient list sends raw schema file fields when requested", async () =
   expect(result.data[0]?.frontmatter.heroImage).toBe("media-hero");
 });
 
+test("createClient list serializes q search query parameter", async () => {
+  const client = createClient({
+    serverUrl: "http://localhost:4000",
+    apiKey: "mdcms_key_test",
+    project: "marketing-site",
+    environment: "production",
+    fetch: async (input: string | URL | Request) => {
+      expect(String(input)).toBe(
+        "http://localhost:4000/api/v1/content?type=BlogPost&q=launch+plan",
+      );
+
+      return new Response(JSON.stringify(createContentListResponse([])), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    },
+  });
+
+  await client.list("BlogPost", {
+    q: "launch plan",
+  });
+});
+
 test("createClient list throws MdcmsApiError for API error envelopes", async () => {
   const client = createClient({
     serverUrl: "http://localhost:4000",

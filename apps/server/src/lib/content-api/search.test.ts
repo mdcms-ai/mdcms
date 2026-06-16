@@ -44,14 +44,14 @@ test("resolvePostgresSearchConfig maps supported locale primary subtags and fall
   assert.equal(resolvePostgresSearchConfig("pl"), "simple");
 });
 
-test("buildContentSearchText includes path body and serialized frontmatter", () => {
+test("buildContentSearchText includes searchable path segments body and serialized frontmatter", () => {
   assert.equal(
     buildContentSearchText({
-      path: "blog/search",
+      path: "blog/pathneedle-73b9b39b",
       body: "Body text",
       frontmatter: { title: "Search Title", nested: { label: "Value" } },
     }),
-    'blog/search\nBody text\n{"title":"Search Title","nested":{"label":"Value"}}',
+    'blog/pathneedle-73b9b39b\nblog pathneedle 73b9b39b\nBody text\n{"title":"Search Title","nested":{"label":"Value"}}',
   );
 });
 
@@ -109,6 +109,11 @@ test("postgres draft search honors explicit deleted visibility filters", async (
     query: "soft deleted",
   });
   assert.equal(readIsDeletedParam(defaultVisibility), false);
+  assert.match(
+    defaultVisibility.sql,
+    /regexp_replace\("documents"\."(?:path|path)", \$\d+, \$\d+, \$\d+\)/,
+    "expected draft full-text search to index separator-normalized path segments",
+  );
 
   const deletedFilters = {
     query: "soft deleted",

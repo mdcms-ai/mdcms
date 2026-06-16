@@ -23,6 +23,7 @@ export type MdcmsListInput = {
   project?: string;
   environment?: string;
   locale?: string;
+  q?: string;
   resolve?: string[];
   draft?: boolean;
   fileFields?: "raw";
@@ -329,6 +330,7 @@ export function createClient(options: MdcmsClientOptions): MdcmsClient {
 
     const url = new URL(`${baseUrl}/api/v1/content`);
     url.searchParams.set("type", type);
+    appendQueryParam(url.searchParams, "q", input.q);
     appendQueryParam(url.searchParams, "locale", input.locale);
     appendRepeatedQueryParam(url.searchParams, "resolve", input.resolve);
     appendQueryParam(url.searchParams, "draft", input.draft);
