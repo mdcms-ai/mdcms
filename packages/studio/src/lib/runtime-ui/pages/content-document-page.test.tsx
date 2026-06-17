@@ -27,7 +27,6 @@ import {
   getLivePreviewViewportFrame,
   isLivePreviewReadyMessage,
   readContentDocumentPreviewModeSearchParam,
-  resolveCollaborationDraftSaveSnapshot,
   resolveContentDocumentEditorCollaboration,
   resolveContentDocumentEditorPresence,
   resolveLivePreviewDocument,
@@ -620,34 +619,6 @@ test("resolveContentDocumentEditorCollaboration waits for room sync before bindi
   assert.equal(open.publishBlockedByActiveCollaboration, false);
 });
 
-test("resolveCollaborationDraftSaveSnapshot reads the live editor body after collaboration flush", () => {
-  const frontmatter = { title: "Launch Notes" };
-
-  assert.deepEqual(
-    resolveCollaborationDraftSaveSnapshot({
-      editor: { getContent: () => "Live collaborative body" },
-      fallbackBody: "Stale draft body",
-      frontmatter,
-    }),
-    {
-      body: "Live collaborative body",
-      frontmatter,
-    },
-  );
-
-  assert.deepEqual(
-    resolveCollaborationDraftSaveSnapshot({
-      editor: { getContent: () => null },
-      fallbackBody: "Fallback draft body",
-      frontmatter,
-    }),
-    {
-      body: "Fallback draft body",
-      frontmatter,
-    },
-  );
-});
-
 test("ContentDocumentPageView renders editor collaborator indicators", () => {
   const markup = renderPageMarkup(createReadyState(), {
     editorPresenceUsers: [
@@ -717,6 +688,21 @@ test("ContentDocumentPageView renders the unsaved collaboration publish prompt",
   assert.match(markup, />Publish saved draft</);
   assert.match(markup, />Cancel</);
   assert.match(markup, /live editor changes/);
+});
+
+test("ContentDocumentPageView disables publish dialog submit after local draft changes", () => {
+  const markup = renderPageMarkup({
+    ...createReadyState(),
+    draftBody: "# Unsaved local edit",
+    saveState: "unsaved",
+    publishDialogOpen: true,
+  });
+
+  assert.match(markup, /Publish document/);
+  assert.match(
+    markup,
+    /<button[^>]+disabled=""[^>]+data-mdcms-publish-confirm-submit="true"[^>]*>Publish<\/button>/,
+  );
 });
 
 test("canPublishContentDocumentReadyState includes unsaved live collaboration edits", () => {
@@ -2068,11 +2054,12 @@ test("applySuccessfulDraftSaveToReadyState ignores a stale save that resolves af
       title: "Published title",
     },
     updatedAt: "2026-03-27T12:12:00.000Z",
-    draftRevision: 10,
+    draftRevision: 9,
   });
 
   assert.equal(next.document.hasUnpublishedChanges, false);
   assert.equal(next.document.publishedVersion, 6);
+  assert.equal(next.document.draftRevision, 10);
   assert.equal(next.document.updatedAt, state.document.updatedAt);
   assert.equal(next.saveState, "saved");
 });

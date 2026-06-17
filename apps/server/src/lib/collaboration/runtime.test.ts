@@ -526,6 +526,90 @@ test("server.publishDocument publishes active room draft and keeps active lock",
   );
 });
 
+test("server.publishDocument flushes pending active room stores before publishing", async () => {
+  const document = createDocument({
+    body: "# Original\n\nBody.",
+    hasUnpublishedChanges: true,
+    publishedVersion: 5,
+  });
+  const { contentStore, redisStore, authGuard, lifecycleEvents } =
+    createHarness(document);
+  const runtime = createCollaborationRuntime({
+    contentStore,
+    redisStore,
+    authGuard,
+    createRoomLeaseValue: () => "lease-1",
+    lifecycleEvents,
+  });
+  const context = createContext({
+    userId: "018f0c6d-98da-4f25-89fe-7c7ef5e8597d",
+  });
+  const documentName = createCollaborationDocumentName(context);
+  const pendingDocument = markdownToYDoc("# Pending\n\nBody.");
+  let pendingStore = true;
+
+  await runtime.hooks.onLoadDocument({ context, documentName });
+
+  (
+    runtime.server as typeof runtime.server & {
+      debouncer: {
+        debounce: (
+          id: string,
+          func: () => unknown,
+          debounce: number,
+          maxDebounce: number,
+        ) => Promise<unknown>;
+        isDebounced: (id: string) => boolean;
+        isCurrentlyExecuting: (id: string) => boolean;
+        executeNow: (id: string) => Promise<void>;
+      };
+    }
+  ).debouncer = {
+    debounce: async () => undefined,
+    isDebounced: (id) =>
+      pendingStore && id === `onStoreDocument-${documentName}`,
+    isCurrentlyExecuting: () => false,
+    executeNow: async () => {
+      pendingStore = false;
+      await runtime.hooks.onStoreDocument({
+        document: pendingDocument,
+        documentName,
+        lastContext: createContext({
+          userId: "writer-before-publish",
+          loadedDraftRevision: context.loadedDraftRevision,
+          loadedBodyHash: context.loadedBodyHash,
+          loadedFrontmatterHash: context.loadedFrontmatterHash,
+          roomLeaseValue: context.roomLeaseValue,
+        }),
+      });
+    },
+  };
+
+  const publishDocument = (
+    runtime.server as {
+      publishDocument?: (
+        documentName: string,
+        input: {
+          context: CollaborationRuntimeContext;
+          changeSummary?: string;
+        },
+      ) => Promise<{ document: ContentDocument }>;
+    }
+  ).publishDocument;
+
+  assert.ok(publishDocument);
+
+  const result = await publishDocument(documentName, {
+    context,
+    changeSummary: "Publish pending body.",
+  });
+
+  assert.equal(contentStore.updates.length, 1);
+  assert.equal(contentStore.updates[0]?.payload.body, "# Pending\n\nBody.");
+  assert.equal(result.document.body, "# Pending\n\nBody.");
+  assert.equal(result.document.publishedVersion, 6);
+});
+
 test("server.publishDocument keeps committed publish when lifecycle emission fails", async () => {
   const document = createDocument({
     hasUnpublishedChanges: true,

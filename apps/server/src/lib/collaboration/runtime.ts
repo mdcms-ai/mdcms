@@ -1458,8 +1458,11 @@ export function createCollaborationRuntime(
       draftRevision: after,
     };
   };
-  hocuspocusServer.publishDocument = (documentName, input) =>
-    hooks.publishDocument(documentName, input);
+  hocuspocusServer.publishDocument = async (documentName, input) => {
+    await flushPendingStoreForDocument(hocuspocusServer, documentName);
+
+    return hooks.publishDocument(documentName, input);
+  };
   server = hocuspocusServer;
 
   return {

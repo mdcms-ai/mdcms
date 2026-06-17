@@ -898,6 +898,18 @@ export function createDatabaseContentStore(
             })
         : undefined;
 
+      if (
+        matchingSearchDocumentIds !== undefined &&
+        matchingSearchDocumentIds.size === 0
+      ) {
+        return {
+          rows: [],
+          total: 0,
+          limit,
+          offset,
+        };
+      }
+
       const headRows = await db
         .select()
         .from(documents)

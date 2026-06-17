@@ -205,6 +205,12 @@ export function hasLiveCollaborationDraftChanges(input: {
   );
 }
 
+export function hasUnsavedLocalDraftChanges(
+  state: ContentDocumentPageReadyState,
+): boolean {
+  return state.saveState !== "saved" && !isDraftPersisted(state);
+}
+
 export function canPublishContentDocumentReadyState(input: {
   state: ContentDocumentPageReadyState;
   activeDocumentCollaborationOpen: boolean;
@@ -453,24 +459,6 @@ function replaceCollaborationFrontmatter(
       map.set(key, value);
     }
   }
-}
-
-export function resolveCollaborationDraftSaveSnapshot({
-  editor,
-  fallbackBody,
-  frontmatter,
-}: {
-  editor: Pick<TipTapEditorHandle, "getContent"> | null | undefined;
-  fallbackBody: string;
-  frontmatter: Record<string, unknown>;
-}): {
-  body: string;
-  frontmatter: Record<string, unknown>;
-} {
-  return {
-    body: editor?.getContent() ?? fallbackBody,
-    frontmatter,
-  };
 }
 
 function deriveLocalPresenceLabel(input: {
@@ -2308,6 +2296,9 @@ function useContentDocumentPageViewElement({
       publishBlockedByActiveCollaboration:
         editorCollaboration.publishBlockedByActiveCollaboration,
     });
+  const publishDialogSubmitBlocked =
+    state.status === "ready" &&
+    (state.publishState === "publishing" || hasUnsavedLocalDraftChanges(state));
 
   const canSaveNow =
     state.status === "ready" &&
@@ -3043,8 +3034,9 @@ function useContentDocumentPageViewElement({
                     Cancel
                   </Button>
                   <Button
-                    disabled={state.publishState === "publishing"}
+                    disabled={publishDialogSubmitBlocked}
                     onClick={onPublishSubmit}
+                    data-mdcms-publish-confirm-submit="true"
                   >
                     {state.publishState === "publishing"
                       ? "Publishing..."
@@ -3644,6 +3636,22 @@ function useContentDocumentPageController({
         return;
       }
 
+      if (
+        !documentCollaboration.enabled &&
+        hasUnsavedLocalDraftChanges(currentState)
+      ) {
+        setState((current) =>
+          current.status === "ready"
+            ? {
+                ...current,
+                publishState: "idle",
+                publishError: "Save changes before publishing.",
+              }
+            : current,
+        );
+        return;
+      }
+
       const publishApi: Pick<
         StudioDocumentRouteApi,
         "publish" | "listVersions"
@@ -3922,11 +3930,10 @@ function useContentDocumentPageController({
             return false;
           }
 
-          const persistedSnapshot = resolveCollaborationDraftSaveSnapshot({
-            editor: editorRef.current,
-            fallbackBody: requestBody,
+          const persistedSnapshot = {
+            body: requestBody,
             frontmatter: requestFrontmatter,
-          });
+          };
 
           setState((current) =>
             current.status === "ready" &&

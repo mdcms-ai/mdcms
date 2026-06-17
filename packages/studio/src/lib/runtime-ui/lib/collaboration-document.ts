@@ -93,12 +93,66 @@ const CollaborationFlushResultSchema = z.discriminatedUnion("status", [
   }),
 ]);
 
+const ContentReferenceResolveErrorSchema = z.object({
+  code: z.enum([
+    "REFERENCE_NOT_FOUND",
+    "REFERENCE_DELETED",
+    "REFERENCE_TYPE_MISMATCH",
+    "REFERENCE_FORBIDDEN",
+  ]),
+  message: z.string(),
+  ref: z.object({
+    documentId: z.string(),
+    type: z.string(),
+  }),
+});
+
+const ContentMediaResolveErrorSchema = z.object({
+  code: z.enum(["MEDIA_NOT_FOUND", "MEDIA_TYPE_MISMATCH"]),
+  message: z.string(),
+  media: z.object({
+    assetId: z.string(),
+    expectedMime: z.array(z.string()).optional(),
+    actualMimeType: z.string().optional(),
+  }),
+});
+
+const ContentResolveErrorSchema = z.discriminatedUnion("code", [
+  ContentReferenceResolveErrorSchema,
+  ContentMediaResolveErrorSchema,
+]);
+
+const ContentDocumentResponseSchema = z.object({
+  documentId: z.string(),
+  translationGroupId: z.string(),
+  project: z.string(),
+  environment: z.string(),
+  path: z.string(),
+  type: z.string(),
+  locale: z.string(),
+  format: z.enum(["md", "mdx"]),
+  isDeleted: z.boolean(),
+  hasUnpublishedChanges: z.boolean(),
+  version: z.number(),
+  publishedVersion: z.number().nullable(),
+  draftRevision: z.number(),
+  frontmatter: z.record(z.string(), z.unknown()),
+  body: z.string(),
+  resolveErrors: z.record(z.string(), ContentResolveErrorSchema).optional(),
+  localesPresent: z.array(z.string()).optional(),
+  publishedLocales: z.array(z.string()).optional(),
+  createdBy: z.string(),
+  createdAt: z.string(),
+  updatedBy: z.string(),
+  updatedAt: z.string(),
+});
+
 const CollaborationPublishResultSchema = z.discriminatedUnion("status", [
   z.object({
     type: z.literal("mdcms.collaboration.publish.result"),
     requestId: z.string(),
     status: z.literal("published"),
-    document: z.object({}).passthrough(),
+    document: ContentDocumentResponseSchema,
   }),
   z.object({
     type: z.literal("mdcms.collaboration.publish.result"),

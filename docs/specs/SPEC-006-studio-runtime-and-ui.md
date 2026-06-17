@@ -770,8 +770,9 @@ Normative behavior:
   - `Save and publish` sends a collaboration flush, waits for the server to
     persist the room snapshot, and then publishes the newly saved draft head.
   - `Publish saved draft` skips the flush and publishes the current PostgreSQL
-    draft head; live editor changes that have not reached PostgreSQL remain
-    unpublished and may later autosave as new unpublished changes.
+    draft head directly without opening another confirmation dialog; live editor
+    changes that have not reached PostgreSQL remain unpublished and may later
+    autosave as new unpublished changes.
   - `Cancel` closes the prompt without saving or publishing.
     If the collaboration flush fails or times out, Studio must not publish and
     must surface the collaboration save error in the document editor.

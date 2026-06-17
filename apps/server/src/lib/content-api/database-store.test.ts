@@ -154,8 +154,12 @@ testWithDatabase(
       project: `db-search-sync-${stableFixtureName(randomUUID())}`,
       environment: "production",
     };
-    const calls: Array<{ type: string; documentId: string; body?: string }> =
-      [];
+    const calls: Array<{
+      type: string;
+      documentId: string;
+      locale: string;
+      body?: string;
+    }> = [];
 
     try {
       const { schemaHash } = await seedSchemaRegistryScope(dbConnection.db, {
@@ -177,6 +181,7 @@ testWithDatabase(
             calls.push({
               type: "upsert",
               documentId: document.documentId,
+              locale: document.locale,
               body: document.body,
             });
           },
@@ -184,6 +189,7 @@ testWithDatabase(
             calls.push({
               type: "remove",
               documentId: input.documentId,
+              locale: input.locale,
             });
           },
         },
@@ -243,6 +249,71 @@ testWithDatabase(
           "published body",
         ],
       );
+      assert.deepEqual(
+        calls.map((call) => call.locale),
+        ["en", "en", "en", "en", "en", "en"],
+      );
+    } finally {
+      await dbConnection.close();
+    }
+  },
+);
+
+testWithDatabase(
+  "database content store returns an empty list when search has no matches",
+  async () => {
+    const dbConnection = createDatabaseConnection({ env: dbEnv });
+    const scope = {
+      project: `db-search-empty-${stableFixtureName(randomUUID())}`,
+      environment: "production",
+    };
+    let publishedSearchCalls = 0;
+
+    try {
+      const { schemaHash } = await seedSchemaRegistryScope(dbConnection.db, {
+        scope,
+        entries: [
+          {
+            type: "Page",
+            directory: "content/pages",
+            localized: true,
+          },
+        ],
+      });
+      const store = createDatabaseContentStore({
+        db: dbConnection.db,
+        searchBackend: {
+          searchPublishedDocumentIds: async () => {
+            publishedSearchCalls += 1;
+            return new Set<string>();
+          },
+          searchDraftDocumentIds: async () => new Set<string>(),
+          upsertPublishedDocument: async () => {},
+          removePublishedDocument: async () => {},
+        },
+      });
+
+      const created = await store.create(
+        scope,
+        {
+          path: "content/pages/about",
+          type: "Page",
+          locale: "en",
+          format: "md",
+          frontmatter: { slug: "about", title: "About" },
+          body: "About body",
+        },
+        { expectedSchemaHash: schemaHash },
+      );
+      await store.publish(scope, created.documentId, {});
+
+      const listed = await store.list(scope, {
+        q: "no hits",
+      });
+
+      assert.equal(publishedSearchCalls, 1);
+      assert.equal(listed.total, 0);
+      assert.deepEqual(listed.rows, []);
     } finally {
       await dbConnection.close();
     }
