@@ -4,6 +4,7 @@ import { test } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { AssistantProvider } from "./assistant-context.js";
+import { EmptyStarter } from "./empty-starter.js";
 import { AssistantBubble, AssistantPanel } from "./assistant-panel.js";
 import {
   AssistantRail,
@@ -131,6 +132,74 @@ test("assistant pending progress renders between streamed text blocks and collap
   assert.ok(collapsedIndex > firstTextIndex);
   assert.ok(secondTextIndex > collapsedIndex);
   assert.ok(trailingProgressIndex > secondTextIndex);
+});
+
+test("assistant completed progress remains visible in conversation history", () => {
+  const message = {
+    id: "msg-complete",
+    role: "assistant",
+    text: "I checked the component reference and drafted the edit.",
+    streamBlocks: [
+      {
+        kind: "text",
+        text: "I checked the component reference.",
+      },
+      {
+        kind: "progress",
+        events: [
+          {
+            phase: "tool-call",
+            status: "started",
+            toolName: "component_reference",
+            message: "Read component reference tool started",
+          },
+        ],
+      },
+      {
+        kind: "text",
+        text: "Drafted the edit.",
+      },
+    ],
+    at: "2026-05-22T12:00:00.000Z",
+  } satisfies AssistantMessage;
+
+  const markup = renderToStaticMarkup(
+    <AssistantBubble
+      message={message}
+      proposalsById={{}}
+      documentPathById={new Map()}
+      isStreamingPlaceholder={false}
+      onAccept={() => undefined}
+      onReject={() => undefined}
+    />,
+  );
+
+  assert.match(markup, /data-mdcms-assistant-progress-collapsed/);
+  assert.match(markup, /1 tool call appended/);
+  assert.match(markup, /Read component reference tool started/);
+});
+
+test("assistant starter prompts only advertise currently supported context", () => {
+  const markup = renderToStaticMarkup(
+    <EmptyStarter
+      thread={{
+        id: "thread-empty",
+        title: "New conversation",
+        updatedAt: "2026-05-22T12:00:00.000Z",
+        preview: "",
+        contextDocs: [],
+        messages: [],
+        docCount: 0,
+      }}
+      activeDocument={null}
+      hasDraft={false}
+      onPick={() => undefined}
+    />,
+  );
+
+  assert.doesNotMatch(markup, /recent product changes/i);
+  assert.doesNotMatch(markup, /recently edited drafts/i);
+  assert.doesNotMatch(markup, /document history/i);
 });
 
 test("assistant rail exposes a resize handle and default width", () => {

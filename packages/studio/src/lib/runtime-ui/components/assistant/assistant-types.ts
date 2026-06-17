@@ -236,9 +236,10 @@ export type AssistantMessage = {
   context?: AssistantMessageContextSnapshot;
   progress?: AssistantProgressEvent[];
   /**
-   * Pending-stream-only render blocks. They preserve the order in
+   * Stream render blocks. They preserve the order in
    * which text deltas and progress events arrived so the assistant can
-   * show tool activity between prose blocks while a turn is streaming.
+   * show tool activity between prose blocks while a turn is streaming
+   * and keep those rows available after the turn is committed.
    */
   streamBlocks?: AssistantStreamBlock[];
   proposals?: string[];

@@ -54,9 +54,9 @@ const EXAMPLE_SETS: Record<ExampleSet, Example[]> = {
         "Generate a 150–160 character SEO meta description summarising this document.",
     },
     {
-      label: "Summarize for changelog",
+      label: "Summarize this draft",
       prompt:
-        "Summarise the key changes in this document as a short changelog entry.",
+        "Summarise the current document and call out any unclear sections.",
     },
   ],
   global: [
@@ -72,12 +72,12 @@ const EXAMPLE_SETS: Record<ExampleSet, Example[]> = {
     {
       label: "Suggest blog topics",
       prompt:
-        "Suggest five blog topics for this week tied to recent product changes.",
+        "Suggest five evergreen blog topics for content editors using MDCMS.",
     },
     {
-      label: "Review my latest drafts",
+      label: "Outline a guide",
       prompt:
-        "Find my five most recently edited drafts and summarise what each needs to ship.",
+        "Draft an outline for a guide that explains MDCMS projects and environments.",
     },
   ],
 };
