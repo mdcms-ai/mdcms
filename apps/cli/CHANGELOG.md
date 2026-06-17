@@ -1,5 +1,13 @@
 # @mdcms/cli
 
+## 0.3.1
+
+### Patch Changes
+
+- 7837930: Report active collaboration locks during push as per-document failures.
+- Updated dependencies [d862750]
+  - @mdcms/shared@0.6.0
+
 ## 0.3.0
 
 ### Minor Changes
