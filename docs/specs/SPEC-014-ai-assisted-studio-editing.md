@@ -120,6 +120,11 @@ The assistant surface presents:
 - A thread list with conversation persistence across navigation.
 - A composer that auto-attaches the active document and any current editor
   selection as removable context chips.
+- Empty-thread starter prompts that match the assistant's currently available
+  context and model-callable tools. Starter prompts must not imply access to
+  version history, edit history, recently changed documents, repository source,
+  analytics, or other history/recency data unless that data is explicitly
+  available to the chat turn.
 - While a chat turn is pending, the composer remains editable so the user can
   draft the next message. Studio must block sending that draft until the
   pending turn completes or is stopped; the pending affordance remains Stop,
@@ -173,6 +178,11 @@ auto-collapses that earlier run into a summary row that names the number of
 tool calls or progress updates and can be expanded to inspect the individual
 status rows. The current trailing progress run remains expanded while the
 pending turn is still active.
+
+When the streaming turn completes, Studio commits the same ordered text and
+progress blocks into the assistant conversation history. Completed progress
+runs remain collapsed, expandable history rows and must not disappear when the
+stream placeholder is replaced by the final assistant message.
 
 Rejecting a proposal does not silently discard the model's turn. Reject opens
 an inline feedback textarea on the card; the user types what should change and

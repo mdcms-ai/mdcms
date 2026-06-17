@@ -5,6 +5,7 @@ import {
   buildAssistantChatRequestContext,
   buildAssistantMessageContextSnapshot,
   buildAssistantProposalDocumentPathMap,
+  commitAssistantStreamMessage,
   relTime,
   resolveAssistantProposalDisplayPath,
   studioProposalFromWire,
@@ -15,6 +16,7 @@ import type {
   AssistantActiveDocument,
   AssistantThread,
 } from "./assistant-context.js";
+import type { AssistantMessage } from "./assistant-types.js";
 
 test("relTime formats relative timestamps against an explicit now", () => {
   const now = "2026-05-07T10:00:00Z";
@@ -145,6 +147,50 @@ test("buildAssistantMessageContextSnapshot records attached document labels for 
       { path: "posts/releases/related.md", source: "attached" },
     ],
   );
+});
+
+test("commitAssistantStreamMessage preserves streamed progress history on the final turn", () => {
+  const placeholder = {
+    id: "placeholder",
+    role: "assistant",
+    at: "2026-05-07T10:00:00Z",
+    text: "Checking",
+    progress: [
+      {
+        phase: "tool-call",
+        status: "started",
+        toolName: "get_component_reference",
+        message: "Read component reference tool started",
+      },
+    ],
+    streamBlocks: [
+      { kind: "text", text: "Checking" },
+      {
+        kind: "progress",
+        events: [
+          {
+            phase: "tool-call",
+            status: "started",
+            toolName: "get_component_reference",
+            message: "Read component reference tool started",
+          },
+        ],
+      },
+    ],
+  } satisfies AssistantMessage;
+  const finalMessage = {
+    id: "server-message",
+    role: "assistant",
+    at: "2026-05-07T10:00:03Z",
+    text: "Done.",
+  } satisfies AssistantMessage;
+
+  const committed = commitAssistantStreamMessage(placeholder, finalMessage);
+
+  assert.equal(committed.id, "server-message");
+  assert.equal(committed.text, "Done.");
+  assert.deepEqual(committed.progress, placeholder.progress);
+  assert.deepEqual(committed.streamBlocks, placeholder.streamBlocks);
 });
 
 // ─────────────────────────────────────────────────────────────────────

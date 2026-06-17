@@ -573,9 +573,11 @@ function hasVisibleStreamContent(block: AssistantStreamBlock): boolean {
 function AssistantStreamBlocks({
   blocks,
   hasProposalContent,
+  isStreamingPlaceholder,
 }: {
   blocks: AssistantStreamBlock[];
   hasProposalContent: boolean;
+  isStreamingPlaceholder: boolean;
 }) {
   const visibleBlocks = blocks.filter(hasVisibleStreamContent);
   return (
@@ -601,7 +603,7 @@ function AssistantStreamBlocks({
           <AssistantProgressTimeline
             key={`progress-${idx}`}
             events={block.events}
-            collapsed={hasLaterContent}
+            collapsed={hasLaterContent || !isStreamingPlaceholder}
           />
         );
       })}
@@ -644,14 +646,10 @@ export function AssistantBubble({
   onUndo?: (proposalId: string) => Promise<void>;
 }) {
   const proposalIds = message.proposals ?? [];
-  const streamBlocks =
-    isStreamingPlaceholder && message.streamBlocks?.length
-      ? message.streamBlocks
-      : [];
+  const streamBlocks = message.streamBlocks?.length ? message.streamBlocks : [];
   const hasStreamBlocks = streamBlocks.some(hasVisibleStreamContent);
   const text = hasStreamBlocks ? undefined : message.text?.trim();
-  const progressEvents =
-    isStreamingPlaceholder && !hasStreamBlocks ? (message.progress ?? []) : [];
+  const progressEvents = !hasStreamBlocks ? (message.progress ?? []) : [];
   if (
     proposalIds.length === 0 &&
     !text &&
@@ -678,6 +676,7 @@ export function AssistantBubble({
           <AssistantStreamBlocks
             blocks={streamBlocks}
             hasProposalContent={proposalIds.length > 0}
+            isStreamingPlaceholder={isStreamingPlaceholder}
           />
         ) : text ? (
           <div className="max-w-[92%] py-0.5">
@@ -693,8 +692,11 @@ export function AssistantBubble({
             <span className="size-1.5 animate-pulse rounded-full bg-primary [animation-delay:0.2s]" />
           </div>
         ) : null}
-        {isStreamingPlaceholder && progressEvents.length > 0 ? (
-          <AssistantProgressTimeline events={progressEvents} />
+        {progressEvents.length > 0 ? (
+          <AssistantProgressTimeline
+            events={progressEvents}
+            collapsed={!isStreamingPlaceholder}
+          />
         ) : null}
         {!isMultiTurn &&
           proposals.map((proposal) => (

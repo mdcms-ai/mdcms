@@ -103,6 +103,19 @@ function appendProgressStreamBlock(
   return [...current, { kind: "progress", events: [progress] }];
 }
 
+export function commitAssistantStreamMessage(
+  placeholder: AssistantMessage,
+  finalMessage: AssistantMessage,
+): AssistantMessage {
+  const streamBlocks = finalMessage.streamBlocks ?? placeholder.streamBlocks;
+  const progress = finalMessage.progress ?? placeholder.progress;
+  return {
+    ...finalMessage,
+    ...(streamBlocks && streamBlocks.length > 0 ? { streamBlocks } : {}),
+    ...(progress && progress.length > 0 ? { progress } : {}),
+  };
+}
+
 type AssistantAction =
   | { type: "open-rail" }
   | { type: "close" }
@@ -981,7 +994,9 @@ function reducer(
               docCount: Math.max(thread.docCount, docCount),
               updatedAt: action.finalMessage.at,
               messages: thread.messages.map((m) =>
-                m.id === action.placeholderId ? action.finalMessage : m,
+                m.id === action.placeholderId
+                  ? commitAssistantStreamMessage(m, action.finalMessage)
+                  : m,
               ),
             };
           }),
