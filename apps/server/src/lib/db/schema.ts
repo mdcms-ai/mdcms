@@ -3,17 +3,27 @@ import {
   bigint,
   boolean,
   check,
+  customType,
   foreignKey,
   index,
   integer,
   jsonb,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   unique,
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+
+const regconfig = customType<{ data: string; driverData: string }>({
+  dataType: () => "regconfig",
+});
+
+const tsvector = customType<{ data: string; driverData: string }>({
+  dataType: () => "tsvector",
+});
 
 export const projects = pgTable("projects", {
   id: uuid().defaultRandom().primaryKey(),
@@ -440,6 +450,11 @@ export const documents = pgTable(
       "documents_content_format_check",
       sql`${table.contentFormat} in ('md', 'mdx')`,
     ),
+    unique("unique_document_scope").on(
+      table.documentId,
+      table.projectId,
+      table.environmentId,
+    ),
     foreignKey({
       name: "fk_documents_env_project",
       columns: [table.environmentId, table.projectId],
@@ -483,6 +498,60 @@ export const documents = pgTable(
         table.locale,
       )
       .where(sql`${table.isDeleted} = false`),
+  ],
+);
+
+export const publishedSearchIndex = pgTable(
+  "published_search_index",
+  {
+    projectId: uuid()
+      .notNull()
+      .references(() => projects.id),
+    environmentId: uuid()
+      .notNull()
+      .references(() => environments.id),
+    documentId: uuid().notNull(),
+    locale: text().notNull(),
+    schemaType: text().notNull(),
+    searchConfig: regconfig().notNull(),
+    searchVector: tsvector().notNull(),
+  },
+  (table): any => [
+    primaryKey({
+      name: "published_search_index_pkey",
+      columns: [
+        table.projectId,
+        table.environmentId,
+        table.documentId,
+        table.locale,
+      ],
+    }),
+    foreignKey({
+      name: "fk_published_search_index_document",
+      columns: [table.documentId],
+      foreignColumns: [documents.documentId],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "fk_published_search_index_document_scope",
+      columns: [table.documentId, table.projectId, table.environmentId],
+      foreignColumns: [
+        documents.documentId,
+        documents.projectId,
+        documents.environmentId,
+      ],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "fk_published_search_index_env_project",
+      columns: [table.environmentId, table.projectId],
+      foreignColumns: [environments.id, environments.projectId],
+    }),
+    index("idx_published_search_vector").using("gin", table.searchVector),
+    index("idx_published_search_scope_type_locale").on(
+      table.projectId,
+      table.environmentId,
+      table.schemaType,
+      table.locale,
+    ),
   ],
 );
 

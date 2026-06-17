@@ -1,6 +1,7 @@
 import * as decoding from "lib0/decoding.js";
 import * as encoding from "lib0/encoding.js";
 import * as syncProtocol from "y-protocols/sync.js";
+import type { ContentDocumentResponse } from "@mdcms/shared";
 import type * as Y from "yjs";
 import { z } from "zod";
 
@@ -61,6 +62,21 @@ export type CollaborationFlushResult =
       message: string;
     };
 
+export type CollaborationPublishResult =
+  | {
+      type: "mdcms.collaboration.publish.result";
+      requestId: string;
+      status: "published";
+      document: ContentDocumentResponse;
+    }
+  | {
+      type: "mdcms.collaboration.publish.result";
+      requestId: string;
+      status: "error";
+      code: string;
+      message: string;
+    };
+
 const CollaborationFlushResultSchema = z.discriminatedUnion("status", [
   z.object({
     type: z.literal("mdcms.collaboration.flush.result"),
@@ -70,6 +86,76 @@ const CollaborationFlushResultSchema = z.discriminatedUnion("status", [
   }),
   z.object({
     type: z.literal("mdcms.collaboration.flush.result"),
+    requestId: z.string(),
+    status: z.literal("error"),
+    code: z.string(),
+    message: z.string(),
+  }),
+]);
+
+const ContentReferenceResolveErrorSchema = z.object({
+  code: z.enum([
+    "REFERENCE_NOT_FOUND",
+    "REFERENCE_DELETED",
+    "REFERENCE_TYPE_MISMATCH",
+    "REFERENCE_FORBIDDEN",
+  ]),
+  message: z.string(),
+  ref: z.object({
+    documentId: z.string(),
+    type: z.string(),
+  }),
+});
+
+const ContentMediaResolveErrorSchema = z.object({
+  code: z.enum(["MEDIA_NOT_FOUND", "MEDIA_TYPE_MISMATCH"]),
+  message: z.string(),
+  media: z.object({
+    assetId: z.string(),
+    expectedMime: z.array(z.string()).optional(),
+    actualMimeType: z.string().optional(),
+  }),
+});
+
+const ContentResolveErrorSchema = z.discriminatedUnion("code", [
+  ContentReferenceResolveErrorSchema,
+  ContentMediaResolveErrorSchema,
+]);
+
+const ContentDocumentResponseSchema = z.object({
+  documentId: z.string(),
+  translationGroupId: z.string(),
+  project: z.string(),
+  environment: z.string(),
+  path: z.string(),
+  type: z.string(),
+  locale: z.string(),
+  format: z.enum(["md", "mdx"]),
+  isDeleted: z.boolean(),
+  hasUnpublishedChanges: z.boolean(),
+  version: z.number(),
+  publishedVersion: z.number().nullable(),
+  draftRevision: z.number(),
+  frontmatter: z.record(z.string(), z.unknown()),
+  body: z.string(),
+  resolveErrors: z.record(z.string(), ContentResolveErrorSchema).optional(),
+  localesPresent: z.array(z.string()).optional(),
+  publishedLocales: z.array(z.string()).optional(),
+  createdBy: z.string(),
+  createdAt: z.string(),
+  updatedBy: z.string(),
+  updatedAt: z.string(),
+});
+
+const CollaborationPublishResultSchema = z.discriminatedUnion("status", [
+  z.object({
+    type: z.literal("mdcms.collaboration.publish.result"),
+    requestId: z.string(),
+    status: z.literal("published"),
+    document: ContentDocumentResponseSchema,
+  }),
+  z.object({
+    type: z.literal("mdcms.collaboration.publish.result"),
     requestId: z.string(),
     status: z.literal("error"),
     code: z.string(),
@@ -252,6 +338,19 @@ export function createCollaborationFlushRequest(requestId: string): string {
   });
 }
 
+export function createCollaborationPublishRequest(input: {
+  requestId: string;
+  changeSummary?: string;
+}): string {
+  return JSON.stringify({
+    type: "mdcms.collaboration.publish",
+    requestId: input.requestId,
+    ...(input.changeSummary !== undefined
+      ? { changeSummary: input.changeSummary }
+      : {}),
+  });
+}
+
 export function parseCollaborationFlushResult(
   raw: unknown,
 ): CollaborationFlushResult | null {
@@ -269,4 +368,23 @@ export function parseCollaborationFlushResult(
 
   const result = CollaborationFlushResultSchema.safeParse(payload);
   return result.success ? result.data : null;
+}
+
+export function parseCollaborationPublishResult(
+  raw: unknown,
+): CollaborationPublishResult | null {
+  if (typeof raw !== "string") {
+    return null;
+  }
+
+  let payload: unknown;
+
+  try {
+    payload = JSON.parse(raw) as unknown;
+  } catch {
+    return null;
+  }
+
+  const result = CollaborationPublishResultSchema.safeParse(payload);
+  return result.success ? (result.data as CollaborationPublishResult) : null;
 }

@@ -14,6 +14,54 @@ function createMarkdownEditor(content: string | JSONContent): Editor {
   });
 }
 
+function isEmptyParagraphNode(node: JSONContent | undefined): boolean {
+  return (
+    node?.type === "paragraph" && (!node.content || node.content.length === 0)
+  );
+}
+
+function dropTrailingEmptyParagraphs(content: JSONContent[] | undefined): {
+  content: JSONContent[] | undefined;
+  changed: boolean;
+} {
+  if (!content || content.length === 0) {
+    return { content, changed: false };
+  }
+
+  let end = content.length;
+  while (end > 1 && isEmptyParagraphNode(content[end - 1])) {
+    end -= 1;
+  }
+
+  if (end === content.length) {
+    return { content, changed: false };
+  }
+
+  return {
+    content: content.slice(0, end),
+    changed: true,
+  };
+}
+
+function normalizeEditorDocumentForMarkdown(document: JSONContent): {
+  document: JSONContent;
+  changed: boolean;
+} {
+  const normalized = dropTrailingEmptyParagraphs(document.content);
+
+  if (!normalized.changed) {
+    return { document, changed: false };
+  }
+
+  return {
+    document: {
+      ...document,
+      ...(normalized.content ? { content: normalized.content } : {}),
+    },
+    changed: true,
+  };
+}
+
 function assertMarkdownString(markdown: unknown, source: string): string {
   if (typeof markdown === "string") {
     return markdown;
@@ -26,7 +74,7 @@ function assertMarkdownString(markdown: unknown, source: string): string {
   });
 }
 
-export function extractMarkdownFromEditor(editor: Editor): string {
+function extractRawMarkdownFromEditor(editor: Editor): string {
   // TipTap v3 has exposed markdown serialization through both
   // `editor.getMarkdown()` and `editor.storage.markdown.getMarkdown()`.
   // The double cast keeps this duck-typing local, while the RuntimeError
@@ -62,18 +110,38 @@ export function extractMarkdownFromEditor(editor: Editor): string {
   });
 }
 
+function serializeNormalizedDocumentToMarkdown(document: JSONContent): string {
+  const normalized = normalizeEditorDocumentForMarkdown(document);
+  const editor = createMarkdownEditor(normalized.document);
+
+  try {
+    return extractRawMarkdownFromEditor(editor);
+  } finally {
+    editor.destroy();
+  }
+}
+
+export function extractMarkdownFromEditor(editor: Editor): string {
+  const getJSON = (editor as unknown as { getJSON?: () => JSONContent })
+    .getJSON;
+
+  if (typeof getJSON === "function") {
+    const normalized = normalizeEditorDocumentForMarkdown(getJSON.call(editor));
+
+    if (normalized.changed) {
+      return serializeNormalizedDocumentToMarkdown(normalized.document);
+    }
+  }
+
+  return extractRawMarkdownFromEditor(editor);
+}
+
 export function parseMarkdownToDocument(markdown: string): JSONContent {
   return parseMdxMarkdownToTipTapDocument(markdown);
 }
 
 export function serializeDocumentToMarkdown(document: JSONContent): string {
-  const editor = createMarkdownEditor(document);
-
-  try {
-    return extractMarkdownFromEditor(editor);
-  } finally {
-    editor.destroy();
-  }
+  return serializeNormalizedDocumentToMarkdown(document);
 }
 
 export function roundTripMarkdown(markdown: string): {

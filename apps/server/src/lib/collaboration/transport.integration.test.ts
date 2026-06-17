@@ -182,6 +182,29 @@ class IntegrationContentStore implements CollaborationRuntimeContentStore {
     };
     return this.document;
   }
+
+  async publish(
+    scope: ContentScope,
+    documentId: string,
+    input: { actorId?: string },
+  ): Promise<ContentDocument> {
+    assert.deepEqual(scope, {
+      project: this.document.project,
+      environment: this.document.environment,
+    });
+    assert.equal(documentId, this.document.documentId);
+
+    const nextVersion = this.document.version + 1;
+    this.document = {
+      ...this.document,
+      hasUnpublishedChanges: false,
+      version: nextVersion,
+      publishedVersion: nextVersion,
+      updatedBy: input.actorId ?? this.document.updatedBy,
+      updatedAt: "2026-06-11T10:02:00.000Z",
+    };
+    return this.document;
+  }
 }
 
 class IntegrationRedisStore implements CollaborationRuntimeRedisStore {
@@ -568,6 +591,7 @@ test("Bun collaboration sockets sync Yjs updates and finalize the document room 
       }),
       authorizePresenceUpdate: async () => ({ ok: true }),
       filterPresenceSnapshot: async (_request, _context, users) => users,
+      revalidatePublish: async () => ({ ok: true }),
       revalidateWrite: async () => ({ ok: true }),
     },
     runtime,
@@ -657,6 +681,7 @@ test("Bun presence sockets exchange JSON snapshots and clean up on disconnect", 
       },
       authorizePresenceUpdate: async () => ({ ok: true }),
       filterPresenceSnapshot: async (_request, _context, users) => users,
+      revalidatePublish: async () => ({ ok: true }),
       revalidateWrite: async () => ({ ok: true }),
     },
     presenceStore: redisStore,
@@ -766,6 +791,7 @@ test("Bun collaboration socket receives a forbidden close message when write rev
       }),
       authorizePresenceUpdate: async () => ({ ok: true }),
       filterPresenceSnapshot: async (_request, _context, users) => users,
+      revalidatePublish: async () => ({ ok: true }),
       revalidateWrite: async () => ({ ok: true }),
     },
     runtime,

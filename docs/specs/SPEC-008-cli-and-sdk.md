@@ -2,7 +2,7 @@
 status: live
 canonical: true
 created: 2026-03-11
-last_updated: 2026-06-14
+last_updated: 2026-06-16
 ---
 
 # SPEC-008 CLI and SDK
@@ -40,6 +40,7 @@ const post = await cms.get("BlogPost", { slug: "hello-world", locale: "en" });
 // List documents
 const posts = await cms.list("BlogPost", {
   locale: "en",
+  q: "launch plan",
   published: true,
   limit: 10,
   sort: "createdAt",
@@ -62,7 +63,7 @@ The SDK follows the same reference-resolution contract documented in SPEC-003. R
 - `get(type, input)` accepts either `id` or `slug`. `id` is preferred; `slug` remains available for legacy-compatible lookups.
 - `get` and `list` both accept an explicit `locale` parameter, plus optional `project` and `environment` overrides that take precedence over the client defaults for that call only.
 - The SDK sends explicit target routing with `X-MDCMS-Project` and `X-MDCMS-Environment` on every request rather than relying on ambient runtime state.
-- `list(type, input)` maps to the content list query contract owned by SPEC-003, including pagination (`limit`, `offset`), sorting (`sort`, `order`), draft reads, and the supported filter fields.
+- `list(type, input)` maps to the content list query contract owned by SPEC-003, including pagination (`limit`, `offset`), sorting (`sort`, `order`), full-text search (`q`), draft reads, and the supported filter fields.
 - SDK content reads use the Content API default expanded schema file-field response shape defined in SPEC-003 unless the caller sets `fileFields: "raw"` on the SDK read input. In expanded mode, schema file field IDs are replaced in frontmatter with media asset metadata, including `id`, `url`, `mimeType`, `sizeBytes`, and thumbnails when the media record has them. The `fileFields: "raw"` SDK read input sends `fileFields=raw` to the Content API for `get` and `list` reads so responses preserve the original media asset IDs. CLI pull/push authoring flows request `fileFields=raw` for local file serialization.
 - The SDK parses the shared API envelopes directly: single-document reads unwrap `{ data }`, list reads unwrap `{ data, pagination }`, and document payloads preserve any `resolveErrors` map returned by the API.
 - API error responses are surfaced through a deterministic SDK error type parsed from the shared error envelope. Transport failures, malformed success payloads, and client misconfiguration use a separate client-side error type so callers can distinguish backend errors from local failures.

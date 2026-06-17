@@ -242,6 +242,10 @@ export function createCollaborationAuthGuard(
     context: CollaborationPresenceContext,
     users: CollaborationPresenceUser[],
   ) => Promise<CollaborationPresenceUser[]>;
+  revalidatePublish: (
+    request: Request,
+    context: CollaborationSessionContext,
+  ) => Promise<{ ok: true } | { ok: false; closeCode: CollaborationCloseCode }>;
   revalidateWrite: (
     request: Request,
     context: CollaborationSessionContext,
@@ -622,11 +626,48 @@ export function createCollaborationAuthGuard(
     }
   }
 
+  async function revalidatePublish(
+    request: Request,
+    context: CollaborationSessionContext,
+  ): Promise<{ ok: true } | { ok: false; closeCode: CollaborationCloseCode }> {
+    try {
+      const session = await options.authService.getSession(request);
+      if (!session) {
+        return {
+          ok: false,
+          closeCode: 4401,
+        };
+      }
+
+      await authorizeDraftRead({
+        request,
+        project: context.project,
+        environment: context.environment,
+        documentPath: context.documentPath,
+      });
+      await options.authService.authorizeRequest(request, {
+        requiredScope: "content:publish",
+        project: context.project,
+        environment: context.environment,
+        documentPath: context.documentPath,
+      });
+
+      return { ok: true };
+    } catch (error) {
+      const failure = mapAuthErrorToHandshakeFailure(error);
+      return {
+        ok: false,
+        closeCode: failure.closeCode,
+      };
+    }
+  }
+
   return {
     authorizeHandshake,
     authorizePresenceHandshake,
     authorizePresenceUpdate,
     filterPresenceSnapshot,
+    revalidatePublish,
     revalidateWrite,
   };
 }

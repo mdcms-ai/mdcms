@@ -9,10 +9,12 @@ import {
   COLLABORATION_DOCUMENT_FIELD_NAME,
   createCollaborationDocumentConnectionKey,
   createCollaborationDocumentName,
+  createCollaborationPublishRequest,
   createDocumentCollaborationWebSocketUrl,
   encodeCollaborationAuthMessage,
   encodeCollaborationSyncStep1Message,
   handleCollaborationSyncMessage,
+  parseCollaborationPublishResult,
 } from "./collaboration-document.js";
 
 const DOCUMENT_ID = "11111111-1111-4111-8111-111111111111";
@@ -64,6 +66,67 @@ test("createCollaborationDocumentName and connection key are stable per routed d
     }),
     `marketing%3Asite:preview%2Fdraft:${DOCUMENT_ID}`,
   );
+});
+
+test("collaboration publish request and result helpers round-trip", () => {
+  const request = createCollaborationPublishRequest({
+    requestId: "publish-1",
+    changeSummary: "Ready for launch.",
+  });
+
+  assert.deepEqual(JSON.parse(request), {
+    type: "mdcms.collaboration.publish",
+    requestId: "publish-1",
+    changeSummary: "Ready for launch.",
+  });
+
+  const result = parseCollaborationPublishResult(
+    JSON.stringify({
+      type: "mdcms.collaboration.publish.result",
+      requestId: "publish-1",
+      status: "published",
+      document: {
+        documentId: DOCUMENT_ID,
+        translationGroupId: "22222222-2222-4222-8222-222222222222",
+        project: "marketing",
+        environment: "draft",
+        path: "content/pages/about",
+        type: "Page",
+        locale: "en",
+        format: "mdx",
+        isDeleted: false,
+        hasUnpublishedChanges: false,
+        version: 6,
+        publishedVersion: 6,
+        draftRevision: 10,
+        frontmatter: {
+          title: "About",
+        },
+        body: "# About",
+        createdBy: "user-created",
+        createdAt: "2026-06-11T10:00:00.000Z",
+        updatedBy: "user-updated",
+        updatedAt: "2026-06-11T10:02:00.000Z",
+      },
+    }),
+  );
+
+  assert.equal(result?.status, "published");
+});
+
+test("collaboration publish result rejects incomplete document payloads", () => {
+  const result = parseCollaborationPublishResult(
+    JSON.stringify({
+      type: "mdcms.collaboration.publish.result",
+      requestId: "publish-1",
+      status: "published",
+      document: {
+        documentId: DOCUMENT_ID,
+      },
+    }),
+  );
+
+  assert.equal(result, null);
 });
 
 test("encodeCollaborationAuthMessage matches Hocuspocus token auth framing", () => {

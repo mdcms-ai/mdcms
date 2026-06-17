@@ -46,6 +46,29 @@ test("markdown pipeline can serialize parsed document back to markdown", () => {
   assert.equal(serialized.length > 0, true);
 });
 
+test("markdown pipeline ignores editor-only trailing empty paragraphs", () => {
+  const serialized = serializeDocumentToMarkdown({
+    type: "doc",
+    content: [
+      {
+        type: "heading",
+        attrs: { level: 1 },
+        content: [{ type: "text", text: "About" }],
+      },
+      { type: "paragraph" },
+    ],
+  });
+
+  assert.equal(serialized, "# About");
+});
+
+test("markdown pipeline preserves explicit non-breaking-space paragraphs", () => {
+  const source = "# About\n\n&nbsp;";
+  const parsed = parseMarkdownToDocument(source);
+
+  assert.equal(serializeDocumentToMarkdown(parsed), "# About\n\n\u00a0");
+});
+
 test("markdown pipeline preserves native image nodes as markdown image syntax", () => {
   const source = "![Hero image](https://cdn.example.com/hero.png)";
   const parsed = parseMarkdownToDocument(source);

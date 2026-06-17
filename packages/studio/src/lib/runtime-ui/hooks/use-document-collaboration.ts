@@ -11,13 +11,16 @@ import {
   createCollaborationDocumentConnectionKey,
   createCollaborationDocumentName,
   createCollaborationFlushRequest,
+  createCollaborationPublishRequest,
   createDocumentCollaborationWebSocketUrl,
   encodeCollaborationAuthMessage,
   encodeCollaborationSyncStep1Message,
   encodeCollaborationUpdateMessage,
   handleCollaborationSyncMessage,
   parseCollaborationFlushResult,
+  parseCollaborationPublishResult,
   type CollaborationFlushResult,
+  type CollaborationPublishResult,
 } from "../lib/collaboration-document.js";
 import {
   getCollaborationReconnectDelayMs,
@@ -45,6 +48,9 @@ export type UseDocumentCollaborationResult = {
   body: Y.XmlFragment | null;
   frontmatter: Y.Map<unknown> | null;
   flush: () => Promise<CollaborationFlushResult>;
+  publish: (input: {
+    changeSummary?: string;
+  }) => Promise<CollaborationPublishResult>;
 };
 
 type CollaborationDocumentState = {
@@ -55,16 +61,16 @@ type CollaborationDocumentState = {
   frontmatter: Y.Map<unknown>;
 };
 
-type PendingFlush = {
-  resolve: (result: CollaborationFlushResult) => void;
+type PendingCollaborationRequest<Result> = {
+  resolve: (result: Result) => void;
   reject: (error: Error) => void;
   timeout: ReturnType<typeof setTimeout>;
 };
 
 const SOCKET_UPDATE_ORIGIN = { source: "mdcms-document-socket" };
-const COLLABORATION_FLUSH_TIMEOUT_MS = 10_000;
+const COLLABORATION_REQUEST_TIMEOUT_MS = 10_000;
 
-function createFlushRequestId(): string {
+function createCollaborationRequestId(prefix: "flush" | "publish"): string {
   if (
     typeof crypto !== "undefined" &&
     typeof crypto.randomUUID === "function"
@@ -72,19 +78,19 @@ function createFlushRequestId(): string {
     return crypto.randomUUID();
   }
 
-  return `flush-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-function rejectPendingFlushes(
-  pendingFlushes: Map<string, PendingFlush>,
+function rejectPendingRequests<Result>(
+  pendingRequests: Map<string, PendingCollaborationRequest<Result>>,
   error: Error,
 ): void {
-  for (const pending of pendingFlushes.values()) {
+  for (const pending of pendingRequests.values()) {
     clearTimeout(pending.timeout);
     pending.reject(error);
   }
 
-  pendingFlushes.clear();
+  pendingRequests.clear();
 }
 
 async function readWebSocketMessageData(
@@ -116,7 +122,12 @@ export function useDocumentCollaboration({
   const mountInfo = useStudioMountInfo();
   const sessionState = useStudioSession();
   const socketRef = useRef<WebSocket | null>(null);
-  const pendingFlushesRef = useRef(new Map<string, PendingFlush>());
+  const pendingFlushesRef = useRef(
+    new Map<string, PendingCollaborationRequest<CollaborationFlushResult>>(),
+  );
+  const pendingPublishesRef = useRef(
+    new Map<string, PendingCollaborationRequest<CollaborationPublishResult>>(),
+  );
   const [status, setStatus] =
     useState<DocumentCollaborationConnectionStatus>("idle");
 
@@ -188,8 +199,12 @@ export function useDocumentCollaboration({
       !documentState ||
       typeof WebSocket === "undefined"
     ) {
-      rejectPendingFlushes(
+      rejectPendingRequests(
         pendingFlushesRef.current,
+        new Error("Document collaboration is not connected."),
+      );
+      rejectPendingRequests(
+        pendingPublishesRef.current,
         new Error("Document collaboration is not connected."),
       );
       socketRef.current = null;
@@ -294,6 +309,20 @@ export function useDocumentCollaboration({
                 }
               }
 
+              const publishResult = parseCollaborationPublishResult(data);
+
+              if (publishResult) {
+                const pending = pendingPublishesRef.current.get(
+                  publishResult.requestId,
+                );
+
+                if (pending) {
+                  clearTimeout(pending.timeout);
+                  pendingPublishesRef.current.delete(publishResult.requestId);
+                  pending.resolve(publishResult);
+                }
+              }
+
               return;
             }
 
@@ -315,8 +344,12 @@ export function useDocumentCollaboration({
             ) {
               fatalClose = true;
               setStatus("error");
-              rejectPendingFlushes(
+              rejectPendingRequests(
                 pendingFlushesRef.current,
+                new Error("Document collaboration socket failed."),
+              );
+              rejectPendingRequests(
+                pendingPublishesRef.current,
                 new Error("Document collaboration socket failed."),
               );
               if (
@@ -333,8 +366,14 @@ export function useDocumentCollaboration({
 
             fatalClose = true;
             setStatus("error");
-            rejectPendingFlushes(
+            rejectPendingRequests(
               pendingFlushesRef.current,
+              error instanceof Error
+                ? error
+                : new Error("Document collaboration socket failed."),
+            );
+            rejectPendingRequests(
+              pendingPublishesRef.current,
               error instanceof Error
                 ? error
                 : new Error("Document collaboration socket failed."),
@@ -358,8 +397,12 @@ export function useDocumentCollaboration({
           socketRef.current = null;
         }
 
-        rejectPendingFlushes(
+        rejectPendingRequests(
           pendingFlushesRef.current,
+          new Error("Document collaboration socket closed."),
+        );
+        rejectPendingRequests(
+          pendingPublishesRef.current,
           new Error("Document collaboration socket closed."),
         );
 
@@ -378,8 +421,12 @@ export function useDocumentCollaboration({
         }
 
         setStatus("reconnecting");
-        rejectPendingFlushes(
+        rejectPendingRequests(
           pendingFlushesRef.current,
+          new Error("Document collaboration socket failed."),
+        );
+        rejectPendingRequests(
+          pendingPublishesRef.current,
           new Error("Document collaboration socket failed."),
         );
         if (
@@ -398,8 +445,12 @@ export function useDocumentCollaboration({
       fatalClose = true;
       clearReconnect();
       documentState.document.off("update", onLocalUpdate);
-      rejectPendingFlushes(
+      rejectPendingRequests(
         pendingFlushesRef.current,
+        new Error("Document collaboration disconnected."),
+      );
+      rejectPendingRequests(
+        pendingPublishesRef.current,
         new Error("Document collaboration disconnected."),
       );
 
@@ -424,13 +475,13 @@ export function useDocumentCollaboration({
       );
     }
 
-    const requestId = createFlushRequestId();
+    const requestId = createCollaborationRequestId("flush");
 
     return new Promise<CollaborationFlushResult>((resolve, reject) => {
       const timeout = setTimeout(() => {
         pendingFlushesRef.current.delete(requestId);
         reject(new Error("Timed out waiting for collaboration flush."));
-      }, COLLABORATION_FLUSH_TIMEOUT_MS);
+      }, COLLABORATION_REQUEST_TIMEOUT_MS);
 
       pendingFlushesRef.current.set(requestId, {
         resolve,
@@ -442,6 +493,42 @@ export function useDocumentCollaboration({
     });
   }, []);
 
+  const publish = useCallback((input: { changeSummary?: string }) => {
+    const socket = socketRef.current;
+
+    if (
+      !socket ||
+      typeof WebSocket === "undefined" ||
+      socket.readyState !== WebSocket.OPEN
+    ) {
+      return Promise.reject(
+        new Error("Document collaboration is not connected."),
+      );
+    }
+
+    const requestId = createCollaborationRequestId("publish");
+
+    return new Promise<CollaborationPublishResult>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        pendingPublishesRef.current.delete(requestId);
+        reject(new Error("Timed out waiting for collaboration publish."));
+      }, COLLABORATION_REQUEST_TIMEOUT_MS);
+
+      pendingPublishesRef.current.set(requestId, {
+        resolve,
+        reject,
+        timeout,
+      });
+
+      socket.send(
+        createCollaborationPublishRequest({
+          requestId,
+          changeSummary: input.changeSummary,
+        }),
+      );
+    });
+  }, []);
+
   return {
     enabled: Boolean(connectionConfig && documentState),
     status,
@@ -450,5 +537,6 @@ export function useDocumentCollaboration({
     body: documentState?.body ?? null,
     frontmatter: documentState?.frontmatter ?? null,
     flush,
+    publish,
   };
 }

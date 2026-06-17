@@ -10,6 +10,7 @@ import {
   useState,
 } from "react";
 
+import { useQueryClient } from "@tanstack/react-query";
 import {
   appendMdcmsPreviewTokenToUrl,
   type CollaborationPresenceCursor,
@@ -114,6 +115,8 @@ import {
   useDocumentCollaboration,
   type DocumentCollaborationConnectionStatus,
 } from "../hooks/use-document-collaboration.js";
+import { getContentTypeListQueryKey } from "../hooks/use-content-type-list.js";
+import { getContentTranslationCoverageQueryKey } from "../lib/content-translation-coverage.js";
 import {
   Select,
   SelectContent,
@@ -175,6 +178,74 @@ type ContentDocumentPreviewMode = "edit" | "split" | "preview";
 const CONTENT_DOCUMENT_PREVIEW_MODE_QUERY_PARAM = "previewMode";
 export const LIVE_PREVIEW_IFRAME_SANDBOX =
   "allow-scripts allow-forms allow-same-origin";
+
+export function getContentDocumentListInvalidationKeys({
+  project,
+  environment,
+  typeId,
+}: {
+  project: string | null | undefined;
+  environment: string | null | undefined;
+  typeId: string;
+}) {
+  return [
+    getContentTypeListQueryKey(project, environment, typeId),
+    getContentTranslationCoverageQueryKey(project, environment, typeId),
+  ] as const;
+}
+
+export function hasLiveCollaborationDraftChanges(input: {
+  state: ContentDocumentPageReadyState;
+  activeDocumentCollaborationOpen: boolean;
+}): boolean {
+  return (
+    input.activeDocumentCollaborationOpen &&
+    input.state.saveState !== "saved" &&
+    !isDraftPersisted(input.state)
+  );
+}
+
+export function hasUnsavedLocalDraftChanges(
+  state: ContentDocumentPageReadyState,
+): boolean {
+  return state.saveState !== "saved" && !isDraftPersisted(state);
+}
+
+export function canPublishContentDocumentReadyState(input: {
+  state: ContentDocumentPageReadyState;
+  activeDocumentCollaborationOpen: boolean;
+  publishBlockedByActiveCollaboration: boolean;
+}): boolean {
+  const hasPublishableDraft =
+    input.state.document.hasUnpublishedChanges ||
+    hasLiveCollaborationDraftChanges({
+      state: input.state,
+      activeDocumentCollaborationOpen: input.activeDocumentCollaborationOpen,
+    });
+
+  return (
+    input.state.canWrite &&
+    hasPublishableDraft &&
+    input.state.publishState !== "publishing" &&
+    !input.state.viewingVersion &&
+    !input.publishBlockedByActiveCollaboration &&
+    (input.state.saveState === "saved" || input.activeDocumentCollaborationOpen)
+  );
+}
+
+export function shouldForceCollaborationDraftFlush(input: {
+  collaborationEnabled: boolean;
+  collaborationStatus: DocumentCollaborationConnectionStatus;
+  saveState: ContentDocumentPageReadyState["saveState"];
+  allowSavingCollaborationDraft: boolean | undefined;
+}): boolean {
+  return (
+    input.collaborationEnabled &&
+    input.collaborationStatus === "open" &&
+    input.allowSavingCollaborationDraft === true &&
+    input.saveState === "saving"
+  );
+}
 
 function isContentDocumentPreviewMode(
   value: unknown,
@@ -334,7 +405,9 @@ export function resolveContentDocumentEditorCollaboration({
     readOnlyBlockedByCollaboration:
       documentCollaboration !== undefined &&
       documentCollaboration.status !== "open",
-    publishBlockedByActiveCollaboration: documentCollaboration !== undefined,
+    publishBlockedByActiveCollaboration:
+      documentCollaboration !== undefined &&
+      documentCollaboration.status !== "open",
   };
 }
 
@@ -386,24 +459,6 @@ function replaceCollaborationFrontmatter(
       map.set(key, value);
     }
   }
-}
-
-export function resolveCollaborationDraftSaveSnapshot({
-  editor,
-  fallbackBody,
-  frontmatter,
-}: {
-  editor: Pick<TipTapEditorHandle, "getContent"> | null | undefined;
-  fallbackBody: string;
-  frontmatter: Record<string, unknown>;
-}): {
-  body: string;
-  frontmatter: Record<string, unknown>;
-} {
-  return {
-    body: editor?.getContent() ?? fallbackBody,
-    frontmatter,
-  };
 }
 
 function deriveLocalPresenceLabel(input: {
@@ -557,6 +612,9 @@ type ContentDocumentPageViewProps = {
   onToggleSidebar?: () => void;
   onGoBack?: () => void;
   onPublishDialogOpenChange?: (open: boolean) => void;
+  onPublishUnsavedPromptOpenChange?: (open: boolean) => void;
+  onPublishSaveAndContinue?: () => void;
+  onPublishSavedDraft?: () => void;
   onPublishChangeSummaryChange?: (value: string) => void;
   onPublishSubmit?: () => void;
   /** Persist the current draft immediately, bypassing the auto-save debounce. */
@@ -2126,6 +2184,9 @@ function useContentDocumentPageViewElement({
   onToggleSidebar,
   onGoBack,
   onPublishDialogOpenChange,
+  onPublishUnsavedPromptOpenChange,
+  onPublishSaveAndContinue,
+  onPublishSavedDraft,
   onPublishChangeSummaryChange,
   onPublishSubmit,
   onSaveNow,
@@ -2225,13 +2286,19 @@ function useContentDocumentPageViewElement({
   const documentCollaborationStatusMessage = documentCollaboration
     ? getDocumentCollaborationStatusMessage(documentCollaboration.status)
     : null;
+  const activeDocumentCollaborationOpen =
+    documentCollaboration?.status === "open";
   const canPublish =
     state.status === "ready" &&
-    state.canWrite &&
-    state.saveState === "saved" &&
-    state.document.hasUnpublishedChanges &&
-    state.publishState !== "publishing" &&
-    !editorCollaboration.publishBlockedByActiveCollaboration;
+    canPublishContentDocumentReadyState({
+      state,
+      activeDocumentCollaborationOpen,
+      publishBlockedByActiveCollaboration:
+        editorCollaboration.publishBlockedByActiveCollaboration,
+    });
+  const publishDialogSubmitBlocked =
+    state.status === "ready" &&
+    (state.publishState === "publishing" || hasUnsavedLocalDraftChanges(state));
 
   const canSaveNow =
     state.status === "ready" &&
@@ -2249,6 +2316,18 @@ function useContentDocumentPageViewElement({
 
   const triggerSaveShortcut = useLatestCallback(() => {
     onSaveNow?.();
+  });
+  const openPublishFlow = useLatestCallback(() => {
+    if (state.status !== "ready") {
+      return;
+    }
+
+    if (activeDocumentCollaborationOpen && state.saveState !== "saved") {
+      onPublishUnsavedPromptOpenChange?.(true);
+      return;
+    }
+
+    onPublishDialogOpenChange?.(true);
   });
   useEffect(() => {
     if (!canSaveNow) return;
@@ -2538,7 +2617,7 @@ function useContentDocumentPageViewElement({
                 <Button
                   size="sm"
                   disabled={!canPublish}
-                  onClick={() => onPublishDialogOpenChange?.(true)}
+                  onClick={openPublishFlow}
                   data-mdcms-document-publish-disabled={
                     !canPublish ? "true" : undefined
                   }
@@ -2955,12 +3034,48 @@ function useContentDocumentPageViewElement({
                     Cancel
                   </Button>
                   <Button
-                    disabled={state.publishState === "publishing"}
+                    disabled={publishDialogSubmitBlocked}
                     onClick={onPublishSubmit}
+                    data-mdcms-publish-confirm-submit="true"
                   >
                     {state.publishState === "publishing"
                       ? "Publishing..."
                       : "Publish"}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          ) : null}
+
+          {state.status === "ready" ? (
+            <Dialog
+              open={state.publishUnsavedPromptOpen}
+              onOpenChange={onPublishUnsavedPromptOpenChange}
+            >
+              <DialogContent
+                forceMount={state.publishUnsavedPromptOpen ? true : undefined}
+                data-mdcms-publish-unsaved-dialog="open"
+              >
+                <DialogHeader>
+                  <DialogTitle>Publish unsaved changes?</DialogTitle>
+                  <DialogDescription>
+                    Some live editor changes have not reached the saved draft
+                    yet. Save them before publishing, or publish the saved draft
+                    and leave live editor changes unpublished.
+                  </DialogDescription>
+                </DialogHeader>
+                <DialogFooter>
+                  <Button
+                    variant="ghost"
+                    onClick={() => onPublishUnsavedPromptOpenChange?.(false)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button variant="ghost" onClick={onPublishSavedDraft}>
+                    Publish saved draft
+                  </Button>
+                  <Button onClick={onPublishSaveAndContinue}>
+                    Save and publish
                   </Button>
                 </DialogFooter>
               </DialogContent>
@@ -2982,6 +3097,7 @@ function useContentDocumentPageController({
   const session = useStudioSession();
   const params = useParams();
   const { back, push } = useRouter();
+  const queryClient = useQueryClient();
   const typeId = (params.type as string) || "content";
   const documentId = (params.documentId as string) || "";
   const typeLabel = typeId;
@@ -3005,6 +3121,19 @@ function useContentDocumentPageController({
         : context,
     [context, route],
   );
+  const invalidateDocumentListQueries = useLatestCallback(() => {
+    if (!route) {
+      return;
+    }
+
+    for (const queryKey of getContentDocumentListInvalidationKeys({
+      project: route.project,
+      environment: route.initialEnvironment,
+      typeId,
+    })) {
+      void queryClient.invalidateQueries({ queryKey });
+    }
+  });
 
   const [state, setState] = useState<ContentDocumentPageState>(() =>
     route
@@ -3486,104 +3615,163 @@ function useContentDocumentPageController({
     }
   });
 
-  const publishDocument = useLatestCallback(async () => {
-    const currentState = stateRef.current;
-    const requestContext = activeContext;
-    const requestRoute = route;
-    const api = createRouteApi({
-      context: requestContext,
-      route: requestRoute,
-    });
-
-    if (
-      !api ||
-      !requestRoute ||
-      currentState.status !== "ready" ||
-      !currentState.canWrite ||
-      documentCollaboration.enabled
-    ) {
-      return;
-    }
-
-    const requestToken = createContentDocumentRouteRequestToken({
-      documentId: currentState.documentId,
-      route: requestRoute,
-    });
-    setState((current) =>
-      current.status === "ready"
-        ? {
-            ...current,
-            publishState: "publishing",
-            publishError: undefined,
-          }
-        : current,
-    );
-
-    try {
-      const nextState = await publishContentDocumentReadyState({
-        api,
-        state: currentState,
-        changeSummary: currentState.publishChangeSummary,
+  const publishDocument = useLatestCallback(
+    async (options?: { savedCollaborationDraft?: boolean }) => {
+      const currentState = stateRef.current;
+      const requestContext = activeContext;
+      const requestRoute = route;
+      const api = createRouteApi({
+        context: requestContext,
+        route: requestRoute,
       });
 
-      const recoveredSchemaState = nextState.schemaState;
+      if (
+        !api ||
+        !requestRoute ||
+        currentState.status !== "ready" ||
+        !currentState.canWrite ||
+        (documentCollaboration.enabled &&
+          documentCollaboration.status !== "open")
+      ) {
+        return;
+      }
 
-      if (hasSchemaRecoveryMismatch(recoveredSchemaState)) {
+      if (
+        !documentCollaboration.enabled &&
+        hasUnsavedLocalDraftChanges(currentState)
+      ) {
         setState((current) =>
-          current.status === "ready" &&
-          matchesContentDocumentRouteRequestToken(requestToken, current)
-            ? applyGuardedPublishFailureToReadyState({
-                state: current,
-                schemaState: recoveredSchemaState,
-              })
+          current.status === "ready"
+            ? {
+                ...current,
+                publishState: "idle",
+                publishError: "Save changes before publishing.",
+              }
             : current,
         );
         return;
       }
 
-      // If publish normalized the body, rehydrate the editor — but only
-      // if the user hasn't typed newer edits during the in-flight publish.
-      const publishedBody = nextState.document.body;
-      const latestAfterPublish = stateRef.current;
-      if (
-        publishedBody !== currentState.draftBody &&
-        latestAfterPublish.status === "ready" &&
-        matchesContentDocumentRouteRequestToken(
-          requestToken,
-          latestAfterPublish,
-        ) &&
-        latestAfterPublish.draftBody === currentState.draftBody &&
-        !latestAfterPublish.viewingVersion
-      ) {
-        editorRef.current?.setContent(publishedBody);
-      }
+      const publishApi: Pick<
+        StudioDocumentRouteApi,
+        "publish" | "listVersions"
+      > =
+        documentCollaboration.enabled && documentCollaboration.status === "open"
+          ? {
+              publish: async (input) => {
+                const result = await documentCollaboration.publish({
+                  changeSummary: input.changeSummary,
+                });
 
-      setState((current) =>
-        current.status === "ready" &&
-        matchesContentDocumentRouteRequestToken(requestToken, current)
-          ? applySuccessfulPublishToReadyState({
-              state: current,
-              requestBody: currentState.draftBody,
-              requestFrontmatter: currentState.draftFrontmatter,
-              publishedState: nextState,
-            })
-          : current,
-      );
-    } catch (error) {
-      const message = toRouteErrorMessage(error, "Failed to publish document.");
+                if (result.status === "error") {
+                  throw new RuntimeError({
+                    code: result.code,
+                    message: result.message,
+                    statusCode: 409,
+                  });
+                }
 
+                return result.document;
+              },
+              listVersions: api.listVersions.bind(api),
+            }
+          : api;
+      const publishRequestBody =
+        documentCollaboration.enabled &&
+        !options?.savedCollaborationDraft &&
+        currentState.saveState !== "saved"
+          ? (currentState.document.body ?? "")
+          : currentState.draftBody;
+      const publishRequestFrontmatter =
+        documentCollaboration.enabled &&
+        !options?.savedCollaborationDraft &&
+        currentState.saveState !== "saved"
+          ? currentState.document.frontmatter
+          : currentState.draftFrontmatter;
+      const requestToken = createContentDocumentRouteRequestToken({
+        documentId: currentState.documentId,
+        route: requestRoute,
+      });
       setState((current) =>
-        current.status === "ready" &&
-        matchesContentDocumentRouteRequestToken(requestToken, current)
+        current.status === "ready"
           ? {
               ...current,
-              publishState: "idle",
-              publishError: message,
+              publishState: "publishing",
+              publishError: undefined,
             }
           : current,
       );
-    }
-  });
+
+      try {
+        const nextState = await publishContentDocumentReadyState({
+          api: publishApi,
+          state: currentState,
+          changeSummary: currentState.publishChangeSummary,
+        });
+
+        const recoveredSchemaState = nextState.schemaState;
+
+        if (hasSchemaRecoveryMismatch(recoveredSchemaState)) {
+          setState((current) =>
+            current.status === "ready" &&
+            matchesContentDocumentRouteRequestToken(requestToken, current)
+              ? applyGuardedPublishFailureToReadyState({
+                  state: current,
+                  schemaState: recoveredSchemaState,
+                })
+              : current,
+          );
+          return;
+        }
+
+        // If publish normalized the body, rehydrate the editor — but only
+        // if the user hasn't typed newer edits during the in-flight publish.
+        const publishedBody = nextState.document.body;
+        const latestAfterPublish = stateRef.current;
+        if (
+          publishedBody !== publishRequestBody &&
+          latestAfterPublish.status === "ready" &&
+          matchesContentDocumentRouteRequestToken(
+            requestToken,
+            latestAfterPublish,
+          ) &&
+          latestAfterPublish.draftBody === publishRequestBody &&
+          !latestAfterPublish.viewingVersion
+        ) {
+          editorRef.current?.setContent(publishedBody);
+        }
+
+        setState((current) =>
+          current.status === "ready" &&
+          matchesContentDocumentRouteRequestToken(requestToken, current)
+            ? applySuccessfulPublishToReadyState({
+                state: current,
+                requestBody: publishRequestBody,
+                requestFrontmatter: publishRequestFrontmatter,
+                publishedState: nextState,
+              })
+            : current,
+        );
+        invalidateDocumentListQueries();
+      } catch (error) {
+        const message = toRouteErrorMessage(
+          error,
+          "Failed to publish document.",
+        );
+
+        setState((current) =>
+          current.status === "ready" &&
+          matchesContentDocumentRouteRequestToken(requestToken, current)
+            ? {
+                ...current,
+                publishState: "idle",
+                publishError: message,
+              }
+            : current,
+        );
+      }
+    },
+  );
 
   const syncSchema = useLatestCallback(async () => {
     const currentState = stateRef.current;
@@ -3656,49 +3844,138 @@ function useContentDocumentPageController({
     setState(nextState);
   });
 
-  const saveDraft = useLatestCallback(async (): Promise<boolean> => {
-    const currentState = stateRef.current;
-    const requestContext = activeContext;
-    const requestRoute = route;
+  const saveDraft = useLatestCallback(
+    async (options?: {
+      allowSavingCollaborationDraft?: boolean;
+    }): Promise<boolean> => {
+      const currentState = stateRef.current;
+      const requestContext = activeContext;
+      const requestRoute = route;
 
-    if (
-      // Fail closed when the embedded host cannot derive the local schema hash
-      // required by guarded draft-write routes.
-      !requestRoute ||
-      !requestRoute.write.canWrite ||
-      currentState.status !== "ready"
-    ) {
-      return false;
-    }
+      if (
+        // Fail closed when the embedded host cannot derive the local schema hash
+        // required by guarded draft-write routes.
+        !requestRoute ||
+        !requestRoute.write.canWrite ||
+        currentState.status !== "ready"
+      ) {
+        return false;
+      }
 
-    if (
-      !currentState.canWrite ||
-      currentState.saveState !== "unsaved" ||
-      // Both the manual `Save draft` button and the autosave debounce
-      // route through this function. Refuse to persist while the user is
-      // viewing a historical version — restoring is an explicit action
-      // gated by the "Restore this version" button, not a side effect of
-      // autosave.
-      currentState.viewingVersion ||
-      isDraftPersisted(currentState) ||
-      (currentState.saveRequestBody === currentState.draftBody &&
+      const canFlushSavingCollaborationDraft =
+        shouldForceCollaborationDraftFlush({
+          collaborationEnabled: documentCollaboration.enabled,
+          collaborationStatus: documentCollaboration.status,
+          saveState: currentState.saveState,
+          allowSavingCollaborationDraft: options?.allowSavingCollaborationDraft,
+        });
+      const saveRequestMatchesDraft =
+        currentState.saveRequestBody === currentState.draftBody &&
         areJsonValuesEqual(
           currentState.saveRequestFrontmatter ?? {},
           currentState.draftFrontmatter,
-        ))
-    ) {
-      return false;
-    }
+        );
 
-    const requestBody = currentState.draftBody;
-    const requestFrontmatter = currentState.draftFrontmatter;
-    const requestToken = createContentDocumentRouteRequestToken({
-      documentId: currentState.documentId,
-      route: requestRoute,
-    });
+      if (
+        !currentState.canWrite ||
+        (currentState.saveState !== "unsaved" &&
+          !canFlushSavingCollaborationDraft) ||
+        // Both the manual `Save draft` button and the autosave debounce
+        // route through this function. Refuse to persist while the user is
+        // viewing a historical version — restoring is an explicit action
+        // gated by the "Restore this version" button, not a side effect of
+        // autosave.
+        currentState.viewingVersion ||
+        isDraftPersisted(currentState) ||
+        (!canFlushSavingCollaborationDraft && saveRequestMatchesDraft)
+      ) {
+        return false;
+      }
 
-    if (documentCollaboration.enabled) {
-      if (documentCollaboration.status !== "open") {
+      const requestBody = currentState.draftBody;
+      const requestFrontmatter = currentState.draftFrontmatter;
+      const requestToken = createContentDocumentRouteRequestToken({
+        documentId: currentState.documentId,
+        route: requestRoute,
+      });
+
+      if (documentCollaboration.enabled) {
+        if (documentCollaboration.status !== "open") {
+          return false;
+        }
+
+        setState((current) =>
+          current.status === "ready"
+            ? reduceContentDocumentPageReadyState(current, {
+                type: "saveStarted",
+              })
+            : current,
+        );
+
+        try {
+          const result = await documentCollaboration.flush();
+
+          if (result.status === "error") {
+            setState((current) =>
+              current.status === "ready" &&
+              matchesContentDocumentRouteRequestToken(requestToken, current)
+                ? applyFailedDraftSaveToReadyState({
+                    state: current,
+                    requestBody,
+                    requestFrontmatter,
+                    message: result.message,
+                  })
+                : current,
+            );
+            return false;
+          }
+
+          const persistedSnapshot = {
+            body: requestBody,
+            frontmatter: requestFrontmatter,
+          };
+
+          setState((current) =>
+            current.status === "ready" &&
+            matchesContentDocumentRouteRequestToken(requestToken, current)
+              ? applySuccessfulDraftSaveToReadyState({
+                  state: current,
+                  requestBody,
+                  requestFrontmatter,
+                  persistedBody: persistedSnapshot.body,
+                  persistedFrontmatter: persistedSnapshot.frontmatter,
+                  updatedAt: currentState.document.updatedAt,
+                  draftRevision: result.draftRevision,
+                })
+              : current,
+          );
+          invalidateDocumentListQueries();
+          return true;
+        } catch (error) {
+          setState((current) =>
+            current.status === "ready" &&
+            matchesContentDocumentRouteRequestToken(requestToken, current)
+              ? applyFailedDraftSaveToReadyState({
+                  state: current,
+                  requestBody,
+                  requestFrontmatter,
+                  message:
+                    error instanceof Error
+                      ? error.message
+                      : "Collaboration save failed.",
+                })
+              : current,
+          );
+          return false;
+        }
+      }
+
+      const api = createRouteApi({
+        context: requestContext,
+        route: requestRoute,
+      });
+
+      if (!api) {
         return false;
       }
 
@@ -3710,46 +3987,37 @@ function useContentDocumentPageController({
           : current,
       );
 
-      try {
-        const result = await documentCollaboration.flush();
+      const nextState = await saveContentDocumentReadyState({
+        api,
+        route: requestRoute,
+        state: currentState,
+      });
 
-        if (result.status === "error") {
-          setState((current) =>
-            current.status === "ready" &&
-            matchesContentDocumentRouteRequestToken(requestToken, current)
-              ? applyFailedDraftSaveToReadyState({
-                  state: current,
-                  requestBody,
-                  requestFrontmatter,
-                  message: result.message,
-                })
-              : current,
-          );
-          return false;
-        }
+      const recoveredSchemaState = nextState.schemaState;
 
-        const persistedSnapshot = resolveCollaborationDraftSaveSnapshot({
-          editor: editorRef.current,
-          fallbackBody: requestBody,
-          frontmatter: requestFrontmatter,
-        });
-
+      if (hasSchemaRecoveryMismatch(recoveredSchemaState)) {
         setState((current) =>
           current.status === "ready" &&
           matchesContentDocumentRouteRequestToken(requestToken, current)
-            ? applySuccessfulDraftSaveToReadyState({
+            ? applyGuardedDraftSaveFailureToReadyState({
                 state: current,
-                requestBody,
-                requestFrontmatter,
-                persistedBody: persistedSnapshot.body,
-                persistedFrontmatter: persistedSnapshot.frontmatter,
-                updatedAt: currentState.document.updatedAt,
-                draftRevision: result.draftRevision,
+                schemaState: recoveredSchemaState,
               })
             : current,
         );
-        return true;
-      } catch (error) {
+        return false;
+      }
+
+      const failedFieldName = nextState.fieldErrors
+        ? Object.keys(nextState.fieldErrors)[0]
+        : undefined;
+      const mutationError =
+        nextState.mutationError ??
+        (failedFieldName
+          ? nextState.fieldErrors?.[failedFieldName]
+          : undefined);
+
+      if (mutationError) {
         setState((current) =>
           current.status === "ready" &&
           matchesContentDocumentRouteRequestToken(requestToken, current)
@@ -3757,109 +4025,50 @@ function useContentDocumentPageController({
                 state: current,
                 requestBody,
                 requestFrontmatter,
-                message:
-                  error instanceof Error
-                    ? error.message
-                    : "Collaboration save failed.",
+                message: mutationError,
+                fieldName: failedFieldName,
               })
             : current,
         );
         return false;
       }
-    }
 
-    const api = createRouteApi({
-      context: requestContext,
-      route: requestRoute,
-    });
+      // If the server normalized the body (whitespace, etc.), rehydrate the
+      // editor — but only if the user hasn't typed newer edits during the
+      // in-flight save. The reducer already preserves newer drafts in state.
+      const persistedBody = nextState.document.body;
+      const latestAfterSave = stateRef.current;
+      if (
+        persistedBody !== requestBody &&
+        latestAfterSave.status === "ready" &&
+        matchesContentDocumentRouteRequestToken(
+          requestToken,
+          latestAfterSave,
+        ) &&
+        latestAfterSave.draftBody === requestBody &&
+        !latestAfterSave.viewingVersion
+      ) {
+        editorRef.current?.setContent(persistedBody);
+      }
 
-    if (!api) {
-      return false;
-    }
-
-    setState((current) =>
-      current.status === "ready"
-        ? reduceContentDocumentPageReadyState(current, {
-            type: "saveStarted",
-          })
-        : current,
-    );
-
-    const nextState = await saveContentDocumentReadyState({
-      api,
-      route: requestRoute,
-      state: currentState,
-    });
-
-    const recoveredSchemaState = nextState.schemaState;
-
-    if (hasSchemaRecoveryMismatch(recoveredSchemaState)) {
       setState((current) =>
         current.status === "ready" &&
         matchesContentDocumentRouteRequestToken(requestToken, current)
-          ? applyGuardedDraftSaveFailureToReadyState({
-              state: current,
-              schemaState: recoveredSchemaState,
-            })
-          : current,
-      );
-      return false;
-    }
-
-    const failedFieldName = nextState.fieldErrors
-      ? Object.keys(nextState.fieldErrors)[0]
-      : undefined;
-    const mutationError =
-      nextState.mutationError ??
-      (failedFieldName ? nextState.fieldErrors?.[failedFieldName] : undefined);
-
-    if (mutationError) {
-      setState((current) =>
-        current.status === "ready" &&
-        matchesContentDocumentRouteRequestToken(requestToken, current)
-          ? applyFailedDraftSaveToReadyState({
+          ? applySuccessfulDraftSaveToReadyState({
               state: current,
               requestBody,
               requestFrontmatter,
-              message: mutationError,
-              fieldName: failedFieldName,
+              persistedBody,
+              persistedFrontmatter: nextState.document.frontmatter,
+              updatedAt: nextState.document.updatedAt,
+              draftRevision: nextState.document.draftRevision,
             })
           : current,
       );
-      return false;
-    }
-
-    // If the server normalized the body (whitespace, etc.), rehydrate the
-    // editor — but only if the user hasn't typed newer edits during the
-    // in-flight save. The reducer already preserves newer drafts in state.
-    const persistedBody = nextState.document.body;
-    const latestAfterSave = stateRef.current;
-    if (
-      persistedBody !== requestBody &&
-      latestAfterSave.status === "ready" &&
-      matchesContentDocumentRouteRequestToken(requestToken, latestAfterSave) &&
-      latestAfterSave.draftBody === requestBody &&
-      !latestAfterSave.viewingVersion
-    ) {
-      editorRef.current?.setContent(persistedBody);
-    }
-
-    setState((current) =>
-      current.status === "ready" &&
-      matchesContentDocumentRouteRequestToken(requestToken, current)
-        ? applySuccessfulDraftSaveToReadyState({
-            state: current,
-            requestBody,
-            requestFrontmatter,
-            persistedBody,
-            persistedFrontmatter: nextState.document.frontmatter,
-            updatedAt: nextState.document.updatedAt,
-            draftRevision: nextState.document.draftRevision,
-          })
-        : current,
-    );
-    return true;
-  });
+      invalidateDocumentListQueries();
+      return true;
+    },
+  );
 
   const handleLocaleSwitch = useLatestCallback(async (targetLocale: string) => {
     const currentState = stateRef.current;
@@ -4466,6 +4675,51 @@ function useContentDocumentPageController({
             }
           : current,
       );
+    },
+    onPublishUnsavedPromptOpenChange: (open) => {
+      setState((current) =>
+        current.status === "ready"
+          ? {
+              ...current,
+              publishUnsavedPromptOpen: open,
+              publishError: open ? undefined : current.publishError,
+            }
+          : current,
+      );
+    },
+    onPublishSaveAndContinue: () => {
+      void (async () => {
+        setState((current) =>
+          current.status === "ready"
+            ? {
+                ...current,
+                publishUnsavedPromptOpen: false,
+                publishError: undefined,
+              }
+            : current,
+        );
+
+        const saved = await saveDraft({
+          allowSavingCollaborationDraft: true,
+        });
+        if (!saved) {
+          return;
+        }
+
+        await publishDocument({ savedCollaborationDraft: true });
+      })();
+    },
+    onPublishSavedDraft: () => {
+      setState((current) =>
+        current.status === "ready"
+          ? {
+              ...current,
+              publishUnsavedPromptOpen: false,
+              publishError: undefined,
+            }
+          : current,
+      );
+      void publishDocument();
     },
     onPublishChangeSummaryChange: (value) => {
       setState((current) =>

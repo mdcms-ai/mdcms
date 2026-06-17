@@ -298,6 +298,42 @@ class BaselineContentStore implements CollaborationRuntimeContentStore {
     return cloneDocument(updated);
   }
 
+  async publish(
+    scope: ContentScope,
+    documentId: string,
+    input: { actorId?: string },
+  ): Promise<ContentDocument> {
+    const current = this.documents.get(documentId);
+
+    if (!current) {
+      throw new Error(`Unknown baseline document ${documentId}`);
+    }
+
+    if (scope.project !== PROJECT || scope.environment !== ENVIRONMENT) {
+      throw new Error(
+        `Unexpected baseline scope ${scope.project}/${scope.environment}`,
+      );
+    }
+
+    const nextVersion = current.version + 1;
+    const published: ContentDocument = {
+      ...current,
+      hasUnpublishedChanges: false,
+      version: nextVersion,
+      publishedVersion: nextVersion,
+      updatedBy: input.actorId ?? current.updatedBy,
+      updatedAt: BASELINE_UPDATED_AT,
+    };
+
+    this.documents.set(documentId, published);
+    this.versionRowsCreated.set(
+      documentId,
+      (this.versionRowsCreated.get(documentId) ?? 0) + 1,
+    );
+
+    return cloneDocument(published);
+  }
+
   requireDocument(documentId: string): ContentDocument {
     const document = this.documents.get(documentId);
 
@@ -512,6 +548,10 @@ class BaselinePresenceAuthGuard implements CollaborationAuthHandshakeGuard {
   }
 
   async revalidateWrite(): Promise<{ ok: true }> {
+    return { ok: true };
+  }
+
+  async revalidatePublish(): Promise<{ ok: true }> {
     return { ok: true };
   }
 }

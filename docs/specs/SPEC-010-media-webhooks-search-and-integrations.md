@@ -2,7 +2,7 @@
 status: live
 canonical: true
 created: 2026-03-11
-last_updated: 2026-06-14
+last_updated: 2026-06-16
 ---
 
 # SPEC-010 Media, Webhooks, Search, and Integrations
@@ -400,17 +400,23 @@ unavailable, and populated states.
 
 ---
 
-## Search (Post-MVP)
+## Search
 
-### Deferred Design Target
-
-When implemented, full-text search uses PostgreSQL's built-in full-text search capabilities (`tsvector` / `tsquery`) over a **materialized latest-published index**.
+Content search uses PostgreSQL full-text search (`tsvector` / `tsquery`) over a
+materialized latest-published index. Search is exposed through the Content API
+list endpoint documented in SPEC-003 and preserves the same explicit
+project/environment routing, authorization, filtering, grouping, sorting, and
+pagination contract as other content list reads.
 
 Default behavior:
 
-- Search indexes only latest published snapshots (same visibility as default content API).
-- Draft search is opt-in (`draft=true`) and requires draft permissions.
-- Text search config is selected by locale (locale-aware analyzer with fallback to `simple`).
+- Search indexes only latest published snapshots, matching default Content API
+  visibility.
+- Draft search is opt-in with `draft=true` and requires draft read permission.
+- Text search config is selected by locale, with fallback to `simple`.
+- `q` is a filter on the content list result set, not a rank-based sort.
+- Search backends are pluggable behind a server-owned interface so a later
+  Meilisearch or Typesense backend can replace PostgreSQL without API changes.
 
 ```sql
 CREATE TABLE published_search_index (
@@ -433,7 +439,59 @@ CREATE INDEX idx_published_search_scope_type_locale
   ON published_search_index (project_id, environment_id, schema_type, locale);
 ```
 
-### API Usage (When Implemented)
+### Search Text
+
+The indexed text is built from the published snapshot's path, body, and
+serialized frontmatter, in that order. This makes schema-defined title, slug,
+summary, and custom frontmatter fields searchable without coupling the index to
+individual schema field names.
+
+### Synchronization
+
+The published index is synchronized with content lifecycle operations:
+
+- Publishing a document upserts the latest published snapshot into
+  `published_search_index` in the same transaction that records the immutable
+  `document_versions` row and advances `documents.published_version`.
+- Restoring a historical version directly to published follows the same upsert
+  path.
+- Unpublishing removes the document's published index row in the same
+  transaction that clears `documents.published_version`.
+- Soft-deleting a document removes the published index row when the document is
+  hidden from default published reads.
+- Hard deletion is covered by the `ON DELETE CASCADE` foreign key.
+- Draft updates do not update `published_search_index` until the draft is
+  published.
+
+Migrations that introduce the index must backfill non-deleted documents with a
+published version so existing published content is searchable immediately after
+the migration runs.
+
+### Locale Analyzer Selection
+
+Locale-aware search config selection uses the BCP 47 primary language subtag.
+Region subtags inherit from the primary language; for example `en-US` uses
+`english`. Blank, unknown, and unsupported locales use `simple`.
+
+| Locale primary subtag | PostgreSQL search config |
+| --------------------- | ------------------------ |
+| `da`                  | `danish`                 |
+| `de`                  | `german`                 |
+| `en`                  | `english`                |
+| `es`                  | `spanish`                |
+| `fi`                  | `finnish`                |
+| `fr`                  | `french`                 |
+| `hu`                  | `hungarian`              |
+| `it`                  | `italian`                |
+| `nl`                  | `dutch`                  |
+| `no`, `nb`, `nn`      | `norwegian`              |
+| `pt`                  | `portuguese`             |
+| `ro`                  | `romanian`               |
+| `ru`                  | `russian`                |
+| `sv`                  | `swedish`                |
+| `tr`                  | `turkish`                |
+
+### API Usage
 
 ```
 # Required headers:
@@ -443,11 +501,15 @@ CREATE INDEX idx_published_search_scope_type_locale
 GET /api/v1/content?q=hello+world&type=BlogPost
 ```
 
-Use `draft=true` to search draft content (requires draft access permissions) once search is implemented.
+Use `draft=true` to search mutable draft content. Draft search is denied unless
+the caller has the draft read permission defined by SPEC-005. Draft search uses
+PostgreSQL full-text search over mutable `documents` rows and does not persist a
+separate draft search index.
 
 ### Future
 
-The search backend is designed to be pluggable. A post-MVP upgrade path to Meilisearch or Typesense can be implemented without API changes.
+The search backend is designed to be pluggable. A future upgrade path to
+Meilisearch or Typesense can be implemented without API changes.
 
 ---
 

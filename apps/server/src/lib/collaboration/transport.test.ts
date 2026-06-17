@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "bun:test";
 import type { WebSocketLike } from "@hocuspocus/server";
-import type { CollaborationPresenceUser } from "@mdcms/shared";
+import type {
+  CollaborationPresenceUser,
+  ContentDocumentResponse,
+} from "@mdcms/shared";
 
 import type {
   CollaborationPresenceContext,
@@ -28,6 +31,33 @@ function createContext(
     documentPath: "blog/post-1",
     role: "editor",
     ...overrides,
+  };
+}
+
+function createContentDocumentResponse(
+  overrides: Partial<ContentDocumentResponse> = {},
+): ContentDocumentResponse {
+  return {
+    documentId: overrides.documentId ?? DOCUMENT_ID,
+    translationGroupId:
+      overrides.translationGroupId ?? "22222222-2222-4222-8222-222222222222",
+    project: overrides.project ?? "marketing",
+    environment: overrides.environment ?? "staging",
+    path: overrides.path ?? "blog/post-1",
+    type: overrides.type ?? "Post",
+    locale: overrides.locale ?? "__mdcms_default__",
+    format: overrides.format ?? "mdx",
+    isDeleted: overrides.isDeleted ?? false,
+    hasUnpublishedChanges: overrides.hasUnpublishedChanges ?? true,
+    version: overrides.version ?? 0,
+    publishedVersion: overrides.publishedVersion ?? null,
+    draftRevision: overrides.draftRevision ?? 4,
+    frontmatter: overrides.frontmatter ?? { title: "Post 1" },
+    body: overrides.body ?? "# Post 1",
+    createdBy: overrides.createdBy ?? "user-created",
+    createdAt: overrides.createdAt ?? "2026-06-16T10:00:00.000Z",
+    updatedBy: overrides.updatedBy ?? "user-updated",
+    updatedAt: overrides.updatedAt ?? "2026-06-16T10:01:00.000Z",
   };
 }
 
@@ -110,6 +140,9 @@ function createAuthGuard(
     async revalidateWrite() {
       return result.ok ? { ok: true } : result;
     },
+    async revalidatePublish() {
+      return result.ok ? { ok: true } : result;
+    },
   };
 }
 
@@ -117,6 +150,7 @@ function createPresenceAuthGuard(overrides: {
   authorizePresenceHandshake?: CollaborationAuthHandshakeGuard["authorizePresenceHandshake"];
   authorizePresenceUpdate?: CollaborationAuthHandshakeGuard["authorizePresenceUpdate"];
   filterPresenceSnapshot?: CollaborationAuthHandshakeGuard["filterPresenceSnapshot"];
+  revalidatePublish?: CollaborationAuthHandshakeGuard["revalidatePublish"];
   revalidateWrite?: CollaborationAuthHandshakeGuard["revalidateWrite"];
 }): CollaborationAuthHandshakeGuard {
   return {
@@ -144,6 +178,8 @@ function createPresenceAuthGuard(overrides: {
     filterPresenceSnapshot:
       overrides.filterPresenceSnapshot ??
       (async (_request, _context, users) => users),
+    revalidatePublish:
+      overrides.revalidatePublish ?? (async () => ({ ok: true })),
     revalidateWrite: overrides.revalidateWrite ?? (async () => ({ ok: true })),
   };
 }
@@ -385,6 +421,9 @@ test("collaboration transport falls through for non-collaboration requests", asy
       },
       async revalidateWrite() {
         throw new Error("should not revalidate writes");
+      },
+      async revalidatePublish() {
+        throw new Error("should not revalidate publish");
       },
     },
     runtime: {
@@ -719,6 +758,178 @@ test("collaboration transport rejects flush control messages after write access 
     code: "FORBIDDEN",
     message: "Collaboration write access is no longer allowed.",
   });
+});
+
+test("collaboration transport publishes active document room through control message", async () => {
+  const context = createContext({ userId: "editor-1" });
+  const publishedDocument = createContentDocumentResponse({
+    hasUnpublishedChanges: false,
+    publishedVersion: 6,
+  });
+  const { calls, server: bunServer } = createBunServerStub();
+  const delegated: string[] = [];
+  const securityEvents: string[] = [];
+  const publishContexts: CollaborationSessionContext[] = [];
+  const authGuard = createAuthGuard({
+    ok: true,
+    context,
+  }) as CollaborationAuthHandshakeGuard & {
+    revalidatePublish: (
+      request: Request,
+      context: CollaborationSessionContext,
+    ) => Promise<{ ok: true } | { ok: false; closeCode: 4401 | 4403 }>;
+  };
+  authGuard.revalidatePublish = async (_request, revalidatedContext) => {
+    securityEvents.push(`revalidate:${revalidatedContext.documentId}`);
+    return { ok: true };
+  };
+  const hocuspocusServer = {
+    handleConnection(
+      _websocket: WebSocketLike,
+      request: Request,
+      defaultContext: CollaborationRuntimeContext,
+    ) {
+      delegated.push(`open:${defaultContext.userId}:${request.url}`);
+
+      return {
+        handleMessage(message: Uint8Array) {
+          delegated.push(`message:${Array.from(message).join(",")}`);
+        },
+        async waitForPendingMessages() {
+          delegated.push("wait");
+        },
+        handleClose(event?: { code?: number; reason?: string }) {
+          delegated.push(`close:${event?.code}:${event?.reason}`);
+        },
+      };
+    },
+    async publishDocument(
+      documentName: string,
+      input: {
+        context: CollaborationRuntimeContext;
+        changeSummary?: string;
+      },
+    ) {
+      securityEvents.push(`publish:${documentName}`);
+      publishContexts.push(input.context);
+      assert.equal(input.changeSummary, "Ready for launch.");
+      return { document: publishedDocument };
+    },
+  };
+  const transport = createCollaborationWebSocketTransport({
+    authGuard,
+    runtime: { server: hocuspocusServer },
+  });
+
+  await transport.handleFetchUpgrade(
+    createUpgradeRequest(),
+    bunServer as never,
+  );
+
+  const { socket, sent } = createBunSocketStub(calls[0]!.options.data);
+
+  transport.websocket.open(socket as never);
+  transport.websocket.message(
+    socket as never,
+    JSON.stringify({
+      type: "mdcms.collaboration.publish",
+      requestId: "publish-1",
+      changeSummary: "Ready for launch.",
+    }),
+  );
+
+  await waitFor(
+    () => sent.length === 1,
+    "Timed out waiting for publish result.",
+  );
+
+  assert.equal(publishContexts[0]?.documentId, DOCUMENT_ID);
+  assert.deepEqual(securityEvents, [
+    `revalidate:${DOCUMENT_ID}`,
+    `publish:marketing:staging:${DOCUMENT_ID}`,
+  ]);
+  assert.deepEqual(delegated, [
+    `open:editor-1:${calls[0]!.request.url}`,
+    "wait",
+  ]);
+  assert.deepEqual(JSON.parse(sent[0] as string), {
+    type: "mdcms.collaboration.publish.result",
+    requestId: "publish-1",
+    status: "published",
+    document: publishedDocument,
+  });
+
+  await transport.shutdown();
+});
+
+test("collaboration transport returns publish authorization errors without publishing", async () => {
+  const context = createContext({ userId: "editor-1" });
+  const { calls, server: bunServer } = createBunServerStub();
+  let publishCalled = false;
+  const authGuard = createAuthGuard({
+    ok: true,
+    context,
+  }) as CollaborationAuthHandshakeGuard & {
+    revalidatePublish: (
+      request: Request,
+      context: CollaborationSessionContext,
+    ) => Promise<{ ok: true } | { ok: false; closeCode: 4401 | 4403 }>;
+  };
+  authGuard.revalidatePublish = async () => ({
+    ok: false,
+    closeCode: 4403,
+  });
+  const hocuspocusServer = {
+    handleConnection() {
+      return {
+        handleMessage() {
+          throw new Error("publish control messages should not delegate");
+        },
+        async waitForPendingMessages() {},
+        handleClose() {},
+      };
+    },
+    async publishDocument() {
+      publishCalled = true;
+      throw new Error("publish should not run");
+    },
+  };
+  const transport = createCollaborationWebSocketTransport({
+    authGuard,
+    runtime: { server: hocuspocusServer },
+  });
+
+  await transport.handleFetchUpgrade(
+    createUpgradeRequest(),
+    bunServer as never,
+  );
+
+  const { socket, sent } = createBunSocketStub(calls[0]!.options.data);
+
+  transport.websocket.open(socket as never);
+  transport.websocket.message(
+    socket as never,
+    JSON.stringify({
+      type: "mdcms.collaboration.publish",
+      requestId: "publish-denied",
+    }),
+  );
+
+  await waitFor(
+    () => sent.length === 1,
+    "Timed out waiting for publish error.",
+  );
+
+  assert.equal(publishCalled, false);
+  assert.deepEqual(JSON.parse(sent[0] as string), {
+    type: "mdcms.collaboration.publish.result",
+    requestId: "publish-denied",
+    status: "error",
+    code: "FORBIDDEN",
+    message: "Collaboration publish access is no longer allowed.",
+  });
+
+  await transport.shutdown();
 });
 
 test("presence transport stores online record and sends initial filtered snapshot on open", async () => {

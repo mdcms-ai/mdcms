@@ -134,7 +134,7 @@ function parseOverviewTypes(request: Request): string[] {
 
 const FileFieldReadModeSchema = z.enum(["raw", "expanded"]);
 
-function parseFileFieldReadMode(request: Request): FileFieldReadMode {
+export function parseFileFieldReadMode(request: Request): FileFieldReadMode {
   const values = new URL(request.url).searchParams.getAll("fileFields");
 
   if (values.length === 0) {
@@ -582,7 +582,7 @@ function toContentBulkOperationItemError(
   };
 }
 
-async function shapeContentDocumentResponse<
+export async function shapeContentDocumentResponse<
   TDocument extends ContentDocumentResponse | ContentVersionDocumentResponse,
 >(input: {
   authorize: MountContentApiRoutesOptions["authorize"];

@@ -250,6 +250,7 @@ function createFixtureReadyState(
     canReadMedia: true,
     canUploadMedia: true,
     publishDialogOpen: false,
+    publishUnsavedPromptOpen: false,
     publishChangeSummary: "",
     publishState: "idle",
     restoreVersionState: "idle",
