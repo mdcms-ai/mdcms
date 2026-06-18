@@ -1,5 +1,11 @@
 # @mdcms/shared
 
+## 0.6.0
+
+### Minor Changes
+
+- d862750: Add collaboration presence contracts
+
 ## 0.5.0
 
 ### Minor Changes

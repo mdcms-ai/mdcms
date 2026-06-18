@@ -1,5 +1,18 @@
 # @mdcms/studio
 
+## 0.5.1
+
+### Patch Changes
+
+- 7f7e562: Wire Studio editor collaboration document rooms
+- 215a295: Extract reusable editor schema and Markdown/MDX conversion primitives into @mdcms/editor-core while keeping Studio compatibility exports.
+- 36beee1: Fix editor no-op draft saves
+- Updated dependencies [215a295]
+- Updated dependencies [36beee1]
+- Updated dependencies [d862750]
+  - @mdcms/editor-core@0.1.1
+  - @mdcms/shared@0.6.0
+
 ## 0.5.0
 
 ### Minor Changes

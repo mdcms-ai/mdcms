@@ -1,5 +1,13 @@
 # @mdcms/sdk
 
+## 0.4.1
+
+### Patch Changes
+
+- 43f5dc6: Add q search support to SDK list reads.
+- Updated dependencies [d862750]
+  - @mdcms/shared@0.6.0
+
 ## 0.4.0
 
 ### Minor Changes
