@@ -7,7 +7,19 @@
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "files": [
-    "dist"
+    "dist/**/*.js",
+    "dist/**/*.js.map",
+    "dist/**/*.mjs",
+    "dist/**/*.mjs.map",
+    "dist/**/*.d.ts",
+    "dist/**/*.d.ts.map",
+    "dist/**/*.css",
+    "dist/**/*.json",
+    "dist/**/*.woff2",
+    "!dist/**/*.test.*",
+    "!dist/**/*.spec.*",
+    "!dist/**/__tests__/**",
+    "!dist/**/__mocks__/**"
   ],
   "repository": {
     "type": "git",
