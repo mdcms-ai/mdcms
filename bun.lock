@@ -10,7 +10,7 @@
         "@playwright/test": "^1.59.1",
         "@types/node": "20.19.9",
         "nx": "22.5.1",
-        "prettier": "~3.6.2",
+        "prettier": "~3.9.0",
         "tslib": "^2.3.0",
         "typescript": "~5.9.2",
         "zod": "^4.3.6",
@@ -18,7 +18,7 @@
     },
     "apps/cli": {
       "name": "@mdcms/cli",
-      "version": "0.3.0",
+      "version": "0.3.1",
       "bin": {
         "mdcms": "./dist/bin/mdcms.js",
       },
@@ -84,7 +84,7 @@
     },
     "packages/editor-core": {
       "name": "@mdcms/editor-core",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "dependencies": {
         "@mdcms/shared": "^0.5.0",
         "@tiptap/core": "^3.7.0",
@@ -121,7 +121,7 @@
     },
     "packages/react-primitives": {
       "name": "@mdcms/react-primitives",
-      "version": "0.0.4",
+      "version": "0.0.5",
       "dependencies": {
         "@mdcms/shared": "workspace:*",
         "tslib": "^2.3.0",
@@ -138,7 +138,7 @@
     },
     "packages/sdk": {
       "name": "@mdcms/sdk",
-      "version": "0.4.0",
+      "version": "0.4.1",
       "dependencies": {
         "@mdcms/shared": "^0.3.0",
         "@mdx-js/mdx": "^3.1.1",
@@ -159,7 +159,7 @@
     },
     "packages/shared": {
       "name": "@mdcms/shared",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "dependencies": {
         "elysia": "^1.4.25",
         "tslib": "^2.3.0",
@@ -169,7 +169,7 @@
     },
     "packages/studio": {
       "name": "@mdcms/studio",
-      "version": "0.5.0",
+      "version": "0.5.1",
       "dependencies": {
         "@elysiajs/eden": "^1.4.8",
         "@floating-ui/react-dom": "^2.1.8",
@@ -2085,7 +2085,7 @@
 
     "postgres": ["postgres@3.4.8", "", {}, "sha512-d+JFcLM17njZaOLkv6SCev7uoLaBtfK86vMUXhW1Z4glPWh4jozno9APvW/XKFJ3CCxVoC7OL38BqRydtu5nGg=="],
 
-    "prettier": ["prettier@3.6.2", "", { "bin": { "prettier": "bin/prettier.cjs" } }, "sha512-I7AIg5boAr5R0FFtJ6rCfD+LFsWHp81dolrFD8S79U9tb8Az2nGrJncnMSnys+bpQJfRUzqs9hnA81OAA3hCuQ=="],
+    "prettier": ["prettier@3.9.6", "", { "bin": { "prettier": "bin/prettier.cjs" } }, "sha512-OpN0zzVdiaiAhxpuuj5efpIS4sY9j7bY6uR5mnj5yPzGkdkjNKSJeUThPb60Jw29QuAZgA4o+/iB49kFiaBX6g=="],
 
     "pretty-format": ["pretty-format@30.2.0", "", { "dependencies": { "@jest/schemas": "30.0.5", "ansi-styles": "^5.2.0", "react-is": "^18.3.1" } }, "sha512-9uBdv/B4EefsuAL+pWqueZyZS2Ba+LxfFeQ9DN14HU4bN8bhaxKdkpjpB6fs9+pSjIBu+FXQHImEg8j/Lw0+vA=="],
 
