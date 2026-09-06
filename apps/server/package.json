@@ -29,7 +29,7 @@
     "db:migrate": "drizzle-kit migrate --config drizzle.config.ts"
   },
   "dependencies": {
-    "@better-auth/sso": "1.5.1",
+    "@better-auth/sso": "1.7.3",
     "@hocuspocus/server": "^4",
     "@hocuspocus/transformer": "^4",
     "@mdcms/editor-core": "workspace:*",
