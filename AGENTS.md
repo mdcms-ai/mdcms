@@ -10,7 +10,7 @@ Three interfaces share the same data layer: a CLI for developers, an embeddable 
 
 The module system is how MDCMS gets extended. Server actions, CLI commands, and Studio UI surfaces all hook in through the same module contract. Community contributions should follow this pattern rather than patching core code.
 
-Upcoming work is focused on live preview (real-time content rendering in the consumer frontend), MCP integration (Model Context Protocol for agent-driven content operations), multiple spaces (team-scoped content organization), and real-time collaboration (multi-user editing via CRDTs).
+Upcoming work is focused on live preview (real-time content rendering in the consumer frontend), MCP integration (Model Context Protocol for agent-driven content operations; a preview stdio server ships in the CLI as `mdcms mcp`), multiple spaces (team-scoped content organization), and real-time collaboration (multi-user editing via CRDTs).
 
 ## Repository layout
 

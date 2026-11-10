@@ -11,6 +11,7 @@ import { loadCliEnvFiles } from "./env-files.js";
 import { createInitCommand } from "./init.js";
 import { createLoginCommand } from "./login.js";
 import { createLogoutCommand } from "./logout.js";
+import { createMcpCommand } from "./mcp.js";
 import { createPullCommand } from "./pull.js";
 import { createPushCommand } from "./push.js";
 import {
@@ -102,15 +103,18 @@ export type RunMdcmsCliOptions = {
   runtimeWithModules?: CliRuntimeContextWithModules;
 };
 
-const DEFAULT_COMMANDS: CliCommand[] = [
-  createInitCommand(),
-  createLoginCommand(),
-  createLogoutCommand(),
-  createPullCommand(),
-  createPushCommand(),
-  createSchemaSyncCommand(),
-  createStatusCommand(),
-];
+function createDefaultCommands(version?: string): CliCommand[] {
+  return [
+    createInitCommand(),
+    createLoginCommand(),
+    createLogoutCommand(),
+    createMcpCommand({ version }),
+    createPullCommand(),
+    createPushCommand(),
+    createSchemaSyncCommand(),
+    createStatusCommand(),
+  ];
+}
 
 function parseOptionalValue(
   value: string | undefined,
@@ -463,7 +467,7 @@ export async function runMdcmsCli(
   const stderr = options.stderr ?? process.stderr;
   const cwd = options.cwd ?? process.cwd();
   const env = options.env ?? process.env;
-  const commands = options.commands ?? DEFAULT_COMMANDS;
+  const commands = options.commands ?? createDefaultCommands(options.version);
   const fetcher = options.fetcher ?? fetch;
   const confirm = options.confirm ?? defaultConfirmPrompt;
   const multiSelect = options.multiSelect ?? defaultMultiSelectPrompt;
