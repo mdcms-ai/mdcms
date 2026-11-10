@@ -88,6 +88,7 @@ Shell-exported variables override all file values. Use `--no-env-file` or `MDCMS
 | `mdcms pull`        | Pull content from the server to local Markdown files     |
 | `mdcms push`        | Push local content changes back to the server            |
 | `mdcms schema sync` | Sync your local schema definition to the server registry |
+| `mdcms mcp`         | Run an MCP server over stdio for AI agents (preview)     |
 
 ### Pull
 
@@ -105,6 +106,16 @@ mdcms push              # Interactive mode — prompts before uploading
 mdcms push --force      # Skip confirmation prompt
 mdcms push --dry-run    # Preview changes without uploading
 ```
+
+### MCP server (preview)
+
+`mdcms mcp` exposes the configured project and environment to AI agents over the Model Context Protocol. It reuses the credentials from `mdcms login`.
+
+```bash
+claude mcp add mdcms -- npx mdcms mcp
+```
+
+Tools: `get_schema`, `list_documents`, `get_document`, `create_document`, `update_document`, `publish_document`, `sync_schema`. Writes are draft writes, are validated against the synced schema, and fail instead of overwriting a concurrent change. See the [commands reference](https://docs.mdcms.ai/guide/cli/commands) for details.
 
 ### Global Flags
 

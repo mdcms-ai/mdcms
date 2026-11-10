@@ -50,7 +50,7 @@ Runtime, dependencies, and infrastructure. Update when any of them change.
 ## Things that are NOT in the stack (yet)
 
 - No CRDT library (real-time collab is Post-MVP).
-- No MCP server (AI agent integration is upcoming, separate work).
+- No server-hosted MCP endpoint. The only MCP surface is the CLI's stdio server (`mdcms mcp`, `@modelcontextprotocol/sdk`).
 - No real-time preview transport beyond iframe route reloads.
 
 ## Repository services

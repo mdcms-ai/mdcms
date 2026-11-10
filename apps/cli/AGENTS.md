@@ -4,7 +4,7 @@
 
 The command-line interface for syncing content between local files and the MDCMS server. The core mental model: content lives in the database, but developers pull it to local `.md`/`.mdx` files, edit with their preferred tools, and push changes back. The CLI handles change detection, conflict resolution, and schema synchronization.
 
-Commands: `init`, `login`, `logout`, `push`, `pull`, `schema sync`, `status`. Auth uses a loopback OAuth flow (RFC 8252): the CLI runs a localhost listener, the user authorizes in the browser, and the redirect carries a one-time code that the CLI exchanges for an API key stored locally.
+Commands: `init`, `login`, `logout`, `push`, `pull`, `schema sync`, `status`, `mcp` (preview stdio MCP server for agent clients). Auth uses a loopback OAuth flow (RFC 8252): the CLI runs a localhost listener, the user authorizes in the browser, and the redirect carries a one-time code that the CLI exchanges for an API key stored locally.
 
 ## Boundaries
 

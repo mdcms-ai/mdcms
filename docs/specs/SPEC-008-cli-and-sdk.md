@@ -2,7 +2,7 @@
 status: live
 canonical: true
 created: 2026-03-11
-last_updated: 2026-06-16
+last_updated: 2026-11-10
 ---
 
 # SPEC-008 CLI and SDK
@@ -124,6 +124,7 @@ const body = await renderer.render(document);
 | `cms schema sync`            | Sync `mdcms.config.ts` schema to the server registry                         |
 | `cms migrate`                | Generate and apply content migrations for schema changes                     |
 | `cms status`                 | Show content drift and schema drift (local vs server)                        |
+| `cms mcp`                    | Run a Model Context Protocol server over stdio for AI agents (preview)       |
 | `cms action list`            | List available backend actions from `/actions` (with permissions metadata).  |
 | `cms action run <actionId>`  | Execute a command/query action via the generic action runner.                |
 | `cms <module-defined alias>` | Optional local alias mapped to `actionId` by bundled module CLI surface.     |
@@ -460,6 +461,109 @@ export const migration: Migration = {
   }),
 };
 ```
+
+### `cms mcp` (Preview)
+
+`cms mcp` runs a Model Context Protocol (MCP) server so an AI agent client can
+read and change content in one `(project, environment)` target through the same
+content API, scopes, and schema gate as every other write client. The tool
+surface is a preview and may change between minor releases.
+
+#### Transport and process contract
+
+- Transport is stdio: JSON-RPC messages on `stdin`/`stdout`. No HTTP listener is
+  opened.
+- `stdout` carries protocol messages only. Diagnostics, warnings, and log
+  output go to `stderr`.
+- The process runs until the client closes `stdin`, then exits with code `0`.
+- The command requires a config file and a resolved target. Server URL,
+  project, environment, and API key resolve exactly as for other commands
+  (flags, then environment variables, then config and the stored credential
+  profile).
+- When no API key resolves, the command exits with code `1` before starting the
+  server and tells the user to run `cms login` or provide `MDCMS_API_KEY`.
+
+A client registers the server by spawning the CLI from the project root, for
+example:
+
+```json
+{
+  "mcpServers": {
+    "mdcms": { "command": "npx", "args": ["mdcms", "mcp"] }
+  }
+}
+```
+
+#### Tools
+
+All tools operate on the resolved target only. A tool cannot address another
+project or environment.
+
+| Tool               | Required scope                        | Behavior                                                                                                 |
+| ------------------ | ------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `get_schema`       | `schema:read`                         | Returns the content types and fields synced for the target, with the server `schemaHash` and `syncedAt`. |
+| `list_documents`   | `content:read:draft`                  | Lists draft heads with frontmatter and status metadata, without bodies.                                  |
+| `get_document`     | `content:read:draft`                  | Returns one draft head including its body.                                                               |
+| `create_document`  | `content:write`                       | Creates a draft document after validating frontmatter against the synced schema.                         |
+| `update_document`  | `content:read:draft`, `content:write` | Applies a frontmatter patch and/or body replacement to a draft after validating the merged frontmatter.  |
+| `publish_document` | `content:publish`                     | Publishes the current draft as a new immutable version.                                                  |
+| `sync_schema`      | `schema:write`                        | Reloads `mdcms.config.ts` from disk and performs the same schema sync as `cms schema sync`.              |
+
+Tool inputs:
+
+- `get_schema`: no input.
+- `list_documents`: optional `type`, `locale`, `q` (text search), `published`
+  (boolean), `hasUnpublishedChanges` (boolean), `limit` (default `20`, max
+  `100`), `offset` (default `0`). The result includes `pagination`.
+- `get_document`: `documentId`.
+- `create_document`: `type`, `path`, `frontmatter`, `body`, optional `locale`
+  and `format` (`md` or `mdx`, default `md`). `path` follows the create
+  payload path rules in SPEC-003 and must be inside the content type's
+  `directory`; a path outside it fails with `INVALID_INPUT`. `locale` applies
+  to localized types and defaults to the configured default locale; a
+  localized type with no supplied or configured locale fails with
+  `INVALID_INPUT`. Documents of non-localized types use the same fixed locale
+  that `cms push` assigns.
+- `update_document`: `documentId`, optional `frontmatter`, optional `body`. At
+  least one of `frontmatter` or `body` is required.
+- `publish_document`: `documentId`, optional `changeSummary`.
+- `sync_schema`: no input.
+
+#### Write behavior
+
+- Writes are draft writes. `create_document` and `update_document` never
+  publish; publishing is the separate `publish_document` tool and requires the
+  `content:publish` scope, which login-generated API keys do not request.
+- `update_document` reads the current draft, shallow-merges the supplied
+  `frontmatter` keys over the stored frontmatter (a `null` value removes the
+  key), and sends the read `draftRevision` with the write. A concurrent change
+  between the read and the write fails with `STALE_DRAFT_REVISION` and no
+  content is overwritten.
+- Before `create_document` and `update_document` write, the resulting
+  frontmatter is validated against the synced schema for the document type,
+  using the same rules as `cms push --validate`. Validation errors fail the
+  tool call with `INVALID_FRONTMATTER`, list every failing field, and perform no
+  write. A type that is not in the synced schema fails with `UNKNOWN_TYPE`.
+- Write tools send the `x-mdcms-schema-hash` read from the local schema state
+  file (see SPEC-004 "Local Schema State File"). A missing state file fails
+  with `SCHEMA_STATE_MISSING`. A server-side mismatch surfaces
+  `SCHEMA_HASH_MISMATCH`. Neither case refreshes the hash automatically; the
+  `sync_schema` tool (or `cms schema sync`) is the explicit gesture that
+  updates it.
+- MCP writes go to the server. Local `.md`/`.mdx` files and the manifest are
+  not modified; `cms pull` brings the working copy up to date.
+
+#### Results and errors
+
+- A successful tool call returns a single text content item containing a JSON
+  document.
+- A failed tool call sets `isError` and returns a JSON document with `code`,
+  `message`, and optional `details`. Server error envelopes pass through with
+  their original `code` (for example `FORBIDDEN`, `NOT_FOUND`,
+  `STALE_DRAFT_REVISION`, `SCHEMA_HASH_MISMATCH`,
+  `DOCUMENT_COLLABORATION_ACTIVE`). A network failure reports
+  `SERVER_UNREACHABLE`. A failed response without an error envelope reports
+  `REQUEST_FAILED` with the HTTP status in `details`.
 
 ### Authentication
 
