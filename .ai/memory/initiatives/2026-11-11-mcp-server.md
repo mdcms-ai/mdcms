@@ -1,0 +1,44 @@
+# MCP server and shared agent tools
+
+**Status:** active
+
+## Goal
+
+Agents can do everything a person can do in Studio through the Model Context
+Protocol, both locally (`mdcms mcp` over stdio) and remotely (Streamable HTTP
+with OAuth 2.1). The Studio Assistant and MCP run on one server-hosted tool
+registry, and every content change records the real user and the client that
+made it.
+
+## Why
+
+The CLI and the public skills pack covered file-based agent work, but agents
+increasingly connect to tools through MCP, including hosted clients that
+cannot run the CLI. Keeping the Assistant and MCP on separate tool code would
+double the work and let their permission and validation rules drift.
+
+## Scope
+
+In:
+
+- Change attribution derived from authentication, with a change origin.
+- A content service and tool registry shared by HTTP routes, the Assistant
+  and MCP.
+- A remote MCP endpoint and an OAuth 2.1 authorization server.
+- The CLI stdio bridge, a Node-compatible CLI entry point, and release.
+- Tools for every Studio and Assistant operation, docs, skills pack updates,
+  CI end-to-end coverage, and verification with real agent clients.
+
+Out:
+
+- An activity log of draft edits.
+- Backfilling historical actors.
+
+## Key decisions
+
+- Design: `.ai/research/2026-11-11-mcp-and-shared-tools-design.md`.
+- Tools live on the server; the CLI bridges stdio to the server instead of
+  reimplementing tools.
+- Assistant writes stay proposals; MCP writes execute directly.
+- Attribution records the last change and each publish, with a verified
+  channel and an optional client-declared name.
