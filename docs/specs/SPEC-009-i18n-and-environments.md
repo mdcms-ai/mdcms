@@ -289,7 +289,7 @@ Notes:
 
 Rules:
 
-- Environment management requires an authenticated Studio session with global `owner` or `admin` privileges.
+- Environment management requires global `owner` or `admin` privileges. List, create, and delete accept only an authenticated Studio session. Clone and promote accept either an authenticated Studio session with global `owner` or `admin` privileges or an API key holding the matching `environments:clone` or `environments:promote` scope. Session callers with only `editor` or `viewer` access receive `FORBIDDEN` (`403`).
 - The latest synced project config snapshot derived from `mdcms.config.ts` is authoritative for valid environment names and `extends` chains.
 - `GET /api/v1/environments` may return existing environment rows even when no synced project config snapshot is available yet. In that case:
   - `meta.definitionsStatus` is `missing`

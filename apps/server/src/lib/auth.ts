@@ -2017,63 +2017,43 @@ function resolveAdminAllowlist(env: NodeJS.ProcessEnv): {
   };
 }
 
+/**
+ * Maps an operation scope to the RBAC action a session must hold for it.
+ * Returns `null` for scopes that no role holds; session callers are denied
+ * those scopes and cannot mint API keys carrying them.
+ */
 function toRbacAction(requiredScope: ApiKeyOperationScope): RbacAction | null {
-  if (requiredScope === "content:read") {
-    return "content:read";
+  switch (requiredScope) {
+    case "content:read":
+    case "content:read:draft":
+    case "content:write":
+    case "content:publish":
+    case "content:delete":
+    case "schema:read":
+    case "schema:write":
+    case "media:read":
+    case "media:upload":
+    case "media:delete":
+    case "environments:clone":
+    case "environments:promote":
+    case "projects:read":
+    case "projects:write":
+    case "ai:use":
+      return requiredScope;
+    case LEGACY_CONTENT_WRITE_DRAFT_SCOPE:
+      return "content:write";
+    case "webhooks:read":
+    case "webhooks:write":
+      return "settings:manage";
+    // No route requires this scope and no role is defined to hold it, so
+    // sessions are denied it and cannot mint API keys carrying it.
+    case "migrations:run":
+      return null;
+    default: {
+      const unhandled: never = requiredScope;
+      throw new Error(`Unhandled API key operation scope: ${unhandled}`);
+    }
   }
-
-  if (requiredScope === "content:read:draft") {
-    return "content:read:draft";
-  }
-
-  if (
-    requiredScope === "content:write" ||
-    requiredScope === LEGACY_CONTENT_WRITE_DRAFT_SCOPE
-  ) {
-    return "content:write";
-  }
-
-  if (requiredScope === "content:publish") {
-    return "content:publish";
-  }
-
-  if (requiredScope === "content:delete") {
-    return "content:delete";
-  }
-
-  if (requiredScope === "schema:read") {
-    return "schema:read";
-  }
-
-  if (requiredScope === "schema:write") {
-    return "schema:write";
-  }
-
-  if (
-    requiredScope === "media:read" ||
-    requiredScope === "media:upload" ||
-    requiredScope === "media:delete"
-  ) {
-    return requiredScope;
-  }
-
-  if (requiredScope === "webhooks:read" || requiredScope === "webhooks:write") {
-    return "settings:manage";
-  }
-
-  if (requiredScope === "projects:read") {
-    return "projects:read";
-  }
-
-  if (requiredScope === "projects:write") {
-    return "projects:write";
-  }
-
-  if (requiredScope === "ai:use") {
-    return "ai:use";
-  }
-
-  return null;
 }
 
 export function resolveApiKeyRbacAction(
@@ -2090,6 +2070,107 @@ export function resolveApiKeyRbacAction(
     message: "Session role cannot mint this API key scope.",
     statusCode: 403,
   });
+}
+
+/**
+ * Checks that a session holding `grants` may mint an API key carrying every
+ * scope in `scopes` for every `(project, environment)` tuple in
+ * `contextAllowlist`. Throws `FORBIDDEN` (403) otherwise.
+ */
+export function assertGrantsCanIssueApiKeyScopes(
+  grants: readonly RbacGrant[],
+  scopes: readonly ApiKeyOperationScope[],
+  contextAllowlist: readonly ApiKeyScopeTuple[],
+): void {
+  for (const scope of new Set(scopes)) {
+    const action = resolveApiKeyRbacAction(scope);
+
+    for (const target of contextAllowlist) {
+      const decision = evaluatePermission({
+        grants,
+        target: {
+          project: target.project,
+          environment: target.environment,
+        },
+        action,
+      });
+
+      if (decision.allowed) {
+        continue;
+      }
+
+      throw new RuntimeError({
+        code: "FORBIDDEN",
+        message:
+          "Session role does not allow minting this API key scope for the requested target.",
+        statusCode: 403,
+        details: {
+          requiredScope: scope,
+          project: target.project,
+          environment: target.environment,
+        },
+      });
+    }
+  }
+}
+
+/**
+ * Decides whether a session holding `grants` satisfies `requirement`.
+ * Returns the effective role on success and throws `FORBIDDEN` (403)
+ * otherwise.
+ */
+export function authorizeSessionGrants(
+  grants: readonly RbacGrant[],
+  requirement: AuthorizationRequirement,
+): RbacRole | undefined {
+  const action = toRbacAction(requirement.requiredScope);
+
+  if (!action) {
+    throw new RuntimeError({
+      code: "FORBIDDEN",
+      message: "Session role does not allow this operation.",
+      statusCode: 403,
+      details: {
+        requiredScope: requirement.requiredScope,
+      },
+    });
+  }
+
+  if (!requirement.project) {
+    throw new RuntimeError({
+      code: "FORBIDDEN",
+      message:
+        "RBAC authorization requires an explicit project in the request context.",
+      statusCode: 403,
+    });
+  }
+
+  const decision = evaluatePermission({
+    grants,
+    target: {
+      project: requirement.project,
+      environment: requirement.environment,
+      path: requirement.documentPath,
+    },
+    action,
+  });
+
+  if (!decision.allowed) {
+    throw new RuntimeError({
+      code: "FORBIDDEN",
+      message:
+        "Session role does not allow this operation for the requested content scope.",
+      statusCode: 403,
+      details: {
+        requiredScope: requirement.requiredScope,
+        project: requirement.project,
+        environment: requirement.environment ?? null,
+        documentPath: requirement.documentPath ?? null,
+      },
+    });
+  }
+
+  return decision.effectiveRole;
 }
 
 function apiKeyScopesSatisfyRequirement(
@@ -3297,85 +3378,17 @@ export function createAuthService(
     contextAllowlist: readonly ApiKeyScopeTuple[],
   ): Promise<void> {
     const grants = await loadSessionRbacGrants(session);
-
-    for (const scope of new Set(scopes)) {
-      const action = resolveApiKeyRbacAction(scope);
-
-      for (const target of contextAllowlist) {
-        const decision = evaluatePermission({
-          grants,
-          target: {
-            project: target.project,
-            environment: target.environment,
-          },
-          action,
-        });
-
-        if (decision.allowed) {
-          continue;
-        }
-
-        throw new RuntimeError({
-          code: "FORBIDDEN",
-          message:
-            "Session role does not allow minting this API key scope for the requested target.",
-          statusCode: 403,
-          details: {
-            requiredScope: scope,
-            project: target.project,
-            environment: target.environment,
-          },
-        });
-      }
-    }
+    assertGrantsCanIssueApiKeyScopes(grants, scopes, contextAllowlist);
   }
 
   async function assertSessionRbacAuthorization(
     session: StudioSession,
     requirement: AuthorizationRequirement,
   ): Promise<RbacRole | undefined> {
-    const action = toRbacAction(requirement.requiredScope);
-
-    if (!action) {
-      return undefined;
-    }
-
-    if (!requirement.project) {
-      throw new RuntimeError({
-        code: "FORBIDDEN",
-        message:
-          "RBAC authorization requires an explicit project in the request context.",
-        statusCode: 403,
-      });
-    }
-
-    const grants = await loadSessionRbacGrants(session);
-    const decision = evaluatePermission({
-      grants,
-      target: {
-        project: requirement.project,
-        environment: requirement.environment,
-        path: requirement.documentPath,
-      },
-      action,
-    });
-
-    if (!decision.allowed) {
-      throw new RuntimeError({
-        code: "FORBIDDEN",
-        message:
-          "Session role does not allow this operation for the requested content scope.",
-        statusCode: 403,
-        details: {
-          requiredScope: requirement.requiredScope,
-          project: requirement.project,
-          environment: requirement.environment ?? null,
-          documentPath: requirement.documentPath ?? null,
-        },
-      });
-    }
-
-    return decision.effectiveRole;
+    const grants = requirement.project
+      ? await loadSessionRbacGrants(session)
+      : [];
+    return authorizeSessionGrants(grants, requirement);
   }
 
   async function revokeAllUserSessions(userId: string): Promise<number> {
