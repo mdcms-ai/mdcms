@@ -2,7 +2,7 @@
 status: live
 canonical: true
 created: 2026-03-11
-last_updated: 2026-06-14
+last_updated: 2026-11-11
 ---
 
 # SPEC-011 Local Development and Operations
@@ -231,3 +231,15 @@ Redis-loss recovery drill:
    presence indicators disappear within 30 seconds.
 
 ---
+
+## OAuth Origin and Local Configuration
+
+SPEC-005 owns MDCMS*SERVER_URL validation and the bounded OAuth rate-limit
+settings. Set the public canonical origin explicitly for deployed servers; in
+production it must be HTTPS or startup fails. A reverse proxy does not change the
+configured public origin. Local development may use http://localhost:4000.
+Docker Compose forwards MDCMS_SERVER_URL and the four MDCMS_OAUTH*\*\_RATE_LIMIT
+settings into the server service; setting them in a host .env file alone is not
+sufficient without that environment mapping. Missing production origin is a boot
+error, not a fallback to localhost. The example environment documents defaults,
+accepted ranges and the difference between local HTTP and production HTTPS.

@@ -1262,3 +1262,19 @@ Execution mode:
 | GET    | `/api/v1/studio/bootstrap`         | public             | none           | none                | optional query pair: `rejectedBuildId`, `rejectionReason`                                                                   | `200` `StudioBootstrapReadyResponse`                        | `INVALID_QUERY_PARAM` (`400`), `FORBIDDEN_ORIGIN` (`403`), `STUDIO_RUNTIME_DISABLED` (`503`), `STUDIO_RUNTIME_UNAVAILABLE` (`503`), `INTERNAL_ERROR` (`500`) |
 | GET    | `/api/v1/studio/assets/:buildId/*` | public             | none           | none                | `buildId` path param                                                                                                        | `200` immutable runtime asset stream                        | `FORBIDDEN_ORIGIN` (`403`), `NOT_FOUND` (`404`)                                                                                                              |
 | GET    | `/api/v1/me/capabilities`          | session_or_api_key | none           | project+environment | session cookie or `Authorization: Bearer <mdcms_key_...>` plus explicit `X-MDCMS-Project` and `X-MDCMS-Environment` routing | `200` `{ data: { project, environment, capabilities } }`    | `UNAUTHORIZED` (`401`), `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `FORBIDDEN_ORIGIN` (`403`)                                      |
+
+## Connected Apps
+
+Settings includes Connected apps for session-authenticated users. It consumes
+SPEC-005's OAuth connection list and revoke endpoints with explicit project
+routing. Members see their connections; project admins/owners see project-wide
+connections. Token-mode Studio shows that session sign-in is required and must
+not attempt an API-key workaround.
+
+Each row shows escaped client name labeled unverified, granting user, environment,
+scopes, creation time and last use (or Never used). Revoke identifies the client
+and target before confirmation, then invalidates the grant through the session
+CSRF-protected endpoint. Refresh the list after success. A failed request leaves
+the row visible with an actionable error; do not claim revocation before success.
+Show loading, empty, unauthorized and unavailable states. Do not display tokens or
+hashes. The Studio review consumer must mirror these contracts and states.
