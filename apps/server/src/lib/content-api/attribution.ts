@@ -30,7 +30,8 @@ export function attributionFromAuthorizedRequest(input: {
     return {
       actorId: principal.session.userId,
       origin: {
-        channel: input.channel ?? "studio",
+        channel:
+          input.channel ?? input.authorization.internalChannel ?? "studio",
         credential: "session",
         ...declaredField,
       },
@@ -40,7 +41,7 @@ export function attributionFromAuthorizedRequest(input: {
   return {
     actorId: principal.createdByUserId,
     origin: {
-      channel: input.channel ?? "api",
+      channel: input.channel ?? input.authorization.internalChannel ?? "api",
       credential: "api_key",
       apiKeyId: principal.keyId,
       ...declaredField,

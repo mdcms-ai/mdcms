@@ -251,7 +251,7 @@ testWithDatabase(
 
       assert.deepEqual(
         calls.map((call) => call.type),
-        ["upsert", "upsert", "remove", "upsert", "remove", "upsert"],
+        ["upsert", "upsert", "remove", "remove", "remove", "upsert"],
       );
       assert.deepEqual(
         calls.map((call) => call.body),
@@ -259,7 +259,7 @@ testWithDatabase(
           "published body",
           "latest published body",
           undefined,
-          "latest published body",
+          undefined,
           undefined,
           "published body",
         ],

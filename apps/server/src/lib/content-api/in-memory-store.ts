@@ -19,6 +19,7 @@ import {
 } from "./types.js";
 import {
   assertJsonObject,
+  assertExpectedDraftRevision,
   assertRequiredString,
   parseBoolean,
   parseContentListGroupBy,
@@ -787,6 +788,19 @@ export function createInMemoryContentStore(
         });
       }
 
+      assertExpectedDraftRevision(
+        normalizedDocumentId,
+        existing.draftRevision,
+        options.expectedDraftRevision,
+      );
+      if (options.requireUnpublished && existing.publishedVersion !== null) {
+        throw new RuntimeError({
+          code: "DOCUMENT_PUBLISHED",
+          message: "Assistant deletion requires an unpublished document.",
+          statusCode: 409,
+          details: { documentId: normalizedDocumentId },
+        });
+      }
       const now = new Date().toISOString();
       const deleted: ContentDocument = {
         ...existing,
@@ -821,6 +835,13 @@ export function createInMemoryContentStore(
         });
       }
 
+      assertExpectedDraftRevision(
+        normalizedDocumentId,
+        existing.draftRevision,
+        options.expectedDraftRevision,
+      );
+      if (!existing.isDeleted)
+        return { document: existing, transition: "none" };
       const conflict = findPathConflict(store, {
         path: existing.path,
         locale: existing.locale,
@@ -841,16 +862,46 @@ export function createInMemoryContentStore(
         });
       }
 
+      const now = new Date().toISOString();
+      let publishedVersion: number | null = null;
+      if (options.targetStatus === "published") {
+        const snapshots = getScopePublishedSnapshots(scope);
+        const history =
+          snapshots.get(normalizedDocumentId) ??
+          new Map<number, ContentPublishedSnapshot>();
+        publishedVersion = getNextVersionNumber(history);
+        history.set(publishedVersion, {
+          version: publishedVersion,
+          path: existing.path,
+          type: existing.type,
+          locale: existing.locale,
+          format: existing.format,
+          frontmatter: existing.frontmatter,
+          body: existing.body,
+          publishedAt: now,
+          publishedBy: options.attribution.actorId,
+          publishedOrigin: options.attribution.origin,
+        });
+        snapshots.set(normalizedDocumentId, history);
+      }
       const restored: ContentDocument = {
         ...existing,
         isDeleted: false,
+        publishedVersion,
+        version: publishedVersion ?? 0,
+        hasUnpublishedChanges: publishedVersion === null,
+        draftRevision: existing.draftRevision + 1,
         updatedBy: options.attribution.actorId,
         updatedOrigin: options.attribution.origin,
         updatedAt: new Date().toISOString(),
       };
       store.set(normalizedDocumentId, restored);
 
-      return restored;
+      return {
+        document: restored,
+        transition:
+          publishedVersion === null ? "restored_draft" : "restored_published",
+      };
     },
 
     async listVersions(scope, documentId, query = {}) {

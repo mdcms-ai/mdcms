@@ -61,7 +61,9 @@ test("store preserves creator and records each mutation actor and origin", async
   for (const mutate of [
     () => store.unpublish(scope, created.documentId, { attribution: creator }),
     () => store.softDelete(scope, created.documentId, { attribution: creator }),
-    () => store.restore(scope, created.documentId, { attribution: creator }),
+    async () =>
+      (await store.restore(scope, created.documentId, { attribution: creator }))
+        .document,
     () =>
       store.restoreVersion(scope, created.documentId, 1, {
         targetStatus: "draft",

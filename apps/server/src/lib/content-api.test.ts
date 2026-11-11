@@ -5057,7 +5057,7 @@ test("content API restore undeletes the current head without appending a version
 
   assert.equal(restoreResponse.status, 200);
   assert.equal(restoreBody.data.isDeleted, false);
-  assert.equal(restoreBody.data.publishedVersion, 1);
+  assert.equal(restoreBody.data.publishedVersion, null);
   assert.equal(restoreBody.data.body, "restore me body");
 
   const versionsResponse = await handler(
@@ -5093,12 +5093,8 @@ test("content API restore undeletes the current head without appending a version
       headers: scopeHeaders,
     }),
   );
-  const publishedReadBody = (await publishedReadResponse.json()) as {
-    data: { body: string };
-  };
 
-  assert.equal(publishedReadResponse.status, 200);
-  assert.equal(publishedReadBody.data.body, "restore me body");
+  assert.equal(publishedReadResponse.status, 404);
 });
 
 test("content API restore returns CONTENT_PATH_CONFLICT when undelete collides with an active path", async () => {

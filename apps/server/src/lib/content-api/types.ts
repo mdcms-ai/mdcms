@@ -130,6 +130,18 @@ export type ContentAttributionOptions = {
   attribution: ContentWriteAttribution;
 };
 
+export type ContentTransitionOptions = ContentAttributionOptions & {
+  expectedDraftRevision?: number;
+  /** Host-owned Assistant deletion guard; never taken from public input. */
+  requireUnpublished?: boolean;
+};
+
+/** Describes the transition committed by this restore call, including no-ops. */
+export type ContentRestoreResult = {
+  document: ContentDocument;
+  transition: "none" | "restored_draft" | "restored_published";
+};
+
 export type ContentWriteOperationOptions = ContentAttributionOptions & {
   // Route-owned request metadata for CMS-29. HTTP content writes must pass the
   // header-derived hash once the route gate succeeds; non-HTTP direct store
@@ -248,13 +260,13 @@ export type ContentStore = {
   softDelete: (
     scope: ContentScope,
     documentId: string,
-    options: ContentAttributionOptions,
+    options: ContentTransitionOptions,
   ) => Promise<ContentDocument>;
   restore: (
     scope: ContentScope,
     documentId: string,
-    options: ContentAttributionOptions,
-  ) => Promise<ContentDocument>;
+    options: ContentTransitionOptions & { targetStatus?: RestoreTargetStatus },
+  ) => Promise<ContentRestoreResult>;
   listVersions: (
     scope: ContentScope,
     documentId: string,

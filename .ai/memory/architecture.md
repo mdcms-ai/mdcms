@@ -64,3 +64,10 @@ Files under `docs/specs/` are **standalone canonical product documentation**. No
 - Preview route mapping belongs on the content type in `mdcms.config.ts` via `resolvePreviewUrl(document)`, not in frontmatter conventions or hardcoded Studio routes.
 - The server mints short-lived preview JWTs from persisted draft state at `POST /api/v1/content/:documentId/preview-token`. Tokens are signed with `MDCMS_PREVIEW_TOKEN_SECRET` and are not API keys.
 - Private host preview routes verify `mdcms_preview_token` with `@mdcms/sdk` before calling draft reads. Public draft preview routes are allowed when intentional, but `?preview=true` alone is only a mode flag.
+
+## Agent tool execution
+
+- Server-owned agent tools dispatch in process through domain HTTP routes with the caller's credentials and a fixed project/environment. External ingress strips internal headers; a private runtime secret binds trusted MCP or Assistant attribution.
+- Assistant reads receive adapted registry definitions through shared dependency contracts. Document lookup summaries omit full bodies; detail reads remain explicit.
+- Assistant mutations resolve server-stored proposals and request-bound route executors. Per-proposal reservations serialize apply and undo; trusted undo records retain the resulting revision and expire after six seconds.
+- Delete and trash restore compare draft revision under the same PostgreSQL row lock as the transition. Published restore appends history and updates search atomically; live-document restore preserves its no-op after checking the precondition.

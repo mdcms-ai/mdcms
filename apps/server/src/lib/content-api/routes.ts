@@ -25,10 +25,12 @@ import {
   parseContentListGroupBy,
   parseOptionalString,
   parsePathInt,
+  parseExpectedDraftRevision,
   parseRestoreTargetStatus,
   pickScope,
 } from "./parsing.js";
 import { requireMatchingWriteSchemaHash } from "./schema-hash.js";
+import { attributionFromAuthorizedRequest } from "./attribution.js";
 import {
   applyResolvePlan,
   parseRequestedResolvePaths,
@@ -39,7 +41,10 @@ import {
   createCachedMediaAssetLookup,
   type FileFieldReadMode,
 } from "./media-field-expansion.js";
-import { createContentLifecycleMutationCommitter } from "./lifecycle-events.js";
+import {
+  createContentLifecycleMutationCommitter,
+  emitContentLifecycleEvent,
+} from "./lifecycle-events.js";
 import {
   stripUnknownFrontmatterFields,
   toDocumentResponse,
@@ -1481,7 +1486,7 @@ export function mountContentApiRoutes(
 
   contentApp.post?.(
     "/api/v1/content/:documentId/restore",
-    ({ request, params }: any) => {
+    ({ request, params, body }: any) => {
       return executeWithRuntimeErrorsHandled(request, async () => {
         const scope = pickScope(request);
         const fileFieldMode = parseFileFieldReadMode(request);
@@ -1490,8 +1495,32 @@ export function mountContentApiRoutes(
         );
         await options.requireCsrf(request);
 
+        if (body !== undefined && body !== null && !isRecord(body)) {
+          throw new RuntimeError({
+            code: "INVALID_INPUT",
+            message: "Restore body must be an object.",
+            statusCode: 400,
+          });
+        }
+        if (
+          body?.targetStatus !== undefined &&
+          body.targetStatus !== "draft" &&
+          body.targetStatus !== "published"
+        ) {
+          throw new RuntimeError({
+            code: "INVALID_INPUT",
+            message: "targetStatus must be draft or published.",
+            statusCode: 400,
+          });
+        }
+        const targetStatus = parseRestoreTargetStatus(body?.targetStatus);
+        const expectedDraftRevision = parseExpectedDraftRevision(
+          body?.expectedDraftRevision,
+        );
+        const requiredScope =
+          targetStatus === "published" ? "content:publish" : "content:write";
         const authorization = await options.authorize(request, {
-          requiredScope: "content:write",
+          requiredScope,
           project: scope.project,
           environment: scope.environment,
         });
@@ -1512,7 +1541,7 @@ export function mountContentApiRoutes(
         }
 
         await options.authorize(request, {
-          requiredScope: "content:write",
+          requiredScope,
           project: scope.project,
           environment: scope.environment,
           documentPath: existing.path,
@@ -1523,20 +1552,45 @@ export function mountContentApiRoutes(
           params.documentId,
         );
 
-        const document = await commitMutation(
-          "content.restored",
+        const { document, transition } = await options.store.restore(
           scope,
-          request,
-          authorization,
-          (attribution) =>
-            options.store.restore(scope, params.documentId, { attribution }),
+          params.documentId,
+          {
+            attribution: attributionFromAuthorizedRequest({
+              request,
+              authorization,
+            }),
+            expectedDraftRevision,
+            targetStatus,
+          },
         );
-
+        if (transition !== "none") {
+          emitContentLifecycleEvent({
+            sink: options.lifecycleEvents,
+            event: "content.restored",
+            scope,
+            document,
+            authorization,
+          });
+          await invalidateInactiveCollaborationCache(
+            options.inactiveCollaborationCache,
+            params.documentId,
+          );
+        }
+        if (transition === "restored_published") {
+          emitContentLifecycleEvent({
+            sink: options.lifecycleEvents,
+            event: "content.published",
+            scope,
+            document,
+            authorization,
+          });
+        }
         return {
           data: await shapeContentDocumentResponse({
             authorize: options.authorize,
             request,
-            requiredScope: "content:write",
+            requiredScope,
             scope,
             store: options.store,
             draft: true,
@@ -1936,6 +1990,11 @@ export function mountContentApiRoutes(
           options.lookupMediaAsset,
         );
         await options.requireCsrf(request);
+        const expectedDraftRevision = parseExpectedDraftRevision(
+          new URL(request.url).searchParams.get("expectedDraftRevision") ??
+            undefined,
+          true,
+        );
         const authorization = await options.authorize(request, {
           requiredScope: "content:delete",
           project: scope.project,
@@ -1974,7 +2033,11 @@ export function mountContentApiRoutes(
           request,
           authorization,
           (attribution) =>
-            options.store.softDelete(scope, params.documentId, { attribution }),
+            options.store.softDelete(scope, params.documentId, {
+              attribution,
+              expectedDraftRevision,
+              requireUnpublished: authorization.internalChannel === "studio_ai",
+            }),
         );
 
         await invalidateInactiveCollaborationCache(

@@ -539,6 +539,33 @@ the AI module.
 The validator is wired at orchestrator construction, so both inline-transform
 proposals and chat proposals share the same trust boundary.
 
+### Proposal store retention and capacity
+
+The server-owned proposal store holds at most 1,000 records per runtime. Pending
+records expire at their proposal expiry timestamp. Expired records remain
+available for lifecycle conflict responses for at most ten minutes after that
+timestamp; accepted and rejected records remain for at most ten minutes after
+resolution. Records are not a durable audit archive. After removal, the existing
+missing-record error for the requested endpoint applies.
+
+Undo storage contains only the applied document identifier, the post-apply draft
+revision, and the prior body/frontmatter snapshot needed for edit undo. It does
+not duplicate the full resulting document. The undo payload is removed immediately
+when consumed, and on cleanup after the six-second undo window expires.
+
+Store operations opportunistically prune expired payloads and records. An
+unreferenced cleanup timer runs at least once per second so idle runtimes also
+release them; runtime shutdown disposes the timer and clears retained records.
+A reservation protects an in-flight operation from record eviction or background
+payload cleanup. Releasing the reservation immediately performs overdue cleanup;
+reservation never extends the validity of apply or undo. Expiry checks still run
+before mutation dispatch.
+
+When the store is full after pruning, creating another proposal fails closed with
+`AI_RATE_LIMITED` (`429`). Live or reserved records are never evicted to admit a
+new proposal. No content mutation occurs, and the caller may retry after capacity
+becomes available.
+
 ## MDX Component Grounding
 
 AI-generated MDX must be grounded in the active MDX component catalog.
@@ -852,3 +879,10 @@ in the same transaction. Checking a draft before dispatch is advisory only.
 Translate the domain STALE_DRAFT_REVISION failure to AI_PROPOSAL_CONFLICT and emit
 neither a successful undo audit nor a lifecycle event. A competing write after
 validation but before the mutation must survive unchanged.
+
+Assistant delete proposals and create-document undo require the document to remain
+unpublished at the atomic DELETE transition. The host derives this precondition
+from the verified studio_ai channel; no browser field can enable or disable it.
+A concurrent publication may leave draftRevision unchanged, so the domain route
+also checks publishedVersion under its deletion lock. DOCUMENT_PUBLISHED (409)
+maps to AI_PROPOSAL_CONFLICT with no successful apply/undo audit or lifecycle event.

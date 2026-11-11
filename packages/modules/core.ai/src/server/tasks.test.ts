@@ -100,7 +100,7 @@ test("buildChatUserPrompt renders referenced documents as compact fetchable card
     prompt,
     /<headings>Related Article &gt; Background &gt; Migration Notes<\/headings>/,
   );
-  assert.match(prompt, /Use get_entry\(\{ documentId \}\)/);
+  assert.match(prompt, /Use get_document\(\{ documentId \}\)/);
   assert.doesNotMatch(prompt, /FULL_BODY_SENTINEL_THIS_SHOULD_NOT_BE_INCLUDED/);
   assert.doesNotMatch(prompt, /internalNotes/);
 });
@@ -171,7 +171,7 @@ test("buildChatSystemPrompt allows bounded document lookup tools when registered
       canDeleteDocument: false,
       canReadEntries: true,
     },
-    registeredToolNames: ["find_entries", "get_entry"],
+    registeredToolNames: ["list_documents", "get_document"],
     projectKnowledge: {
       project: "demo",
       environment: "draft",
@@ -180,13 +180,13 @@ test("buildChatSystemPrompt allows bounded document lookup tools when registered
     },
   });
 
-  assert.match(prompt, /find_entries/);
-  assert.match(prompt, /get_entry/);
+  assert.match(prompt, /list_documents/);
+  assert.match(prompt, /get_document/);
   assert.doesNotMatch(prompt, /no such tool yet/);
   assert.match(prompt, /Unbounded autonomous crawling/);
   assert.match(
     prompt,
-    /Document lookup \(`find_entries`, `get_entry`\): available/,
+    /Document lookup \(`list_documents`, `get_document`\): available/,
   );
 });
 
@@ -211,11 +211,11 @@ test("buildChatSystemPrompt marks document lookup unavailable without draft read
 
   assert.match(
     prompt,
-    /Document lookup \(`find_entries`, `get_entry`\): UNAVAILABLE/,
+    /Document lookup \(`list_documents`, `get_document`\): UNAVAILABLE/,
   );
   assert.match(prompt, /content:read:draft/);
-  assert.doesNotMatch(prompt, /<tool>find_entries<\/tool>/);
-  assert.doesNotMatch(prompt, /<tool>get_entry<\/tool>/);
+  assert.doesNotMatch(prompt, /<tool>list_documents<\/tool>/);
+  assert.doesNotMatch(prompt, /<tool>get_document<\/tool>/);
 });
 
 test("buildChatSystemPrompt guides UI proposals toward the existing aesthetic", () => {

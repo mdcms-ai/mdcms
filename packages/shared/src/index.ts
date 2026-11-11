@@ -14,3 +14,11 @@ export * from "./lib/contracts/preview-token.js";
 export * from "./lib/contracts/schema.js";
 export * from "./lib/contracts/target-routing.js";
 export * from "./lib/contracts/webhooks.js";
+
+export {
+  validateFrontmatter,
+  type ValidationResult,
+} from "./lib/frontmatter-validation.js";
+
+export { parseMdxSyntax } from "./lib/mdx-syntax.js";
+export type { AgentReadToolDefinition } from "./lib/contracts/agent-tools.js";

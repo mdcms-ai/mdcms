@@ -9,9 +9,7 @@ import type {
   SchemaRegistryFieldSnapshot,
   SchemaRegistryTypeSnapshot,
 } from "@mdcms/shared";
-import { fromMarkdown } from "mdast-util-from-markdown";
-import { mdxFromMarkdown } from "mdast-util-mdx";
-import { mdx } from "micromark-extension-mdx";
+import { parseMdxSyntax } from "@mdcms/shared";
 
 /**
  * Looks up a content type's schema for a given project + environment.
@@ -206,10 +204,7 @@ function validateMdxTargetsAgainstStudioParser(
 
   for (const target of targets) {
     try {
-      fromMarkdown(target.source, {
-        extensions: [mdx()],
-        mdastExtensions: [mdxFromMarkdown()],
-      });
+      parseMdxSyntax(target.source);
     } catch (error) {
       errors.push({
         code: "MDX_PARSE_FAILED",
@@ -528,7 +523,7 @@ async function walkReferences(
     if (!UUID_PATTERN.test(value)) {
       errors.push({
         code: "UNKNOWN_REFERENCE",
-        message: `Field "${fieldPath.replace(/^frontmatter\./, "")}" must be a UUID string referencing "${field.reference.targetType}". Use the find_entries tool to look up a real document id; "${value}" is not a valid documentId.`,
+        message: `Field "${fieldPath.replace(/^frontmatter\./, "")}" must be a UUID string referencing "${field.reference.targetType}". Use the list_documents tool to look up a real document id; "${value}" is not a valid documentId.`,
         path: fieldPath,
       });
       return;

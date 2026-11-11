@@ -1,5 +1,6 @@
 import { brotliCompress, gzip } from "node:zlib";
 import { promisify } from "node:util";
+import { stripInternalHeaders } from "./agent-tools/dispatcher.js";
 
 const brotliCompressAsync = promisify(brotliCompress);
 const gzipAsync = promisify(gzip);
@@ -774,6 +775,14 @@ async function normalizeElysiaErrorResponse(input: {
  * including `/healthz` and unified error envelope responses.
  */
 export function createServerRequestHandler(
+  options: CreateServerRequestHandlerOptions = {},
+): ServerRequestHandler {
+  const internalHandler = createInternalServerRequestHandler(options);
+  return (request) => internalHandler(stripInternalHeaders(request));
+}
+
+/** Host-only handler behind the external ingress header boundary. */
+export function createInternalServerRequestHandler(
   options: CreateServerRequestHandlerOptions = {},
 ): ServerRequestHandler {
   const env = parseServerEnv(options.env ?? process.env);

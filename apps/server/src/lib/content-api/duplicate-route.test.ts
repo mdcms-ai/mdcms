@@ -81,7 +81,7 @@ function createStore(overrides?: Partial<ContentStore>): ContentStore {
     getById: async () => baseDocument,
     update: async () => baseDocument,
     softDelete: async () => baseDocument,
-    restore: async () => baseDocument,
+    restore: async () => ({ document: baseDocument, transition: "none" }),
     listVersions: async () => ({ rows: [], total: 0, limit: 20, offset: 0 }),
     getVersion: async () => ({
       ...baseDocument,

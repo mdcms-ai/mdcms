@@ -554,6 +554,7 @@ describe("applyAiProposalUndo", () => {
     const store = createStubStore(state);
 
     const result = await applyAiProposalUndo({
+      postApplyDraftRevision: 4,
       attribution: {
         actorId: "user-1",
         origin: { channel: "studio", credential: "session" },
@@ -594,6 +595,7 @@ describe("applyAiProposalUndo", () => {
     const store = createStubStore(state);
 
     const result = await applyAiProposalUndo({
+      postApplyDraftRevision: 4,
       attribution: {
         actorId: "user-1",
         origin: { channel: "studio", credential: "session" },
@@ -631,6 +633,7 @@ describe("applyAiProposalUndo", () => {
     await assert.rejects(
       () =>
         applyAiProposalUndo({
+          postApplyDraftRevision: 4,
           attribution: {
             actorId: "user-1",
             origin: { channel: "studio", credential: "session" },
@@ -823,6 +826,7 @@ test("Assistant create and delete undo forward accepting-user attribution", asyn
     },
   };
   await applyAiProposalUndo({
+    postApplyDraftRevision: 4,
     proposal: buildProposal({
       kind: "delete_document",
       operations: [{ op: "delete_document", path: "blog/welcome" }],

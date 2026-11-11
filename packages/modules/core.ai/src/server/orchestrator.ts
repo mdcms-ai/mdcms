@@ -47,7 +47,7 @@ export const DEFAULT_PROPOSAL_TTL_MS = 5 * 60 * 1000;
  * lets the model take in a single turn. Each text-reply, tool-call, and
  * tool-result counts as one step, so a "draft 5 posts" turn naturally
  * needs at least 5 (tool calls) + 1 (final text reply) = 6 — with some
- * headroom for the model to call `find_entries` ahead of references or
+ * headroom for the model to call `list_documents` ahead of references or
  * emit interstitial reasoning. 20 gives that headroom without letting a
  * runaway loop drain the provider budget.
  */
@@ -134,15 +134,14 @@ export type AiChatInput = {
    */
   mdxCatalog?: MdxComponentCatalog;
   /**
-   * Backends for the read-only chat tools (find_entries, get_entry).
+   * Backends for the read-only chat tools (list_documents, get_document).
    * The route handler wires these from the contentStore only when the
    * caller holds `content:read:draft`; the lookup tools are registered
    * only when `capabilities.canReadEntries` is true and `findEntries`
    * is present. Otherwise the model responds in text.
    */
   toolBackends?: {
-    findEntries?: import("./chat-tools.js").ChatToolDeps["findEntriesBackend"];
-    getEntry?: import("./chat-tools.js").ChatToolDeps["getEntryBackend"];
+    readTools?: import("./chat-tools.js").ChatToolDeps["readTools"];
     getComponentReference?: import("./chat-tools.js").ChatToolDeps["getComponentReferenceBackend"];
   };
 };
@@ -558,7 +557,11 @@ function prepareChatRun(
     ...call.capabilities,
     canReadEntries:
       call.capabilities.canReadEntries &&
-      Boolean(call.toolBackends?.findEntries),
+      Boolean(
+        call.toolBackends?.readTools?.some(
+          (tool) => tool.name === "list_documents",
+        ),
+      ),
   };
 
   const tools = buildChatTools({
@@ -589,11 +592,8 @@ function prepareChatRun(
       (t) => t.type,
     ),
     supportedLocales: call.projectKnowledge?.supportedLocales ?? [],
-    ...(call.toolBackends?.findEntries
-      ? { findEntriesBackend: call.toolBackends.findEntries }
-      : {}),
-    ...(call.toolBackends?.getEntry
-      ? { getEntryBackend: call.toolBackends.getEntry }
+    ...(call.toolBackends?.readTools
+      ? { readTools: call.toolBackends.readTools }
       : {}),
     ...(call.toolBackends?.getComponentReference
       ? {
@@ -896,9 +896,9 @@ function toolLabel(toolName: string): string {
       return "Create draft";
     case "propose_delete_document":
       return "Delete draft";
-    case "find_entries":
+    case "list_documents":
       return "Search documents";
-    case "get_entry":
+    case "get_document":
       return "Read document";
     case "get_component_reference":
       return "Read component reference";

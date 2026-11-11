@@ -49,3 +49,13 @@ Out:
   displays the last editor and publication authors with their channels.
 - Environment clone/promote attribution belongs to the shared content-service
   integration alongside its source/destination authorization checks.
+
+- Shared frontmatter validation and MDX syntax parsing are exported from shared.
+  The server registry supplies content/schema tools and injects adapted read
+  definitions into the Assistant. Apply/undo use request-bound domain-route
+  execution, server-owned proposal/undo records, and per-proposal reservations.
+- Trusted proposals have bounded retention and capacity. Minimal undo snapshots
+  are removed after consumption or expiry; idle cleanup is disposed on shutdown.
+- Delete/restore preconditions and restore-to-published transitions are atomic
+  in PostgreSQL. Remote transport, OAuth and remaining tool families remain
+  separate implementation stages.

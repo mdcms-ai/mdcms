@@ -106,3 +106,21 @@ test("system attribution uses the placeholder actor by default", () => {
   });
   assert.equal(systemAttribution("user-seed").actorId, "user-seed");
 });
+
+test("trusted authorization channel overrides defaults but forged headers do not", () => {
+  const forged = request({ "x-mdcms-internal-channel": "mcp" });
+  assert.equal(
+    attributionFromAuthorizedRequest({
+      request: forged,
+      authorization: sessionAuthorization,
+    }).origin.channel,
+    "studio",
+  );
+  assert.equal(
+    attributionFromAuthorizedRequest({
+      request: forged,
+      authorization: { ...sessionAuthorization, internalChannel: "studio_ai" },
+    }).origin.channel,
+    "studio_ai",
+  );
+});

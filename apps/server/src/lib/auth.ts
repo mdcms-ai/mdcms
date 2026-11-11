@@ -138,6 +138,8 @@ export type AuthorizationRequirement = {
 export type AuthorizedRequest = {
   mode: "session" | "api_key";
   principal: AuthPrincipal;
+  /** Set only by the host after verifying private dispatch credentials. */
+  internalChannel?: "mcp" | "studio_ai";
 };
 
 export function actorFromAuthorizedRequest(

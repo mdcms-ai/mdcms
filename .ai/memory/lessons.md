@@ -113,3 +113,7 @@ Entries are reverse-chronological (newest first).
 **Rule:** Identify the owning store contract before updating calls to common methods such as `create`, `update`, and `restore`.
 **Why:** Content, environment, and webhook stores use the same method names but accept different authorization metadata.
 **How to apply:** Scope edits by the concrete store type, preserve existing actor semantics outside that contract, and typecheck all affected callers.
+
+- Validate agent-tool response schemas against mounted domain routes, including database-backed fixtures.
+  Why: Handwritten fixtures can accidentally add fields that the actual response omits, hiding incompatible envelope or nested schema definitions.
+  How to apply: Parse successful registry and adapted Assistant outputs with their advertised schemas and include a real runtime integration case.

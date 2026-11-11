@@ -54,7 +54,11 @@ export type AiApplyContentStore = {
   softDelete(
     scope: AiApplyContentScope,
     documentId: string,
-    options: { attribution: ContentWriteAttribution },
+    options: {
+      attribution: ContentWriteAttribution;
+      expectedDraftRevision?: number;
+      expectedSchemaHash?: string;
+    },
   ): Promise<AiApplyContentDocument>;
   /**
    * Restore a previously soft-deleted document back to draft state.
@@ -65,7 +69,11 @@ export type AiApplyContentStore = {
   restore?(
     scope: AiApplyContentScope,
     documentId: string,
-    options: { attribution: ContentWriteAttribution },
+    options: {
+      attribution: ContentWriteAttribution;
+      expectedDraftRevision?: number;
+      expectedSchemaHash?: string;
+    },
   ): Promise<AiApplyContentDocument>;
 };
 
@@ -82,7 +90,7 @@ export type AiApplyInput = {
  * Snapshot of the pre-apply draft state captured at the moment of
  * write. Returned by `applyAiProposal` for body/frontmatter mutating
  * kinds so the post-accept undo path can replay the prior values
- * without storing them server-side. The shape is intentionally simple
+ * from the trusted server undo record. The shape is intentionally simple
  * — body and frontmatter are the only fields content edits touch.
  */
 export type AiApplyPriorDraft = {
@@ -105,7 +113,7 @@ export type AiUndoInput = {
   documentId: string;
   expectedSchemaHash: string;
   /**
-   * Caller-supplied draft snapshot to replay for body/frontmatter
+   * Server-trusted draft snapshot to replay for body/frontmatter
    * kinds. Required for `replace_selection`, `insert_block`, and
    * `update_frontmatter`; ignored for create/delete kinds.
    */
@@ -268,7 +276,7 @@ function mergeFrontmatter(
  * underlying store enforces the same conflict semantics as a regular
  * `PUT /api/v1/content/:id`.
  */
-export async function applyAiProposal(
+async function applyAiProposalInternal(
   input: AiApplyInput,
 ): Promise<AiApplyResult> {
   const { proposal, expectedSchemaHash, store } = input;
@@ -388,14 +396,14 @@ export async function applyAiProposal(
     // identity, and we already proved we're deleting the doc the model
     // intended via the existing draft load.
     const document = await store.softDelete(scope, proposal.documentId, {
+      expectedDraftRevision: existing.draftRevision,
       attribution: input.attribution,
     });
     return { document };
   }
 
   // Snapshot the pre-apply body and frontmatter before the write so the
-  // post-accept undo path can replay the prior state without persisting
-  // it server-side. `existing.frontmatter` is captured by reference here
+  // post-accept undo path can replay the server-trusted prior state. `existing.frontmatter` is captured by reference here
   // — the store guarantees frontmatter is a fresh object per fetch.
   const priorDraft: AiApplyPriorDraft = {
     body: existing.body,
@@ -428,11 +436,7 @@ export async function applyAiProposal(
     {
       expectedSchemaHash,
       attribution: input.attribution,
-      expectedDraftRevision: hasBaseDraftRevision
-        ? canApplyReplaceSelectionAgainstLiveRevision
-          ? existing.draftRevision
-          : proposal.baseDraftRevision
-        : undefined,
+      expectedDraftRevision: existing.draftRevision,
     },
   );
   return { document, priorDraft };
@@ -452,7 +456,7 @@ export async function applyAiProposal(
  * frontmatter kinds — a concurrent edit landed inside the 6-second
  * window and a blind replay would clobber the user's work.
  */
-export async function applyAiProposalUndo(
+async function applyAiProposalUndoInternal(
   input: AiUndoInput,
 ): Promise<AiUndoResult> {
   const { proposal, documentId, expectedSchemaHash, store } = input;
@@ -460,6 +464,11 @@ export async function applyAiProposalUndo(
     project: proposal.project,
     environment: proposal.environment,
   };
+
+  if (typeof input.postApplyDraftRevision !== "number")
+    throw aiOutputInvalid("Undo requires a trusted post-apply revision.", {
+      proposalId: proposal.proposalId,
+    });
 
   if (proposal.kind === "create_document") {
     // Soft-delete the newly created document. The store's soft-delete
@@ -475,7 +484,14 @@ export async function applyAiProposalUndo(
         details: { documentId },
       });
     }
+    if (existing.publishedVersion !== null)
+      throw aiProposalConflict(
+        "Cannot undo creation of a published document.",
+        { documentId },
+      );
     const document = await store.softDelete(scope, documentId, {
+      expectedDraftRevision: input.postApplyDraftRevision,
+      expectedSchemaHash,
       attribution: input.attribution,
     });
     return { document };
@@ -511,6 +527,8 @@ export async function applyAiProposalUndo(
       );
     }
     const document = await store.restore(scope, documentId, {
+      expectedDraftRevision: input.postApplyDraftRevision,
+      expectedSchemaHash,
       attribution: input.attribution,
     });
     return { document };
@@ -569,4 +587,30 @@ export async function applyAiProposalUndo(
     },
   );
   return { document };
+}
+
+async function mapRevisionConflict<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    if (
+      error instanceof RuntimeError &&
+      ["STALE_DRAFT_REVISION", "DOCUMENT_PUBLISHED"].includes(error.code)
+    )
+      throw aiProposalConflict(error.message, error.details ?? {});
+    if (
+      error instanceof RuntimeError &&
+      ["INVALID_FRONTMATTER", "INVALID_MDX", "UNKNOWN_TYPE"].includes(
+        error.code,
+      )
+    )
+      throw aiOutputInvalid(error.message, error.details ?? {});
+    throw error;
+  }
+}
+export function applyAiProposal(input: AiApplyInput): Promise<AiApplyResult> {
+  return mapRevisionConflict(() => applyAiProposalInternal(input));
+}
+export function applyAiProposalUndo(input: AiUndoInput): Promise<AiUndoResult> {
+  return mapRevisionConflict(() => applyAiProposalUndoInternal(input));
 }

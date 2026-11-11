@@ -1,3 +1,7 @@
+import {
+  createTestReadTools,
+  type TestReadBackends,
+} from "./read-tools.test-support.js";
 import assert from "node:assert/strict";
 import { describe, test } from "bun:test";
 
@@ -178,8 +182,8 @@ function createTestSetup(input: {
   contentTypesLookup?: MountAiRoutesOptions["contentTypesLookup"];
   supportedLocalesLookup?: MountAiRoutesOptions["supportedLocalesLookup"];
   userLookup?: MountAiRoutesOptions["userLookup"];
-  listEntries?: MountAiRoutesOptions["listEntries"];
-  getEntry?: MountAiRoutesOptions["getEntry"];
+  listDocuments?: TestReadBackends["findEntriesBackend"];
+  getDocument?: TestReadBackends["getEntryBackend"];
   orchestrator?: AiOrchestrator;
 }) {
   const document = input.document ?? input.documents?.[0] ?? buildDocument();
@@ -293,8 +297,15 @@ function createTestSetup(input: {
       ? { supportedLocalesLookup: input.supportedLocalesLookup }
       : {}),
     ...(input.userLookup ? { userLookup: input.userLookup } : {}),
-    ...(input.listEntries ? { listEntries: input.listEntries } : {}),
-    ...(input.getEntry ? { getEntry: input.getEntry } : {}),
+    ...(input.listDocuments || input.getDocument
+      ? {
+          readToolsForRequest: async () =>
+            createTestReadTools({
+              findEntriesBackend: input.listDocuments,
+              getEntryBackend: input.getDocument,
+            }),
+        }
+      : {}),
   };
 
   const app = createFakeApp();
@@ -308,6 +319,240 @@ const TARGET_HEADERS = {
   "x-mdcms-environment": "draft",
   "content-type": "application/json",
 };
+
+test("trusted proposal reservations permit one concurrent create and one undo", async () => {
+  const setup = createTestSetup({});
+  const proposal: AiProposal = {
+    proposalId: "concurrent-create",
+    kind: "create_document",
+    project: "demo",
+    environment: "draft",
+    type: "post",
+    locale: "en",
+    summary: "Create",
+    operations: [
+      {
+        op: "create_document",
+        path: "blog/new",
+        format: "md",
+        frontmatter: {},
+        body: "trusted",
+      },
+    ],
+    validation: { status: "valid" },
+    expiresAt: "2026-05-01T00:05:00.000Z",
+    provider: { providerId: "echo", model: "echo-1", promptTemplateId: "test" },
+  };
+  setup.proposalStore.insert({ proposal, actorId: "user_1" });
+  const store = setup.options.contentStore as AiContentStore;
+  let creates = 0;
+  let deletes = 0;
+  const create = store.create;
+  store.create = async (...args) => {
+    creates++;
+    return create(...args);
+  };
+  const remove = store.softDelete;
+  store.softDelete = async (...args) => {
+    deletes++;
+    return remove(...args);
+  };
+  const call = (operation: string, body: unknown) =>
+    setup.app.fetch(
+      "POST",
+      `https://test.local/api/v1/ai/proposals/${proposal.proposalId}/${operation}`,
+      { method: "POST", headers: TARGET_HEADERS, body: JSON.stringify(body) },
+    );
+  const apply = await Promise.all([
+    call("apply", {
+      schemaHash: "hash_1",
+      proposal: { ...proposal, operations: [] },
+    }),
+    call("apply", { schemaHash: "hash_1" }),
+  ]);
+  assert.deepEqual(apply.map((response) => response.status).sort(), [200, 409]);
+  assert.equal(creates, 1);
+  assert.equal(
+    setup.audits.filter((audit) => audit.outcome === "accepted").length,
+    1,
+  );
+  const undo = await Promise.all([
+    call("undo", {
+      schemaHash: "hash_1",
+      documentId: "doc_new",
+      postApplyDraftRevision: 4,
+      proposal,
+    }),
+    call("undo", {
+      schemaHash: "hash_1",
+      documentId: "doc_new",
+      postApplyDraftRevision: 4,
+      proposal,
+    }),
+  ]);
+  assert.deepEqual(undo.map((response) => response.status).sort(), [200, 409]);
+  assert.equal(deletes, 1);
+  assert.equal(
+    setup.audits.filter((audit) => audit.outcome === "undone").length,
+    1,
+  );
+  assert.equal(
+    (
+      await call("undo", {
+        schemaHash: "hash_1",
+        documentId: "doc_new",
+        postApplyDraftRevision: 4,
+        proposal,
+      })
+    ).status,
+    409,
+  );
+});
+
+test("undo rechecks its trusted window after asynchronous authorization and schema lookup", async () => {
+  const document = buildDocument();
+  const setup = createTestSetup({ document });
+  let now = Date.parse("2026-05-01T00:00:00.000Z");
+  const proposalStore = createInMemoryAiProposalStore({
+    clock: () => new Date(now),
+  });
+  setup.options.proposalStore = proposalStore;
+  const id = await createProposal(setup.app);
+  const call = (operation: string, body: unknown) =>
+    setup.app.fetch(
+      "POST",
+      `https://test.local/api/v1/ai/proposals/${id}/${operation}`,
+      {
+        method: "POST",
+        headers: TARGET_HEADERS,
+        body: JSON.stringify(body),
+      },
+    );
+  assert.equal(
+    (await call("apply", { schemaHash: "hash_1", draftRevision: 4 })).status,
+    200,
+  );
+  document.draftRevision = 5;
+  document.body = "Hi there!";
+  setup.options.schemaHashLookup = async () => {
+    now += 6001;
+    return "hash_1";
+  };
+  const undo = await call("undo", {
+    schemaHash: "hash_1",
+    proposal: proposalStore.peek(id)!.proposal,
+    documentId: document.documentId,
+    postApplyDraftRevision: 5,
+  });
+  assert.equal(undo.status, 409);
+  assert.equal(setup.updateCalls.length, 1);
+  assert.equal(
+    setup.audits.filter((audit) => audit.outcome === "undone").length,
+    0,
+  );
+});
+
+test("browser proposals cannot authorize writes and failed authorization releases reservations", async () => {
+  let allowed = false;
+  const setup = createTestSetup({
+    authorize: async () => {
+      if (!allowed)
+        throw new RuntimeError({
+          code: "FORBIDDEN",
+          message: "Grant removed.",
+          statusCode: 403,
+        });
+      return {
+        actorId: "user_1",
+        attribution: {
+          actorId: "user_1",
+          origin: { channel: "studio_ai", credential: "session" },
+        },
+      };
+    },
+  });
+  const proposal: AiProposal = {
+    proposalId: "trusted-create",
+    kind: "create_document",
+    project: "demo",
+    environment: "draft",
+    type: "post",
+    locale: "en",
+    summary: "Create",
+    operations: [
+      {
+        op: "create_document",
+        path: "new",
+        format: "md",
+        frontmatter: {},
+        body: "trusted",
+      },
+    ],
+    validation: { status: "valid" },
+    expiresAt: "2026-05-01T00:05:00.000Z",
+    provider: { providerId: "echo", model: "echo-1", promptTemplateId: "test" },
+  };
+  const call = () =>
+    setup.app.fetch(
+      "POST",
+      `https://test.local/api/v1/ai/proposals/${proposal.proposalId}/apply`,
+      {
+        method: "POST",
+        headers: TARGET_HEADERS,
+        body: JSON.stringify({ proposal, schemaHash: "hash_1" }),
+      },
+    );
+  assert.equal((await call()).status, 404);
+  setup.proposalStore.insert({ proposal, actorId: "user_1" });
+  assert.equal((await call()).status, 403);
+  assert.equal(
+    setup.proposalStore.peek(proposal.proposalId)?.status,
+    "pending",
+  );
+  allowed = true;
+  assert.equal((await call()).status, 200);
+});
+
+test("apply revalidates the complete resulting MDX against the trusted catalog", async () => {
+  const setup = createTestSetup({
+    document: buildDocument({ format: "mdx", body: "<Unknown />" }),
+  });
+  const proposal: AiProposal = {
+    proposalId: "catalog-apply",
+    kind: "update_frontmatter",
+    project: "demo",
+    environment: "draft",
+    type: "post",
+    locale: "en",
+    documentId: "doc_1",
+    baseDraftRevision: 4,
+    summary: "Edit title",
+    operations: [{ op: "update_frontmatter", patch: { title: "Updated" } }],
+    validation: { status: "valid" },
+    expiresAt: "2026-05-01T00:05:00.000Z",
+    provider: { providerId: "echo", model: "echo-1", promptTemplateId: "test" },
+  };
+  setup.proposalStore.insert({
+    proposal,
+    actorId: "user_1",
+    mdxCatalog: { components: [] },
+  });
+  const response = await setup.app.fetch(
+    "POST",
+    `https://test.local/api/v1/ai/proposals/${proposal.proposalId}/apply`,
+    {
+      method: "POST",
+      headers: TARGET_HEADERS,
+      body: JSON.stringify({ schemaHash: "hash_1", proposal }),
+    },
+  );
+  assert.equal(response.status, 422);
+  assert.equal(setup.updateCalls.length, 0);
+  assert.equal(
+    setup.audits.some((audit) => audit.outcome === "accepted"),
+    false,
+  );
+});
 
 describe("mountAiRoutes — inline-transform", () => {
   test("creates pending proposals on success", async () => {
@@ -431,29 +676,29 @@ describe("mountAiRoutes — inline-transform", () => {
   });
 });
 
-describe("mountAiRoutes — proposals/:id/apply", () => {
-  async function createProposal(app: FakeApp): Promise<string> {
-    const response = await app.fetch(
-      "POST",
-      "https://test.local/api/v1/ai/inline-transform",
-      {
-        method: "POST",
-        headers: TARGET_HEADERS,
-        body: JSON.stringify({
-          documentId: "doc_1",
-          draftRevision: 4,
-          selectionId: "sel_anchor",
-          selectedText: "Welcome to the site.",
-          action: "rewrite",
-        }),
-      },
-    );
-    const payload = (await response.json()) as {
-      data: { proposals: { proposalId: string }[] };
-    };
-    return payload.data.proposals[0]!.proposalId;
-  }
+async function createProposal(app: FakeApp): Promise<string> {
+  const response = await app.fetch(
+    "POST",
+    "https://test.local/api/v1/ai/inline-transform",
+    {
+      method: "POST",
+      headers: TARGET_HEADERS,
+      body: JSON.stringify({
+        documentId: "doc_1",
+        draftRevision: 4,
+        selectionId: "sel_anchor",
+        selectedText: "Welcome to the site.",
+        action: "rewrite",
+      }),
+    },
+  );
+  const payload = (await response.json()) as {
+    data: { proposals: { proposalId: string }[] };
+  };
+  return payload.data.proposals[0]!.proposalId;
+}
 
+describe("mountAiRoutes: proposals/:id/apply", () => {
   test("happy path applies proposal and emits accepted audit", async () => {
     const setup = createTestSetup({});
     const proposalId = await createProposal(setup.app);
@@ -529,6 +774,7 @@ describe("mountAiRoutes — proposals/:id/apply", () => {
       }),
     });
 
+    setup.proposalStore.insert({ proposal, actorId: "user_1" });
     const response = await setup.app.fetch(
       "POST",
       `https://test.local/api/v1/ai/proposals/${proposal.proposalId}/apply`,
@@ -585,6 +831,7 @@ describe("mountAiRoutes — proposals/:id/apply", () => {
       }),
     });
 
+    setup.proposalStore.insert({ proposal, actorId: "user_1" });
     const response = await setup.app.fetch(
       "POST",
       `https://test.local/api/v1/ai/proposals/${proposal.proposalId}/apply`,
@@ -646,7 +893,7 @@ describe("mountAiRoutes — proposals/:id/apply", () => {
         },
       ],
       validation: { status: "valid" },
-      expiresAt: "2025-12-01T00:00:00.000Z",
+      expiresAt: "2026-05-01T00:00:59.000Z",
       provider: {
         providerId: "echo",
         model: "echo-1",
@@ -753,6 +1000,102 @@ describe("mountAiRoutes — proposals/:id/apply", () => {
     assert.equal(setup.updateCalls.length, 0);
     assert.equal(setup.proposalStore.peek(proposalId)?.status, "rejected");
     assert.ok(setup.audits.some((record) => record.outcome === "rejected"));
+  });
+
+  test("Studio-shaped rejection uses the trusted proposal and prevents later apply", async () => {
+    const setup = createTestSetup({});
+    const proposalId = await createProposal(setup.app);
+    const trusted = setup.proposalStore.peek(proposalId)!.proposal;
+    const response = await setup.app.fetch(
+      "POST",
+      `https://test.local/api/v1/ai/proposals/${proposalId}/reject`,
+      {
+        method: "POST",
+        headers: TARGET_HEADERS,
+        body: JSON.stringify({
+          proposal: {
+            ...trusted,
+            summary: "browser replacement",
+            proposalId: "forged-id",
+          },
+        }),
+      },
+    );
+    assert.equal(response.status, 200);
+    const rejected = (await response.json()) as {
+      data: { proposal: AiProposal };
+    };
+    assert.deepEqual(rejected.data.proposal, trusted);
+    assert.equal(setup.proposalStore.peek(proposalId)?.status, "rejected");
+    const apply = await setup.app.fetch(
+      "POST",
+      `https://test.local/api/v1/ai/proposals/${proposalId}/apply`,
+      {
+        method: "POST",
+        headers: TARGET_HEADERS,
+        body: JSON.stringify({
+          proposal: trusted,
+          schemaHash: "hash_1",
+          draftRevision: 4,
+        }),
+      },
+    );
+    assert.equal(apply.status, 409);
+    assert.equal(setup.updateCalls.length, 0);
+    assert.equal(
+      setup.audits.filter((record) => record.outcome === "rejected").length,
+      1,
+    );
+  });
+
+  test("rejection requires content write, trusted ownership and matching target", async () => {
+    for (const deniedBy of ["scope", "owner", "target", "missing"] as const) {
+      const setup = createTestSetup({});
+      const proposalId = await createProposal(setup.app);
+      const proposal = setup.proposalStore.peek(proposalId)!.proposal;
+      const originalAuthorize = setup.options.authorize;
+      setup.options.authorize = async (request, requirement) => {
+        if (deniedBy === "scope" && requirement.requiredScope !== "ai:use") {
+          throw new RuntimeError({
+            code: "FORBIDDEN",
+            message: "Scope denied.",
+            statusCode: 403,
+          });
+        }
+        const authorization = await originalAuthorize(request, requirement);
+        return {
+          ...authorization,
+          actorId: deniedBy === "owner" ? "other-user" : authorization.actorId,
+        };
+      };
+      const response = await setup.app.fetch(
+        "POST",
+        `https://test.local/api/v1/ai/proposals/${deniedBy === "missing" ? "unknown" : proposalId}/reject`,
+        {
+          method: "POST",
+          headers: {
+            ...TARGET_HEADERS,
+            "x-mdcms-environment": deniedBy === "target" ? "other" : "draft",
+          },
+          body: JSON.stringify({
+            proposal: {
+              ...proposal,
+              proposalId: deniedBy === "missing" ? "unknown" : proposalId,
+            },
+          }),
+        },
+      );
+      assert.equal(
+        response.status,
+        deniedBy === "missing" ? 404 : 403,
+        deniedBy,
+      );
+      assert.equal(setup.proposalStore.peek(proposalId)?.status, "pending");
+      assert.equal(
+        setup.audits.filter((record) => record.outcome === "rejected").length,
+        0,
+      );
+    }
   });
 
   test("apply on a missing proposal returns 404", async () => {
@@ -865,7 +1208,7 @@ describe("mountAiRoutes — chat-message", () => {
     // Chat proposals live client-side in localStorage; the server does
     // NOT insert them into its in-memory proposal store. Apply/reject
     // accept the full proposal body from the client instead.
-    assert.equal(proposalStore.peek(proposal.proposalId), undefined);
+    assert.equal(proposalStore.peek(proposal.proposalId)?.status, "pending");
     assert.equal(payload.data.message.text, "Proposed a tighter intro.");
   });
 
@@ -1178,7 +1521,7 @@ describe("mountAiRoutes — chat-message", () => {
     assert.equal(proposal.documentId, "doc_1");
     // Same as the edit-proposal test: chat proposals are client-owned;
     // the server's in-memory store stays empty for chat-driven turns.
-    assert.equal(proposalStore.peek(proposal.proposalId), undefined);
+    assert.equal(proposalStore.peek(proposal.proposalId)?.status, "pending");
   });
 
   test("does not expose the delete tool when caller lacks content:delete", async () => {
@@ -1575,7 +1918,7 @@ describe("mountAiRoutes — chat-message", () => {
       capturedPrompt,
       /<headings>Related Article &gt; Details<\/headings>/,
     );
-    assert.match(capturedPrompt, /Use get_entry\(\{ documentId \}\)/);
+    assert.match(capturedPrompt, /Use get_document\(\{ documentId \}\)/);
     assert.doesNotMatch(capturedPrompt, /FULL_RELATED_BODY_SENTINEL/);
     assert.doesNotMatch(capturedPrompt, /internalNotes/);
   });
@@ -1809,8 +2152,8 @@ describe("mountAiRoutes — chat-message", () => {
     assert.equal(payload.data.message.text, "Hi!");
   });
 
-  test("find_entries tool call flows through to backend and result reaches model", async () => {
-    let backendCalledWith: { type: string; query?: string } | undefined;
+  test("list_documents tool call flows through to backend and result reaches model", async () => {
+    let backendCalledWith: { type: string; q?: string } | undefined;
     const { app } = createTestSetup({
       authorize: authorizeWithScopes(
         new Set(["ai:use", "content:read:draft", "content:write"]),
@@ -1827,8 +2170,8 @@ describe("mountAiRoutes — chat-message", () => {
       ],
       supportedLocalesLookup: async () => ["en"],
       userLookup: async () => ({ id: "u1", displayName: "K" }),
-      listEntries: async (input) => {
-        backendCalledWith = { type: input.type, query: input.query };
+      listDocuments: async (input) => {
+        backendCalledWith = { type: input.type, q: input.q };
         return {
           matches: [
             {
@@ -1849,8 +2192,8 @@ describe("mountAiRoutes — chat-message", () => {
           type: "tool-calls",
           calls: [
             {
-              toolName: "find_entries",
-              input: JSON.stringify({ type: "author", query: "John" }),
+              toolName: "list_documents",
+              input: JSON.stringify({ type: "author", q: "John" }),
             },
           ],
         },
@@ -1869,7 +2212,7 @@ describe("mountAiRoutes — chat-message", () => {
     );
 
     assert.equal(response.status, 200);
-    assert.deepEqual(backendCalledWith, { type: "author", query: "John" });
+    assert.deepEqual(backendCalledWith, { type: "author", q: "John" });
     const payload = (await response.json()) as {
       data: { message: { text?: string } };
     };
@@ -1989,6 +2332,24 @@ describe("mountAiRoutes — chat-message", () => {
 });
 
 describe("mountAiRoutes — proposals/:id/undo", () => {
+  function seedUndo(
+    setup: ReturnType<typeof createTestSetup>,
+    proposal: AiProposal,
+    documentId = "doc_1",
+  ) {
+    setup.proposalStore.insert({ proposal, actorId: "user_1" });
+    setup.proposalStore.markAccepted({
+      proposalId: proposal.proposalId,
+      actorId: "user_1",
+    });
+    setup.proposalStore.saveUndo(proposal.proposalId, {
+      document: buildDocument({ documentId }),
+      priorDraft: {
+        body: "Welcome to the site.",
+        frontmatter: { title: "Welcome" },
+      },
+    });
+  }
   function applyProposalShape(overrides: Partial<AiProposal> = {}): AiProposal {
     return {
       proposalId: overrides.proposalId ?? "p_undo_1",
@@ -2021,6 +2382,7 @@ describe("mountAiRoutes — proposals/:id/undo", () => {
   test("happy path emits an undone audit and returns the restored document", async () => {
     const setup = createTestSetup({});
     const proposal = applyProposalShape();
+    seedUndo(setup, proposal);
 
     const response = await setup.app.fetch(
       "POST",
@@ -2052,9 +2414,10 @@ describe("mountAiRoutes — proposals/:id/undo", () => {
     assert.equal(last.documentId, "doc_1");
   });
 
-  test("rejects 400 when request documentId mismatches the proposal target", async () => {
+  test("rejects 403 when request documentId mismatches the proposal target", async () => {
     const setup = createTestSetup({});
     const proposal = applyProposalShape({ proposalId: "p_docid_mismatch" });
+    seedUndo(setup, proposal);
 
     const response = await setup.app.fetch(
       "POST",
@@ -2076,14 +2439,15 @@ describe("mountAiRoutes — proposals/:id/undo", () => {
       },
     );
 
-    assert.equal(response.status, 400);
+    assert.equal(response.status, 403);
     const body = (await response.json()) as { code: string };
-    assert.equal(body.code, "INVALID_INPUT");
+    assert.equal(body.code, "FORBIDDEN");
   });
 
   test("body undo without postApplyDraftRevision returns 400", async () => {
     const setup = createTestSetup({});
     const proposal = applyProposalShape({ proposalId: "p_undo_norev" });
+    seedUndo(setup, proposal);
 
     const response = await setup.app.fetch(
       "POST",
@@ -2107,8 +2471,6 @@ describe("mountAiRoutes — proposals/:id/undo", () => {
     );
 
     assert.equal(response.status, 400);
-    const body = (await response.json()) as { code: string };
-    assert.equal(body.code, "INVALID_INPUT");
   });
 
   test("create_document undo audit carries the operated documentId", async () => {
@@ -2143,6 +2505,7 @@ describe("mountAiRoutes — proposals/:id/undo", () => {
       },
     };
 
+    seedUndo(setup, createProposal, "doc_new");
     const response = await setup.app.fetch(
       "POST",
       `https://test.local/api/v1/ai/proposals/${createProposal.proposalId}/undo`,
@@ -2151,6 +2514,7 @@ describe("mountAiRoutes — proposals/:id/undo", () => {
         headers: TARGET_HEADERS,
         body: JSON.stringify({
           proposal: createProposal,
+          postApplyDraftRevision: 4,
           documentId: "doc_new",
           schemaHash: "hash_1",
         }),
@@ -2169,6 +2533,7 @@ describe("mountAiRoutes — proposals/:id/undo", () => {
   test("undo_failed audit carries the operated documentId", async () => {
     const setup = createTestSetup({ schemaHash: "hash_server" });
     const proposal = applyProposalShape({ proposalId: "p_audit_docid" });
+    seedUndo(setup, proposal);
 
     await setup.app.fetch(
       "POST",
@@ -2188,10 +2553,10 @@ describe("mountAiRoutes — proposals/:id/undo", () => {
 
     const failure = setup.audits.find((r) => r.outcome === "undo_failed");
     assert.ok(failure, "expected an undo_failed audit record");
-    assert.equal(failure!.documentId, "doc_42");
+    assert.equal(failure!.documentId, "doc_1");
   });
 
-  test("invalid input — missing proposal body returns 400", async () => {
+  test("undo without a trusted record is rejected", async () => {
     const setup = createTestSetup({});
 
     const response = await setup.app.fetch(
@@ -2215,6 +2580,7 @@ describe("mountAiRoutes — proposals/:id/undo", () => {
   test("schema hash mismatch returns 409 and audits undo_failed", async () => {
     const setup = createTestSetup({ schemaHash: "hash_server" });
     const proposal = applyProposalShape({ proposalId: "p_hash_undo" });
+    seedUndo(setup, proposal);
 
     const response = await setup.app.fetch(
       "POST",
@@ -2268,11 +2634,11 @@ describe("mountAiRoutes: chat document lookup gate", () => {
     const setup = createTestSetup({
       authorize: authorizeWithScopes(scopes),
       echoRespond: captureTurn(captured),
-      listEntries: async () => {
-        backendCalls.push("listEntries");
+      listDocuments: async () => {
+        backendCalls.push("listDocuments");
         return { matches: [], total: 0 };
       },
-      getEntry: async () => {
+      getDocument: async () => {
         backendCalls.push("getEntry");
         return undefined;
       },
@@ -2308,17 +2674,17 @@ describe("mountAiRoutes: chat document lookup gate", () => {
       assert.equal(response.status, 200);
       await response.text();
       assert.ok(captured.system.length > 0, "model should have been called");
-      assert.equal(captured.toolNames.includes("find_entries"), false);
-      assert.equal(captured.toolNames.includes("get_entry"), false);
+      assert.equal(captured.toolNames.includes("list_documents"), false);
+      assert.equal(captured.toolNames.includes("get_document"), false);
       assert.ok(
         captured.toolNames.includes("propose_create_document"),
         "write tools stay available with content:write",
       );
       assert.match(
         captured.system,
-        /Document lookup \(`find_entries`, `get_entry`\): UNAVAILABLE/,
+        /Document lookup \(`list_documents`, `get_document`\): UNAVAILABLE/,
       );
-      assert.doesNotMatch(captured.system, /<tool>find_entries<\/tool>/);
+      assert.doesNotMatch(captured.system, /<tool>list_documents<\/tool>/);
       assert.deepEqual(backendCalls, []);
     });
 
@@ -2335,11 +2701,11 @@ describe("mountAiRoutes: chat document lookup gate", () => {
 
       assert.equal(response.status, 200);
       await response.text();
-      assert.ok(captured.toolNames.includes("find_entries"));
-      assert.ok(captured.toolNames.includes("get_entry"));
+      assert.ok(captured.toolNames.includes("list_documents"));
+      assert.ok(captured.toolNames.includes("get_document"));
       assert.match(
         captured.system,
-        /Document lookup \(`find_entries`, `get_entry`\): available/,
+        /Document lookup \(`list_documents`, `get_document`\): available/,
       );
     });
 
@@ -2361,7 +2727,7 @@ describe("mountAiRoutes: chat document lookup gate", () => {
             },
           };
         },
-        listEntries: async () => ({ matches: [], total: 0 }),
+        listDocuments: async () => ({ matches: [], total: 0 }),
       });
 
       const response = await app.fetch("POST", route.path, {

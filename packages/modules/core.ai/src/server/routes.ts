@@ -1,3 +1,4 @@
+import { createMdxCatalogProposalValidator } from "./validate-proposal.js";
 import type { ContentWriteAttribution } from "@mdcms/shared";
 import {
   aiChatMessageRequestSchema,
@@ -18,7 +19,6 @@ import {
   applyAiProposal,
   applyAiProposalUndo,
   type AiApplyContentStore,
-  type AiApplyPriorDraft,
 } from "./apply.js";
 import { buildAuditRecord, type AiAuditRecord } from "./audit.js";
 import {
@@ -79,14 +79,7 @@ export type InlineTransformRequestBody = {
 export type ProposalApplyRequestBody = {
   draftRevision?: number;
   schemaHash?: string;
-  /**
-   * Full proposal body — used by the chat surface, which persists
-   * proposals client-side (in localStorage) so they survive server
-   * restarts and never get a "NOT_FOUND" after the in-memory store is
-   * wiped. When present, the server validates the body via Zod and
-   * applies it directly, bypassing the proposal store lookup. Inline
-   * transforms continue to use the proposalId-only path.
-   */
+  /** Browser copy for display compatibility; the stored proposal authorizes apply. */
   proposal?: unknown;
 };
 
@@ -139,7 +132,7 @@ export type AiRouteApp = {
 export type MountAiRoutesOptions = {
   orchestrator: AiOrchestrator;
   proposalStore: AiProposalStore;
-  contentStore: AiContentStore;
+  contentStore: AiContentStore | ((request: Request) => AiContentStore);
   contextResolver: AiContextResolver;
   schemaHashLookup: AiSchemaHashLookup;
   authorize: AiAuthorizer;
@@ -149,9 +142,10 @@ export type MountAiRoutesOptions = {
    * Returns all content types registered for the given project +
    * environment, each with the full schema snapshot. Used to ground
    * the chat model in real types (system prompt) and to enum-constrain
-   * the find_entries tool's `type` parameter.
+   * the list_documents tool's `type` parameter.
    */
   contentTypesLookup?: (input: {
+    request: Request;
     project: string;
     environment: string;
   }) => Promise<import("@mdcms/shared").SchemaRegistryTypeSnapshot[]>;
@@ -159,7 +153,7 @@ export type MountAiRoutesOptions = {
   /**
    * Returns the list of locale codes (e.g. "en", "pl") configured as
    * supported by the project's MDCMS config. Used to ground the model
-   * and to enum-constrain the find_entries tool's `locale` parameter.
+   * and to enum-constrain the list_documents tool's `locale` parameter.
    */
   supportedLocalesLookup?: (input: {
     project: string;
@@ -176,30 +170,13 @@ export type MountAiRoutesOptions = {
     displayName: string;
   }>;
 
-  /**
-   * Backend for the find_entries chat tool. Wraps contentStore.list
-   * scoped to the active project + environment. The chat routes expose
-   * it to the model only when the caller holds `content:read:draft`.
-   */
-  listEntries?: (input: {
-    project: string;
-    environment: string;
-    type: string;
-    query?: string;
-    locale?: string;
-    limit?: number;
-  }) => Promise<import("./chat-tools.js").FindEntriesResult>;
-
-  /**
-   * Backend for the get_entry chat tool. Wraps contentStore.getById.
-   * The chat routes expose it to the model only when the caller holds
-   * `content:read:draft`.
-   */
-  getEntry?: (input: {
-    project: string;
-    environment: string;
-    documentId: string;
-  }) => Promise<import("./chat-tools.js").GetEntryResult | undefined>;
+  readToolsForRequest?: (
+    request: Request,
+    input: {
+      registeredTypes: string[];
+      supportedLocales: string[];
+    },
+  ) => Promise<readonly import("@mdcms/shared").AgentReadToolDefinition[]>;
 };
 
 const KIND_BY_TASK: Record<AiTaskKind, AiProposalKind> = {
@@ -620,9 +597,8 @@ function buildLifecycleAudit(input: {
   /**
    * Explicit document id override. The undo path always operates on
    * the document the apply call landed on, even for `create_document`
-   * proposals whose `proposal.documentId` is undefined (the resulting
-   * id is resolved client-side from the apply response and posted on
-   * the undo request). Pass this so the audit record carries the
+   * proposals whose `proposal.documentId` is undefined. The trusted
+   * apply result supplies this id so the audit record carries the
    * operated document id per SPEC-014 §Observability.
    */
   documentId?: string;
@@ -671,20 +647,83 @@ function canReanchorProposalBySourceText(proposal: AiProposal): boolean {
   );
 }
 
+function proposalContentExecutor(
+  options: MountAiRoutesOptions,
+  request: Request,
+  record: AiProposalRecord,
+): AiContentStore {
+  const store =
+    typeof options.contentStore === "function"
+      ? options.contentStore(request)
+      : options.contentStore;
+  if (!record.mdxCatalog) return store;
+  const validate = async (document: {
+    path: string;
+    format?: "md" | "mdx";
+    body?: string;
+    frontmatter?: Record<string, unknown>;
+  }) => {
+    if (document.format !== "mdx") return;
+    const result = await createMdxCatalogProposalValidator({
+      catalog: record.mdxCatalog!,
+    })({
+      ...record.proposal,
+      kind: "create_document",
+      operations: [
+        {
+          op: "create_document",
+          path: document.path,
+          format: "mdx",
+          body: document.body ?? "",
+          frontmatter: document.frontmatter ?? {},
+        },
+      ],
+    });
+    if (result.status === "invalid")
+      throw new RuntimeError({
+        code: "AI_OUTPUT_INVALID",
+        message: "Resulting document failed component validation.",
+        statusCode: 422,
+        details: { errors: result.errors },
+      });
+  };
+  return {
+    ...store,
+    create: async (scope, payload, mutationOptions) => {
+      await validate(payload);
+      return store.create(scope, payload, mutationOptions);
+    },
+    update: async (scope, id, payload, mutationOptions) => {
+      const current = await store.getById(scope, id, { draft: true });
+      if (current) await validate({ ...current, ...payload });
+      return store.update(scope, id, payload, mutationOptions);
+    },
+    ...(store.restore
+      ? {
+          restore: async (scope, id, mutationOptions) => {
+            const current = await store.getById(scope, id, { draft: true });
+            if (current) await validate(current);
+            return store.restore!(scope, id, mutationOptions);
+          },
+        }
+      : {}),
+  };
+}
+
 async function handleProposalApply(
   request: Request,
   proposalId: string,
   options: MountAiRoutesOptions,
 ): Promise<Response> {
   const occurredAt = new Date();
+  let release: (() => void) | undefined;
   let observedRecord: AiProposalRecord | undefined;
-  // Tracks the parsed proposal so the catch block can audit failures
-  // even when the proposal came from the chat body (no store record).
+  // Only a stored proposal can supply identity or audit metadata.
   let parsedProposal: AiProposal | undefined;
 
   try {
     await options.requireCsrf(request);
-    assertRequestTargetRouting(request, "project_environment");
+    const routing = assertRequestTargetRouting(request, "project_environment");
     const body = await readJsonBody<ProposalApplyRequestBody>(request);
     const schemaHash = ensureNonEmptyString(body.schemaHash, "schemaHash");
     const requestDraftRevision = ensureOptionalNonNegativeInteger(
@@ -692,59 +731,21 @@ async function handleProposalApply(
       "draftRevision",
     );
 
-    // Dual-path: if the client supplied a full proposal body (chat
-    // surface), validate via Zod and use it directly. Otherwise (inline
-    // transform) look up the proposal from the in-memory store by id.
-    // Chat proposals are persisted client-side in localStorage, so a
-    // server restart doesn't poison them.
-    let proposal: AiProposal;
-    let proposalFromStore = false;
-    if (body.proposal !== undefined) {
-      const parsed = aiProposalSchema.safeParse(body.proposal);
-      if (!parsed.success) {
-        throw new RuntimeError({
-          code: "INVALID_INPUT",
-          message: "Proposal body failed schema validation.",
-          statusCode: 400,
-          details: {
-            issues: parsed.error.issues.map((issue) => ({
-              path: issue.path.join("."),
-              message: issue.message,
-            })),
-          },
-        });
-      }
-      if (parsed.data.proposalId !== proposalId) {
-        throw new RuntimeError({
-          code: "INVALID_INPUT",
-          message:
-            "Proposal body proposalId does not match the URL path parameter.",
-          statusCode: 400,
-          details: {
-            urlProposalId: proposalId,
-            bodyProposalId: parsed.data.proposalId,
-          },
-        });
-      }
-      proposal = parsed.data;
-      parsedProposal = parsed.data;
-    } else {
-      observedRecord = options.proposalStore.observe(proposalId);
-      if (observedRecord && observedRecord.status === "expired") {
-        const audit = buildLifecycleAudit({
-          proposal: observedRecord.proposal,
-          outcome: "expired",
-          occurredAt,
-          actorId: observedRecord.createdByActorId,
-          errorCode: "AI_PROPOSAL_EXPIRED",
-        });
-        emitAudit(options.emitAudit, audit);
-      }
-      ensureProposalCanBeApplied(observedRecord, proposalId);
-      proposal = observedRecord.proposal;
-      proposalFromStore = true;
+    release = options.proposalStore.reserve(proposalId);
+    observedRecord = options.proposalStore.observe(proposalId);
+    ensureProposalCanBeApplied(observedRecord, proposalId);
+    const proposal = observedRecord.proposal;
+    parsedProposal = proposal;
+    if (
+      routing.project !== proposal.project ||
+      routing.environment !== proposal.environment
+    ) {
+      throw new RuntimeError({
+        code: "FORBIDDEN",
+        message: "Proposal target does not match the request.",
+        statusCode: 403,
+      });
     }
-
     if (
       typeof requestDraftRevision === "number" &&
       typeof proposal.baseDraftRevision === "number" &&
@@ -777,30 +778,48 @@ async function handleProposalApply(
       environment: proposal.environment,
     });
 
+    if (aiAuth.actorId !== observedRecord.createdByActorId)
+      throw new RuntimeError({
+        code: "FORBIDDEN",
+        message: "Proposal belongs to another user.",
+        statusCode: 403,
+      });
+    if (observedRecord.mdxCatalog) {
+      const validation = await createMdxCatalogProposalValidator({
+        catalog: observedRecord.mdxCatalog,
+      })(proposal);
+      if (validation.status === "invalid")
+        throw new RuntimeError({
+          code: "AI_OUTPUT_INVALID",
+          message: "Proposal component validation failed.",
+          statusCode: 422,
+          details: { errors: validation.errors },
+        });
+    }
     const expected = await options.schemaHashLookup({
       project: proposal.project,
       environment: proposal.environment,
     });
     ensureSchemaHashMatch(expected, schemaHash);
 
+    ensureProposalCanBeApplied(
+      options.proposalStore.observe(proposalId),
+      proposalId,
+    );
     const applyResult = await applyAiProposal({
       proposal,
       expectedSchemaHash: schemaHash,
       actorId: aiAuth.actorId,
       attribution: aiAuth.attribution,
-      store: options.contentStore,
+      store: proposalContentExecutor(options, request, observedRecord),
     });
     const { document, priorDraft } = applyResult;
 
-    // Mark accepted in the store only when we sourced the proposal
-    // from the store. Client-supplied chat proposals don't have a store
-    // record to update.
-    const acceptedProposal = proposalFromStore
-      ? options.proposalStore.markAccepted({
-          proposalId,
-          actorId: aiAuth.actorId,
-        }).proposal
-      : proposal;
+    const acceptedProposal = options.proposalStore.markAccepted({
+      proposalId,
+      actorId: aiAuth.actorId,
+    }).proposal;
+    options.proposalStore.saveUndo(proposalId, applyResult);
 
     const audit = buildLifecycleAudit({
       proposal: acceptedProposal,
@@ -835,10 +854,12 @@ async function handleProposalApply(
         : "apply_failed";
     const errorMessage = error instanceof Error ? error.message : String(error);
 
-    // Prefer the store record when we have one (it carries the original
-    // createdByActorId); fall back to the chat-body proposal so a
-    // failed apply on a chat-surface proposal still emits an audit.
-    if (observedRecord && observedRecord.status === "pending") {
+    // Use the stored proposal and its original actor for lifecycle failures.
+    if (
+      observedRecord &&
+      (observedRecord.status === "pending" ||
+        observedRecord.status === "expired")
+    ) {
       emitAudit(
         options.emitAudit,
         buildLifecycleAudit({
@@ -864,6 +885,8 @@ async function handleProposalApply(
     }
 
     return toRuntimeErrorResponse(error);
+  } finally {
+    release?.();
   }
 }
 
@@ -880,132 +903,65 @@ export type ProposalUndoRequestBody = {
   postApplyDraftRevision?: unknown;
 };
 
-function ensurePriorDraftPayload(
-  value: unknown,
-): AiApplyPriorDraft | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value !== "object") {
-    throw invalidInput("priorDraft must be an object.", {
-      field: "priorDraft",
-    });
-  }
-  const record = value as Record<string, unknown>;
-  if (typeof record.body !== "string") {
-    throw invalidInput("priorDraft.body must be a string.", {
-      field: "priorDraft.body",
-    });
-  }
-  if (
-    typeof record.frontmatter !== "object" ||
-    record.frontmatter === null ||
-    Array.isArray(record.frontmatter)
-  ) {
-    throw invalidInput("priorDraft.frontmatter must be a plain object.", {
-      field: "priorDraft.frontmatter",
-    });
-  }
-  return {
-    body: record.body,
-    frontmatter: record.frontmatter as Record<string, unknown>,
-  };
-}
-
 async function handleProposalUndo(
   request: Request,
   proposalId: string,
   options: MountAiRoutesOptions,
 ): Promise<Response> {
   const occurredAt = new Date();
+  let release: (() => void) | undefined;
   let parsedProposal: AiProposal | undefined;
   let resolvedActorId: string | undefined;
   let resolvedDocumentId: string | undefined;
 
   try {
     await options.requireCsrf(request);
-    assertRequestTargetRouting(request, "project_environment");
+    const routing = assertRequestTargetRouting(request, "project_environment");
     const body = await readJsonBody<ProposalUndoRequestBody>(request);
     const schemaHash = ensureNonEmptyString(body.schemaHash, "schemaHash");
-    const documentId = ensureNonEmptyString(body.documentId, "documentId");
-    resolvedDocumentId = documentId;
-    const postApplyDraftRevision = ensureOptionalNonNegativeInteger(
+    const suppliedRevision = ensureOptionalNonNegativeInteger(
       body.postApplyDraftRevision,
       "postApplyDraftRevision",
     );
-
-    if (body.proposal === undefined) {
-      throw invalidInput("Undo requires the wire-shape proposal body.", {
+    if (suppliedRevision === undefined)
+      throw invalidInput("postApplyDraftRevision is required.", {
+        field: "postApplyDraftRevision",
+      });
+    const wireProposal = aiProposalSchema.safeParse(body.proposal);
+    if (!wireProposal.success || wireProposal.data.proposalId !== proposalId)
+      throw invalidInput("A matching proposal body is required.", {
         field: "proposal",
       });
-    }
-    const parsed = aiProposalSchema.safeParse(body.proposal);
-    if (!parsed.success) {
+    release = options.proposalStore.reserve(proposalId);
+    const record = options.proposalStore.peek(proposalId);
+    if (!record || record.status !== "accepted")
       throw new RuntimeError({
-        code: "INVALID_INPUT",
-        message: "Proposal body failed schema validation.",
-        statusCode: 400,
-        details: {
-          issues: parsed.error.issues.map((issue) => ({
-            path: issue.path.join("."),
-            message: issue.message,
-          })),
-        },
+        code: "AI_PROPOSAL_CONFLICT",
+        message: "No accepted proposal is available for undo.",
+        statusCode: 409,
       });
-    }
-    if (parsed.data.proposalId !== proposalId) {
-      throw new RuntimeError({
-        code: "INVALID_INPUT",
-        message:
-          "Proposal body proposalId does not match the URL path parameter.",
-        statusCode: 400,
-        details: {
-          urlProposalId: proposalId,
-          bodyProposalId: parsed.data.proposalId,
-        },
-      });
-    }
-    const proposal = parsed.data;
+    const trusted = options.proposalStore.getUndo(proposalId);
+    const proposal = record.proposal;
     parsedProposal = proposal;
-
-    // SPEC-014 §Post-Accept Undo Window: body/frontmatter undo MUST
-    // ship the post-apply draft revision so the server can refuse a
-    // replay that would clobber a concurrent edit. The apply call
-    // returns it on `result.document.draftRevision`; the client
-    // stamps it onto the proposal on accept. A request that omits
-    // it is a programming error, not a transient failure.
-    const isBodyOrFrontmatterKind =
-      proposal.kind === "replace_selection" ||
-      proposal.kind === "insert_block" ||
-      proposal.kind === "update_frontmatter";
-    if (isBodyOrFrontmatterKind && typeof postApplyDraftRevision !== "number") {
-      throw invalidInput(
-        "postApplyDraftRevision is required for body/frontmatter undo.",
-        { field: "postApplyDraftRevision", proposalKind: proposal.kind },
-      );
-    }
-
-    // For every kind except `create_document`, the proposal already
-    // pins the target document. Allowing the request body documentId
-    // to diverge would let a caller replay the proposal's captured
-    // priorDraft (or restore-from-trash, or soft-delete) onto an
-    // unrelated document the caller happens to have write access to.
-    // The proposal's documentId is the canonical target; refuse a
-    // mismatch up front so the audit + mutation paths only ever see
-    // a consistent pair.
+    const documentId = trusted.documentId;
+    resolvedDocumentId = documentId;
+    const postApplyDraftRevision = trusted.postApplyDraftRevision;
+    if (suppliedRevision !== postApplyDraftRevision)
+      throw new RuntimeError({
+        code: "AI_PROPOSAL_CONFLICT",
+        message: "Undo revision does not match the accepted result.",
+        statusCode: 409,
+      });
     if (
-      proposal.kind !== "create_document" &&
-      proposal.documentId !== documentId
-    ) {
-      throw invalidInput(
-        "Request documentId does not match the proposal's target document.",
-        {
-          field: "documentId",
-          proposalKind: proposal.kind,
-          requestDocumentId: documentId,
-          proposalDocumentId: proposal.documentId,
-        },
-      );
-    }
-
+      body.documentId !== documentId ||
+      routing.project !== proposal.project ||
+      routing.environment !== proposal.environment
+    )
+      throw new RuntimeError({
+        code: "FORBIDDEN",
+        message: "Undo target does not match the accepted proposal.",
+        statusCode: 403,
+      });
     // Undo authorization mirrors the action being reverted:
     //   create_document  → content:delete (we are deleting the doc)
     //   delete_document  → content:write  (we are restoring the doc)
@@ -1018,6 +974,12 @@ async function handleProposalUndo(
       environment: proposal.environment,
     });
     resolvedActorId = aiAuth.actorId;
+    if (record.createdByActorId !== aiAuth.actorId)
+      throw new RuntimeError({
+        code: "FORBIDDEN",
+        message: "Proposal belongs to another user.",
+        statusCode: 403,
+      });
 
     const expected = await options.schemaHashLookup({
       project: proposal.project,
@@ -1025,7 +987,8 @@ async function handleProposalUndo(
     });
     ensureSchemaHashMatch(expected, schemaHash);
 
-    const priorDraft = ensurePriorDraftPayload(body.priorDraft);
+    options.proposalStore.getUndo(proposalId);
+    const priorDraft = trusted.priorDraft;
 
     const undoResult = await applyAiProposalUndo({
       proposal,
@@ -1033,13 +996,14 @@ async function handleProposalUndo(
       expectedSchemaHash: schemaHash,
       actorId: aiAuth.actorId,
       attribution: aiAuth.attribution,
-      store: options.contentStore,
+      store: proposalContentExecutor(options, request, record),
       ...(priorDraft ? { priorDraft } : {}),
       ...(typeof postApplyDraftRevision === "number"
         ? { postApplyDraftRevision }
         : {}),
     });
 
+    options.proposalStore.consumeUndo(proposalId);
     emitAudit(
       options.emitAudit,
       buildLifecycleAudit({
@@ -1080,6 +1044,8 @@ async function handleProposalUndo(
       );
     }
     return toRuntimeErrorResponse(error);
+  } finally {
+    release?.();
   }
 }
 
@@ -1092,91 +1058,44 @@ async function handleProposalReject(
 
   try {
     await options.requireCsrf(request);
-    assertRequestTargetRouting(request, "project_environment");
-
-    const rawBody = (await readJsonBody<{ proposal?: unknown }>(request)) ?? {};
-
-    // Dual-path: chat surface persists proposals client-side and posts
-    // the body back to reject; inline transforms still rely on the
-    // in-memory proposal store.
-    let proposal: AiProposal;
-    let proposalFromStore = false;
-    if (rawBody.proposal !== undefined) {
-      const parsed = aiProposalSchema.safeParse(rawBody.proposal);
-      if (!parsed.success) {
-        throw new RuntimeError({
-          code: "INVALID_INPUT",
-          message: "Proposal body failed schema validation.",
-          statusCode: 400,
-          details: {
-            issues: parsed.error.issues.map((issue) => ({
-              path: issue.path.join("."),
-              message: issue.message,
-            })),
-          },
-        });
-      }
-      if (parsed.data.proposalId !== proposalId) {
-        throw new RuntimeError({
-          code: "INVALID_INPUT",
-          message:
-            "Proposal body proposalId does not match the URL path parameter.",
-          statusCode: 400,
-        });
-      }
-      proposal = parsed.data;
-    } else {
-      const observed = options.proposalStore.observe(proposalId);
-      if (!observed) {
-        throw new RuntimeError({
-          code: "NOT_FOUND",
-          message: "AI proposal not found.",
-          statusCode: 404,
-          details: { proposalId },
-        });
-      }
-      if (observed.status === "expired") {
-        emitAudit(
-          options.emitAudit,
-          buildLifecycleAudit({
-            proposal: observed.proposal,
-            outcome: "expired",
-            occurredAt,
-            actorId: observed.createdByActorId,
-            errorCode: "AI_PROPOSAL_EXPIRED",
-          }),
-        );
-        throw new RuntimeError({
-          code: "AI_PROPOSAL_EXPIRED",
-          message: "AI proposal has expired.",
-          statusCode: 410,
-          details: { proposalId, status: observed.status },
-        });
-      }
-      if (observed.status !== "pending") {
-        throw new RuntimeError({
-          code: "AI_PROPOSAL_CONFLICT",
-          message: "AI proposal has already been resolved.",
-          statusCode: 409,
-          details: { proposalId, status: observed.status },
-        });
-      }
-      proposal = observed.proposal;
-      proposalFromStore = true;
+    const routing = assertRequestTargetRouting(request, "project_environment");
+    const observed = options.proposalStore.peek(proposalId);
+    if (!observed) {
+      throw new RuntimeError({
+        code: "NOT_FOUND",
+        message: "AI proposal not found.",
+        statusCode: 404,
+        details: { proposalId },
+      });
+    }
+    const proposal = observed.proposal;
+    if (
+      routing.project !== proposal.project ||
+      routing.environment !== proposal.environment
+    ) {
+      throw new RuntimeError({
+        code: "FORBIDDEN",
+        message: "Proposal target does not match the request.",
+        statusCode: 403,
+      });
     }
 
     const aiAuth = await options.authorize(request, {
-      requiredScope: "ai:use",
+      requiredScope: "content:write",
       project: proposal.project,
       environment: proposal.environment,
     });
-
-    const rejectedProposal = proposalFromStore
-      ? options.proposalStore.markRejected({
-          proposalId,
-          actorId: aiAuth.actorId,
-        }).proposal
-      : proposal;
+    if (aiAuth.actorId !== observed.createdByActorId) {
+      throw new RuntimeError({
+        code: "FORBIDDEN",
+        message: "Proposal belongs to another user.",
+        statusCode: 403,
+      });
+    }
+    const rejectedProposal = options.proposalStore.markRejected({
+      proposalId,
+      actorId: aiAuth.actorId,
+    }).proposal;
 
     emitAudit(
       options.emitAudit,
@@ -1234,7 +1153,7 @@ type ChatCapabilities = {
   canDelete: boolean;
   /**
    * `content:read:draft` for the routed project and environment. Gates
-   * the document lookup tools (`find_entries`, `get_entry`), which
+   * the document lookup tools (`list_documents`, `get_document`), which
    * return draft bodies to the model.
    */
   canReadDrafts: boolean;
@@ -1298,45 +1217,26 @@ async function probeChatCapabilities(
  * Bind the configured chat tool backends to the routed project and
  * environment. The document lookup backends are included only when the
  * caller can read drafts, so callers without `content:read:draft` never
- * get `find_entries` or `get_entry` on the model's tool surface.
+ * get `list_documents` or `get_document` on the model's tool surface.
  */
-function buildChatToolBackends(input: {
+async function buildChatToolBackends(input: {
   options: MountAiRoutesOptions;
-  project: string;
-  environment: string;
+  request: Request;
+  registeredTypes: string[];
+  supportedLocales: string[];
   canReadDrafts: boolean;
   getComponentReference: ReturnType<typeof buildComponentReferenceBackend>;
-}): import("./orchestrator.js").AiChatInput["toolBackends"] {
-  const { options, project, environment, getComponentReference } = input;
-  const listEntries = input.canReadDrafts ? options.listEntries : undefined;
-  const getEntry = input.canReadDrafts ? options.getEntry : undefined;
-
-  if (!listEntries && !getEntry && !getComponentReference) {
-    return undefined;
-  }
-
+}): Promise<import("./orchestrator.js").AiChatInput["toolBackends"]> {
+  const definitions =
+    (await input.options.readToolsForRequest?.(input.request, input)) ?? [];
+  const readTools = definitions.filter(
+    (tool) => tool.name === "get_schema" || input.canReadDrafts,
+  );
   return {
-    ...(listEntries
-      ? {
-          findEntries: (lookup: {
-            type: string;
-            query?: string;
-            locale?: string;
-            limit?: number;
-          }) => listEntries({ project, environment, ...lookup }),
-        }
+    readTools,
+    ...(input.getComponentReference
+      ? { getComponentReference: input.getComponentReference }
       : {}),
-    ...(getEntry
-      ? {
-          getEntry: (lookup: { documentId: string }) =>
-            getEntry({
-              project,
-              environment,
-              documentId: lookup.documentId,
-            }),
-        }
-      : {}),
-    ...(getComponentReference ? { getComponentReference } : {}),
   };
 }
 
@@ -1644,12 +1544,13 @@ async function prepareChatTurn(
     canEditDocument: effectiveAllowed.has("edit_document"),
     canCreateDocument: effectiveAllowed.has("create_document"),
     canDeleteDocument: effectiveAllowed.has("delete_document"),
-    canReadEntries: capabilities.canReadDrafts && Boolean(options.listEntries),
+    canReadEntries:
+      capabilities.canReadDrafts && Boolean(options.readToolsForRequest),
   };
 
   const [registeredTypes, supportedLocales, currentUser] = await Promise.all([
     options.contentTypesLookup
-      ? options.contentTypesLookup({ project, environment })
+      ? options.contentTypesLookup({ request, project, environment })
       : Promise.resolve([]),
     options.supportedLocalesLookup
       ? options.supportedLocalesLookup({ project, environment })
@@ -1658,10 +1559,11 @@ async function prepareChatTurn(
       ? options.userLookup({ userId: aiAuth.actorId }).catch(() => undefined)
       : Promise.resolve(undefined),
   ]);
-  const toolBackends = buildChatToolBackends({
+  const toolBackends = await buildChatToolBackends({
     options,
-    project,
-    environment,
+    request,
+    registeredTypes: registeredTypes.map((type) => type.type),
+    supportedLocales,
     canReadDrafts: capabilities.canReadDrafts,
     getComponentReference: buildComponentReferenceBackend(
       body.componentReferences,
@@ -1780,10 +1682,8 @@ async function handleChatMessage(
     // the feedback string isn't enough — the model wouldn't know what
     // it was being asked to redo.
     //
-    // Chat proposals live client-side (localStorage), so the client
-    // sends the full prior proposal body when regenerating. Fall back
-    // to the in-memory store for backward compatibility (inline-driven
-    // regenerates, if any).
+    // The optional browser copy is conversational input for regeneration.
+    // Mutation and lifecycle endpoints resolve the server-owned proposal.
     let priorProposal: AiProposal | undefined;
     if (body.rejectedProposal) {
       const parsed = aiProposalSchema.safeParse(body.rejectedProposal);
@@ -1910,7 +1810,7 @@ async function handleChatMessage(
       canCreateDocument: effectiveAllowed.has("create_document"),
       canDeleteDocument: effectiveAllowed.has("delete_document"),
       canReadEntries:
-        capabilities.canReadDrafts && Boolean(options.listEntries),
+        capabilities.canReadDrafts && Boolean(options.readToolsForRequest),
     };
 
     // Gather per-turn project knowledge in parallel with the existing
@@ -1918,7 +1818,7 @@ async function handleChatMessage(
     // longest query, not the sum.
     const [registeredTypes, supportedLocales, currentUser] = await Promise.all([
       options.contentTypesLookup
-        ? options.contentTypesLookup({ project, environment })
+        ? options.contentTypesLookup({ request, project, environment })
         : Promise.resolve([]),
       options.supportedLocalesLookup
         ? options.supportedLocalesLookup({ project, environment })
@@ -1927,10 +1827,11 @@ async function handleChatMessage(
         ? options.userLookup({ userId: aiAuth.actorId }).catch(() => undefined)
         : Promise.resolve(undefined),
     ]);
-    const toolBackends = buildChatToolBackends({
+    const toolBackends = await buildChatToolBackends({
       options,
-      project,
-      environment,
+      request,
+      registeredTypes: registeredTypes.map((type) => type.type),
+      supportedLocales,
       canReadDrafts: capabilities.canReadDrafts,
       getComponentReference: buildComponentReferenceBackend(
         body.componentReferences,
@@ -2033,12 +1934,13 @@ async function handleChatMessage(
       );
     }
 
-    // Chat proposals are owned by the client (persisted in localStorage
-    // alongside the conversation thread). Apply/reject accept the full
-    // proposal body from the client, so we deliberately do NOT insert
-    // chat proposals into the in-memory store — that store is only the
-    // backing for inline-transform proposals where the client doesn't
-    // carry the proposal body.
+    for (const proposal of filteredProposals) {
+      options.proposalStore.insert({
+        proposal,
+        actorId: aiAuth.actorId,
+        ...(body.mdxCatalog ? { mdxCatalog: body.mdxCatalog } : {}),
+      });
+    }
     const messageId = `m-asst-${occurredAt.getTime().toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}`;
     const assistantMessage: AiChatMessage = {
       id: messageId,
@@ -2208,6 +2110,14 @@ async function handleChatMessageStream(
       const filtered = collectedProposals.filter((p) =>
         effectiveAllowed.has(PROPOSAL_KIND_TO_ACTION[p.kind]),
       );
+
+      for (const proposal of filtered) {
+        options.proposalStore.insert({
+          proposal,
+          actorId: aiAuth.actorId,
+          ...(body.mdxCatalog ? { mdxCatalog: body.mdxCatalog } : {}),
+        });
+      }
 
       const messageId = `m-asst-${occurredAt.getTime().toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}`;
       const assistantMessage: AiChatMessage = {
