@@ -135,9 +135,10 @@ export type AiChatInput = {
   mdxCatalog?: MdxComponentCatalog;
   /**
    * Backends for the read-only chat tools (find_entries, get_entry).
-   * The route handler wires these from the contentStore; when absent,
-   * the tools are not registered (the model gracefully responds in
-   * text). `canReadEntries` is derived from `findEntries` presence.
+   * The route handler wires these from the contentStore only when the
+   * caller holds `content:read:draft`; the lookup tools are registered
+   * only when `capabilities.canReadEntries` is true and `findEntries`
+   * is present. Otherwise the model responds in text.
    */
   toolBackends?: {
     findEntries?: import("./chat-tools.js").ChatToolDeps["findEntriesBackend"];
@@ -549,6 +550,17 @@ function prepareChatRun(
       })
     : bodyAwareValidator;
 
+  // Document lookup tools need both the caller's draft read capability
+  // (decided by the route handler) and a wired backend. The same
+  // effective capabilities feed tool registration and the system
+  // prompt so the model's availability notes match its tool surface.
+  const capabilities: ChatToolCapabilities = {
+    ...call.capabilities,
+    canReadEntries:
+      call.capabilities.canReadEntries &&
+      Boolean(call.toolBackends?.findEntries),
+  };
+
   const tools = buildChatTools({
     envelope,
     ...(call.attachedSelection
@@ -571,10 +583,7 @@ function prepareChatRun(
     idFactory,
     ttlMs,
     ...(effectiveValidator ? { validator: effectiveValidator } : {}),
-    capabilities: {
-      ...call.capabilities,
-      canReadEntries: Boolean(call.toolBackends?.findEntries),
-    },
+    capabilities,
     collected,
     registeredTypeIds: (call.projectKnowledge?.registeredTypes ?? []).map(
       (t) => t.type,
@@ -607,7 +616,7 @@ function prepareChatRun(
   const system = buildChatSystemPrompt({
     hasActiveDocument: !!call.activeDocument,
     hasAttachedSelection: !!call.attachedSelection,
-    capabilities: call.capabilities,
+    capabilities,
     registeredToolNames: Object.keys(tools),
     projectKnowledge,
   });

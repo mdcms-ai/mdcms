@@ -177,7 +177,8 @@ export type MountAiRoutesOptions = {
 
   /**
    * Backend for the find_entries chat tool. Wraps contentStore.list
-   * scoped to the active project + environment.
+   * scoped to the active project + environment. The chat routes expose
+   * it to the model only when the caller holds `content:read:draft`.
    */
   listEntries?: (input: {
     project: string;
@@ -190,6 +191,8 @@ export type MountAiRoutesOptions = {
 
   /**
    * Backend for the get_entry chat tool. Wraps contentStore.getById.
+   * The chat routes expose it to the model only when the caller holds
+   * `content:read:draft`.
    */
   getEntry?: (input: {
     project: string;
@@ -1226,7 +1229,113 @@ const PROPOSAL_KIND_TO_ACTION: Record<AiProposalKind, AiChatAllowedAction> = {
 type ChatCapabilities = {
   canWrite: boolean;
   canDelete: boolean;
+  /**
+   * `content:read:draft` for the routed project and environment. Gates
+   * the document lookup tools (`find_entries`, `get_entry`), which
+   * return draft bodies to the model.
+   */
+  canReadDrafts: boolean;
 };
+
+/**
+ * Whether the caller holds `requiredScope` for the routed project and
+ * environment. Only permission denials (`403`) count as "not held";
+ * any other failure (expired session, routing mismatch, backend error)
+ * propagates so it surfaces as the request's error.
+ */
+async function callerHoldsScope(
+  request: Request,
+  options: MountAiRoutesOptions,
+  requirement: {
+    requiredScope: "content:write" | "content:delete" | "content:read:draft";
+    project: string;
+    environment: string;
+  },
+): Promise<boolean> {
+  try {
+    await options.authorize(request, requirement);
+    return true;
+  } catch (error) {
+    if (error instanceof RuntimeError && error.statusCode === 403) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+/**
+ * Probe the content capabilities that shape the chat tool surface.
+ * These calls double as the explicit capability check the chat needs
+ * and as the place where unrelated auth failures surface.
+ */
+async function probeChatCapabilities(
+  request: Request,
+  options: MountAiRoutesOptions,
+  project: string,
+  environment: string,
+): Promise<ChatCapabilities> {
+  const routing = { project, environment };
+  return {
+    canWrite: await callerHoldsScope(request, options, {
+      requiredScope: "content:write",
+      ...routing,
+    }),
+    canDelete: await callerHoldsScope(request, options, {
+      requiredScope: "content:delete",
+      ...routing,
+    }),
+    canReadDrafts: await callerHoldsScope(request, options, {
+      requiredScope: "content:read:draft",
+      ...routing,
+    }),
+  };
+}
+
+/**
+ * Bind the configured chat tool backends to the routed project and
+ * environment. The document lookup backends are included only when the
+ * caller can read drafts, so callers without `content:read:draft` never
+ * get `find_entries` or `get_entry` on the model's tool surface.
+ */
+function buildChatToolBackends(input: {
+  options: MountAiRoutesOptions;
+  project: string;
+  environment: string;
+  canReadDrafts: boolean;
+  getComponentReference: ReturnType<typeof buildComponentReferenceBackend>;
+}): import("./orchestrator.js").AiChatInput["toolBackends"] {
+  const { options, project, environment, getComponentReference } = input;
+  const listEntries = input.canReadDrafts ? options.listEntries : undefined;
+  const getEntry = input.canReadDrafts ? options.getEntry : undefined;
+
+  if (!listEntries && !getEntry && !getComponentReference) {
+    return undefined;
+  }
+
+  return {
+    ...(listEntries
+      ? {
+          findEntries: (lookup: {
+            type: string;
+            query?: string;
+            locale?: string;
+            limit?: number;
+          }) => listEntries({ project, environment, ...lookup }),
+        }
+      : {}),
+    ...(getEntry
+      ? {
+          getEntry: (lookup: { documentId: string }) =>
+            getEntry({
+              project,
+              environment,
+              documentId: lookup.documentId,
+            }),
+        }
+      : {}),
+    ...(getComponentReference ? { getComponentReference } : {}),
+  };
+}
 
 /**
  * Resolve which action kinds the caller is allowed to receive
@@ -1409,29 +1518,12 @@ async function prepareChatTurn(
     }
   }
 
-  const capabilities: ChatCapabilities = { canWrite: false, canDelete: false };
-  try {
-    await options.authorize(request, {
-      requiredScope: "content:write",
-      project,
-      environment,
-    });
-    capabilities.canWrite = true;
-  } catch (error) {
-    if (!(error instanceof RuntimeError) || error.statusCode !== 403)
-      throw error;
-  }
-  try {
-    await options.authorize(request, {
-      requiredScope: "content:delete",
-      project,
-      environment,
-    });
-    capabilities.canDelete = true;
-  } catch (error) {
-    if (!(error instanceof RuntimeError) || error.statusCode !== 403)
-      throw error;
-  }
+  const capabilities = await probeChatCapabilities(
+    request,
+    options,
+    project,
+    environment,
+  );
 
   const effectiveAllowed = resolveEffectiveAllowedActions(
     body.allowedActions,
@@ -1549,7 +1641,7 @@ async function prepareChatTurn(
     canEditDocument: effectiveAllowed.has("edit_document"),
     canCreateDocument: effectiveAllowed.has("create_document"),
     canDeleteDocument: effectiveAllowed.has("delete_document"),
-    canReadEntries: Boolean(options.listEntries),
+    canReadEntries: capabilities.canReadDrafts && Boolean(options.listEntries),
   };
 
   const [registeredTypes, supportedLocales, currentUser] = await Promise.all([
@@ -1563,9 +1655,15 @@ async function prepareChatTurn(
       ? options.userLookup({ userId: aiAuth.actorId }).catch(() => undefined)
       : Promise.resolve(undefined),
   ]);
-  const getComponentReference = buildComponentReferenceBackend(
-    body.componentReferences,
-  );
+  const toolBackends = buildChatToolBackends({
+    options,
+    project,
+    environment,
+    canReadDrafts: capabilities.canReadDrafts,
+    getComponentReference: buildComponentReferenceBackend(
+      body.componentReferences,
+    ),
+  });
 
   const chatInput: import("./orchestrator.js").AiChatInput = {
     message: `${regenerateInstructionPrefix}${body.message}`,
@@ -1602,38 +1700,7 @@ async function prepareChatTurn(
       ...(currentUser ? { currentUser } : {}),
     },
     ...(body.mdxCatalog ? { mdxCatalog: body.mdxCatalog } : {}),
-    ...(options.listEntries || options.getEntry || getComponentReference
-      ? {
-          toolBackends: {
-            ...(options.listEntries
-              ? {
-                  findEntries: (input: {
-                    type: string;
-                    query?: string;
-                    locale?: string;
-                    limit?: number;
-                  }) =>
-                    options.listEntries!({
-                      project,
-                      environment,
-                      ...input,
-                    }),
-                }
-              : {}),
-            ...(options.getEntry
-              ? {
-                  getEntry: (input: { documentId: string }) =>
-                    options.getEntry!({
-                      project,
-                      environment,
-                      documentId: input.documentId,
-                    }),
-                }
-              : {}),
-            ...(getComponentReference ? { getComponentReference } : {}),
-          },
-        }
-      : {}),
+    ...(toolBackends ? { toolBackends } : {}),
   };
 
   return {
@@ -1690,37 +1757,12 @@ async function handleChatMessage(
       }
     }
 
-    // Probe content capabilities. These calls double as the explicit
-    // capability check the chat needs AND as the place where unrelated
-    // auth failures (token expired, wrong project) surface.
-    const capabilities: ChatCapabilities = {
-      canWrite: false,
-      canDelete: false,
-    };
-    try {
-      await options.authorize(request, {
-        requiredScope: "content:write",
-        project,
-        environment,
-      });
-      capabilities.canWrite = true;
-    } catch (error) {
-      if (!(error instanceof RuntimeError) || error.statusCode !== 403) {
-        throw error;
-      }
-    }
-    try {
-      await options.authorize(request, {
-        requiredScope: "content:delete",
-        project,
-        environment,
-      });
-      capabilities.canDelete = true;
-    } catch (error) {
-      if (!(error instanceof RuntimeError) || error.statusCode !== 403) {
-        throw error;
-      }
-    }
+    const capabilities = await probeChatCapabilities(
+      request,
+      options,
+      project,
+      environment,
+    );
 
     const effectiveAllowed = resolveEffectiveAllowedActions(
       body.allowedActions,
@@ -1864,7 +1906,8 @@ async function handleChatMessage(
       canEditDocument: effectiveAllowed.has("edit_document"),
       canCreateDocument: effectiveAllowed.has("create_document"),
       canDeleteDocument: effectiveAllowed.has("delete_document"),
-      canReadEntries: Boolean(options.listEntries),
+      canReadEntries:
+        capabilities.canReadDrafts && Boolean(options.listEntries),
     };
 
     // Gather per-turn project knowledge in parallel with the existing
@@ -1881,9 +1924,15 @@ async function handleChatMessage(
         ? options.userLookup({ userId: aiAuth.actorId }).catch(() => undefined)
         : Promise.resolve(undefined),
     ]);
-    const getComponentReference = buildComponentReferenceBackend(
-      body.componentReferences,
-    );
+    const toolBackends = buildChatToolBackends({
+      options,
+      project,
+      environment,
+      canReadDrafts: capabilities.canReadDrafts,
+      getComponentReference: buildComponentReferenceBackend(
+        body.componentReferences,
+      ),
+    });
 
     let newProposals: AiProposal[] = [];
     let assistantText: string | undefined;
@@ -1924,38 +1973,7 @@ async function handleChatMessage(
           ...(currentUser ? { currentUser } : {}),
         },
         ...(body.mdxCatalog ? { mdxCatalog: body.mdxCatalog } : {}),
-        ...(options.listEntries || options.getEntry || getComponentReference
-          ? {
-              toolBackends: {
-                ...(options.listEntries
-                  ? {
-                      findEntries: (input: {
-                        type: string;
-                        query?: string;
-                        locale?: string;
-                        limit?: number;
-                      }) =>
-                        options.listEntries!({
-                          project,
-                          environment,
-                          ...input,
-                        }),
-                    }
-                  : {}),
-                ...(options.getEntry
-                  ? {
-                      getEntry: (input: { documentId: string }) =>
-                        options.getEntry!({
-                          project,
-                          environment,
-                          documentId: input.documentId,
-                        }),
-                    }
-                  : {}),
-                ...(getComponentReference ? { getComponentReference } : {}),
-              },
-            }
-          : {}),
+        ...(toolBackends ? { toolBackends } : {}),
       });
       newProposals = chatResult.proposals;
       assistantText = chatResult.text;
