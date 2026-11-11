@@ -1,3 +1,4 @@
+import type { ContentWriteAttribution } from "@mdcms/shared";
 import {
   aiChatMessageRequestSchema,
   aiProposalSchema,
@@ -127,7 +128,7 @@ export type AiAuthorizer = (
     environment: string;
     documentPath?: string;
   },
-) => Promise<{ actorId: string }>;
+) => Promise<{ actorId: string; attribution: ContentWriteAttribution }>;
 
 export type AiCsrfProtector = (request: Request) => Promise<void>;
 
@@ -786,6 +787,7 @@ async function handleProposalApply(
       proposal,
       expectedSchemaHash: schemaHash,
       actorId: aiAuth.actorId,
+      attribution: aiAuth.attribution,
       store: options.contentStore,
     });
     const { document, priorDraft } = applyResult;
@@ -1030,6 +1032,7 @@ async function handleProposalUndo(
       documentId,
       expectedSchemaHash: schemaHash,
       actorId: aiAuth.actorId,
+      attribution: aiAuth.attribution,
       store: options.contentStore,
       ...(priorDraft ? { priorDraft } : {}),
       ...(typeof postApplyDraftRevision === "number"

@@ -107,3 +107,9 @@ Entries are reverse-chronological (newest first).
 **Rule:** Treat loopback listener failures on port `0` in CLI tests as a likely sandbox artifact before debugging login code.
 **Why:** `bun test --cwd apps/cli ./src` can fail `loopback callback returns styled HTML success page` with `Failed to start server. Is port 0 in use?` under Codex sandboxing, while the same targeted test passes outside the sandbox.
 **How to apply:** When a CLI test that binds `127.0.0.1` fails with a port-bind error, rerun the targeted test with sandbox escalation before attributing the failure to product code.
+
+## 2026-11-11: distinguish store contracts when migrating callers
+
+**Rule:** Identify the owning store contract before updating calls to common methods such as `create`, `update`, and `restore`.
+**Why:** Content, environment, and webhook stores use the same method names but accept different authorization metadata.
+**How to apply:** Scope edits by the concrete store type, preserve existing actor semantics outside that contract, and typecheck all affected callers.

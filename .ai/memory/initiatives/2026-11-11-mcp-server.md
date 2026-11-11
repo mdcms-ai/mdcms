@@ -42,3 +42,10 @@ Out:
 - Assistant writes stay proposals; MCP writes execute directly.
 - Attribution records the last change and each publish, with a verified
   channel and an optional client-declared name.
+
+- ContentStore writes require authentication-derived `ContentWriteAttribution`.
+  HTTP content routes, collaboration, Assistant apply/undo, and seeding persist
+  actor IDs and change origins. The CLI declares its name and version; Studio
+  displays the last editor and publication authors with their channels.
+- Environment clone/promote attribution belongs to the shared content-service
+  integration alongside its source/destination authorization checks.

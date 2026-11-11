@@ -657,6 +657,17 @@ export function mountContentApiRoutes(
   options: MountContentApiRoutesOptions,
 ): void {
   const contentApp = app as ContentRouteApp;
+  async function attachUsers(response: object, ids: string[]): Promise<void> {
+    if (!options.resolveUsers || ids.length === 0) return;
+    try {
+      (response as Record<string, unknown>).users = await options.resolveUsers([
+        ...new Set(ids),
+      ]);
+    } catch {
+      /* User enrichment is best-effort and must not break content reads. */
+    }
+  }
+
   const commitMutation = createContentLifecycleMutationCommitter(
     options.lifecycleEvents,
   );
@@ -773,20 +784,10 @@ export function mountContentApiRoutes(
         }),
       );
 
-      if (options.resolveUsers && response.data.length > 0) {
-        try {
-          const uniqueUserIds = [
-            ...new Set(
-              response.data.flatMap((d) => [d.createdBy, d.updatedBy]),
-            ),
-          ];
-          const users = await options.resolveUsers(uniqueUserIds);
-          (response as Record<string, unknown>).users = users;
-        } catch {
-          // User enrichment is best-effort; a lookup failure must not
-          // break the content list response.
-        }
-      }
+      await attachUsers(
+        response,
+        response.data.flatMap((d) => [d.createdBy, d.updatedBy]),
+      );
 
       return response;
     });
@@ -901,7 +902,7 @@ export function mountContentApiRoutes(
           paths: resolvePaths,
         });
 
-        return {
+        const response = {
           data: await shapeContentDocumentResponse({
             authorize: options.authorize,
             document: responseDocument,
@@ -916,6 +917,8 @@ export function mountContentApiRoutes(
             lookupMediaAsset,
           }),
         };
+        await attachUsers(response, [document.createdBy, document.updatedBy]);
+        return response;
       });
     },
   );
@@ -1040,9 +1043,14 @@ export function mountContentApiRoutes(
           }
         }
 
-        return toPaginatedResponse(versions, (version) =>
+        const response = toPaginatedResponse(versions, (version) =>
           toVersionSummaryResponse(version),
         );
+        await attachUsers(
+          response,
+          response.data.map((version) => version.publishedBy),
+        );
+        return response;
       });
     },
   );
@@ -1166,10 +1174,12 @@ export function mountContentApiRoutes(
       const document = await commitMutation(
         "content.created",
         scope,
+        request,
         authorization,
-        () =>
+        (attribution) =>
           options.store.create(scope, payload, {
             expectedSchemaHash: schemaHash,
+            attribution,
           }),
       );
 
@@ -1257,36 +1267,41 @@ export function mountContentApiRoutes(
             document = await commitMutation(
               getBulkLifecycleEvent(payload.action),
               scope,
+              request,
               authorization,
-              () =>
+              (attribution) =>
                 options.store.publish(scope, documentId, {
                   changeSummary: payload.changeSummary,
-                  actorId: payload.actorId,
+                  attribution,
                 }),
             );
           } else if (payload.action === "unpublish") {
             document = await commitMutation(
               getBulkLifecycleEvent(payload.action),
               scope,
+              request,
               authorization,
-              () =>
+              (attribution) =>
                 options.store.unpublish(scope, documentId, {
-                  actorId: payload.actorId,
+                  attribution,
                 }),
             );
           } else if (payload.action === "delete") {
             document = await commitMutation(
               getBulkLifecycleEvent(payload.action),
               scope,
+              request,
               authorization,
-              () => options.store.softDelete(scope, documentId),
+              (attribution) =>
+                options.store.softDelete(scope, documentId, { attribution }),
             );
           } else {
             document = await commitMutation(
               getBulkLifecycleEvent(payload.action),
               scope,
+              request,
               authorization,
-              () =>
+              (attribution) =>
                 options.store.update(
                   scope,
                   documentId,
@@ -1295,6 +1310,7 @@ export function mountContentApiRoutes(
                   },
                   {
                     expectedSchemaHash: schemaHash,
+                    attribution,
                   },
                 ),
             );
@@ -1430,10 +1446,12 @@ export function mountContentApiRoutes(
         const document = await commitMutation(
           "content.updated",
           scope,
+          request,
           authorization,
-          () =>
+          (attribution) =>
             options.store.update(scope, params.documentId, payload, {
               expectedSchemaHash: schemaHash,
+              attribution,
               expectedDraftRevision,
             }),
         );
@@ -1508,8 +1526,10 @@ export function mountContentApiRoutes(
         const document = await commitMutation(
           "content.restored",
           scope,
+          request,
           authorization,
-          () => options.store.restore(scope, params.documentId),
+          (attribution) =>
+            options.store.restore(scope, params.documentId, { attribution }),
         );
 
         return {
@@ -1593,7 +1613,6 @@ export function mountContentApiRoutes(
           payload.changeSummary ?? payload.change_summary,
           "changeSummary",
         );
-        const actorId = parseOptionalString(payload.actorId, "actorId");
 
         await assertNoActiveCollaboration(
           options.activeCollaboration,
@@ -1605,12 +1624,13 @@ export function mountContentApiRoutes(
             ? "content.published"
             : "content.updated",
           scope,
+          request,
           authorization,
-          () =>
+          (attribution) =>
             options.store.restoreVersion(scope, params.documentId, version, {
               targetStatus,
               changeSummary,
-              actorId,
+              attribution,
             }),
         );
 
@@ -1679,7 +1699,6 @@ export function mountContentApiRoutes(
           payload.changeSummary ?? payload.change_summary,
           "changeSummary",
         );
-        const actorId = parseOptionalString(payload.actorId, "actorId");
 
         await assertNoActiveCollaboration(
           options.activeCollaboration,
@@ -1689,11 +1708,12 @@ export function mountContentApiRoutes(
         const document = await commitMutation(
           "content.published",
           scope,
+          request,
           authorization,
-          () =>
+          (attribution) =>
             options.store.publish(scope, params.documentId, {
               changeSummary,
-              actorId,
+              attribution,
             }),
         );
 
@@ -1753,9 +1773,6 @@ export function mountContentApiRoutes(
           documentPath: existing.path,
         });
 
-        const payload = (body ?? {}) as ContentPublishPayload;
-        const actorId = parseOptionalString(payload.actorId, "actorId");
-
         await assertNoActiveCollaboration(
           options.activeCollaboration,
           params.documentId,
@@ -1764,10 +1781,11 @@ export function mountContentApiRoutes(
         const document = await commitMutation(
           "content.unpublished",
           scope,
+          request,
           authorization,
-          () =>
+          (attribution) =>
             options.store.unpublish(scope, params.documentId, {
-              actorId,
+              attribution,
             }),
         );
 
@@ -1848,8 +1866,9 @@ export function mountContentApiRoutes(
             const document = await commitMutation(
               "content.created",
               scope,
+              request,
               authorization,
-              () =>
+              (attribution) =>
                 options.store.create(
                   scope,
                   {
@@ -1862,6 +1881,7 @@ export function mountContentApiRoutes(
                   },
                   {
                     expectedSchemaHash: schemaHash,
+                    attribution,
                   },
                 ),
             );
@@ -1951,8 +1971,10 @@ export function mountContentApiRoutes(
         const document = await commitMutation(
           "content.deleted",
           scope,
+          request,
           authorization,
-          () => options.store.softDelete(scope, params.documentId),
+          (attribution) =>
+            options.store.softDelete(scope, params.documentId, { attribution }),
         );
 
         await invalidateInactiveCollaborationCache(

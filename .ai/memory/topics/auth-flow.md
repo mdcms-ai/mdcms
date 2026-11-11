@@ -37,6 +37,10 @@ If the listener doesn't receive a callback within a timeout, the CLI surfaces "T
 
 ## Guarantees / invariants
 
+- Content actors come from the authenticated principal through
+  `attributionFromAuthorizedRequest`; store writes require a
+  `ContentWriteAttribution`; request body actor fields are ignored.
+
 - Every authenticated request resolves a project context **before** reaching domain code. No cross-tenant leak via missing scoping.
 - API keys carry scopes; sessions inherit scopes from the user's role.
 - CSRF bootstrap must not rotate an existing `mdcms_csrf` cookie; multiple Studio clients and route helpers may cache that token concurrently.

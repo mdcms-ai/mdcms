@@ -266,7 +266,13 @@ function createTestSetup(input: {
 
   const authorize: AiAuthorizer = input.authorize
     ? input.authorize
-    : async () => ({ actorId: "user_1" });
+    : async () => ({
+        actorId: "user_1",
+        attribution: {
+          actorId: "user_1",
+          origin: { channel: "studio_ai", credential: "session" },
+        },
+      });
 
   const requireCsrf: AiCsrfProtector = async () => undefined;
   const audits: AiAuditRecord[] = [];
@@ -674,7 +680,13 @@ describe("mountAiRoutes — proposals/:id/apply", () => {
         },
       },
       schemaHashLookup: async () => "hash_1",
-      authorize: async () => ({ actorId: "user_1" }),
+      authorize: async () => ({
+        actorId: "user_1",
+        attribution: {
+          actorId: "user_1",
+          origin: { channel: "studio_ai", credential: "session" },
+        },
+      }),
       requireCsrf: async () => undefined,
       emitAudit: (record) => audits.push(record),
     };
@@ -775,7 +787,13 @@ function authorizeWithScopes(scopes: ReadonlySet<string>): AiAuthorizer {
         statusCode: 403,
       });
     }
-    return { actorId: "user_1" };
+    return {
+      actorId: "user_1",
+      attribution: {
+        actorId: "user_1",
+        origin: { channel: "studio_ai", credential: "session" },
+      },
+    };
   };
 }
 
@@ -2335,7 +2353,13 @@ describe("mountAiRoutes: chat document lookup gate", () => {
               statusCode: 401,
             });
           }
-          return { actorId: "user_1" };
+          return {
+            actorId: "user_1",
+            attribution: {
+              actorId: "user_1",
+              origin: { channel: "studio_ai", credential: "session" },
+            },
+          };
         },
         listEntries: async () => ({ matches: [], total: 0 }),
       });

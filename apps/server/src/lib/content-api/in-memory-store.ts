@@ -1,9 +1,9 @@
+import { originField } from "./responses.js";
 import { randomUUID } from "node:crypto";
 
 import { RuntimeError, type SchemaRegistryTypeSnapshot } from "@mdcms/shared";
 
 import {
-  DEFAULT_ACTOR,
   DEFAULT_LIMIT,
   MAX_LIMIT,
   type ContentDocument,
@@ -37,6 +37,26 @@ import { matchesDeletedListVisibility } from "./visibility.js";
 
 function toScopeKey(project: string, environment: string): string {
   return `${project}::${environment}`;
+}
+
+export function toPublishedReadDocument(
+  document: ContentDocument,
+  snapshot: ContentPublishedSnapshot,
+): ContentDocument {
+  const { updatedOrigin: _draftOrigin, ...head } = document;
+  return {
+    ...head,
+    path: snapshot.path,
+    type: snapshot.type,
+    locale: snapshot.locale,
+    format: snapshot.format,
+    frontmatter: snapshot.frontmatter,
+    body: snapshot.body,
+    version: snapshot.version,
+    updatedAt: snapshot.publishedAt,
+    updatedBy: snapshot.publishedBy,
+    ...originField("updatedOrigin", snapshot.publishedOrigin),
+  };
 }
 
 export function createInMemoryContentStore(
@@ -182,18 +202,7 @@ export function createInMemoryContentStore(
       return undefined;
     }
 
-    return {
-      ...input.document,
-      path: snapshot.path,
-      type: snapshot.type,
-      locale: snapshot.locale,
-      format: snapshot.format,
-      frontmatter: snapshot.frontmatter,
-      body: snapshot.body,
-      version: snapshot.version,
-      updatedAt: snapshot.publishedAt,
-      updatedBy: snapshot.publishedBy,
-    };
+    return toPublishedReadDocument(input.document, snapshot);
   }
 
   function toVersionSummary(
@@ -213,6 +222,7 @@ export function createInMemoryContentStore(
       format: snapshot.format,
       publishedAt: snapshot.publishedAt,
       publishedBy: snapshot.publishedBy,
+      ...originField("publishedOrigin", snapshot.publishedOrigin),
       changeSummary: snapshot.changeSummary,
     };
   }
@@ -249,7 +259,7 @@ export function createInMemoryContentStore(
         ?.get(normalizedType);
     },
 
-    async create(scope, payload, _options?: ContentWriteOperationOptions) {
+    async create(scope, payload, options: ContentWriteOperationOptions) {
       const store = getScopeStore(scope);
       const scopeSchemas = getScopeSchemas(scope);
       const path = validateContentPath(
@@ -371,7 +381,6 @@ export function createInMemoryContentStore(
       }
 
       const now = new Date().toISOString();
-      const actor = payload.createdBy?.trim() || DEFAULT_ACTOR;
       const document: ContentDocument = {
         documentId: randomUUID(),
         translationGroupId,
@@ -388,9 +397,11 @@ export function createInMemoryContentStore(
         draftRevision: 1,
         frontmatter: normalizedFrontmatter,
         body,
-        createdBy: actor,
+        createdBy: options.attribution.actorId,
+        createdOrigin: options.attribution.origin,
         createdAt: now,
-        updatedBy: actor,
+        updatedBy: options.attribution.actorId,
+        updatedOrigin: options.attribution.origin,
         updatedAt: now,
       };
 
@@ -598,7 +609,7 @@ export function createInMemoryContentStore(
       scope,
       documentId,
       payload,
-      options?: ContentWriteOperationOptions,
+      options: ContentWriteOperationOptions,
     ) {
       const store = getScopeStore(scope);
       const scopeSchemas = getScopeSchemas(scope);
@@ -748,7 +759,8 @@ export function createInMemoryContentStore(
             : existing.body,
         hasUnpublishedChanges: true,
         draftRevision: existing.draftRevision + 1,
-        updatedBy: payload.updatedBy?.trim() || DEFAULT_ACTOR,
+        updatedBy: options.attribution.actorId,
+        updatedOrigin: options.attribution.origin,
         updatedAt: now,
       };
 
@@ -756,7 +768,7 @@ export function createInMemoryContentStore(
       return updated;
     },
 
-    async softDelete(scope, documentId) {
+    async softDelete(scope, documentId, options) {
       const store = getScopeStore(scope);
       const normalizedDocumentId = assertRequiredString(
         documentId,
@@ -781,7 +793,8 @@ export function createInMemoryContentStore(
         isDeleted: true,
         hasUnpublishedChanges: true,
         draftRevision: existing.draftRevision + 1,
-        updatedBy: DEFAULT_ACTOR,
+        updatedBy: options.attribution.actorId,
+        updatedOrigin: options.attribution.origin,
         updatedAt: now,
       };
       store.set(normalizedDocumentId, deleted);
@@ -789,7 +802,7 @@ export function createInMemoryContentStore(
       return deleted;
     },
 
-    async restore(scope, documentId) {
+    async restore(scope, documentId, options) {
       const store = getScopeStore(scope);
       const normalizedDocumentId = assertRequiredString(
         documentId,
@@ -831,7 +844,8 @@ export function createInMemoryContentStore(
       const restored: ContentDocument = {
         ...existing,
         isDeleted: false,
-        updatedBy: DEFAULT_ACTOR,
+        updatedBy: options.attribution.actorId,
+        updatedOrigin: options.attribution.origin,
         updatedAt: new Date().toISOString(),
       };
       store.set(normalizedDocumentId, restored);
@@ -981,7 +995,6 @@ export function createInMemoryContentStore(
         });
       }
 
-      const actorId = input.actorId?.trim() || DEFAULT_ACTOR;
       const now = new Date().toISOString();
 
       if (input.targetStatus === "published") {
@@ -991,7 +1004,8 @@ export function createInMemoryContentStore(
           ...snapshot,
           version: nextVersion,
           publishedAt: now,
-          publishedBy: actorId,
+          publishedBy: input.attribution.actorId,
+          publishedOrigin: input.attribution.origin,
           changeSummary: input.changeSummary,
         });
 
@@ -1008,7 +1022,8 @@ export function createInMemoryContentStore(
           version: nextVersion,
           publishedVersion: nextVersion,
           draftRevision: existing.draftRevision + 1,
-          updatedBy: actorId,
+          updatedBy: input.attribution.actorId,
+          updatedOrigin: input.attribution.origin,
           updatedAt: now,
         };
         store.set(normalizedDocumentId, restored);
@@ -1026,7 +1041,8 @@ export function createInMemoryContentStore(
         isDeleted: false,
         hasUnpublishedChanges: true,
         draftRevision: existing.draftRevision + 1,
-        updatedBy: actorId,
+        updatedBy: input.attribution.actorId,
+        updatedOrigin: input.attribution.origin,
         updatedAt: now,
       };
       store.set(normalizedDocumentId, restored);
@@ -1061,7 +1077,6 @@ export function createInMemoryContentStore(
       }
 
       const nextVersion = getNextVersionNumber(documentSnapshots);
-      const actorId = input.actorId?.trim() || DEFAULT_ACTOR;
       const now = new Date().toISOString();
 
       documentSnapshots.set(nextVersion, {
@@ -1073,7 +1088,8 @@ export function createInMemoryContentStore(
         frontmatter: existing.frontmatter,
         body: existing.body,
         publishedAt: now,
-        publishedBy: actorId,
+        publishedBy: input.attribution.actorId,
+        publishedOrigin: input.attribution.origin,
         changeSummary: input.changeSummary,
       });
 
@@ -1082,7 +1098,8 @@ export function createInMemoryContentStore(
         version: nextVersion,
         publishedVersion: nextVersion,
         hasUnpublishedChanges: false,
-        updatedBy: actorId,
+        updatedBy: input.attribution.actorId,
+        updatedOrigin: input.attribution.origin,
         updatedAt: now,
       };
 
@@ -1109,14 +1126,14 @@ export function createInMemoryContentStore(
         });
       }
 
-      const actorId = input.actorId?.trim() || DEFAULT_ACTOR;
       const now = new Date().toISOString();
       const updated: ContentDocument = {
         ...existing,
         version: 0,
         publishedVersion: null,
         hasUnpublishedChanges: true,
-        updatedBy: actorId,
+        updatedBy: input.attribution.actorId,
+        updatedOrigin: input.attribution.origin,
         updatedAt: now,
       };
 

@@ -24,6 +24,7 @@ import {
   scopeHeaders,
   stableFixtureName,
   testWithDatabase,
+  testAttribution,
   wrapHandlerWithAutoSchemaHash,
 } from "./content-api-test-support.js";
 import { createServerRequestHandler } from "./server.js";
@@ -283,28 +284,38 @@ test("cms-28 in-memory content store enforces reference identity when schema sna
       },
     ],
   });
-  const page = await store.create(scope, {
-    path: `pages/cms28-memory-page-${Date.now()}`,
-    type: "Page",
-    locale: "en",
-    format: "md",
-    frontmatter: {
-      slug: `cms28-memory-page-${Math.random().toString(36).slice(2, 8)}`,
+  const page = await store.create(
+    scope,
+    {
+      path: `pages/cms28-memory-page-${Date.now()}`,
+      type: "Page",
+      locale: "en",
+      format: "md",
+      frontmatter: {
+        slug: `cms28-memory-page-${Math.random().toString(36).slice(2, 8)}`,
+      },
+      body: "page body",
     },
-    body: "page body",
-  });
+    { attribution: testAttribution },
+  );
   const blogPayload = createCms28BlogPostPayload({
     title: "memory base",
   });
-  const blog = await store.create(scope, blogPayload);
+  const blog = await store.create(scope, blogPayload, {
+    attribution: testAttribution,
+  });
 
   await assert.rejects(
     () =>
-      store.create(scope, {
-        ...createCms28BlogPostPayload({
-          author: page.documentId,
-        }),
-      }),
+      store.create(
+        scope,
+        {
+          ...createCms28BlogPostPayload({
+            author: page.documentId,
+          }),
+        },
+        { attribution: testAttribution },
+      ),
     (error: unknown) => {
       assert.equal((error as { code?: string }).code, "INVALID_INPUT");
       return true;
@@ -313,12 +324,17 @@ test("cms-28 in-memory content store enforces reference identity when schema sna
 
   await assert.rejects(
     () =>
-      store.update(scope, blog.documentId, {
-        frontmatter: {
-          ...(blogPayload.frontmatter ?? {}),
-          author: randomUUID(),
+      store.update(
+        scope,
+        blog.documentId,
+        {
+          frontmatter: {
+            ...(blogPayload.frontmatter ?? {}),
+            author: randomUUID(),
+          },
         },
-      }),
+        { attribution: testAttribution },
+      ),
     (error: unknown) => {
       assert.equal((error as { code?: string }).code, "INVALID_INPUT");
       return true;
@@ -365,17 +381,21 @@ test("in-memory content store validates schema file field media assets on writes
     ],
   });
 
-  const created = await store.create(scope, {
-    path: "content/media-pages/valid",
-    type: "MediaPage",
-    locale: "en",
-    format: "md",
-    frontmatter: {
-      slug: "valid",
-      primaryImage: mediaFieldImageAsset.id,
+  const created = await store.create(
+    scope,
+    {
+      path: "content/media-pages/valid",
+      type: "MediaPage",
+      locale: "en",
+      format: "md",
+      frontmatter: {
+        slug: "valid",
+        primaryImage: mediaFieldImageAsset.id,
+      },
+      body: "body",
     },
-    body: "body",
-  });
+    { attribution: testAttribution },
+  );
 
   assert.equal(created.frontmatter.primaryImage, mediaFieldImageAsset.id);
   assert.equal(created.frontmatter.defaultImage, mediaFieldImageAsset.id);
@@ -388,17 +408,21 @@ test("in-memory content store validates schema file field media assets on writes
   ] as const) {
     await assertContentWriteRuntimeError(
       () =>
-        store.create(scope, {
-          path: `content/media-pages/${label}`,
-          type: "MediaPage",
-          locale: "en",
-          format: "md",
-          frontmatter: {
-            slug: label,
-            ...(value !== undefined ? { primaryImage: value } : {}),
+        store.create(
+          scope,
+          {
+            path: `content/media-pages/${label}`,
+            type: "MediaPage",
+            locale: "en",
+            format: "md",
+            frontmatter: {
+              slug: label,
+              ...(value !== undefined ? { primaryImage: value } : {}),
+            },
+            body: "body",
           },
-          body: "body",
-        }),
+          { attribution: testAttribution },
+        ),
       {
         code: "INVALID_INPUT",
         statusCode: 400,
@@ -412,17 +436,21 @@ test("in-memory content store validates schema file field media assets on writes
 
   await assertContentWriteRuntimeError(
     () =>
-      store.create(scope, {
-        path: "content/media-pages/non-image",
-        type: "MediaPage",
-        locale: "en",
-        format: "md",
-        frontmatter: {
-          slug: "non-image",
-          primaryImage: mediaFieldPdfAsset.id,
+      store.create(
+        scope,
+        {
+          path: "content/media-pages/non-image",
+          type: "MediaPage",
+          locale: "en",
+          format: "md",
+          frontmatter: {
+            slug: "non-image",
+            primaryImage: mediaFieldPdfAsset.id,
+          },
+          body: "body",
         },
-        body: "body",
-      }),
+        { attribution: testAttribution },
+      ),
     {
       code: "INVALID_INPUT",
       statusCode: 400,
@@ -438,12 +466,17 @@ test("in-memory content store validates schema file field media assets on writes
 
   await assertContentWriteRuntimeError(
     () =>
-      store.update(scope, created.documentId, {
-        frontmatter: {
-          slug: "missing-update",
-          primaryImage: missingAssetId,
+      store.update(
+        scope,
+        created.documentId,
+        {
+          frontmatter: {
+            slug: "missing-update",
+            primaryImage: missingAssetId,
+          },
         },
-      }),
+        { attribution: testAttribution },
+      ),
     {
       code: "INVALID_INPUT",
       statusCode: 400,
@@ -486,16 +519,20 @@ test("in-memory content store normalizes malformed media id lookup errors", asyn
 
   await assertContentWriteRuntimeError(
     () =>
-      store.create(scope, {
-        path: "content/media-pages/malformed-id",
-        type: "MediaPage",
-        locale: "en",
-        format: "md",
-        frontmatter: {
-          primaryImage: malformedId,
+      store.create(
+        scope,
+        {
+          path: "content/media-pages/malformed-id",
+          type: "MediaPage",
+          locale: "en",
+          format: "md",
+          frontmatter: {
+            primaryImage: malformedId,
+          },
+          body: "body",
         },
-        body: "body",
-      }),
+        { attribution: testAttribution },
+      ),
     {
       code: "INVALID_INPUT",
       statusCode: 400,
@@ -543,14 +580,18 @@ test("in-memory content store treats optional file field unset values as absent"
     ["null", null],
     ["empty", ""],
   ] as const) {
-    const created = await store.create(scope, {
-      path: `content/media-pages/optional-${label}`,
-      type: "MediaPage",
-      locale: "en",
-      format: "md",
-      frontmatter: value === undefined ? {} : { optionalImage: value },
-      body: "body",
-    });
+    const created = await store.create(
+      scope,
+      {
+        path: `content/media-pages/optional-${label}`,
+        type: "MediaPage",
+        locale: "en",
+        format: "md",
+        frontmatter: value === undefined ? {} : { optionalImage: value },
+        body: "body",
+      },
+      { attribution: testAttribution },
+    );
 
     assert.equal("optionalImage" in created.frontmatter, false);
   }
@@ -1051,6 +1092,7 @@ test("content API duplicate applies fileFields and enforces schema hash gate", a
       },
       body: "unsynced source body",
     },
+    { attribution: testAttribution },
   );
   const unsyncedResponse = await unsynced.handler(
     jsonContentRequest(
@@ -2357,14 +2399,18 @@ test("content API bulk move requires schema hash when write schema state exists"
       },
     ],
   });
-  const document = await store.create(scope, {
-    path: "blog/bulk-move-needs-hash",
-    type: "BlogPost",
-    locale: "en",
-    format: "md",
-    frontmatter: { slug: "bulk-move-needs-hash" },
-    body: "move me",
-  });
+  const document = await store.create(
+    scope,
+    {
+      path: "blog/bulk-move-needs-hash",
+      type: "BlogPost",
+      locale: "en",
+      format: "md",
+      frontmatter: { slug: "bulk-move-needs-hash" },
+      body: "move me",
+    },
+    { attribution: testAttribution },
+  );
   const handler = createServerRequestHandler({
     env: baseEnv,
     configureApp: (app) => {
@@ -2767,22 +2813,30 @@ test("content API bulk reports current path authorization failures per document 
       },
     ],
   });
-  const forbidden = await store.create(scope, {
-    path: "blog/bulk-current-path-forbidden",
-    type: "BlogPost",
-    locale: "en",
-    format: "md",
-    frontmatter: { slug: "bulk-current-path-forbidden" },
-    body: "forbidden",
-  });
-  const allowed = await store.create(scope, {
-    path: "blog/bulk-current-path-allowed",
-    type: "BlogPost",
-    locale: "en",
-    format: "md",
-    frontmatter: { slug: "bulk-current-path-allowed" },
-    body: "allowed",
-  });
+  const forbidden = await store.create(
+    scope,
+    {
+      path: "blog/bulk-current-path-forbidden",
+      type: "BlogPost",
+      locale: "en",
+      format: "md",
+      frontmatter: { slug: "bulk-current-path-forbidden" },
+      body: "forbidden",
+    },
+    { attribution: testAttribution },
+  );
+  const allowed = await store.create(
+    scope,
+    {
+      path: "blog/bulk-current-path-allowed",
+      type: "BlogPost",
+      locale: "en",
+      format: "md",
+      frontmatter: { slug: "bulk-current-path-allowed" },
+      body: "allowed",
+    },
+    { attribution: testAttribution },
+  );
   const pathAuthorizeCalls: string[] = [];
   const handler = createServerRequestHandler({
     env: baseEnv,
@@ -2863,22 +2917,30 @@ test("content API bulk reports move destination authorization failures per docum
       },
     ],
   });
-  const forbidden = await store.create(scope, {
-    path: "blog/bulk-move-destination-forbidden",
-    type: "BlogPost",
-    locale: "en",
-    format: "md",
-    frontmatter: { slug: "bulk-move-destination-forbidden" },
-    body: "forbidden",
-  });
-  const allowed = await store.create(scope, {
-    path: "blog/bulk-move-destination-allowed",
-    type: "BlogPost",
-    locale: "en",
-    format: "md",
-    frontmatter: { slug: "bulk-move-destination-allowed" },
-    body: "allowed",
-  });
+  const forbidden = await store.create(
+    scope,
+    {
+      path: "blog/bulk-move-destination-forbidden",
+      type: "BlogPost",
+      locale: "en",
+      format: "md",
+      frontmatter: { slug: "bulk-move-destination-forbidden" },
+      body: "forbidden",
+    },
+    { attribution: testAttribution },
+  );
+  const allowed = await store.create(
+    scope,
+    {
+      path: "blog/bulk-move-destination-allowed",
+      type: "BlogPost",
+      locale: "en",
+      format: "md",
+      frontmatter: { slug: "bulk-move-destination-allowed" },
+      body: "allowed",
+    },
+    { attribution: testAttribution },
+  );
   const forbiddenDestination = "archive/bulk-move-destination-forbidden";
   const allowedDestination = "archive/bulk-move-destination-allowed";
   const pathAuthorizeCalls: string[] = [];
@@ -2973,14 +3035,18 @@ test("content API bulk move rethrows schema hash mismatch from item mutation", a
       },
     ],
   });
-  const document = await store.create(scope, {
-    path: "blog/bulk-move-schema-hash-mismatch",
-    type: "BlogPost",
-    locale: "en",
-    format: "md",
-    frontmatter: { slug: "bulk-move-schema-hash-mismatch" },
-    body: "move me",
-  });
+  const document = await store.create(
+    scope,
+    {
+      path: "blog/bulk-move-schema-hash-mismatch",
+      type: "BlogPost",
+      locale: "en",
+      format: "md",
+      frontmatter: { slug: "bulk-move-schema-hash-mismatch" },
+      body: "move me",
+    },
+    { attribution: testAttribution },
+  );
   const rawHandler = createServerRequestHandler({
     env: baseEnv,
     configureApp: (app) => {
@@ -3044,22 +3110,30 @@ test("content API bulk move reports item-level invalid input from mutations and 
       },
     ],
   });
-  const invalid = await store.create(scope, {
-    path: "blog/bulk-move-invalid-input",
-    type: "BlogPost",
-    locale: "en",
-    format: "md",
-    frontmatter: { slug: "bulk-move-invalid-input" },
-    body: "invalid",
-  });
-  const valid = await store.create(scope, {
-    path: "blog/bulk-move-valid-after-invalid-input",
-    type: "BlogPost",
-    locale: "en",
-    format: "md",
-    frontmatter: { slug: "bulk-move-valid-after-invalid-input" },
-    body: "valid",
-  });
+  const invalid = await store.create(
+    scope,
+    {
+      path: "blog/bulk-move-invalid-input",
+      type: "BlogPost",
+      locale: "en",
+      format: "md",
+      frontmatter: { slug: "bulk-move-invalid-input" },
+      body: "invalid",
+    },
+    { attribution: testAttribution },
+  );
+  const valid = await store.create(
+    scope,
+    {
+      path: "blog/bulk-move-valid-after-invalid-input",
+      type: "BlogPost",
+      locale: "en",
+      format: "md",
+      frontmatter: { slug: "bulk-move-valid-after-invalid-input" },
+      body: "valid",
+    },
+    { attribution: testAttribution },
+  );
   const rawHandler = createServerRequestHandler({
     env: baseEnv,
     configureApp: (app) => {
@@ -3148,14 +3222,18 @@ test("content API bulk rethrows unauthorized errors from per-document authorizat
       },
     ],
   });
-  const document = await store.create(scope, {
-    path: "blog/bulk-path-unauthorized",
-    type: "BlogPost",
-    locale: "en",
-    format: "md",
-    frontmatter: { slug: "bulk-path-unauthorized" },
-    body: "publish me",
-  });
+  const document = await store.create(
+    scope,
+    {
+      path: "blog/bulk-path-unauthorized",
+      type: "BlogPost",
+      locale: "en",
+      format: "md",
+      frontmatter: { slug: "bulk-path-unauthorized" },
+      body: "publish me",
+    },
+    { attribution: testAttribution },
+  );
   const handler = createServerRequestHandler({
     env: baseEnv,
     configureApp: (app) => {
@@ -3631,14 +3709,18 @@ test("content API preview token endpoint signs document-bound draft preview toke
       },
     ],
   });
-  const document = await store.create(scope, {
-    path: "blog/preview-token",
-    type: "BlogPost",
-    locale: "en",
-    format: "md",
-    frontmatter: { slug: "preview-token" },
-    body: "draft body",
-  });
+  const document = await store.create(
+    scope,
+    {
+      path: "blog/preview-token",
+      type: "BlogPost",
+      locale: "en",
+      format: "md",
+      frontmatter: { slug: "preview-token" },
+      body: "draft body",
+    },
+    { attribution: testAttribution },
+  );
   const handler = createServerRequestHandler({
     env: baseEnv,
     configureApp: (app) => {
@@ -3732,14 +3814,18 @@ test("content API preview token endpoint returns unavailable when signing is not
       },
     ],
   });
-  const document = await store.create(scope, {
-    path: "blog/preview-token-missing-secret",
-    type: "BlogPost",
-    locale: "en",
-    format: "md",
-    frontmatter: { slug: "preview-token-missing-secret" },
-    body: "draft body",
-  });
+  const document = await store.create(
+    scope,
+    {
+      path: "blog/preview-token-missing-secret",
+      type: "BlogPost",
+      locale: "en",
+      format: "md",
+      frontmatter: { slug: "preview-token-missing-secret" },
+      body: "draft body",
+    },
+    { attribution: testAttribution },
+  );
   const handler = createServerRequestHandler({
     env: baseEnv,
     configureApp: (app) => {
@@ -3788,14 +3874,18 @@ test("content API preview token endpoint enforces document path authorization", 
       },
     ],
   });
-  const document = await store.create(scope, {
-    path: "blog/preview-token-forbidden",
-    type: "BlogPost",
-    locale: "en",
-    format: "md",
-    frontmatter: { slug: "preview-token-forbidden" },
-    body: "draft body",
-  });
+  const document = await store.create(
+    scope,
+    {
+      path: "blog/preview-token-forbidden",
+      type: "BlogPost",
+      locale: "en",
+      format: "md",
+      frontmatter: { slug: "preview-token-forbidden" },
+      body: "draft body",
+    },
+    { attribution: testAttribution },
+  );
   const handler = createServerRequestHandler({
     env: baseEnv,
     configureApp: (app) => {
@@ -5878,24 +5968,32 @@ test("in-memory store listVariants returns sibling locale variants", async () =>
     ],
   });
 
-  const source = await store.create(scope, {
-    path: "blog/variant-test",
-    type: "BlogPost",
-    locale: "en",
-    format: "md",
-    frontmatter: { slug: "variant-test" },
-    body: "english body",
-  });
+  const source = await store.create(
+    scope,
+    {
+      path: "blog/variant-test",
+      type: "BlogPost",
+      locale: "en",
+      format: "md",
+      frontmatter: { slug: "variant-test" },
+      body: "english body",
+    },
+    { attribution: testAttribution },
+  );
 
-  await store.create(scope, {
-    path: "blog/variant-test",
-    type: "BlogPost",
-    locale: "fr",
-    format: "md",
-    frontmatter: { slug: "variant-test" },
-    body: "french body",
-    sourceDocumentId: source.documentId,
-  });
+  await store.create(
+    scope,
+    {
+      path: "blog/variant-test",
+      type: "BlogPost",
+      locale: "fr",
+      format: "md",
+      frontmatter: { slug: "variant-test" },
+      body: "french body",
+      sourceDocumentId: source.documentId,
+    },
+    { attribution: testAttribution },
+  );
 
   const variants = await store.listVariants(scope, source.documentId);
 
@@ -5932,29 +6030,165 @@ test("in-memory store listVariants excludes soft-deleted variants", async () => 
     ],
   });
 
-  const source = await store.create(scope, {
-    path: "blog/delete-variant-test",
-    type: "BlogPost",
-    locale: "en",
-    format: "md",
-    frontmatter: { slug: "delete-variant-test" },
-    body: "english body",
-  });
+  const source = await store.create(
+    scope,
+    {
+      path: "blog/delete-variant-test",
+      type: "BlogPost",
+      locale: "en",
+      format: "md",
+      frontmatter: { slug: "delete-variant-test" },
+      body: "english body",
+    },
+    { attribution: testAttribution },
+  );
 
-  const variant = await store.create(scope, {
-    path: "blog/delete-variant-test",
-    type: "BlogPost",
-    locale: "fr",
-    format: "md",
-    frontmatter: { slug: "delete-variant-test" },
-    body: "french body",
-    sourceDocumentId: source.documentId,
-  });
+  const variant = await store.create(
+    scope,
+    {
+      path: "blog/delete-variant-test",
+      type: "BlogPost",
+      locale: "fr",
+      format: "md",
+      frontmatter: { slug: "delete-variant-test" },
+      body: "french body",
+      sourceDocumentId: source.documentId,
+    },
+    { attribution: testAttribution },
+  );
 
-  await store.softDelete(scope, variant.documentId);
+  await store.softDelete(scope, variant.documentId, {
+    attribution: testAttribution,
+  });
 
   const variants = await store.listVariants(scope, source.documentId);
   assert.ok(variants !== undefined);
   assert.equal(variants.length, 1);
   assert.equal(variants[0].locale, "en");
+});
+
+test("content writes record the authenticated user and ignore body actor fields", async () => {
+  const handler = createHandler();
+  const createResponse = await handler(
+    new Request("http://localhost/api/v1/content", {
+      method: "POST",
+      headers: { ...scopeHeaders, "content-type": "application/json" },
+      body: JSON.stringify({
+        ...createCms28BlogPostPayload({ title: "attribution-route" }),
+        createdBy: "someone-else",
+        updatedBy: "someone-else",
+      }),
+    }),
+  );
+  assert.equal(createResponse.status, 200);
+  const created = (await createResponse.json()).data;
+  assert.equal(created.createdBy, "user-1");
+  assert.equal(created.updatedBy, "user-1");
+  assert.deepEqual(created.createdOrigin, {
+    channel: "studio",
+    credential: "session",
+  });
+
+  const publishResponse = await handler(
+    new Request(
+      `http://localhost/api/v1/content/${created.documentId}/publish`,
+      {
+        method: "POST",
+        headers: { ...scopeHeaders, "content-type": "application/json" },
+        body: JSON.stringify({ actorId: "someone-else" }),
+      },
+    ),
+  );
+  assert.equal(publishResponse.status, 200);
+
+  const versionsResponse = await handler(
+    new Request(
+      `http://localhost/api/v1/content/${created.documentId}/versions`,
+      { headers: scopeHeaders },
+    ),
+  );
+  const versions = await versionsResponse.json();
+  assert.equal(versions.data[0].publishedBy, "user-1");
+  assert.deepEqual(versions.data[0].publishedOrigin, {
+    channel: "studio",
+    credential: "session",
+  });
+});
+
+test("the declared client header is recorded on writes", async () => {
+  const handler = createHandler();
+  const response = await handler(
+    new Request("http://localhost/api/v1/content", {
+      method: "POST",
+      headers: {
+        ...scopeHeaders,
+        "content-type": "application/json",
+        "x-mdcms-client": "cli/0.4.0",
+      },
+      body: JSON.stringify(
+        createCms28BlogPostPayload({ title: "attribution-declared" }),
+      ),
+    }),
+  );
+  const created = (await response.json()).data;
+  assert.equal(created.createdOrigin.declared, "cli/0.4.0");
+});
+
+test("single document and version responses include a users map", async () => {
+  const handler = createHandler({
+    resolveUsers: async (ids) =>
+      Object.fromEntries(
+        ids.map((id) => [
+          id,
+          { name: "Ada Lovelace", email: "ada@example.com" },
+        ]),
+      ),
+  });
+  const created = (
+    await (
+      await handler(
+        new Request("http://localhost/api/v1/content", {
+          method: "POST",
+          headers: { ...scopeHeaders, "content-type": "application/json" },
+          body: JSON.stringify(
+            createCms28BlogPostPayload({ title: "attribution-users" }),
+          ),
+        }),
+      )
+    ).json()
+  ).data;
+  await handler(
+    new Request(
+      `http://localhost/api/v1/content/${created.documentId}/publish`,
+      {
+        method: "POST",
+        headers: { ...scopeHeaders, "content-type": "application/json" },
+        body: "{}",
+      },
+    ),
+  );
+
+  const single = await (
+    await handler(
+      new Request(
+        `http://localhost/api/v1/content/${created.documentId}?draft=true`,
+        { headers: scopeHeaders },
+      ),
+    )
+  ).json();
+  assert.deepEqual(single.users, {
+    "user-1": { name: "Ada Lovelace", email: "ada@example.com" },
+  });
+
+  const versions = await (
+    await handler(
+      new Request(
+        `http://localhost/api/v1/content/${created.documentId}/versions`,
+        { headers: scopeHeaders },
+      ),
+    )
+  ).json();
+  assert.deepEqual(versions.users, {
+    "user-1": { name: "Ada Lovelace", email: "ada@example.com" },
+  });
 });

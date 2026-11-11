@@ -1,3 +1,4 @@
+import { attributionFromAuthorizedRequest } from "./content-api/attribution.js";
 import {
   createServerRequestHandler,
   type CreateServerRequestHandlerOptions,
@@ -208,16 +209,16 @@ export function createCollaborationGuardedAiContentStore(
       await invalidateInactiveCache(documentId);
       return document;
     },
-    softDelete: async (scope, documentId) => {
+    softDelete: async (scope, documentId, opts) => {
       await assertNoActiveCollaboration(activeCollaboration, documentId);
-      const document = await store.softDelete(scope, documentId);
+      const document = await store.softDelete(scope, documentId, opts);
       await invalidateInactiveCache(documentId);
       return document;
     },
     restore: restore
-      ? async (scope, documentId) => {
+      ? async (scope, documentId, opts) => {
           await assertNoActiveCollaboration(activeCollaboration, documentId);
-          const document = await restore(scope, documentId);
+          const document = await restore(scope, documentId, opts);
           await invalidateInactiveCache(documentId);
           return document;
         }
@@ -627,9 +628,10 @@ export function createServerRequestHandlerWithModules(
           contentStore.update(scope, documentId, payload, opts),
         create: (scope, payload, opts) =>
           contentStore.create(scope, payload, opts),
-        softDelete: (scope, documentId) =>
-          contentStore.softDelete(scope, documentId),
-        restore: (scope, documentId) => contentStore.restore(scope, documentId),
+        softDelete: (scope, documentId, opts) =>
+          contentStore.softDelete(scope, documentId, opts),
+        restore: (scope, documentId, opts) =>
+          contentStore.restore(scope, documentId, opts),
       },
       activeCollaboration,
       inactiveCollaborationCache,
@@ -682,7 +684,14 @@ export function createServerRequestHandlerWithModules(
         authorized.principal.type === "session"
           ? authorized.principal.session.userId
           : authorized.principal.keyId;
-      return { actorId };
+      return {
+        actorId,
+        attribution: attributionFromAuthorizedRequest({
+          request,
+          authorization: authorized,
+          channel: "studio_ai",
+        }),
+      };
     },
     requireCsrf: (request) => authService.requireCsrfProtection(request),
     emitAudit: (record) => {

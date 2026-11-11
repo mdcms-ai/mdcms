@@ -61,6 +61,7 @@ const STUDIO_CORS_ALLOW_HEADERS = [
   "X-MDCMS-Locale",
   "X-MDCMS-Schema-Hash",
   "X-MDCMS-CSRF-Token",
+  "X-MDCMS-Client",
 ].join(", ");
 const STUDIO_BROWSER_ROUTE_PREFIXES = [
   "/api/v1/studio",

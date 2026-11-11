@@ -137,6 +137,10 @@ describe("applyAiProposal", () => {
     const store = createStubStore(state);
 
     const result = await applyAiProposal({
+      attribution: {
+        actorId: "user-1",
+        origin: { channel: "studio", credential: "session" },
+      },
       proposal: buildProposal(),
       expectedSchemaHash: "hash_1",
       actorId: "user_99",
@@ -147,11 +151,7 @@ describe("applyAiProposal", () => {
     const call = state.updateCalls[0]!;
     assert.equal(call.documentId, "doc_1");
     assert.equal(call.payload.body, "Hi there!");
-    // `updatedBy` is intentionally NOT set on AI applies — the store
-    // falls through to its DEFAULT_ACTOR placeholder, matching the
-    // manual content endpoints. Real actor identity is recorded in
-    // the AI audit log instead.
-    assert.equal(call.payload.updatedBy, undefined);
+    assert.ok("attribution" in call.options);
     assert.equal(call.options.expectedDraftRevision, 4);
     assert.equal(call.options.expectedSchemaHash, "hash_1");
     assert.equal(result.document.body, "Hi there!");
@@ -175,6 +175,10 @@ describe("applyAiProposal", () => {
     await assert.rejects(
       () =>
         applyAiProposal({
+          attribution: {
+            actorId: "user-1",
+            origin: { channel: "studio", credential: "session" },
+          },
           proposal: buildProposal(),
           expectedSchemaHash: "hash_1",
           actorId: "user_99",
@@ -201,6 +205,10 @@ describe("applyAiProposal", () => {
     const store = createStubStore(state);
 
     const result = await applyAiProposal({
+      attribution: {
+        actorId: "user-1",
+        origin: { channel: "studio", credential: "session" },
+      },
       proposal: buildProposal({ baseDraftRevision: 4 }),
       expectedSchemaHash: "hash_1",
       actorId: "user_99",
@@ -226,6 +234,10 @@ describe("applyAiProposal", () => {
     await assert.rejects(
       () =>
         applyAiProposal({
+          attribution: {
+            actorId: "user-1",
+            origin: { channel: "studio", credential: "session" },
+          },
           proposal: buildProposal({
             kind: "insert_block",
             baseDraftRevision: 4,
@@ -259,6 +271,10 @@ describe("applyAiProposal", () => {
     const store = createStubStore(state);
 
     await applyAiProposal({
+      attribution: {
+        actorId: "user-1",
+        origin: { channel: "studio", credential: "session" },
+      },
       proposal: buildProposal({
         kind: "update_frontmatter",
         operations: [
@@ -290,6 +306,10 @@ describe("applyAiProposal", () => {
     const store = createStubStore(state);
 
     await applyAiProposal({
+      attribution: {
+        actorId: "user-1",
+        origin: { channel: "studio", credential: "session" },
+      },
       proposal: buildProposal({
         proposalId: "p_2",
         kind: "create_document",
@@ -329,6 +349,10 @@ describe("applyAiProposal", () => {
     const store = createStubStore(state);
 
     const result = await applyAiProposal({
+      attribution: {
+        actorId: "user-1",
+        origin: { channel: "studio", credential: "session" },
+      },
       proposal: buildProposal({
         proposalId: "p_3",
         kind: "delete_document",
@@ -369,6 +393,10 @@ describe("applyAiProposal", () => {
     await assert.rejects(
       () =>
         applyAiProposal({
+          attribution: {
+            actorId: "user-1",
+            origin: { channel: "studio", credential: "session" },
+          },
           proposal: buildProposal({
             proposalId: "p_4",
             kind: "delete_document",
@@ -405,6 +433,10 @@ describe("applyAiProposal", () => {
     await assert.rejects(
       () =>
         applyAiProposal({
+          attribution: {
+            actorId: "user-1",
+            origin: { channel: "studio", credential: "session" },
+          },
           proposal: buildProposal({
             proposalId: "p_published",
             kind: "delete_document",
@@ -440,6 +472,10 @@ describe("applyAiProposal", () => {
     await assert.rejects(
       () =>
         applyAiProposal({
+          attribution: {
+            actorId: "user-1",
+            origin: { channel: "studio", credential: "session" },
+          },
           proposal: buildProposal({
             proposalId: "p_5",
             kind: "delete_document",
@@ -490,6 +526,10 @@ describe("applyAiProposal", () => {
     await assert.rejects(
       () =>
         applyAiProposal({
+          attribution: {
+            actorId: "user-1",
+            origin: { channel: "studio", credential: "session" },
+          },
           proposal: proposalWithoutId,
           expectedSchemaHash: "hash_6",
           actorId: "user_42",
@@ -514,6 +554,10 @@ describe("applyAiProposalUndo", () => {
     const store = createStubStore(state);
 
     const result = await applyAiProposalUndo({
+      attribution: {
+        actorId: "user-1",
+        origin: { channel: "studio", credential: "session" },
+      },
       proposal: buildProposal({
         proposalId: "p_create_undo",
         kind: "create_document",
@@ -550,6 +594,10 @@ describe("applyAiProposalUndo", () => {
     const store = createStubStore(state);
 
     const result = await applyAiProposalUndo({
+      attribution: {
+        actorId: "user-1",
+        origin: { channel: "studio", credential: "session" },
+      },
       proposal: buildProposal({
         proposalId: "p_delete_undo",
         kind: "delete_document",
@@ -583,6 +631,10 @@ describe("applyAiProposalUndo", () => {
     await assert.rejects(
       () =>
         applyAiProposalUndo({
+          attribution: {
+            actorId: "user-1",
+            origin: { channel: "studio", credential: "session" },
+          },
           proposal: buildProposal({
             proposalId: "p_delete_undo_idempotent",
             kind: "delete_document",
@@ -614,6 +666,10 @@ describe("applyAiProposalUndo", () => {
     };
 
     await applyAiProposalUndo({
+      attribution: {
+        actorId: "user-1",
+        origin: { channel: "studio", credential: "session" },
+      },
       proposal: buildProposal(),
       documentId: "doc_1",
       expectedSchemaHash: "hash_undo",
@@ -642,6 +698,10 @@ describe("applyAiProposalUndo", () => {
     await assert.rejects(
       () =>
         applyAiProposalUndo({
+          attribution: {
+            actorId: "user-1",
+            origin: { channel: "studio", credential: "session" },
+          },
           proposal: buildProposal(),
           documentId: "doc_1",
           expectedSchemaHash: "hash_undo",
@@ -672,6 +732,10 @@ describe("applyAiProposalUndo", () => {
     await assert.rejects(
       () =>
         applyAiProposalUndo({
+          attribution: {
+            actorId: "user-1",
+            origin: { channel: "studio", credential: "session" },
+          },
           proposal: buildProposal(),
           documentId: "doc_1",
           expectedSchemaHash: "hash_undo",
@@ -697,6 +761,10 @@ describe("applyAiProposalUndo", () => {
     await assert.rejects(
       () =>
         applyAiProposalUndo({
+          attribution: {
+            actorId: "user-1",
+            origin: { channel: "studio", credential: "session" },
+          },
           proposal: buildProposal(),
           documentId: "doc_1",
           expectedSchemaHash: "hash_undo",
@@ -708,4 +776,84 @@ describe("applyAiProposalUndo", () => {
     );
     assert.equal(state.updateCalls.length, 0);
   });
+});
+
+test("Assistant apply passes the accepting user's attribution to document update", async () => {
+  const state: StubStoreState = {
+    document: buildDocument(),
+    updateCalls: [],
+    createCalls: [],
+    softDeleteCalls: [],
+  };
+  const attribution = {
+    actorId: "user-ada",
+    origin: { channel: "studio_ai", credential: "session" },
+  } as const;
+  await applyAiProposal({
+    proposal: buildProposal(),
+    expectedSchemaHash: "schema",
+    actorId: "user-ada",
+    attribution,
+    store: createStubStore(state),
+  });
+  assert.deepEqual(
+    (state.updateCalls[0]?.options as { attribution?: unknown }).attribution,
+    attribution,
+  );
+});
+
+test("Assistant create and delete undo forward accepting-user attribution", async () => {
+  const state: StubStoreState = {
+    document: buildDocument({ isDeleted: true }),
+    updateCalls: [],
+    createCalls: [],
+    softDeleteCalls: [],
+  };
+  const attribution = {
+    actorId: "user-ada",
+    origin: { channel: "studio_ai", credential: "session" },
+  } as const;
+  const store = createStubStore(state);
+  let restoreAttribution: unknown;
+  const restoredStore: AiApplyContentStore = {
+    ...store,
+    restore: async (_scope, _id, options) => {
+      restoreAttribution = options.attribution;
+      return buildDocument();
+    },
+  };
+  await applyAiProposalUndo({
+    proposal: buildProposal({
+      kind: "delete_document",
+      operations: [{ op: "delete_document", path: "blog/welcome" }],
+    }),
+    documentId: "doc_1",
+    expectedSchemaHash: "schema",
+    actorId: "user-ada",
+    attribution,
+    store: restoredStore,
+  });
+  assert.deepEqual(restoreAttribution, attribution);
+  await applyAiProposal({
+    proposal: buildProposal({
+      kind: "create_document",
+      operations: [
+        {
+          op: "create_document",
+          path: "blog/new",
+          format: "md",
+          frontmatter: {},
+          body: "new",
+        },
+      ],
+    }),
+    expectedSchemaHash: "schema",
+    actorId: "user-ada",
+    attribution,
+    store,
+  });
+  assert.deepEqual(
+    (state.createCalls[0]?.options as { attribution?: unknown }).attribution,
+    attribution,
+  );
 });

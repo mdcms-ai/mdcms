@@ -125,10 +125,10 @@ Channel derivation:
   client's `clientInfo` name and version from `initialize`.
 - `api`: any other API-key request. `declared` comes from the optional
   `X-MDCMS-Client` request header. The CLI sends
-  `cli/<version>` and the SDK sends `sdk/<version>`.
+  `cli/<version>`. The read-only SDK does not send this header.
 - `system`: server-internal writes.
 
-`declared` is limited to 120 printable characters; longer or invalid values
+`declared` is limited to 120 printable ASCII characters; longer or invalid values
 are dropped, not rejected.
 
 Known limitation: an Assistant proposal accepted while a live collaboration
@@ -163,9 +163,11 @@ and undo paths pass the accepting user with channel `studio_ai`.
 All additions are optional fields on existing responses:
 
 - Document responses: `createdOrigin`, `updatedOrigin`.
-- Version list and version detail: `publishedOrigin`, plus a `users` map
+- Version list and version detail: `publishedOrigin`. Single-document GET
+  and version lists also return an optional `users` map
   (`{ [userId]: { name, email } }`) like the content list's.
-- Webhook payloads: `origin` next to the existing `user`.
+- Webhook payloads: `origin` from the document's `updatedOrigin`, next to
+  the existing `user`.
 
 ### Studio
 

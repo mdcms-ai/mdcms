@@ -259,3 +259,40 @@ test("webhook dispatcher validates stored targets before delivery fan-out", asyn
     ["https://public-webhook.example/hooks/mdcms"],
   );
 });
+
+for (const origin of [
+  undefined,
+  { channel: "api", credential: "api_key", apiKeyId: "key-1" },
+] as const) {
+  test(`content webhook ${origin ? "includes" : "omits absent"} change origin`, async () => {
+    const delivered: WebhookDelivery[] = [];
+    const dispatcher = createWebhookEventDispatcher({
+      store: createStubStore({
+        async listActiveTargetsByEvent() {
+          return [createTarget()];
+        },
+      }),
+      resolveTargetAddresses: async () => ["93.184.216.34"],
+      deliver: async (delivery) => {
+        delivered.push(delivery);
+      },
+    });
+    await dispatcher.emitContentEvent({
+      event: "content.updated",
+      scope,
+      actor,
+      document: {
+        ...createDocument(),
+        ...(origin ? { updatedOrigin: origin } : {}),
+      },
+    });
+    await dispatcher.drainDeliveries();
+    assert.equal(delivered.length, 1);
+    if (origin)
+      assert.deepEqual(
+        (delivered[0]?.payload as { origin?: unknown }).origin,
+        origin,
+      );
+    else assert.equal("origin" in delivered[0]!.payload, false);
+  });
+}

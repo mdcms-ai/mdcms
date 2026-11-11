@@ -1,3 +1,5 @@
+import type { ContentWriteAttribution } from "@mdcms/shared";
+import { originField } from "./responses.js";
 import { randomUUID } from "node:crypto";
 
 import { RuntimeError, type SchemaRegistryTypeSnapshot } from "@mdcms/shared";
@@ -13,7 +15,6 @@ import {
 import { resolveProjectEnvironmentScope } from "../project-provisioning.js";
 
 import {
-  DEFAULT_ACTOR,
   DEFAULT_LIMIT,
   MAX_LIMIT,
   type ContentDocument,
@@ -292,8 +293,10 @@ export function createDatabaseContentStore(
       frontmatter: versionRow.frontmatter as Record<string, unknown>,
       body: versionRow.body,
       createdBy: headRow.createdBy,
+      ...originField("createdOrigin", headRow.createdOrigin),
       createdAt: toIsoString(headRow.createdAt),
-      updatedBy: headRow.updatedBy,
+      updatedBy: versionRow.publishedBy,
+      ...originField("updatedOrigin", versionRow.publishedOrigin),
       updatedAt: toIsoString(versionRow.publishedAt),
     };
   }
@@ -416,7 +419,7 @@ export function createDatabaseContentStore(
         body: string;
       };
       version: number;
-      actorId: string;
+      attribution: ContentWriteAttribution;
       changeSummary?: string;
     },
   ): Promise<void> {
@@ -432,7 +435,8 @@ export function createDatabaseContentStore(
       body: input.snapshot.body,
       frontmatter: input.snapshot.frontmatter,
       version: input.version,
-      publishedBy: input.actorId,
+      publishedBy: input.attribution.actorId,
+      publishedOrigin: input.attribution.origin,
       changeSummary: input.changeSummary ?? null,
     });
     await searchBackend.upsertPublishedDocument(tx, {
@@ -551,7 +555,7 @@ export function createDatabaseContentStore(
       return row?.resolvedSchema as SchemaRegistryTypeSnapshot | undefined;
     },
 
-    async create(scope, payload, options?: ContentWriteOperationOptions) {
+    async create(scope, payload, options: ContentWriteOperationOptions) {
       const path = validateContentPath(
         assertRequiredString(payload.path, "path"),
       );
@@ -727,8 +731,6 @@ export function createDatabaseContentStore(
         });
       }
 
-      const actor = payload.createdBy?.trim() || DEFAULT_ACTOR;
-
       try {
         const created = await db.transaction(async (tx) => {
           await assertExpectedSchemaHash(
@@ -754,8 +756,10 @@ export function createDatabaseContentStore(
               hasUnpublishedChanges: true,
               publishedVersion: null,
               draftRevision: 1,
-              createdBy: actor,
-              updatedBy: actor,
+              createdBy: options.attribution.actorId,
+              createdOrigin: options.attribution.origin,
+              updatedBy: options.attribution.actorId,
+              updatedOrigin: options.attribution.origin,
             })
             .returning();
 
@@ -1078,7 +1082,7 @@ export function createDatabaseContentStore(
       scope,
       documentId,
       payload,
-      options?: ContentWriteOperationOptions,
+      options: ContentWriteOperationOptions,
     ) {
       const normalizedDocumentId = assertRequiredString(
         documentId,
@@ -1235,7 +1239,8 @@ export function createDatabaseContentStore(
                   : existing.body,
               hasUnpublishedChanges: true,
               draftRevision: sql`${documents.draftRevision} + 1`,
-              updatedBy: payload.updatedBy?.trim() || DEFAULT_ACTOR,
+              updatedBy: options.attribution.actorId,
+              updatedOrigin: options.attribution.origin,
               updatedAt: new Date(),
             })
             .where(
@@ -1364,7 +1369,7 @@ export function createDatabaseContentStore(
       }
     },
 
-    async softDelete(scope, documentId) {
+    async softDelete(scope, documentId, options) {
       const normalizedDocumentId = assertRequiredString(
         documentId,
         "documentId",
@@ -1418,7 +1423,8 @@ export function createDatabaseContentStore(
             isDeleted: true,
             hasUnpublishedChanges: true,
             draftRevision: sql`${documents.draftRevision} + 1`,
-            updatedBy: DEFAULT_ACTOR,
+            updatedBy: options.attribution.actorId,
+            updatedOrigin: options.attribution.origin,
             updatedAt: new Date(),
           })
           .where(
@@ -1454,7 +1460,7 @@ export function createDatabaseContentStore(
       return toContentDocument(scope, updated);
     },
 
-    async restore(scope, documentId) {
+    async restore(scope, documentId, options) {
       const normalizedDocumentId = assertRequiredString(
         documentId,
         "documentId",
@@ -1509,7 +1515,8 @@ export function createDatabaseContentStore(
           .update(documents)
           .set({
             isDeleted: false,
-            updatedBy: DEFAULT_ACTOR,
+            updatedBy: options.attribution.actorId,
+            updatedOrigin: options.attribution.origin,
             updatedAt: new Date(),
           })
           .where(
@@ -1720,7 +1727,6 @@ export function createDatabaseContentStore(
         });
       }
 
-      const actorId = input.actorId?.trim() || DEFAULT_ACTOR;
       const restoredDocument = await db.transaction(async (tx) => {
         const txDb = tx as unknown as DrizzleDatabase;
         const baseUpdate = {
@@ -1732,7 +1738,8 @@ export function createDatabaseContentStore(
           body: versionRow.body,
           isDeleted: false,
           draftRevision: existing.draftRevision + 1,
-          updatedBy: actorId,
+          updatedBy: input.attribution.actorId,
+          updatedOrigin: input.attribution.origin,
           updatedAt: new Date(),
         };
 
@@ -1753,7 +1760,7 @@ export function createDatabaseContentStore(
               body: versionRow.body,
             },
             version: nextVersion,
-            actorId,
+            attribution: input.attribution,
             changeSummary: input.changeSummary,
           });
 
@@ -1859,7 +1866,6 @@ export function createDatabaseContentStore(
         });
       }
 
-      const actorId = input.actorId?.trim() || DEFAULT_ACTOR;
       const publishedDocument = await db.transaction(async (tx) => {
         const nextVersion = await getNextVersionNumber(
           tx as unknown as DrizzleDatabase,
@@ -1877,7 +1883,7 @@ export function createDatabaseContentStore(
             body: existing.body,
           },
           version: nextVersion,
-          actorId,
+          attribution: input.attribution,
           changeSummary: input.changeSummary,
         });
 
@@ -1886,7 +1892,8 @@ export function createDatabaseContentStore(
           .set({
             publishedVersion: nextVersion,
             hasUnpublishedChanges: false,
-            updatedBy: actorId,
+            updatedBy: input.attribution.actorId,
+            updatedOrigin: input.attribution.origin,
             updatedAt: new Date(),
           })
           .where(
@@ -1933,7 +1940,6 @@ export function createDatabaseContentStore(
         });
       }
 
-      const actorId = input.actorId?.trim() || DEFAULT_ACTOR;
       const updated = await db.transaction(async (tx) => {
         const txDb = tx as unknown as DrizzleDatabase;
         const [existing] = await tx
@@ -1970,7 +1976,8 @@ export function createDatabaseContentStore(
           .set({
             publishedVersion: null,
             hasUnpublishedChanges: true,
-            updatedBy: actorId,
+            updatedBy: input.attribution.actorId,
+            updatedOrigin: input.attribution.origin,
             updatedAt: new Date(),
           })
           .where(

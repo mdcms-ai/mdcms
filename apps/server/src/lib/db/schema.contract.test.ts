@@ -226,8 +226,10 @@ test("schema snapshot includes CMS-11/CMS-12 core tables and columns", () => {
       "published_version",
       "draft_revision",
       "created_by",
+      "created_origin",
       "created_at",
       "updated_by",
+      "updated_origin",
       "updated_at",
     ],
     "public.document_versions": [
@@ -244,6 +246,7 @@ test("schema snapshot includes CMS-11/CMS-12 core tables and columns", () => {
       "frontmatter",
       "version",
       "published_by",
+      "published_origin",
       "published_at",
       "change_summary",
     ],
@@ -875,4 +878,17 @@ test("migration SQL encodes published-version delete restriction and no extensio
     /concat_ws\(\s+E'\\n',\s+"document_versions"\."path",\s+regexp_replace\("document_versions"\."path",\s+'\[\/\._-\]\+',\s+' ',\s+'g'\),\s+"document_versions"\."body",\s+"document_versions"\."frontmatter"::text\s+\)/i,
     "expected backfill vector text to include separator-normalized path segments",
   );
+});
+
+test("actor columns store text user ids", () => {
+  const { snapshot } = readLatestArtifacts();
+  const documentsTable = snapshot.tables["public.documents"];
+  const documentVersionsTable = snapshot.tables["public.document_versions"];
+
+  assert.equal(documentsTable?.columns.created_by?.type, "text");
+  assert.equal(documentsTable?.columns.updated_by?.type, "text");
+  assert.equal(documentVersionsTable?.columns.published_by?.type, "text");
+  assert.equal(documentsTable?.columns.created_origin?.type, "jsonb");
+  assert.equal(documentsTable?.columns.updated_origin?.type, "jsonb");
+  assert.equal(documentVersionsTable?.columns.published_origin?.type, "jsonb");
 });

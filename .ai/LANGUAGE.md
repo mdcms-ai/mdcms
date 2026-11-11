@@ -45,6 +45,13 @@ Use these terms exactly. Do not coin synonyms. If a needed concept is missing, a
 | **Loopback OAuth flow** | CLI's browser-based auth handoff using OAuth2 with a localhost callback (`127.0.0.1`) | device flow, OAuth flow, login flow |
 | **Scope**               | A permission claim attached to a key or session                                       | permission, role, capability        |
 
+## Change attribution
+
+| Term                | Meaning                                                                                          | Don't say       |
+| ------------------- | ------------------------------------------------------------------------------------------------ | --------------- |
+| **Change origin**   | How a content change reached the server: channel, credential, and optional declared client name. | actor identity  |
+| **Declared client** | Client name and version reported in `X-MDCMS-Client`; informational only.                        | verified client |
+
 ## Codebase shape
 
 | Term                          | Meaning                                                               | Don't say                                                 |

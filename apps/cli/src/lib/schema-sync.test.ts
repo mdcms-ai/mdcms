@@ -87,10 +87,11 @@ test("schema sync sends PUT /api/v1/schema with correct payload and headers", as
     assert.equal(capturedUrl, "http://localhost:4000/api/v1/schema");
     assert.equal(capturedInit?.method, "PUT");
 
-    const headers = capturedInit?.headers as Record<string, string>;
-    assert.equal(headers["content-type"], "application/json");
-    assert.equal(headers["x-mdcms-project"], "test-project");
-    assert.equal(headers["x-mdcms-environment"], "staging");
+    const headers = new Headers(capturedInit?.headers);
+    assert.equal(headers.get("content-type"), "application/json");
+    assert.equal(headers.get("x-mdcms-client"), "cli/0.0.0");
+    assert.equal(headers.get("x-mdcms-project"), "test-project");
+    assert.equal(headers.get("x-mdcms-environment"), "staging");
 
     assert.ok(capturedBody?.rawConfigSnapshot);
     assert.ok(capturedBody?.resolvedSchema);
@@ -218,7 +219,7 @@ test("schema sync returns 1 on non-200 response", async () => {
 
 test("schema sync sends authorization header when apiKey is present", async () => {
   await withTempDir(async (cwd) => {
-    let capturedHeaders: Record<string, string> = {};
+    let capturedHeaders = new Headers();
 
     const exitCode = await runMdcmsCli(
       ["schema", "sync", "--api-key", "test-token"],
@@ -230,7 +231,7 @@ test("schema sync sends authorization header when apiKey is present", async () =
           configPath: join(cwd, "mdcms.config.ts"),
         }),
         fetcher: async (_input, init) => {
-          capturedHeaders = init?.headers as Record<string, string>;
+          capturedHeaders = new Headers(init?.headers);
           const body = JSON.parse(String(init?.body)) as { schemaHash: string };
           return createSyncSuccessResponse({ schemaHash: body.schemaHash });
         },
@@ -240,7 +241,7 @@ test("schema sync sends authorization header when apiKey is present", async () =
     );
 
     assert.equal(exitCode, 0);
-    assert.equal(capturedHeaders.authorization, "Bearer test-token");
+    assert.equal(capturedHeaders.get("authorization"), "Bearer test-token");
   });
 });
 
@@ -274,10 +275,10 @@ test("performSchemaSync uploads schema and writes local state", async () => {
 
     assert.equal(capturedUrl, "http://server/api/v1/schema");
     assert.equal(capturedInit?.method, "PUT");
-    const headers = capturedInit?.headers as Record<string, string>;
-    assert.equal(headers["x-mdcms-project"], "p1");
-    assert.equal(headers["x-mdcms-environment"], "staging");
-    assert.equal(headers.authorization, "Bearer k");
+    const headers = new Headers(capturedInit?.headers);
+    assert.equal(headers.get("x-mdcms-project"), "p1");
+    assert.equal(headers.get("x-mdcms-environment"), "staging");
+    assert.equal(headers.get("authorization"), "Bearer k");
 
     const statePath = resolveSchemaStatePath({
       cwd,

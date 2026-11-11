@@ -61,6 +61,9 @@ export function createWebhookEventDispatcher(
             version: input.document.publishedVersion,
           },
           user: userPayload(input.actor),
+          ...(input.document.updatedOrigin
+            ? { origin: input.document.updatedOrigin }
+            : {}),
         },
       });
     },

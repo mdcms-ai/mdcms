@@ -1005,3 +1005,68 @@ test("version detail helper validates required fields and rejects malformed payl
       error.code === "DOCUMENT_ROUTE_RESPONSE_INVALID",
   );
 });
+
+for (const origin of [
+  { channel: "studio", credential: "session" },
+  { channel: "fax" },
+]) {
+  test(`document attribution parsing tolerates origin channel ${origin.channel}`, async () => {
+    const users = {
+      "user-1": { name: "Ada Lovelace", email: "ada@example.com" },
+    };
+    const document = {
+      documentId: "doc-1",
+      translationGroupId: "group-1",
+      project: "marketing-site",
+      environment: "staging",
+      type: "Note",
+      path: "notes/test",
+      locale: "en",
+      format: "md",
+      isDeleted: false,
+      hasUnpublishedChanges: true,
+      version: 1,
+      publishedVersion: 1,
+      draftRevision: 2,
+      frontmatter: {},
+      body: "text",
+      createdBy: "user-1",
+      updatedBy: "user-1",
+      createdAt: "2026-11-11T00:00:00Z",
+      updatedAt: "2026-11-11T00:00:00Z",
+      createdOrigin: origin,
+      updatedOrigin: origin,
+    };
+    const api = createDocumentRouteApi({
+      fetcher: async (input) =>
+        Response.json(
+          String(input).includes("/versions")
+            ? {
+                data: [
+                  {
+                    ...document,
+                    publishedBy: "user-1",
+                    publishedAt: document.updatedAt,
+                    publishedOrigin: origin,
+                  },
+                ],
+                users,
+                pagination: { total: 1, limit: 20, offset: 0, hasMore: false },
+              }
+            : { data: document, users },
+        ),
+    });
+    const draft = await api.loadDraft({ type: "Note", documentId: "doc-1" });
+    assert.deepEqual(draft.users, users);
+    const versions = await api.listVersions({ documentId: "doc-1" });
+    assert.deepEqual(versions.users, users);
+    if (origin.channel === "studio") {
+      assert.deepEqual(draft.updatedOrigin, origin);
+      assert.deepEqual(versions.data[0]?.publishedOrigin, origin);
+    } else {
+      assert.equal("updatedOrigin" in draft, false);
+      assert.equal("createdOrigin" in draft, false);
+      assert.equal("publishedOrigin" in versions.data[0]!, false);
+    }
+  });
+}

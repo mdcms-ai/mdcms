@@ -1,10 +1,11 @@
 import type {
   ContentDocumentResponse,
+  ContentChangeOrigin,
   ContentVersionDocumentResponse,
   ContentVersionSummaryResponse,
   SchemaRegistryTypeSnapshot,
 } from "@mdcms/shared";
-import { RuntimeError } from "@mdcms/shared";
+import { RuntimeError, parseContentChangeOrigin } from "@mdcms/shared";
 
 import { documents, documentVersions } from "../db/schema.js";
 
@@ -43,8 +44,10 @@ export function toDocumentResponse(
       ? { publishedLocales: document.publishedLocales }
       : {}),
     createdBy: document.createdBy,
+    ...originField("createdOrigin", document.createdOrigin),
     createdAt: document.createdAt,
     updatedBy: document.updatedBy,
+    ...originField("updatedOrigin", document.updatedOrigin),
     updatedAt: document.updatedAt,
   };
 }
@@ -64,6 +67,7 @@ export function toVersionSummaryResponse(
     format: document.format,
     publishedAt: document.publishedAt,
     publishedBy: document.publishedBy,
+    ...originField("publishedOrigin", document.publishedOrigin),
     changeSummary: document.changeSummary,
   };
 }
@@ -203,8 +207,10 @@ export function toContentDocument(
     frontmatter: row.frontmatter as Record<string, unknown>,
     body: row.body,
     createdBy: row.createdBy,
+    ...originField("createdOrigin", row.createdOrigin),
     createdAt: toIsoString(row.createdAt),
     updatedBy: row.updatedBy,
+    ...originField("updatedOrigin", row.updatedOrigin),
     updatedAt: toIsoString(row.updatedAt),
   };
 }
@@ -225,6 +231,7 @@ export function toContentVersionDocument(
     format: row.contentFormat as ContentFormat,
     publishedAt: toIsoString(row.publishedAt),
     publishedBy: row.publishedBy,
+    ...originField("publishedOrigin", row.publishedOrigin),
     changeSummary: row.changeSummary ?? undefined,
     frontmatter: row.frontmatter as Record<string, unknown>,
     body: row.body,
@@ -264,4 +271,12 @@ export function buildContentPathConflict(input: {
       locale: input.locale,
     },
   });
+}
+
+export function originField<K extends string>(
+  key: K,
+  value: unknown,
+): Partial<Record<K, ContentChangeOrigin>> {
+  const origin = parseContentChangeOrigin(value);
+  return origin ? ({ [key]: origin } as Record<K, ContentChangeOrigin>) : {};
 }

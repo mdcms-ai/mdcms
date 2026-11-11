@@ -277,6 +277,10 @@ test("createCollaborationGuardedAiContentStore blocks existing-document writes w
         "active-document",
         { body: "next" },
         {
+          attribution: {
+            actorId: "user-1",
+            origin: { channel: "studio", credential: "session" },
+          },
           expectedSchemaHash: "schema-hash",
         },
       ),
@@ -287,7 +291,13 @@ test("createCollaborationGuardedAiContentStore blocks existing-document writes w
       error.details?.documentId === "active-document",
   );
   await assert.rejects(
-    () => store.softDelete(scope, "active-document"),
+    () =>
+      store.softDelete(scope, "active-document", {
+        attribution: {
+          actorId: "user-1",
+          origin: { channel: "studio", credential: "session" },
+        },
+      }),
     (error) =>
       error instanceof RuntimeError &&
       error.code === "DOCUMENT_COLLABORATION_ACTIVE",
@@ -295,7 +305,13 @@ test("createCollaborationGuardedAiContentStore blocks existing-document writes w
   const restore = store.restore;
   assert.ok(restore);
   await assert.rejects(
-    () => restore(scope, "active-document"),
+    () =>
+      restore(scope, "active-document", {
+        attribution: {
+          actorId: "user-1",
+          origin: { channel: "studio", credential: "session" },
+        },
+      }),
     (error) =>
       error instanceof RuntimeError &&
       error.code === "DOCUMENT_COLLABORATION_ACTIVE",
@@ -314,7 +330,13 @@ test("createCollaborationGuardedAiContentStore blocks existing-document writes w
       frontmatter: {},
       body: "new",
     },
-    { expectedSchemaHash: "schema-hash" },
+    {
+      attribution: {
+        actorId: "user-1",
+        origin: { channel: "studio", credential: "session" },
+      },
+      expectedSchemaHash: "schema-hash",
+    },
   );
 
   assert.deepEqual(calls, ["getById", "create"]);
@@ -352,11 +374,23 @@ test("createCollaborationGuardedAiContentStore invalidates inactive cache after 
     { project: "marketing", environment: "draft" },
     "doc-update",
     { body: "updated" },
-    { expectedSchemaHash: "schema-hash" },
+    {
+      attribution: {
+        actorId: "user-1",
+        origin: { channel: "studio", credential: "session" },
+      },
+      expectedSchemaHash: "schema-hash",
+    },
   );
   await store.softDelete(
     { project: "marketing", environment: "draft" },
     "doc-delete",
+    {
+      attribution: {
+        actorId: "user-1",
+        origin: { channel: "studio", credential: "session" },
+      },
+    },
   );
 
   assert.deepEqual(invalidated, ["doc-update", "doc-delete"]);
@@ -393,7 +427,12 @@ test("createCollaborationGuardedAiContentStore invalidates inactive cache after 
   const restore = store.restore;
   assert.ok(restore);
 
-  await restore({ project: "marketing", environment: "draft" }, "doc-restore");
+  await restore({ project: "marketing", environment: "draft" }, "doc-restore", {
+    attribution: {
+      actorId: "user-1",
+      origin: { channel: "studio", credential: "session" },
+    },
+  });
 
   assert.deepEqual(invalidated, ["doc-restore"]);
 });
@@ -426,7 +465,13 @@ test("createCollaborationGuardedAiContentStore ignores inactive cache invalidati
     { project: "marketing", environment: "draft" },
     "doc-update",
     { body: "updated" },
-    { expectedSchemaHash: "schema-hash" },
+    {
+      attribution: {
+        actorId: "user-1",
+        origin: { channel: "studio", credential: "session" },
+      },
+      expectedSchemaHash: "schema-hash",
+    },
   );
 
   assert.equal(updated.documentId, "doc-update");
@@ -699,3 +744,114 @@ test("shutdownServerRuntime drains collaboration before closing database", async
 
   assert.deepEqual(calls, ["collaboration:shutdown", "db:close"]);
 });
+
+(process.env.MDCMS_TEST_DATABASE_URL ? test : test.skip)(
+  "Assistant host applies proposals with the authenticated session user's origin",
+  async () => {
+    const { createDatabaseTestContext, seedSchemaRegistryScope } = await import(
+      "./content-api-test-support.js"
+    );
+    const { createDatabaseContentStore } = await import(
+      "./content-api/database-store.js"
+    );
+    // This integration check is opt-in so the regular runtime unit suite does not
+    // require a database or write to a developer's default database.
+    const context = await createDatabaseTestContext("attribution-host");
+    const scope = {
+      project: "_test-attribution-host",
+      environment: "production",
+    };
+    try {
+      await context.prepareScope(scope);
+      const { schemaHash } = await seedSchemaRegistryScope(
+        context.dbConnection.db,
+        {
+          scope,
+          entries: [
+            {
+              type: "Note",
+              directory: "notes",
+              localized: false,
+              fields: {
+                title: { kind: "string", required: false, nullable: false },
+              },
+            },
+          ],
+        },
+      );
+      const headers = context.csrfHeaders({
+        "content-type": "application/json",
+        "x-mdcms-project": scope.project,
+        "x-mdcms-environment": scope.environment,
+      });
+      const createdResponse = await context.handler(
+        new Request("http://localhost/api/v1/content", {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            type: "Note",
+            path: `notes/${crypto.randomUUID()}`,
+            locale: "en",
+            format: "md",
+            frontmatter: { title: "First" },
+            body: "text",
+          }),
+        }),
+      );
+      assert.equal(
+        createdResponse.status,
+        200,
+        await createdResponse.clone().text(),
+      );
+      const { data: created } = (await createdResponse.json()) as {
+        data: ContentDocumentResponse;
+      };
+      const proposalId = crypto.randomUUID();
+      const response = await context.handler(
+        new Request(
+          `http://localhost/api/v1/ai/proposals/${proposalId}/apply`,
+          {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              schemaHash,
+              draftRevision: created.draftRevision,
+              proposal: {
+                proposalId,
+                kind: "update_frontmatter",
+                ...scope,
+                documentId: created.documentId,
+                baseDraftRevision: created.draftRevision,
+                type: "Note",
+                locale: "en",
+                summary: "Update title",
+                operations: [
+                  { op: "update_frontmatter", patch: { title: "Updated" } },
+                ],
+                validation: { status: "valid" },
+                expiresAt: new Date(Date.now() + 300000).toISOString(),
+                provider: {
+                  providerId: "echo",
+                  model: "echo-1",
+                  promptTemplateId: "copy_improvement.v1",
+                },
+              },
+            }),
+          },
+        ),
+      );
+      assert.equal(response.status, 200, await response.text());
+      const stored = await createDatabaseContentStore({
+        db: context.dbConnection.db,
+      }).getById(scope, created.documentId, { draft: true });
+      assert.equal(stored?.updatedBy, context.userId);
+      assert.deepEqual(stored?.updatedOrigin, {
+        channel: "studio_ai",
+        credential: "session",
+      });
+      assert.equal(stored?.frontmatter.title, "Updated");
+    } finally {
+      await context.dbConnection.close();
+    }
+  },
+);
