@@ -8,7 +8,7 @@ import type {
   EnvironmentDefinitionsMeta,
   EnvironmentSummary,
 } from "@mdcms/shared";
-import { ArrowRight, ChevronRight, Plus, X } from "lucide-react";
+import { ArrowRight, Check, ChevronRight, Plus, X } from "lucide-react";
 
 import { createStudioContentListApi } from "../../../content-list-api.js";
 import { createStudioEnvironmentApi } from "../../../environment-api.js";
@@ -266,12 +266,12 @@ function PromoteStepper({ stage }: { stage: PromoteStage }) {
             >
               <span
                 className={cn(
-                  "grid size-4 place-items-center rounded-full bg-background-subtle text-[9px] font-bold",
+                  "grid size-4 place-items-center rounded-full bg-background-subtle text-[9px] font-semibold",
                   isActive && "bg-primary text-primary-foreground",
                   !isActive && isDone && "bg-success text-primary-foreground",
                 )}
               >
-                {isDone ? "✓" : index + 1}
+                {isDone ? <Check className="size-2.5" /> : index + 1}
               </span>
               {entry.label}
             </span>
@@ -291,7 +291,7 @@ function DefinitionsStrip({ meta }: { meta: EnvironmentDefinitionsMeta }) {
     <div
       data-mdcms-environments-definitions-strip
       data-mdcms-environments-definitions-status={meta.definitionsStatus}
-      className="flex flex-wrap items-center gap-3 rounded-md border border-dashed border-primary/60 bg-card px-3.5 py-2.5 font-mono text-[11px] text-foreground-muted"
+      className="flex flex-wrap items-center gap-3 rounded-lg border border-card-border bg-card px-4 py-2.5 font-mono text-[11px] text-foreground-muted"
     >
       <span
         aria-hidden
@@ -334,10 +334,8 @@ function LineageCard({
     >
       <div className="flex items-center gap-3 border-b border-card-border px-5 py-3.5">
         <div>
-          <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-foreground-muted">
-            Inheritance
-          </div>
-          <div className="font-heading text-base font-bold text-foreground">
+          <div className="text-xs text-foreground-muted">Inheritance</div>
+          <div className="font-heading text-base font-semibold text-foreground">
             Lineage
           </div>
         </div>
@@ -365,14 +363,14 @@ function LineageCard({
               >
                 <div className="flex flex-wrap gap-1">
                   {env.isDefault ? (
-                    <span className="rounded-sm bg-primary px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-[0.06em] text-primary-foreground">
+                    <span className="rounded-sm bg-primary px-1.5 py-0.5 font-mono text-[11px] font-medium text-primary-foreground">
                       Default
                     </span>
                   ) : null}
                   {isRoot ? (
                     <span
                       className={cn(
-                        "rounded-sm px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-[0.06em]",
+                        "rounded-sm px-1.5 py-0.5 font-mono text-[11px] font-medium",
                         "bg-background/20 text-background",
                       )}
                     >
@@ -380,7 +378,7 @@ function LineageCard({
                     </span>
                   ) : null}
                 </div>
-                <div className="font-heading text-[18px] font-bold leading-tight">
+                <div className="font-heading text-[18px] font-medium leading-tight">
                   {env.name}
                 </div>
                 <div
@@ -393,9 +391,7 @@ function LineageCard({
                 </div>
                 {!isRoot ? (
                   <div className="mt-1 inline-flex items-center gap-1.5 font-mono text-[10px] opacity-85">
-                    <span className="uppercase tracking-[0.06em] opacity-55">
-                      extends
-                    </span>
+                    <span className="opacity-55">extends</span>
                     <span>← {parent?.name ?? env.extends}</span>
                   </div>
                 ) : null}
@@ -456,11 +452,11 @@ function EnvironmentRow({
           />
           <div className="flex flex-col">
             <div className="flex items-center gap-2">
-              <span className="font-heading text-[15px] font-bold leading-tight text-foreground">
+              <span className="font-heading text-[15px] font-semibold leading-tight text-foreground">
                 {environment.name}
               </span>
               {environment.isDefault ? (
-                <span className="rounded-sm bg-foreground px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-[0.06em] text-background">
+                <span className="rounded-sm bg-foreground px-1.5 py-0.5 font-mono text-[11px] font-medium text-background">
                   Default
                 </span>
               ) : null}
@@ -477,7 +473,7 @@ function EnvironmentRow({
             ← extends {parent.name}
           </span>
         ) : (
-          <span className="inline-flex items-center gap-1 rounded-sm bg-background-subtle px-2 py-1 font-mono text-[11px] italic text-foreground-muted">
+          <span className="inline-flex items-center gap-1 rounded-sm bg-background-subtle px-2 py-1 font-mono text-[11px] text-foreground-muted">
             root · no parent
           </span>
         )}
@@ -490,7 +486,7 @@ function EnvironmentRow({
           <Button
             type="button"
             size="sm"
-            variant="default"
+            variant="ghost"
             data-mdcms-environment-promote-action={environment.name}
             disabled={isPromotePending}
             onClick={() => onRequestPromote?.(environment)}
@@ -560,10 +556,8 @@ function EnvironmentTable({
     >
       <div className="flex items-center gap-3 border-b border-card-border px-5 py-3.5">
         <div>
-          <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-foreground-muted">
-            All environments
-          </div>
-          <div className="font-heading text-base font-bold text-foreground">
+          <div className="text-xs text-foreground-muted">All environments</div>
+          <div className="font-heading text-base font-semibold text-foreground">
             Manage
           </div>
         </div>
@@ -572,16 +566,16 @@ function EnvironmentTable({
         <table className="w-full min-w-[760px] border-separate border-spacing-0">
           <thead className="bg-background-subtle">
             <tr>
-              <th className="px-4 py-2.5 text-left font-mono text-[10px] font-medium uppercase tracking-[0.08em] text-foreground-muted">
+              <th className="px-4 py-2.5 text-left text-xs font-medium text-foreground-muted">
                 Name
               </th>
-              <th className="px-4 py-2.5 text-left font-mono text-[10px] font-medium uppercase tracking-[0.08em] text-foreground-muted">
+              <th className="px-4 py-2.5 text-left text-xs font-medium text-foreground-muted">
                 Extends
               </th>
-              <th className="px-4 py-2.5 text-left font-mono text-[10px] font-medium uppercase tracking-[0.08em] text-foreground-muted">
+              <th className="px-4 py-2.5 text-left text-xs font-medium text-foreground-muted">
                 Created
               </th>
-              <th className="px-4 py-2.5 text-right font-mono text-[10px] font-medium uppercase tracking-[0.08em] text-foreground-muted">
+              <th className="px-4 py-2.5 text-right text-xs font-medium text-foreground-muted">
                 Actions
               </th>
             </tr>
@@ -637,10 +631,8 @@ function DrawerShell({
       >
         <DialogHeader className="flex flex-row items-center gap-3 border-b border-card-border px-5 py-4 text-left">
           <div className="min-w-0 flex-1">
-            <div className="font-mono text-[10px] uppercase tracking-[0.08em] text-foreground-muted">
-              {kind}
-            </div>
-            <DialogTitle className="font-heading text-[20px] font-bold leading-tight text-foreground">
+            <div className="text-xs text-foreground-muted">{kind}</div>
+            <DialogTitle className="font-heading text-[20px] font-medium leading-tight text-foreground">
               {title}
             </DialogTitle>
             <DialogDescription className="sr-only">
@@ -725,7 +717,7 @@ function CloneDrawer({
         <div className="grid gap-2">
           <Label
             htmlFor="clone-source-env"
-            className="font-mono text-[10px] uppercase tracking-[0.08em] text-foreground-muted"
+            className="text-xs text-foreground-muted"
           >
             Source environment
           </Label>
@@ -1029,7 +1021,7 @@ function PromoteConfigure({
     <>
       <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-end gap-3">
         <div className="grid gap-2">
-          <Label className="font-mono text-[10px] uppercase tracking-[0.08em] text-foreground-muted">
+          <Label className="text-xs text-foreground-muted">
             Source environment
           </Label>
           <select
@@ -1047,7 +1039,7 @@ function PromoteConfigure({
         </div>
         <div className="pb-2 font-mono text-lg text-foreground-muted">→</div>
         <div className="grid gap-2">
-          <Label className="font-mono text-[10px] uppercase tracking-[0.08em] text-foreground-muted">
+          <Label className="text-xs text-foreground-muted">
             Target environment
           </Label>
           <select
@@ -1072,7 +1064,7 @@ function PromoteConfigure({
       ) : null}
 
       <div className="mt-5 grid gap-2">
-        <Label className="font-mono text-[10px] uppercase tracking-[0.08em] text-foreground-muted">
+        <Label className="text-xs text-foreground-muted">
           Documents · {promoteState.selectedDocumentIds.length} selected
         </Label>
         <div
@@ -1191,7 +1183,7 @@ function PromotePreview({
   return (
     <div data-mdcms-environment-promote-preview className="space-y-4">
       <div className="flex items-start gap-2.5 rounded-md border border-warning/40 bg-warning-subtle p-3">
-        <span className="grid size-5 shrink-0 place-items-center rounded-full bg-warning text-[12px] font-bold text-primary-foreground">
+        <span className="grid size-5 shrink-0 place-items-center rounded-full bg-warning text-[12px] font-semibold text-primary-foreground">
           !
         </span>
         <div className="text-xs leading-relaxed text-foreground">
@@ -1219,10 +1211,8 @@ function PromotePreview({
 function PreviewTile({ label, value }: { label: string; value: number }) {
   return (
     <div className="rounded-md border border-card-border bg-background px-3 py-2.5">
-      <div className="font-mono text-[9px] uppercase tracking-[0.08em] text-foreground-muted">
-        {label}
-      </div>
-      <div className="mt-1 font-heading text-[24px] font-bold leading-none text-foreground">
+      <div className="text-[11px] text-foreground-muted">{label}</div>
+      <div className="mt-1 font-heading text-[24px] font-medium leading-none text-foreground">
         {value}
       </div>
     </div>
@@ -1238,7 +1228,7 @@ function PromotePlanList({
 }) {
   return (
     <div className="overflow-hidden rounded-md border border-card-border">
-      <div className="grid grid-cols-[80px_minmax(0,1fr)_56px_110px] items-center gap-2.5 bg-background-subtle px-3.5 py-2 font-mono text-[9px] uppercase tracking-[0.08em] text-foreground-muted">
+      <div className="grid grid-cols-[80px_minmax(0,1fr)_56px_110px] items-center gap-2.5 bg-background-subtle px-3.5 py-2 text-[11px] text-foreground-muted">
         <span>Status</span>
         <span>Path</span>
         <span>Locale</span>
@@ -1278,7 +1268,7 @@ function PromoteStatusPill({
     <span
       data-mdcms-environment-promote-status={status}
       className={cn(
-        "inline-flex w-fit items-center rounded-sm px-1 py-px font-mono text-[8px] font-bold uppercase tracking-[0.06em] leading-tight",
+        "inline-flex w-fit items-center rounded-sm px-1 py-px font-mono text-[8px] font-medium leading-tight",
         status === "overwrote" && "bg-primary/20 text-primary",
         status === "created" && "bg-success/20 text-success",
         status === "skipped_unpublished" &&
@@ -1320,8 +1310,8 @@ function PromoteResult({
   return (
     <div data-mdcms-environment-promote-result className="space-y-4">
       <div className="flex items-start gap-2.5 rounded-md border border-success/30 bg-success-subtle p-3">
-        <span className="grid size-5 shrink-0 place-items-center rounded-full bg-success text-[12px] font-bold text-primary-foreground">
-          ✓
+        <span className="grid size-5 shrink-0 place-items-center rounded-full bg-success text-primary-foreground">
+          <Check className="size-3" />
         </span>
         <div className="text-xs leading-relaxed text-foreground">
           <div className="font-semibold">
@@ -1398,7 +1388,7 @@ export function EnvironmentManagementPageView({
       <div className="space-y-6 p-6 lg:p-8">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div className="space-y-1.5">
-            <h1 className="font-heading text-[36px] font-semibold leading-[1.05] tracking-tight text-foreground">
+            <h1 className="font-heading text-[32px] font-medium leading-[1.1] tracking-tight text-foreground">
               Environments
             </h1>
             <p className="font-mono text-[12px] text-foreground-muted">

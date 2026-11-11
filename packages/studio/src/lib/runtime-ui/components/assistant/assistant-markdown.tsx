@@ -131,7 +131,7 @@ function AssistantCodeBlock({
       className="not-prose my-3 overflow-hidden rounded-lg border border-border/70 bg-[var(--code-bg)] text-foreground shadow-sm"
     >
       <div className="flex min-h-10 items-center justify-between gap-3 border-b border-border/60 bg-card/70 px-3 py-1.5">
-        <span className="truncate font-mono text-[11px] font-medium uppercase text-foreground-muted">
+        <span className="truncate text-xs font-medium text-foreground-muted">
           {language}
         </span>
         <div className="flex shrink-0 items-center gap-1">

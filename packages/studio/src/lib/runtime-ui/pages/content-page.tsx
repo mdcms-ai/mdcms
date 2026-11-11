@@ -51,7 +51,6 @@ function ContentTypeCard({
     0,
     Math.min(100, rawPublishedPercentage),
   );
-  const initial = (entry.type[0] ?? "?").toUpperCase();
 
   const card = (
     <div
@@ -63,11 +62,8 @@ function ContentTypeCard({
       )}
     >
       <div className="flex items-center gap-3">
-        <span className="grid size-9 shrink-0 place-items-center rounded-md bg-blue-100 font-heading text-base font-bold text-primary">
-          {initial}
-        </span>
         <div className="min-w-0 flex-1">
-          <h2 className="font-heading text-[18px] font-semibold leading-[1.1] tracking-tight text-foreground">
+          <h2 className="font-heading text-lg font-medium leading-tight text-foreground">
             {entry.type}
           </h2>
           <p className="mt-0.5 truncate font-mono text-[11px] text-foreground-muted">
@@ -76,7 +72,7 @@ function ContentTypeCard({
         </div>
         {entry.localized ? (
           <span
-            className="rounded-sm bg-blue-100 px-1.5 py-0.5 font-mono text-[10px] font-bold tracking-wider text-primary"
+            className="rounded-sm bg-blue-100 px-1.5 py-0.5 font-mono text-[11px] font-medium text-primary"
             title={entry.locales?.join(", ") ?? "Localized"}
           >
             i18n
@@ -109,7 +105,7 @@ function ContentTypeCard({
 
           <div className="mt-4 h-1 overflow-hidden rounded-full bg-background-subtle">
             <div
-              className="h-full bg-primary transition-all"
+              className="h-full bg-primary"
               style={{ width: `${publishedPercentage}%` }}
             />
           </div>
@@ -117,7 +113,7 @@ function ContentTypeCard({
           <div className="mt-2.5 flex items-center justify-between font-mono text-[11px] text-foreground-muted">
             <span>{publishedPercentage}% published</span>
             {entry.canNavigate ? (
-              <span className="text-primary">browse →</span>
+              <span className="font-sans font-medium text-primary">Browse</span>
             ) : null}
           </div>
         </>
@@ -160,10 +156,8 @@ function CardStat({
       data-mdcms-content-metric-summary={`${value} ${metricLabel}`}
       className="flex flex-col gap-0.5"
     >
-      <span className="font-mono text-[9px] uppercase tracking-[0.08em] text-foreground-muted">
-        {label}
-      </span>
-      <span className="font-heading text-[22px] font-bold leading-none text-foreground">
+      <span className="text-[11px] text-foreground-muted">{label}</span>
+      <span className="font-heading text-[22px] font-medium leading-none text-foreground">
         {value}
       </span>
     </div>
@@ -229,10 +223,10 @@ export function ContentPageView({
 
       <div className="space-y-6 p-6 lg:p-8">
         <div>
-          <PageHeaderHeading className="font-heading text-[36px] font-bold leading-[1.05] tracking-tight text-foreground">
+          <PageHeaderHeading className="font-heading text-[32px] font-medium leading-[1.1] tracking-tight text-foreground">
             Content
           </PageHeaderHeading>
-          <PageHeaderDescription className="mt-1.5 font-mono text-[12px] text-foreground-muted">
+          <PageHeaderDescription className="mt-2 font-mono text-xs text-foreground-muted">
             {summary
               ? `${typesCount} content type${typesCount === 1 ? "" : "s"} · ${summary.totalDocuments} document${summary.totalDocuments === 1 ? "" : "s"}${
                   summary.localizedTypes > 0

@@ -1,4 +1,4 @@
-import { GitBranch } from "lucide-react";
+import { Workflow } from "lucide-react";
 import { ComingSoon } from "../../components/coming-soon.js";
 import { PageHeader } from "../../components/layout/page-header.js";
 
@@ -8,7 +8,7 @@ export default function WorkflowsPage() {
       <PageHeader breadcrumbs={[{ label: "Workflows" }]} />
       <div className="p-6">
         <ComingSoon
-          icon={GitBranch}
+          icon={Workflow}
           title="Workflows"
           description="Define review and approval steps for your content before it gets published."
         />

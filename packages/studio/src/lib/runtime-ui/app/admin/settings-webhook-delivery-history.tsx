@@ -273,7 +273,7 @@ export function WebhookDeliveryHistorySection({
   return (
     <>
       <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-        <Activity className="size-4 text-primary" />
+        <Activity className="size-4 text-foreground-muted" />
         Delivery history
       </div>
 

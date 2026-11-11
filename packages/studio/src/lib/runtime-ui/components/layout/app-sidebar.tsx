@@ -11,12 +11,13 @@ import {
   LayoutDashboard,
   FileText,
   GitBranch,
-  Upload,
+  Image,
   Users,
   Settings,
   Trash2,
   FolderInput,
   Terminal,
+  Workflow,
   ChevronsLeft,
   ChevronsRight,
 } from "lucide-react";
@@ -57,8 +58,8 @@ const mainNavItems: ReadonlyArray<NavItem> = [
     hint: "read-only",
   },
   { icon: GitBranch, label: "Environments", href: "/admin/environments" },
-  { icon: Upload, label: "Media", href: "/admin/media" },
-  { icon: GitBranch, label: "Workflows", href: "/admin/workflows" },
+  { icon: Image, label: "Media", href: "/admin/media" },
+  { icon: Workflow, label: "Workflows", href: "/admin/workflows" },
   { icon: Terminal, label: "API", href: "/admin/api" },
   { icon: Trash2, label: "Trash", href: "/admin/trash" },
 ];
@@ -180,7 +181,7 @@ export function AppSidebar({
           {showAdminSection && (
             <>
               {!collapsed && (
-                <div className="mt-5 px-3 pb-1.5 font-mono text-[10px] font-medium uppercase tracking-wider text-sidebar-foreground-faint">
+                <div className="mt-5 px-3 pb-1.5 text-xs font-medium text-sidebar-foreground-faint">
                   Admin
                 </div>
               )}
@@ -207,14 +208,14 @@ export function AppSidebar({
         <div className="border-t border-sidebar-border p-2 space-y-1">
           {!collapsed && session && (
             <div className="flex items-center gap-2.5 p-2">
-              <span className="grid size-8 shrink-0 place-items-center rounded-full bg-accent font-heading text-[11px] font-bold text-accent-foreground">
+              <span className="grid size-8 shrink-0 place-items-center rounded-full bg-accent font-heading text-[11px] font-semibold text-vibrant-green-foreground">
                 {accountInitials}
               </span>
               <div className="min-w-0 flex-1 leading-tight">
-                <div className="truncate text-[13px] font-semibold text-sidebar-foreground">
+                <div className="truncate text-[13px] font-medium text-sidebar-foreground">
                   {accountName}
                 </div>
-                <div className="truncate font-mono text-[10px] text-sidebar-foreground-muted">
+                <div className="truncate font-mono text-[11px] text-sidebar-foreground-muted">
                   {accountMeta}
                 </div>
               </div>
@@ -286,7 +287,7 @@ function SidebarNavLink({
         <>
           <span className="flex-1 truncate">{item.label}</span>
           {item.hint && (
-            <span className="font-mono text-[9px] uppercase tracking-wider text-sidebar-foreground-faint">
+            <span className="text-[11px] text-sidebar-foreground-faint">
               {item.hint}
             </span>
           )}

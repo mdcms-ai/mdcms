@@ -181,7 +181,7 @@ export function SettingsMediaPanel({
         <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_300px]">
           <div className="space-y-5">
             <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-              <Image className="size-4 text-primary" />
+              <Image className="size-4 text-foreground-muted" />
               Image upload limit
             </div>
 
@@ -257,9 +257,7 @@ export function SettingsMediaPanel({
 
           <div className="space-y-3">
             <div className="rounded-md border border-border bg-background-subtle p-4">
-              <p className="font-mono text-[11px] uppercase text-foreground-muted">
-                Enforcement
-              </p>
+              <p className="text-xs text-foreground-muted">Enforcement</p>
               <p className="mt-3 text-sm text-foreground">
                 This setting only controls the application-level byte cap for
                 image uploads.

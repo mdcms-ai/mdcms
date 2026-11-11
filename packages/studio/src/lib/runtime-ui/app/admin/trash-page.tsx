@@ -145,7 +145,7 @@ function TrashFilterBar({
           <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-foreground-muted" />
           <Input
             aria-label="Search deleted documents"
-            placeholder="Search deleted documents..."
+            placeholder="Search deleted documents"
             value={searchInput}
             onChange={(e) => onSearchChange(e.target.value)}
             className="pl-9 w-72"
@@ -467,11 +467,13 @@ export default function TrashPage() {
     <div className="min-h-screen">
       <PageHeader breadcrumbs={[{ label: "Trash" }]} />
 
-      <div className="p-6 space-y-6">
+      <div className="space-y-6 p-6 lg:p-8">
         <div>
-          <h1 className="text-2xl font-semibold">Deleted Content</h1>
-          <p className="mt-1 text-sm text-foreground-muted">
-            Review and restore deleted documents.
+          <h1 className="font-heading text-[32px] font-medium leading-[1.1] tracking-tight text-foreground">
+            Trash
+          </h1>
+          <p className="mt-2 text-sm text-foreground-muted">
+            Deleted documents stay here until you restore them
           </p>
         </div>
 

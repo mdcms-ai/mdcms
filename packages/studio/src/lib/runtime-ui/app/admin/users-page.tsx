@@ -142,10 +142,10 @@ function SectionCard({
     >
       <div className="flex items-center gap-3 border-b border-divider px-4 py-3.5 sm:px-[18px]">
         <div className="min-w-0">
-          <div className="font-mono text-[10px] font-medium uppercase tracking-[0.08em] text-foreground-muted">
+          <div className="text-xs font-medium text-foreground-muted">
             {eyebrow}
           </div>
-          <h2 className="mt-0.5 truncate font-heading text-base font-bold leading-tight text-foreground">
+          <h2 className="mt-0.5 truncate font-heading text-base font-semibold leading-tight text-foreground">
             {title}
           </h2>
         </div>
@@ -164,7 +164,7 @@ function RoleBadge({ role }: { role: Role }) {
   return (
     <span
       className={cn(
-        "inline-flex w-fit shrink-0 items-center rounded-[3px] border px-2 py-[3px] font-mono text-[10px] font-bold leading-none tracking-[0.06em]",
+        "inline-flex w-fit shrink-0 items-center rounded-sm border px-2 py-0.5 text-xs font-medium leading-4",
         roleConfig[role].badgeClassName,
       )}
     >
@@ -180,7 +180,7 @@ function ScopeChip({ display }: { display: ScopeDisplay }) {
       className={cn(
         "inline-flex max-w-52 items-center truncate rounded-[3px] px-2 py-1 font-mono text-[11px] leading-none",
         display.variant === "full"
-          ? "bg-transparent italic text-foreground-muted"
+          ? "bg-transparent text-foreground-muted"
           : "bg-background-subtle text-foreground-muted",
       )}
     >
@@ -205,7 +205,7 @@ function StatePanel({
       <div className="mx-auto mb-4 grid size-10 place-items-center rounded-full bg-background-subtle text-foreground-muted">
         {icon}
       </div>
-      <h2 className="font-heading text-xl font-bold text-foreground">
+      <h2 className="font-heading text-xl font-medium text-foreground">
         {title}
       </h2>
       <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-foreground-muted">
@@ -313,14 +313,14 @@ function InviteUserDialog({
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>
-        <Button className="rounded-sm shadow-primary-btn">
+        <Button className="rounded-sm">
           <Plus className="size-4" />
           Invite user
         </Button>
       </DialogTrigger>
       <DialogContent className="gap-0 overflow-hidden rounded-lg border-border bg-card p-0 sm:max-w-[480px]">
         <DialogHeader className="px-6 pb-3 pt-5">
-          <DialogTitle className="font-heading text-[22px] font-bold leading-tight">
+          <DialogTitle className="font-heading text-[22px] font-medium leading-tight">
             Invite a new user
           </DialogTitle>
           <DialogDescription className="text-[13px] leading-5 text-foreground-muted">
@@ -329,10 +329,7 @@ function InviteUserDialog({
         </DialogHeader>
         <div className="flex flex-col gap-4 px-6 pb-5 pt-2">
           <div className="space-y-1.5">
-            <Label
-              htmlFor="email"
-              className="font-mono text-[10px] uppercase tracking-[0.08em] text-foreground-muted"
-            >
+            <Label htmlFor="email" className="text-xs text-foreground-muted">
               Email
             </Label>
             <div className="relative">
@@ -351,9 +348,7 @@ function InviteUserDialog({
           </div>
 
           <div className="space-y-1.5">
-            <Label className="font-mono text-[10px] uppercase tracking-[0.08em] text-foreground-muted">
-              Role
-            </Label>
+            <Label className="text-xs text-foreground-muted">Role</Label>
             <Select
               value={form.role}
               onValueChange={(value) =>
@@ -375,7 +370,7 @@ function InviteUserDialog({
             <div className="space-y-1.5">
               <Label
                 htmlFor="path-prefix"
-                className="font-mono text-[10px] uppercase tracking-[0.08em] text-foreground-muted"
+                className="text-xs text-foreground-muted"
               >
                 Folder prefix
               </Label>
@@ -550,7 +545,7 @@ function EditRoleDialogOpen({
     <Dialog open onOpenChange={onOpenChange}>
       <DialogContent className="gap-0 overflow-hidden rounded-lg border-border bg-card p-0 sm:max-w-[480px]">
         <DialogHeader className="px-6 pb-3 pt-5">
-          <DialogTitle className="font-heading text-[22px] font-bold leading-tight">
+          <DialogTitle className="font-heading text-[22px] font-medium leading-tight">
             Edit role
           </DialogTitle>
           <DialogDescription className="text-[13px] leading-5 text-foreground-muted">
@@ -559,9 +554,7 @@ function EditRoleDialogOpen({
         </DialogHeader>
         <div className="flex flex-col gap-4 px-6 pb-5 pt-2">
           <div className="space-y-1.5">
-            <Label className="font-mono text-[10px] uppercase tracking-[0.08em] text-foreground-muted">
-              Role
-            </Label>
+            <Label className="text-xs text-foreground-muted">Role</Label>
             <Select
               value={form.role}
               onValueChange={(value) =>
@@ -583,7 +576,7 @@ function EditRoleDialogOpen({
             <div className="space-y-1.5">
               <Label
                 htmlFor="edit-role-path-prefix"
-                className="font-mono text-[10px] uppercase tracking-[0.08em] text-foreground-muted"
+                className="text-xs text-foreground-muted"
               >
                 Folder prefix
               </Label>
@@ -736,19 +729,19 @@ function UsersTable({
       <Table className="min-w-[760px]">
         <TableHeader className="bg-background-subtle">
           <TableRow className="border-divider hover:bg-background-subtle">
-            <TableHead className="h-10 px-4 font-mono text-[10px] font-medium uppercase tracking-[0.08em] text-foreground-muted">
+            <TableHead className="h-10 px-4 text-xs font-medium text-foreground-muted">
               User
             </TableHead>
-            <TableHead className="h-10 w-28 px-4 font-mono text-[10px] font-medium uppercase tracking-[0.08em] text-foreground-muted">
+            <TableHead className="h-10 w-28 px-4 text-xs font-medium text-foreground-muted">
               Role
             </TableHead>
-            <TableHead className="h-10 w-48 px-4 font-mono text-[10px] font-medium uppercase tracking-[0.08em] text-foreground-muted">
+            <TableHead className="h-10 w-48 px-4 text-xs font-medium text-foreground-muted">
               Scope
             </TableHead>
-            <TableHead className="h-10 w-32 px-4 font-mono text-[10px] font-medium uppercase tracking-[0.08em] text-foreground-muted">
+            <TableHead className="h-10 w-32 px-4 text-xs font-medium text-foreground-muted">
               Joined
             </TableHead>
-            <TableHead className="h-10 w-20 px-4 text-right font-mono text-[10px] font-medium uppercase tracking-[0.08em] text-foreground-muted">
+            <TableHead className="h-10 w-20 px-4 text-right text-xs font-medium text-foreground-muted">
               Actions
             </TableHead>
           </TableRow>
@@ -768,7 +761,7 @@ function UsersTable({
                     <Avatar className="size-8 shrink-0">
                       <AvatarFallback
                         className={cn(
-                          "font-heading text-[11px] font-bold",
+                          "font-heading text-[11px] font-semibold",
                           roleConfig[role].avatarClassName,
                         )}
                       >
@@ -984,13 +977,13 @@ export default function UsersPage() {
     <div className="min-h-screen bg-background">
       <PageHeader breadcrumbs={[{ label: "Users" }]} />
 
-      <div className="space-y-5 p-4 sm:p-6">
+      <div className="space-y-6 p-6 lg:p-8">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div className="min-w-0">
-            <h1 className="font-heading text-[36px] font-bold leading-[1.05] tracking-normal text-foreground">
+            <h1 className="font-heading text-[32px] font-medium leading-[1.1] tracking-tight text-foreground">
               Users
             </h1>
-            <p className="mt-1.5 font-mono text-[12px] leading-5 text-foreground-muted">
+            <p className="mt-2 font-mono text-xs text-foreground-muted">
               {memberCount} · {inviteCount} · scoped to {projectScope}
             </p>
           </div>

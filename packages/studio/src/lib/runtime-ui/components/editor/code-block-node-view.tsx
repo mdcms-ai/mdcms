@@ -61,9 +61,7 @@ export function CodeBlockLanguageSelect({
         <SelectValue placeholder={label} aria-label={label}>
           {label}
           {isUnknown ? (
-            <span className="ml-1 text-[10px] uppercase tracking-wide text-warning">
-              not registered
-            </span>
+            <span className="ml-1 text-xs text-warning">not registered</span>
           ) : null}
         </SelectValue>
       </SelectTrigger>

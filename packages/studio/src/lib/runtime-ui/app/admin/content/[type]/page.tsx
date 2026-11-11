@@ -99,21 +99,21 @@ import {
   type ContentBulkCapabilities,
 } from "../../../../lib/content-bulk-actions.js";
 
+const STATUS_CHIP_CLASS =
+  "inline-flex items-center rounded-sm px-2 py-0.5 text-xs font-medium whitespace-nowrap";
+
 const statusConfig = {
   published: {
-    label: "PUBLISHED",
-    className:
-      "bg-[rgba(174,213,32,0.18)] text-[#516600] font-mono text-[10px] font-bold tracking-wider px-2 py-0.5 rounded-sm",
+    label: "Published",
+    className: `${STATUS_CHIP_CLASS} bg-vibrant-green/25 text-[#3f5000] dark:bg-vibrant-green/15 dark:text-vibrant-green`,
   },
   draft: {
-    label: "DRAFT",
-    className:
-      "bg-vibrant-green text-[#516600] font-mono text-[10px] font-bold tracking-wider px-2 py-0.5 rounded-sm",
+    label: "Draft",
+    className: `${STATUS_CHIP_CLASS} bg-muted text-foreground-muted`,
   },
   changed: {
-    label: "UNPUBLISHED CHANGES",
-    className:
-      "bg-blue-100 text-primary font-mono text-[10px] font-bold tracking-wider px-2 py-0.5 rounded-sm",
+    label: "Unpublished changes",
+    className: `${STATUS_CHIP_CLASS} bg-blue-100 text-primary`,
   },
 };
 
@@ -593,7 +593,7 @@ export function ContentTypeDocumentsTable({
               <TableHead
                 key={column.key}
                 className={cn(
-                  "h-10 px-4 font-mono text-[10px] font-medium uppercase tracking-[0.08em] text-foreground-muted",
+                  "h-10 px-4 text-xs font-medium text-foreground-muted",
                   column.className,
                 )}
               >
@@ -693,7 +693,7 @@ export function ContentTypeDocumentsTable({
               <TableCell className="px-4 py-3">
                 <div className="flex items-center gap-2">
                   <Avatar className="size-6">
-                    <AvatarFallback className="bg-blue-100 text-[10px] font-bold text-primary">
+                    <AvatarFallback className="bg-blue-100 text-[10px] font-semibold text-primary">
                       {deriveAuthorInitials(users[doc.updatedBy]?.email)}
                     </AvatarFallback>
                   </Avatar>
@@ -1342,10 +1342,10 @@ function ContentTypePageView({
         {/* Header */}
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <h1 className="font-heading text-[36px] font-semibold leading-[1.05] tracking-tight text-foreground">
+            <h1 className="font-heading text-[32px] font-medium leading-[1.1] tracking-tight text-foreground">
               {typeName}
             </h1>
-            <p className="mt-1.5 font-mono text-[12px] text-foreground-muted">
+            <p className="mt-2 font-mono text-xs text-foreground-muted">
               {schemaEntry?.directory ? `/${schemaEntry.directory}` : typeId}
               {schemaEntry?.localized ? " · localized" : ""}
               {list.pagination
@@ -1367,7 +1367,7 @@ function ContentTypePageView({
             <div className="relative">
               <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-foreground-muted" />
               <Input
-                placeholder="Search documents..."
+                placeholder="Search documents"
                 value={searchInput}
                 disabled={isListInteractionLocked}
                 onChange={(e) => setSearchInput(e.target.value)}

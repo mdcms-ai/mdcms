@@ -297,7 +297,7 @@ export function WebhookConfigurationsSection({
     <>
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-          <Webhook className="size-4 text-primary" />
+          <Webhook className="size-4 text-foreground-muted" />
           Webhook configurations
         </div>
         <Button asChild className="sm:self-start">

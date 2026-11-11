@@ -90,6 +90,7 @@ import {
 import {
   Check,
   ExternalLink,
+  FileText,
   Globe,
   Monitor,
   PanelRight,
@@ -974,22 +975,20 @@ function DocumentCanvasHeader({
   return (
     <div data-mdcms-document-canvas-header="true" className="space-y-3">
       <span className="inline-flex items-center gap-1.5 rounded-sm bg-code-bg px-2 py-1 font-mono text-[11px] text-foreground-muted">
-        <span aria-hidden="true">📄</span>
+        <FileText aria-hidden="true" className="size-3.5 shrink-0" />
         <span className="break-all">{fullPath}</span>
       </span>
-      <div className="flex flex-wrap items-baseline border-y border-dashed border-border py-2.5">
+      <div className="flex flex-wrap items-baseline border-y border-divider py-2.5">
         {fmEntries.map(([key, value], index) => (
           <span
             key={key}
             className={cn(
               "inline-flex items-baseline gap-2 px-3.5 py-1",
-              index > 0 && "border-l border-dashed border-border",
+              index > 0 && "border-l border-divider",
               index === 0 && "pl-0",
             )}
           >
-            <span className="font-mono text-[10px] uppercase tracking-[0.06em] text-foreground-muted">
-              {key}
-            </span>
+            <span className="text-xs text-foreground-muted">{key}</span>
             <span className="text-[13px] font-medium text-foreground">
               {value}
             </span>
@@ -1015,7 +1014,7 @@ function SidebarTabButton({
       data-mdcms-sidebar-tab={label.toLowerCase()}
       onClick={onClick}
       className={cn(
-        "flex-1 border-b-2 border-transparent py-2.5 text-center font-mono text-[11px] uppercase tracking-wider transition-colors",
+        "flex-1 border-b-2 border-transparent py-2.5 text-center font-mono text-xs transition-colors",
         active
           ? "border-primary text-foreground"
           : "text-foreground-muted hover:text-foreground",
@@ -1033,9 +1032,7 @@ export function SidebarInfoTab(props: {
 
   return (
     <div className="px-5 py-4">
-      <div className="mb-3 font-mono text-[10px] uppercase tracking-[0.08em] text-foreground-muted">
-        Document
-      </div>
+      <div className="mb-3 text-xs text-foreground-muted">Document</div>
       <div className="space-y-2.5 font-mono text-[11px]">
         <div className="flex items-center justify-between gap-3">
           <span className="text-foreground-muted">status</span>
@@ -1092,7 +1089,7 @@ function SidebarPropertiesTab(props: {
 
   return (
     <div className="px-5 py-4">
-      <div className="mb-3 font-mono text-[10px] uppercase tracking-[0.08em] text-foreground-muted">
+      <div className="mb-3 text-xs text-foreground-muted">
         Schema · {props.state.typeId}
       </div>
       {propertyDescriptors.length > 0 ? (
@@ -1333,7 +1330,7 @@ function SidebarPropertiesTab(props: {
                     ) : null}
                   </>
                 ) : (
-                  <span className="text-[11px] italic text-foreground-muted">
+                  <span className="text-[11px] text-foreground-muted">
                     Not editable yet
                   </span>
                 )}
@@ -1493,7 +1490,7 @@ function ContentDocumentPageSidebar(props: {
       data-mdcms-editor-pane="sidebar"
       className="flex size-full shrink-0 flex-col border-l border-border bg-card"
     >
-      {/* Tabs — mono uppercase, bottom-border accent on active.
+      {/* Tabs — sentence case, bottom-border accent on active.
           Stable tabs (Info, Properties, History) with a contextual
           Component tab when an MDX block is selected. */}
       <div className="flex items-stretch border-b border-border">
@@ -1578,7 +1575,7 @@ function PreviewModeButton(props: {
       data-mdcms-preview-mode-option={props.mode}
       data-state={props.activeMode === props.mode ? "active" : "inactive"}
       className={cn(
-        "h-8 border-l border-border px-3 font-mono text-[11px] uppercase transition-colors first:border-l-0",
+        "h-8 border-l border-border px-3 font-mono text-xs transition-colors first:border-l-0",
         props.activeMode === props.mode
           ? "bg-primary text-primary-foreground"
           : "bg-card text-foreground-muted hover:bg-muted hover:text-foreground",
@@ -1616,13 +1613,13 @@ function LivePreviewFailureMatrix() {
   return (
     <div className="divide-y divide-border border-y border-border">
       {[
-        ["NO ADAPTER", "Install the host preview route or use open-in-tab."],
-        ["FRAMING BLOCKED", "Allow Studio in frame-ancestors for preview."],
-        ["UNAUTHORIZED", "Refresh the Studio session or preview token."],
-        ["DRAFT INVALID", "Last valid render is kept until save succeeds."],
+        ["No adapter", "Install the host preview route or use open-in-tab."],
+        ["Framing blocked", "Allow Studio in frame-ancestors for preview."],
+        ["Unauthorized", "Refresh the Studio session or preview token."],
+        ["Draft invalid", "Last valid render is kept until save succeeds."],
       ].map(([label, description]) => (
         <div key={label} className="grid gap-1 py-2 sm:grid-cols-[8rem_1fr]">
-          <p className="font-mono text-[10px] font-semibold uppercase text-foreground">
+          <p className="font-mono text-xs font-medium text-foreground">
             {label}
           </p>
           <p className="text-xs text-foreground-muted">{description}</p>
@@ -1641,9 +1638,7 @@ function LivePreviewUnavailableState(props: {
       className="flex size-full items-center justify-center bg-background-subtle p-6"
     >
       <div className="max-w-md">
-        <p className="font-mono text-[10px] uppercase text-primary">
-          Real-route preview
-        </p>
+        <p className="font-mono text-xs text-primary">Real-route preview</p>
         <h2 className="mt-2 text-lg font-semibold text-foreground">
           Live preview not available
         </h2>
@@ -1670,9 +1665,7 @@ function LivePreviewFrameUnavailableState(props: {
       className="flex h-full w-full items-center justify-center rounded-md border border-border bg-card px-4 text-center text-sm text-foreground-muted"
     >
       <div className="max-w-md">
-        <p className="font-mono text-[10px] uppercase text-primary">
-          Real-route preview
-        </p>
+        <p className="font-mono text-xs text-primary">Real-route preview</p>
         <h2 className="mt-2 text-base font-semibold text-foreground">
           Live preview not available
         </h2>
@@ -2911,7 +2904,7 @@ function useContentDocumentPageViewElement({
                 onClick={onToggleSidebar}
                 data-mdcms-document-properties-handle="true"
                 aria-label="Open properties"
-                className="absolute right-0 top-1/2 z-10 inline-flex -translate-y-1/2 items-center gap-2 rounded-l-md border border-r-0 border-border bg-card px-2.5 py-2 font-mono text-[11px] uppercase tracking-wider text-foreground shadow-[-4px_0_12px_-4px_rgba(0,0,0,0.25)] transition-colors hover:bg-muted"
+                className="absolute right-0 top-1/2 z-10 inline-flex -translate-y-1/2 items-center gap-2 rounded-l-md border border-r-0 border-border bg-card px-2.5 py-2 font-mono text-xs text-foreground shadow-[-4px_0_12px_-4px_rgba(0,0,0,0.25)] transition-colors hover:bg-muted"
               >
                 <span
                   className="inline-block size-1.5 rounded-full bg-primary"

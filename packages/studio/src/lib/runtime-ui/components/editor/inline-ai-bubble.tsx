@@ -510,7 +510,7 @@ function renderInlineAiPreviewBubble({
           "shadow-lg",
         )}
       >
-        <span className="inline-flex items-center gap-1.5 border-r border-border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
+        <span className="inline-flex items-center gap-1.5 border-r border-border px-3 py-1.5 text-xs text-muted-foreground">
           <Sparkles className="size-3 text-primary" aria-hidden />
           Proposed
         </span>
@@ -630,16 +630,13 @@ function renderInlineAiTriggerBubble({
             "px-3 py-1.5 text-xs font-semibold",
             "border bg-card/80 backdrop-blur-md",
             "border-primary/45 text-primary",
-            "shadow-[0_1px_2px_rgba(0,0,0,0.18),0_16px_32px_-16px_rgba(47,73,229,0.55)]",
-            "transition-all duration-150",
+            "shadow-[0_1px_2px_rgba(0,0,0,0.18),0_16px_32px_-16px_rgba(0,0,0,0.35)]",
+            "transition-colors duration-150",
             "hover:border-primary/70 hover:bg-card",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
           )}
         >
-          <Sparkles
-            className="size-3.5 transition-transform duration-150 group-hover:scale-110"
-            aria-hidden
-          />
+          <Sparkles className="size-3.5" aria-hidden />
           Edit with AI
           <kbd
             aria-hidden

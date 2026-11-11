@@ -54,13 +54,13 @@ function CardChrome({ children, className }: CardChromeProps) {
 function ValidBadge({ validation }: { validation: AssistantValidation }) {
   if (validation.status === "valid") {
     return (
-      <span className="inline-flex items-center gap-1 rounded-sm bg-success/15 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-success">
+      <span className="inline-flex items-center gap-1 rounded-sm bg-success/15 px-1.5 py-0.5 font-mono text-[11px] text-success">
         <Check className="size-2.5" aria-hidden /> valid
       </span>
     );
   }
   return (
-    <span className="inline-flex items-center gap-1 rounded-sm bg-destructive/12 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-destructive">
+    <span className="inline-flex items-center gap-1 rounded-sm bg-destructive/12 px-1.5 py-0.5 font-mono text-[11px] text-destructive">
       <AlertTriangle className="size-2.5" aria-hidden />{" "}
       {validation.errors.length} error
       {validation.errors.length === 1 ? "" : "s"}
@@ -106,7 +106,7 @@ function StandardHeader({
       <div className="flex items-center gap-2.5">
         <span
           className={cn(
-            "inline-flex shrink-0 items-center gap-1.5 rounded-sm px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider",
+            "inline-flex shrink-0 items-center gap-1.5 rounded-sm px-1.5 py-0.5 font-mono text-[11px]",
             chipPaletteFor(kind),
           )}
         >
@@ -199,7 +199,7 @@ function RejectFeedback({ onCancel, onSend }: RejectFeedbackProps) {
   const [feedback, setFeedback] = React.useState("");
   return (
     <div className="space-y-2 border-t border-divider/40 bg-muted/40 px-3 py-2.5">
-      <div className="font-mono text-[10px] uppercase tracking-wider text-foreground-muted">
+      <div className="text-xs text-foreground-muted">
         Rejected: what should change?
       </div>
       <textarea
@@ -248,7 +248,7 @@ function DiffBody({ removed, added, emptyLeftLabel }: DiffBodyProps) {
           <span className="whitespace-pre-wrap">{removed}</span>
         </div>
       ) : (
-        <div className="flex gap-2 border-l-2 border-transparent bg-transparent px-2.5 py-1 italic text-foreground-muted/70">
+        <div className="flex gap-2 border-l-2 border-transparent bg-transparent px-2.5 py-1 text-foreground-muted">
           <span className="w-2.5 shrink-0 text-center text-foreground-muted/60">
             −
           </span>
@@ -1046,7 +1046,7 @@ function RemovedOnlyBody({ removed }: { removed: string }) {
 function JsonPatchBlock({ label, value }: { label: string; value: unknown }) {
   return (
     <div className="overflow-hidden rounded-md border border-divider/60 bg-background-subtle font-mono text-[12px] leading-snug">
-      <div className="border-b border-divider/40 px-2.5 py-1 text-[10px] uppercase tracking-wider text-foreground-muted">
+      <div className="border-b border-divider/40 px-2.5 py-1 text-xs text-foreground-muted">
         {label}
       </div>
       <div className="flex gap-2 border-l-2 border-success bg-success/8 px-2.5 py-1 text-foreground">
