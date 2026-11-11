@@ -479,8 +479,8 @@ type within the active `(project, environment)` target. It is backed by:
 - `GET /api/v1/me/capabilities` for action gating (inherited from layout)
 
 The list response includes an optional `users` sidecar map that batch-resolves
-`createdBy` user IDs to `{ name, email }` for author display without per-user
-lookups.
+`createdBy` and `updatedBy` user IDs to `{ name, email }` for author display
+without per-user lookups (SPEC-003 "User Summary Sidecar").
 
 Normative behavior:
 
@@ -838,7 +838,27 @@ Normative behavior:
   controls.
 - `Info` shows the read-only document metadata as a monospace key/value
   block (`status`, `type`, `locale`, `publishedVersion`, `updatedAt`,
-  `path`).
+  `updatedBy`, `path`).
+- The `Info` `updatedBy` row shows the last editor and the channel of the last
+  write in the change attribution display format below, using the document's
+  `updatedBy` and `updatedOrigin` and the `users` map returned by
+  `GET /api/v1/content/:documentId`. The row refreshes after the document
+  changes.
+- The `History` tab lists published versions. Each version shows the publishing
+  user's name, resolved from the `users` map of
+  `GET /api/v1/content/:documentId/versions` by `publishedBy`, in the change
+  attribution display format below, using `publishedOrigin`.
+- Change attribution display format (SPEC-003 "Change Attribution"):
+  - The user's name comes first. A user ID that the `users` map cannot resolve
+    is shown as "Unknown".
+  - When an origin is present, the name is followed by `·` and the channel
+    label: `Studio` (`studio`), `Studio AI` (`studio_ai`), `MCP` (`mcp`), `API`
+    (`api`), or `System` (`system`).
+  - When the origin has a `declared` client name, it follows the channel label
+    in parentheses, for example `Ada Lovelace · MCP (claude-code 1.2)`. Studio
+    labels the declared name as reported by the client (for example in an
+    accessible description or tooltip), because the server does not verify it.
+  - When no origin is present, only the name is shown.
 - The default selected sidebar tab is `Properties` unless an MDX component
   is actively selected, in which case `Component` becomes the selected
   tab.
