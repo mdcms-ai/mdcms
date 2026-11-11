@@ -31,7 +31,7 @@ The core thesis is that **none of the three should block the others**. An editor
   rooms. Redis holds ephemeral Yjs state and presence heartbeats; PostgreSQL
   remains the durable draft source through server-owned collaboration autosave
   and final save.
-- MCP integration for agent-driven content operations — upcoming.
+- MCP integration for agent-driven content operations — preview. `mdcms mcp` runs a stdio MCP server in the CLI for one `(project, environment)` target; a hosted/remote MCP endpoint is not built.
 - Multiple spaces (team-scoped content organization) — upcoming.
 
 ## Current product surfaces

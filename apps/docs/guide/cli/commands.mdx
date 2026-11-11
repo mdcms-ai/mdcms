@@ -254,6 +254,57 @@ mdcms schema sync --environment staging
 
 ---
 
+## `mdcms mcp`
+
+Run a [Model Context Protocol](https://modelcontextprotocol.io) server over stdio so an AI agent can read and change content in the configured project and environment.
+
+<Note>
+  `mdcms mcp` is a preview. The tool surface may change between minor releases.
+</Note>
+
+```bash
+mdcms mcp
+```
+
+The server uses the same server URL, project, environment, and credentials as every other command, so run `mdcms login` (or set `MDCMS_API_KEY`) first. Register it with your agent client from the project root:
+
+<CodeGroup>
+```bash Claude Code
+claude mcp add mdcms -- npx mdcms mcp
+```
+
+```json .mcp.json
+{
+  "mcpServers": {
+    "mdcms": { "command": "npx", "args": ["mdcms", "mcp"] }
+  }
+}
+```
+
+</CodeGroup>
+
+### Tools
+
+| Tool               | Required scope                        | Description                                                            |
+| ------------------ | ------------------------------------- | ---------------------------------------------------------------------- |
+| `get_schema`       | `schema:read`                         | Content types and fields synced for the target                         |
+| `list_documents`   | `content:read:draft`                  | Draft documents with frontmatter and status, without bodies            |
+| `get_document`     | `content:read:draft`                  | One draft document including its body                                  |
+| `create_document`  | `content:write`                       | Create a draft after validating frontmatter against the schema         |
+| `update_document`  | `content:read:draft`, `content:write` | Patch frontmatter and/or replace the body of a draft                   |
+| `publish_document` | `content:publish`                     | Publish the current draft as a new immutable version                   |
+| `sync_schema`      | `schema:write`                        | Reload `mdcms.config.ts` and sync its schema, like `mdcms schema sync` |
+
+### How writes behave
+
+- **Drafts only.** `create_document` and `update_document` never publish. Publishing is a separate tool that needs the `content:publish` scope, which keys created by `mdcms login` do not include. Create a key with that scope in Studio if you want an agent to publish.
+- **Schema validation.** Frontmatter is validated against the synced schema before anything is written. A violation fails the tool call with `INVALID_FRONTMATTER` and lists every failing field, so the agent can correct itself.
+- **No silent overwrites.** `update_document` sends the draft revision it read. If someone else changed the document in between, the call fails with `STALE_DRAFT_REVISION`.
+- **Schema hash pinning.** Writes use the schema hash stored by the last schema sync. After editing `mdcms.config.ts`, call `sync_schema` (or run `mdcms schema sync`).
+- **Local files are untouched.** MCP writes go to the server. Run `mdcms pull` to update your working copy.
+
+---
+
 ## `mdcms status`
 
 Compare local content and schema state against the server.
