@@ -22,8 +22,13 @@ export type RbacFolderPrefixScope = {
 
 export type RbacGrant =
   | {
-      role: "owner" | "admin";
+      role: "owner";
       scope: RbacGlobalScope;
+      source?: string;
+    }
+  | {
+      role: "admin";
+      scope: RbacGlobalScope | RbacProjectScope;
       source?: string;
     }
   | {
@@ -116,14 +121,38 @@ const ROLE_ACTIONS: Record<RbacRole, readonly RbacAction[]> = {
   ],
 };
 
+/**
+ * Actions that concern the whole instance rather than one project. Only a
+ * global grant can allow them, so a project-scoped Admin never manages users.
+ */
+const INSTANCE_LEVEL_ACTIONS: readonly RbacAction[] = ["user:manage"];
+
+/**
+ * Scope kinds each role may be granted with. Owner is always instance-wide;
+ * Admin is instance-wide or bound to one project.
+ */
+const ROLE_SCOPE_KINDS: Record<
+  RbacRole,
+  readonly RbacGrant["scope"]["kind"][]
+> = {
+  owner: ["global"],
+  admin: ["global", "project"],
+  editor: ["global", "project", "folder_prefix"],
+  viewer: ["global", "project", "folder_prefix"],
+};
+
+export function isRoleScopeKindAllowed(
+  role: RbacRole,
+  scopeKind: string,
+): boolean {
+  return (ROLE_SCOPE_KINDS[role] as readonly string[]).includes(scopeKind);
+}
+
 function assertGrantScopeCompatibility(grant: RbacGrant): void {
-  if (
-    (grant.role === "owner" || grant.role === "admin") &&
-    grant.scope.kind !== "global"
-  ) {
+  if (!isRoleScopeKindAllowed(grant.role, grant.scope.kind)) {
     throw new RuntimeError({
       code: "INVALID_RBAC_GRANT",
-      message: `${grant.role} role must be instance-wide (global scope only).`,
+      message: `${grant.role} role cannot be granted with ${grant.scope.kind} scope.`,
       statusCode: 400,
       details: {
         role: grant.role,
@@ -196,14 +225,19 @@ function pickHigherRole(left: RbacRole, right: RbacRole): RbacRole {
   return ROLE_RANK[left] >= ROLE_RANK[right] ? left : right;
 }
 
-export function evaluateEffectiveRole(
+function pickEffectiveRole(
   grants: readonly RbacGrant[],
   target: RbacResourceTarget,
+  options: { globalGrantsOnly: boolean },
 ): RbacRole | undefined {
   let best: RbacRole | undefined;
 
   for (const grant of grants) {
     assertGrantScopeCompatibility(grant);
+
+    if (options.globalGrantsOnly && grant.scope.kind !== "global") {
+      continue;
+    }
 
     if (!isGrantApplicable(grant, target)) {
       continue;
@@ -213,6 +247,13 @@ export function evaluateEffectiveRole(
   }
 
   return best;
+}
+
+export function evaluateEffectiveRole(
+  grants: readonly RbacGrant[],
+  target: RbacResourceTarget,
+): RbacRole | undefined {
+  return pickEffectiveRole(grants, target, { globalGrantsOnly: false });
 }
 
 export function evaluatePermission(input: {
@@ -231,8 +272,16 @@ export function evaluatePermission(input: {
     };
   }
 
+  // Instance-level actions are decided by global grants alone; the reported
+  // effective role still reflects every applicable grant.
+  const decidingRole = INSTANCE_LEVEL_ACTIONS.includes(input.action)
+    ? pickEffectiveRole(input.grants, input.target, { globalGrantsOnly: true })
+    : effectiveRole;
+
   return {
-    allowed: ROLE_ACTIONS[effectiveRole].includes(input.action),
+    allowed:
+      decidingRole !== undefined &&
+      ROLE_ACTIONS[decidingRole].includes(input.action),
     effectiveRole,
   };
 }

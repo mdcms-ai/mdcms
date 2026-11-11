@@ -45,6 +45,7 @@ import type { EmailService } from "./email.js";
 import {
   assertOwnerMutationAllowed,
   evaluatePermission,
+  isRoleScopeKindAllowed,
   type RbacAction,
   type RbacGrant,
   type RbacRole,
@@ -301,6 +302,15 @@ export type AuthService = {
     token: string,
     input: AcceptInviteInput,
   ) => Promise<{ userId: string }>;
+  /**
+   * Narrows project slugs to the ones the caller may see: every slug for a
+   * session with a global grant, the slugs named by its other grants
+   * otherwise, and the allowlisted slugs for an API key.
+   */
+  filterAccessibleProjects: (
+    request: Request,
+    projectSlugs: readonly string[],
+  ) => Promise<string[]>;
 };
 
 export type UserWithGrants = {
@@ -3131,22 +3141,31 @@ export function createAuthService(
 
   function toRbacGrant(row: typeof rbacGrants.$inferSelect): RbacGrant {
     if (row.role === "owner" || row.role === "admin") {
-      if (row.scopeKind !== "global") {
-        throw new RuntimeError({
-          code: "INTERNAL_ERROR",
-          message: "Stored RBAC grant has invalid role/scope pairing.",
-          statusCode: 500,
-          details: {
-            grantId: row.id,
-          },
-        });
+      if (row.scopeKind === "global") {
+        return {
+          role: row.role,
+          scope: { kind: "global" },
+          source: row.source ?? undefined,
+        };
       }
 
-      return {
-        role: row.role,
-        scope: { kind: "global" },
-        source: row.source ?? undefined,
-      };
+      // Admin may also be bound to one project. Owner is always global.
+      if (row.role === "admin" && row.scopeKind === "project" && row.project) {
+        return {
+          role: "admin",
+          scope: { kind: "project", project: row.project },
+          source: row.source ?? undefined,
+        };
+      }
+
+      throw new RuntimeError({
+        code: "INTERNAL_ERROR",
+        message: "Stored RBAC grant has invalid role/scope pairing.",
+        statusCode: 500,
+        details: {
+          grantId: row.id,
+        },
+      });
     }
 
     if (row.role !== "editor" && row.role !== "viewer") {
@@ -4604,10 +4623,10 @@ export function createAuthService(
             statusCode: 400,
           });
         }
-        if (role === "admin" && scopeKind !== "global") {
+        if (!isRoleScopeKindAllowed(role as RbacRole, scopeKind)) {
           throw new RuntimeError({
             code: "VALIDATION_ERROR",
-            message: "Admin role must be global scope.",
+            message: `${role} role cannot be granted with ${scopeKind} scope.`,
             statusCode: 400,
           });
         }
@@ -4737,10 +4756,10 @@ export function createAuthService(
             statusCode: 400,
           });
         }
-        if ((role === "admin" || role === "owner") && scopeKind !== "global") {
+        if (!isRoleScopeKindAllowed(role as RbacRole, scopeKind)) {
           throw new RuntimeError({
             code: "VALIDATION_ERROR",
-            message: `${role} role must be global scope.`,
+            message: `${role} role cannot be granted with ${scopeKind} scope.`,
             statusCode: 400,
           });
         }
@@ -5059,6 +5078,35 @@ export function createAuthService(
         }
       });
       return { userId };
+    },
+    async filterAccessibleProjects(request, projectSlugs) {
+      const bearerToken = extractBearerToken(
+        request.headers.get("authorization"),
+      );
+
+      if (bearerToken) {
+        const { metadata } = await requireActiveApiKey(bearerToken);
+        const allowed = new Set(
+          metadata.contextAllowlist.map((tuple) => tuple.project),
+        );
+
+        return projectSlugs.filter((slug) => allowed.has(slug));
+      }
+
+      const session = await requireSession(request);
+      const grants = await loadSessionRbacGrants(session);
+
+      if (grants.some((grant) => grant.scope.kind === "global")) {
+        return [...projectSlugs];
+      }
+
+      const granted = new Set(
+        grants.flatMap((grant) =>
+          grant.scope.kind === "global" ? [] : [grant.scope.project],
+        ),
+      );
+
+      return projectSlugs.filter((slug) => granted.has(slug));
     },
   };
 }

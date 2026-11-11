@@ -109,8 +109,15 @@ function toGrantInput(grant: UserWithGrants["grants"][number]): GrantInput {
       ? grant.scopeKind
       : "project";
 
-  if (role === "owner" || role === "admin" || scopeKind === "global") {
+  if (role === "owner" || scopeKind === "global") {
     return { role, scopeKind: "global" };
+  }
+
+  // Admin is instance-wide or bound to one project, never to a folder.
+  if (role === "admin") {
+    return grant.project
+      ? { role, scopeKind: "project", project: grant.project }
+      : { role, scopeKind: "global" };
   }
 
   if (scopeKind === "folder_prefix") {
@@ -143,13 +150,23 @@ export function createUpdatedGrants({
   activeProject: string | null;
   activeEnvironment: string | null;
 }): InviteUserInput["grants"] {
-  const editedGrant = createGrantInput({
-    role,
-    pathPrefix,
-    activeProject,
-    activeEnvironment,
-    fallbackProject: currentGrants[0]?.project ?? null,
-  });
+  const currentGrant = currentGrants[0];
+  // The form only offers instance-wide Admin. Saving a user who is already a
+  // project-scoped Admin must keep that scope instead of widening it.
+  const keepsProjectAdmin =
+    role === "admin" &&
+    currentGrant?.role === "admin" &&
+    currentGrant.scopeKind === "project" &&
+    Boolean(currentGrant.project);
+  const editedGrant = keepsProjectAdmin
+    ? toGrantInput(currentGrant)
+    : createGrantInput({
+        role,
+        pathPrefix,
+        activeProject,
+        activeEnvironment,
+        fallbackProject: currentGrant?.project ?? null,
+      });
 
   if (currentGrants.length <= 1) {
     return [editedGrant];

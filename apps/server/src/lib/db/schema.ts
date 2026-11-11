@@ -256,11 +256,14 @@ export const rbacGrants = pgTable(
         (${table.scopeKind} = 'folder_prefix' and ${table.project} is not null and ${table.environment} is not null and ${table.pathPrefix} is not null)
       )`,
     ),
+    // Owner is always instance-wide. Admin is instance-wide or bound to one
+    // project, never to a folder prefix.
     check(
-      "rbac_grants_admin_owner_global_check",
+      "rbac_grants_owner_admin_scope_check",
       sql`(
-        ${table.role} not in ('owner', 'admin')
-        or ${table.scopeKind} = 'global'
+        (${table.role} <> 'owner' or ${table.scopeKind} = 'global')
+        and
+        (${table.role} <> 'admin' or ${table.scopeKind} in ('global', 'project'))
       )`,
     ),
     index("idx_rbac_grants_user_active").on(

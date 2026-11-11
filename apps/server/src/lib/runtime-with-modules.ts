@@ -803,26 +803,18 @@ export function createServerRequestHandlerWithModules(
       });
       mountProjectApiRoutes(app, {
         store: projectStore,
-        authorizeRead: (request) => {
+        authorize: (request, input) => {
           const routing = resolveRequestTargetRouting(request);
           return authService
             .authorizeRequest(request, {
-              requiredScope: "projects:read",
-              project: routing.project,
+              requiredScope: input.scope,
+              project: input.project ?? routing.project,
               environment: routing.environment,
             })
             .then(() => undefined);
         },
-        authorizeWrite: (request) => {
-          const routing = resolveRequestTargetRouting(request);
-          return authService
-            .authorizeRequest(request, {
-              requiredScope: "projects:write",
-              project: routing.project,
-              environment: routing.environment,
-            })
-            .then(() => undefined);
-        },
+        filterAccessibleProjects: (request, projectSlugs) =>
+          authService.filterAccessibleProjects(request, projectSlugs),
       });
       mountCollaborationRoutes(app, {
         authService,
