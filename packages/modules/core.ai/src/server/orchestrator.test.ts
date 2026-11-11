@@ -650,4 +650,54 @@ describe("createAiOrchestrator", () => {
       },
     );
   });
+
+  for (const canReadEntries of [false, true]) {
+    test(`chat registers document lookup tools only when canReadEntries is ${canReadEntries}`, async () => {
+      let toolNames: string[] = [];
+      let system = "";
+      const provider = createEchoAiProvider({
+        respond: (callOptions) => {
+          toolNames = (callOptions.tools ?? []).map((tool) => tool.name);
+          const systemMessage = callOptions.prompt.find(
+            (message) => message.role === "system",
+          );
+          system =
+            typeof systemMessage?.content === "string"
+              ? systemMessage.content
+              : "";
+          return "Answered in text.";
+        },
+      });
+      const orchestrator = createAiOrchestrator({
+        provider,
+        clock: fixedClock,
+        idFactory,
+      });
+
+      await orchestrator.runChat({
+        message: "find the post about pricing",
+        project: "demo",
+        environment: "draft",
+        capabilities: {
+          canEditDocument: false,
+          canCreateDocument: false,
+          canDeleteDocument: false,
+          canReadEntries,
+        },
+        toolBackends: {
+          findEntries: async () => ({ matches: [], total: 0 }),
+          getEntry: async () => undefined,
+        },
+      });
+
+      assert.equal(toolNames.includes("find_entries"), canReadEntries);
+      assert.equal(toolNames.includes("get_entry"), canReadEntries);
+      assert.match(
+        system,
+        canReadEntries
+          ? /Document lookup \(`find_entries`, `get_entry`\): available/
+          : /Document lookup \(`find_entries`, `get_entry`\): UNAVAILABLE/,
+      );
+    });
+  }
 });
