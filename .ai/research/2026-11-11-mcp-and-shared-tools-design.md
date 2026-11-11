@@ -1,7 +1,7 @@
 # MCP Server and Shared Agent Tools: Design
 
 Date: 2026-11-11
-Status: Sub-project 1 designed; sub-projects 2 to 5 outlined and designed separately.
+Status: All five sub-projects designed.
 Supersedes the deferral in `2026-05-01-ai-integration-mcp-scope.md`.
 
 ## Goal
@@ -199,3 +199,139 @@ All additions are optional fields on existing responses:
 - Backfilling historical actors.
 - Attribution for media, webhooks and environments (they already record the
   principal or are covered by later sub-projects).
+
+## Sub-project 2: shared tool layer
+
+### In-process dispatch
+
+Tool handlers do not call the content store. They send requests to the
+server's own HTTP handler in process, with the caller's credentials, so every
+tool call goes through the same routing, authorization (including path-scoped
+grants), validation, schema-hash gate, collaboration guard, attribution and
+lifecycle events as an external request. There is one implementation of each
+operation: the route.
+
+- `createInternalDispatcher(handler)` builds requests against the in-process
+  handler. Internal requests carry an `X-MDCMS-Internal` header whose value is
+  a random secret generated at server start and never sent to clients. The
+  server strips the header from every external request before routing, so
+  only in-process callers can set it.
+- On internal requests only, two more headers are trusted:
+  `X-MDCMS-Internal-Channel` (`studio_ai` or `mcp`) and the declared client
+  name. `attributionFromAuthorizedRequest` reads them; external requests
+  cannot change the channel.
+- The caller's credential is forwarded: the `Authorization` header for API
+  keys and OAuth tokens; the session cookie and CSRF token for Studio
+  sessions.
+
+### Tool registry
+
+`apps/server/src/lib/agent-tools/` holds the registry. A tool definition has:
+`name`, `title`, `description`, Zod `inputSchema` and `outputSchema`,
+`annotations` (`readOnlyHint`, `destructiveHint`, `idempotentHint`), the
+required scopes, and `execute(input, context)`. `context` provides the
+target `(project, environment)` and the dispatcher. Each tool lives in a file
+per area (`content.ts`, `versions.ts`, `translations.ts`, `schema.ts`,
+`media.ts`, `environments.ts`, `webhooks.ts`).
+
+- Frontmatter validation against the synced schema moves from the CLI to
+  `@mdcms/shared` so the CLI, the tools and the Assistant share one
+  implementation. Write tools validate before dispatching and fail with
+  `INVALID_FRONTMATTER` without writing.
+- MDX bodies are syntax-checked with the parser the Assistant already uses.
+  Component catalog validation applies only where a catalog exists (the
+  Assistant, which receives it from Studio); the server does not store one.
+
+### The Assistant on the registry
+
+- The Assistant's read tools are the registry's `list_documents`,
+  `get_document` and `get_schema`, adapted to the AI SDK. `find_entries` and
+  `get_entry` are removed, and the system prompt uses the new names.
+- Proposal tools stay Assistant-specific: they produce proposals, as SPEC-014
+  requires. Applying and undoing a proposal dispatches the matching content
+  request in process with channel `studio_ai`, instead of writing to the
+  store directly. Apply re-checks expiry, validation status, schema and MDX
+  on every path, including proposals sent back by the browser.
+- The host passes the adapted tools to `core.ai` through its module deps, so
+  `packages/modules` does not depend on server code.
+
+## Sub-project 3: remote MCP and OAuth 2.1
+
+### Endpoint
+
+- `POST /api/v1/mcp` (and `GET`/`DELETE` as the transport requires) uses the
+  SDK's `WebStandardStreamableHTTPServerTransport` in stateless mode with JSON
+  responses: one MCP server instance per request, tools listed from the
+  registry filtered by the caller's scopes.
+- Target: an API key request names `(project, environment)` with the usual
+  headers or query parameters. An OAuth token carries its target, chosen at
+  consent; no headers are needed, because hosted clients cannot send custom
+  headers.
+- The MCP client's `clientInfo` name and version become the declared client
+  name, and the channel is `mcp`.
+- An unauthenticated request gets `401` with
+  `WWW-Authenticate: Bearer resource_metadata="<server>/.well-known/oauth-protected-resource/api/v1/mcp"`.
+
+### Authorization server
+
+Built on MDCMS's own auth, not better-auth's `mcp` plugin, which lacks
+resource binding, expiry checks and hashed storage.
+
+- Metadata: `/.well-known/oauth-protected-resource/api/v1/mcp` (RFC 9728)
+  and `/.well-known/oauth-authorization-server` (RFC 8414).
+- `POST /api/v1/oauth/register`: dynamic client registration (RFC 7591) for
+  public clients (`token_endpoint_auth_method: none`). Redirect URIs must be
+  HTTPS or loopback HTTP. Client names are shown as unverified.
+- `GET /api/v1/oauth/authorize`: authorization code flow with PKCE (`S256`
+  only) and the `resource` parameter (RFC 8707), which must be the MCP
+  endpoint URL. A user without a session signs in with the existing
+  server-rendered form. A consent page shows the client name, its redirect
+  host, a target picker limited to the user's grants, and access levels; the
+  granted scopes can never exceed what the user's role allows, using the
+  same check as API key issuance.
+- `POST /api/v1/oauth/token`: `authorization_code` and `refresh_token`
+  grants. Access tokens last one hour, refresh tokens 30 days and rotate on
+  use. Both are random, prefixed (`mdcms_oat_`, `mdcms_ort_`) and stored as
+  SHA-256 hashes.
+- `POST /api/v1/oauth/revoke` (RFC 7009).
+- `authorizeRequest` accepts an OAuth access token only on the MCP endpoint
+  and on internal requests dispatched from it, and only when its `resource`
+  is the MCP endpoint. The principal is `{ type: "oauth", clientId, userId,
+scopes, target }`; attribution uses credential `oauth` and the client id.
+- Studio Settings gains "Connected apps": the user's authorized clients
+  (admins see the project's), with scopes, target, last use, and revoke.
+
+## Sub-project 4: CLI bridge
+
+- `mdcms mcp` starts a stdio MCP server and connects to the server's MCP
+  endpoint with the SDK's `StreamableHTTPClientTransport`, the resolved API
+  key, and the target headers. `tools/list` and `tools/call` are relayed.
+  The upstream connection's `clientInfo` is the local agent's, so attribution
+  shows the agent's name.
+- `sync_schema` stays a CLI-local tool, because it reads `mdcms.config.ts`
+  from disk; it is appended to the relayed tool list.
+- The CLI's published entry point runs on Node.js as well as Bun, so
+  `npx mdcms mcp` works for agents that spawn it without Bun installed.
+
+## Sub-project 5: coverage, docs and verification
+
+Tools, each mapped to an existing route:
+
+| Area         | Tools                                                                                                                                                                    |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Content      | `list_documents`, `get_document`, `create_document`, `update_document` (frontmatter patch, body, path move), `duplicate_document`, `delete_document`, `restore_document` |
+| Publishing   | `publish_document`, `unpublish_document`                                                                                                                                 |
+| Versions     | `list_versions`, `get_version`, `restore_version`                                                                                                                        |
+| Translations | `list_translations`, `create_translation`                                                                                                                                |
+| Schema       | `get_schema`; `sync_schema` in the CLI only                                                                                                                              |
+| Media        | `list_media`, `get_media`, `upload_media` (base64, size-capped), `delete_media`                                                                                          |
+| Environments | `list_environments`, `clone_environment`, `promote_documents` (with dry run)                                                                                             |
+| Webhooks     | `list_webhooks`, `create_webhook`, `update_webhook`, `delete_webhook`, `list_webhook_deliveries`                                                                         |
+
+Not exposed to agents: user, invite, role and API key management, and
+environment creation and deletion. These change who can access the
+instance and stay with people in Studio.
+
+Also in this sub-project: a standalone MCP spec, docs pages for local and
+remote setup, updates to the public skills pack, an MCP end-to-end test in
+the integration job, and connection checks with real agent clients.
