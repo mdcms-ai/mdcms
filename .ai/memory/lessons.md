@@ -6,6 +6,18 @@ Entries are reverse-chronological (newest first).
 
 ---
 
+## 2026-11-10 — give the pty a real size when scripting the CLI wizard
+
+**Rule:** When driving interactive CLI commands (`mdcms init`, `push`) through a scripted pty such as `expect`, set a terminal size first (`set stty_init "rows 40 columns 140"`) and guard the run with a hard `kill -9` watchdog.
+**Why:** A pty with zero columns makes the `ora` spinner compute an infinite line count and loop forever clearing lines. The process ignores SIGTERM in that loop and grows until the machine runs out of memory.
+**How to apply:** Never spawn the wizard under a pty without an explicit size; if a scripted run stalls at a spinner line, kill it with `kill -9` immediately instead of waiting.
+
+## 2026-11-10 — compose images must come from a maintained registry source
+
+**Rule:** Reference third-party Compose images that still publish to a registry, and re-pull them from a clean cache when touching the stack.
+**Why:** `minio/minio` and `minio/mc` stopped being pullable from Docker Hub and Quay, so `docker compose up` failed on every machine without a cached copy while passing locally for anyone who had one.
+**How to apply:** When a Compose service image changes or a self-hosting bug is reported, run `docker manifest inspect <image>` for each third-party image before assuming the stack boots for new users.
+
 ## 2026-06-15 — treat blank provider URL env as absent
 
 **Rule:** AI provider wrappers must normalize blank provider-specific base URL env values to the provider default before constructing SDK clients.

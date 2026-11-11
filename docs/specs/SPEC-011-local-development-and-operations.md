@@ -79,7 +79,7 @@ services:
       retries: 5
 
   minio:
-    image: minio/minio
+    image: pgsty/minio
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
@@ -97,7 +97,7 @@ services:
       retries: 5
 
   minio-init:
-    image: minio/mc
+    image: pgsty/mc
     restart: "no"
     environment:
       S3_ENDPOINT: http://minio:9000
