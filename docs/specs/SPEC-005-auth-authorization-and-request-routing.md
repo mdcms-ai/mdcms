@@ -513,12 +513,12 @@ Studio traffic uses session authentication by default and may use bearer API key
 
 **Roles:**
 
-| Role       | Capabilities                                                                                                                                                                                                                               |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Owner**  | Full access. Cannot be removed. Manages instance-level settings, billing (future SaaS), and can assign all roles. Always instance-wide.                                                                                                    |
-| **Admin**  | User management (instance-wide Admin only), settings, read-only schema browsing, schema sync, all content operations, and destructive media operations. Can assign Editor and Viewer roles. Granted instance-wide or for a single project. |
-| **Editor** | Create, edit, publish, unpublish, and delete content. Can browse schema read-only and upload media for assigned project contexts. Limited to assigned folders for document operations.                                                     |
-| **Viewer** | Read-only access to CMS dashboard, schema, content, and media metadata. Can view content but not modify. Limited to assigned folders for document operations.                                                                              |
+| Role       | Capabilities                                                                                                                                                                                                                                                                                            |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Owner**  | Full access. Cannot be removed. Manages instance-level settings, billing (future SaaS), and can assign all roles. Always instance-wide.                                                                                                                                                                 |
+| **Admin**  | User management and environment management, including clone and promote (both instance-wide Admin only), settings, read-only schema browsing, schema sync, all content operations, and destructive media operations. Can assign Editor and Viewer roles. Granted instance-wide or for a single project. |
+| **Editor** | Create, edit, publish, unpublish, and delete content. Can browse schema read-only and upload media for assigned project contexts. Limited to assigned folders for document operations.                                                                                                                  |
+| **Viewer** | Read-only access to CMS dashboard, schema, content, and media metadata. Can view content but not modify. Limited to assigned folders for document operations.                                                                                                                                           |
 
 **Folder-level assignment:**
 
@@ -588,6 +588,15 @@ Media authorization semantics:
 - `schema:write` is reserved to `admin` and `owner`.
 - `editor` and `viewer` may receive `schema:read`, but never `schema:write`.
 - API key issuance rejects reserved scopes that the authorizing session may not grant. In particular, non-admin and non-owner sessions cannot mint or authorize API keys with `schema:write`.
+
+Environment authorization semantics:
+
+- `environments:clone` authorizes cloning content from a source environment into a target environment of the routed project.
+- `environments:promote` authorizes promoting documents from a source environment into a target environment of the routed project.
+- Session callers derive both from admin/owner access. `editor` and `viewer` sessions are denied with `FORBIDDEN` (`403`).
+- API key issuance rejects `environments:clone` and `environments:promote` for non-admin and non-owner sessions.
+
+Session authorization is deny-by-default: a session caller is denied any operation scope that no role holds, and API key issuance rejects such a scope for every session.
 
 ---
 
