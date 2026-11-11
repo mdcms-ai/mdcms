@@ -144,7 +144,7 @@ function ExampleCard({
     <button
       type="button"
       onClick={() => onPick(prompt)}
-      className="flex flex-col gap-1 rounded-xl border border-divider/60 bg-card px-3.5 py-3 text-left transition-all hover:-translate-y-px hover:border-divider hover:shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-primary"
+      className="flex flex-col gap-1 rounded-xl border border-divider/60 bg-card px-3.5 py-3 text-left transition-colors hover:border-divider hover:bg-background-subtle focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-primary"
     >
       <span className="text-[13px] text-foreground">{label}</span>
       <span className="line-clamp-1 text-[12px] leading-snug text-foreground-muted">

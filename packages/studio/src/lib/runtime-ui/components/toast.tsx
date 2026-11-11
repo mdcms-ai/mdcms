@@ -132,7 +132,7 @@ function ToastItem({
     <div
       role={toast.variant === "error" ? "alert" : "status"}
       className={cn(
-        "flex items-center gap-3 rounded-lg border px-4 py-3 shadow-lg bg-background transition-all duration-200",
+        "flex items-center gap-3 rounded-lg border px-4 py-3 shadow-lg bg-background transition-[opacity,transform] duration-200",
         visible ? "translate-y-0 opacity-100" : "translate-y-2 opacity-0",
         toast.variant === "success" && "border-success/20 text-success",
         toast.variant === "error" && "border-destructive/20 text-destructive",

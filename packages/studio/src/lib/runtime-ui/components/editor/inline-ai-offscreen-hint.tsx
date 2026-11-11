@@ -108,7 +108,7 @@ export function PickerOffscreenHint(props: {
       className={cn(
         "inline-flex items-center gap-2 rounded-full px-3.5 py-1.5",
         "border border-border bg-popover/95 backdrop-blur-md shadow-lg",
-        "font-mono text-[11px] uppercase tracking-[0.04em] text-popover-foreground",
+        "text-xs text-popover-foreground",
         "hover:bg-popover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
       )}
     >

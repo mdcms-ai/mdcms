@@ -212,9 +212,7 @@ export default function LoginPage() {
 
             <div className="flex items-center gap-3">
               <div className="h-px flex-1 bg-border" />
-              <span className="text-xs text-foreground-muted uppercase">
-                or
-              </span>
+              <span className="text-xs text-foreground-muted">or</span>
               <div className="h-px flex-1 bg-border" />
             </div>
           </>

@@ -46,9 +46,7 @@ export function VisualCompositionPalette({
       className="hidden w-64 shrink-0 border-r border-border bg-card lg:flex lg:flex-col"
     >
       <div className="border-b border-border p-3">
-        <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.08em] text-foreground-muted">
-          Blocks
-        </div>
+        <div className="mb-2 text-xs text-foreground-muted">Blocks</div>
         <label className="flex h-8 items-center gap-2 rounded-md border border-border bg-background px-2 text-xs text-foreground-muted">
           <Search className="size-3.5 shrink-0" aria-hidden />
           <input
@@ -75,7 +73,7 @@ export function VisualCompositionPalette({
                 data-mdcms-visual-palette-group={group.id}
                 className="space-y-1"
               >
-                <div className="px-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-foreground-muted">
+                <div className="px-1.5 text-xs text-foreground-muted">
                   {group.label}
                 </div>
                 <div className="space-y-0.5">

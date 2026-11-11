@@ -202,7 +202,7 @@ test("SchemaPageView renders live schema entries with simple constraint metadata
   );
 
   assert.match(markup, /data-mdcms-schema-page-state="ready"/);
-  assert.match(markup, /READ-ONLY IN STUDIO/);
+  assert.match(markup, /Read-only in Studio/);
   assert.match(markup, /mdcms schema sync/);
   assert.match(markup, /data-mdcms-schema-entry-type="BlogPost"/);
   assert.match(markup, /content\/blog/);

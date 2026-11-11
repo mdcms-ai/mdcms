@@ -274,9 +274,7 @@ function SettingsMetaRow({
 }) {
   return (
     <div className="grid gap-1 border-b border-divider/60 py-3 last:border-b-0 sm:grid-cols-[160px_1fr] sm:items-start">
-      <dt className="font-mono text-[11px] uppercase text-foreground-muted">
-        {label}
-      </dt>
+      <dt className="text-xs text-foreground-muted">{label}</dt>
       <dd
         className={cn(
           "min-w-0 break-words font-mono text-[12px] text-foreground",
@@ -341,7 +339,7 @@ function SettingsSubnav({ activeTab }: { activeTab: string }) {
               className={cn(
                 "flex min-w-0 flex-1 items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-medium transition-colors lg:flex-none",
                 isActive
-                  ? "bg-primary text-primary-foreground"
+                  ? "bg-background-subtle text-foreground"
                   : "text-foreground-muted hover:bg-background-subtle hover:text-foreground",
               )}
             >
@@ -398,14 +396,14 @@ function GeneralSettingsPanel({
           General
         </h2>
         <p className="mt-1 max-w-2xl text-sm text-foreground-muted">
-          Read-only session and project context for the active Studio target.
+          Read-only session and project context for the active Studio target
         </p>
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[1fr_280px]">
         <div className="rounded-lg border border-card-border bg-card p-5">
           <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-foreground">
-            <Server className="size-4 text-primary" />
+            <Server className="size-4 text-foreground-muted" />
             Runtime context
           </div>
           <dl>
@@ -422,15 +420,13 @@ function GeneralSettingsPanel({
             {schemaSummary.status === "loading" ? (
               <>
                 <div className="grid gap-1 border-b border-divider/60 py-3 sm:grid-cols-[160px_1fr]">
-                  <dt className="font-mono text-[11px] uppercase text-foreground-muted">
-                    Schema hash
-                  </dt>
+                  <dt className="text-xs text-foreground-muted">Schema hash</dt>
                   <dd>
                     <Skeleton className="h-4 w-40" />
                   </dd>
                 </div>
                 <div className="grid gap-1 py-3 sm:grid-cols-[160px_1fr]">
-                  <dt className="font-mono text-[11px] uppercase text-foreground-muted">
+                  <dt className="text-xs text-foreground-muted">
                     Last schema sync
                   </dt>
                   <dd>
@@ -450,10 +446,8 @@ function GeneralSettingsPanel({
         <div className="space-y-3">
           <div className="rounded-lg border border-card-border bg-card p-4">
             <div className="flex items-center gap-2">
-              <Fingerprint className="size-4 text-primary" />
-              <p className="font-mono text-[11px] uppercase text-foreground-muted">
-                Contract
-              </p>
+              <Fingerprint className="size-4 text-foreground-muted" />
+              <p className="text-xs text-foreground-muted">Contract</p>
             </div>
             <p className="mt-3 text-sm text-foreground">
               Schema and project configuration are code-first. Studio does not
@@ -461,7 +455,11 @@ function GeneralSettingsPanel({
             </p>
           </div>
           <SettingsNotice tone="neutral" title="CLI-owned schema sync">
-            Update `mdcms.config.ts`, then run{" "}
+            Update{" "}
+            <code className="rounded-sm bg-code-bg px-1.5 py-0.5 font-mono text-[12px] text-foreground">
+              mdcms.config.ts
+            </code>
+            , then run{" "}
             <code className="rounded-sm bg-code-bg px-1.5 py-0.5 font-mono text-[12px] text-foreground">
               mdcms schema sync
             </code>{" "}
@@ -740,15 +738,12 @@ export function SettingsPageView({
 
       <div className="space-y-6 p-6 lg:p-8">
         <div className="flex flex-col gap-2">
-          <p className="font-mono text-[11px] uppercase text-foreground-muted">
-            Studio control plane
-          </p>
-          <h1 className="font-heading text-[38px] font-semibold leading-[1.05] text-foreground">
+          <h1 className="font-heading text-[32px] font-medium leading-[1.1] tracking-tight text-foreground">
             Settings
           </h1>
           <p className="max-w-2xl text-sm text-foreground-muted">
             Read live context and manage scoped API access without changing
-            code-owned schema or project definitions.
+            code-owned schema or project definitions
           </p>
         </div>
 

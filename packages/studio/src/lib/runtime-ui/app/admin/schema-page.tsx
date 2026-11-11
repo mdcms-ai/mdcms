@@ -255,7 +255,7 @@ export function SchemaPageView({ state }: { state: StudioSchemaState }) {
       ? state.message
       : state.status === "project-mismatch"
         ? `Project mismatch: configured "${state.configProject}" but server resolved "${state.serverProject}".`
-        : `Read-only schema browser for ${state.project} / ${state.environment}.`;
+        : `${state.project} · ${state.environment} · read-only`;
   const sharedSyncSummary =
     state.status === "ready" ? getSharedSchemaSyncSummary(state.entries) : null;
 
@@ -265,16 +265,16 @@ export function SchemaPageView({ state }: { state: StudioSchemaState }) {
 
       <div className="space-y-6 p-6 lg:p-8">
         <div>
-          <PageHeaderHeading className="font-heading text-[36px] font-bold leading-[1.05] tracking-tight text-foreground">
+          <PageHeaderHeading className="font-heading text-[32px] font-medium leading-[1.1] tracking-tight text-foreground">
             Schema
           </PageHeaderHeading>
-          <PageHeaderDescription className="mt-1.5 font-mono text-[12px] text-foreground-muted">
+          <PageHeaderDescription className="mt-2 font-mono text-xs text-foreground-muted">
             {pageDescription}
           </PageHeaderDescription>
         </div>
 
         {/* Registry strip — always visible, surfaces sync state + read-only marker */}
-        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-dashed border-primary/60 bg-card px-4 py-2.5 font-mono text-[11px] text-foreground-muted">
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-card-border bg-card px-4 py-2.5 font-mono text-[11px] text-foreground-muted">
           <span className="size-2 shrink-0 rounded-full bg-success" />
           <span className="text-foreground-muted">schemaHash</span>
           <span className="text-foreground">
@@ -299,8 +299,8 @@ export function SchemaPageView({ state }: { state: StudioSchemaState }) {
           <span className="ml-auto rounded-sm bg-foreground px-2 py-1 font-mono text-[11px] text-background">
             $ mdcms schema sync
           </span>
-          <span className="rounded-sm bg-code-bg px-2 py-1 text-[10px] font-bold tracking-wider text-foreground-muted">
-            READ-ONLY IN STUDIO
+          <span className="rounded-sm bg-code-bg px-2 py-1 font-sans text-xs font-medium text-foreground-muted">
+            Read-only in Studio
           </span>
         </div>
 
@@ -402,7 +402,7 @@ function SchemaSplitPane({ entries }: { entries: SchemaRegistryEntry[] }) {
     >
       {/* Type list */}
       <div className="border-b border-divider lg:border-b-0 lg:border-r lg:border-divider">
-        <div className="px-4 pb-2 pt-3 font-mono text-[10px] uppercase tracking-[0.08em] text-foreground-muted">
+        <div className="px-4 pb-2 pt-3 text-xs text-foreground-muted">
           Types · {entries.length}
         </div>
         <ul className="pb-2">
@@ -420,26 +420,16 @@ function SchemaSplitPane({ entries }: { entries: SchemaRegistryEntry[] }) {
                       : "hover:bg-background-subtle",
                   )}
                 >
-                  <span
-                    className={cn(
-                      "grid size-6 shrink-0 place-items-center rounded font-mono text-[11px] font-bold",
-                      isActive
-                        ? "bg-primary text-primary-foreground"
-                        : "bg-code-bg text-foreground-muted",
-                    )}
-                  >
-                    {e.type[0]}
-                  </span>
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-[13px] font-semibold text-foreground">
+                    <div className="truncate text-sm font-medium text-foreground">
                       {e.type}
                     </div>
-                    <div className="truncate font-mono text-[10px] text-foreground-muted">
+                    <div className="truncate font-mono text-[11px] text-foreground-muted">
                       /{e.directory}
                     </div>
                   </div>
                   {e.localized && (
-                    <span className="rounded-sm bg-blue-100 px-1.5 py-0.5 font-mono text-[9px] tracking-wider text-primary">
+                    <span className="rounded-sm bg-blue-100 px-1.5 py-0.5 font-mono text-[11px] text-primary">
                       i18n
                     </span>
                   )}
@@ -485,7 +475,7 @@ function SchemaSplitPane({ entries }: { entries: SchemaRegistryEntry[] }) {
             type="button"
             onClick={() => setTab("fields")}
             className={cn(
-              "border-b-2 border-transparent px-4 py-2.5 font-mono text-[11px] uppercase tracking-wider transition-colors",
+              "border-b-2 border-transparent px-4 py-2.5 font-mono text-xs transition-colors",
               tab === "fields"
                 ? "border-primary text-foreground"
                 : "text-foreground-muted hover:text-foreground",
@@ -497,7 +487,7 @@ function SchemaSplitPane({ entries }: { entries: SchemaRegistryEntry[] }) {
             type="button"
             onClick={() => setTab("source")}
             className={cn(
-              "border-b-2 border-transparent px-4 py-2.5 font-mono text-[11px] uppercase tracking-wider transition-colors",
+              "border-b-2 border-transparent px-4 py-2.5 font-mono text-xs transition-colors",
               tab === "source"
                 ? "border-primary text-foreground"
                 : "text-foreground-muted hover:text-foreground",
@@ -512,13 +502,13 @@ function SchemaSplitPane({ entries }: { entries: SchemaRegistryEntry[] }) {
             <table className="w-full border-separate border-spacing-0">
               <thead className="bg-background-subtle">
                 <tr>
-                  <th className="border-b border-divider px-7 py-2.5 text-left font-mono text-[10px] font-medium uppercase tracking-[0.08em] text-foreground-muted">
+                  <th className="border-b border-divider px-7 py-2.5 text-left text-xs font-medium text-foreground-muted">
                     Field
                   </th>
-                  <th className="border-b border-divider px-7 py-2.5 text-left font-mono text-[10px] font-medium uppercase tracking-[0.08em] text-foreground-muted">
+                  <th className="border-b border-divider px-7 py-2.5 text-left text-xs font-medium text-foreground-muted">
                     Kind
                   </th>
-                  <th className="border-b border-divider px-7 py-2.5 text-left font-mono text-[10px] font-medium uppercase tracking-[0.08em] text-foreground-muted">
+                  <th className="border-b border-divider px-7 py-2.5 text-left text-xs font-medium text-foreground-muted">
                     Constraints
                   </th>
                 </tr>

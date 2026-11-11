@@ -15,16 +15,13 @@ export function ComingSoon({
   description,
 }: ComingSoonProps) {
   return (
-    <div className="relative flex flex-col items-center justify-center py-24">
-      {/* Large watermark icon */}
-      <Icon className="absolute size-64 text-foreground/[0.02] pointer-events-none" />
-
-      <div className="relative z-10 flex flex-col items-center text-center max-w-md">
-        <div className="mb-5 flex size-12 items-center justify-center rounded-lg bg-primary/10">
-          <Icon className="size-6 text-primary" />
+    <div className="flex flex-col items-center justify-center px-6 py-24">
+      <div className="flex max-w-md flex-col items-center text-center">
+        <div className="mb-4 flex size-10 items-center justify-center rounded-lg border border-border bg-card">
+          <Icon className="size-[18px] text-foreground-muted" />
         </div>
-        <h2 className="text-xl font-semibold tracking-tight">{title}</h2>
-        <p className="mt-2 text-sm text-muted-foreground leading-relaxed">
+        <h2 className="text-lg font-medium">{title}</h2>
+        <p className="mt-2 text-sm leading-relaxed text-foreground-muted">
           {description}
         </p>
         <Badge
@@ -33,13 +30,13 @@ export function ComingSoon({
         >
           Coming soon
         </Badge>
-        <p className="mt-6 text-xs text-muted-foreground/60">
+        <p className="mt-6 text-xs text-foreground-muted">
           Want to help build this?{" "}
           <a
             href="https://github.com/blazity/mdcms"
             target="_blank"
             rel="noopener noreferrer"
-            className="text-primary/70 hover:text-primary hover:underline"
+            className="text-primary hover:underline"
           >
             Contribute on GitHub
           </a>

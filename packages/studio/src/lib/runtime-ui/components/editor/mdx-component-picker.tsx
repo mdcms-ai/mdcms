@@ -74,7 +74,7 @@ export function MdxComponentPicker({
       data-mdcms-mdx-picker="catalog"
       className="rounded-md border border-border bg-card p-1.5 shadow-[0_12px_32px_-12px_rgba(0,0,0,0.25)]"
     >
-      <div className="px-2 pb-1 pt-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-foreground-muted">
+      <div className="px-2 pb-1 pt-1.5 text-xs text-foreground-muted">
         Mdx components
       </div>
 
@@ -128,7 +128,7 @@ export function MdxComponentPicker({
               >
                 <span
                   className={cn(
-                    "grid h-[22px] w-[22px] shrink-0 place-items-center rounded-sm font-mono text-[11px] font-bold",
+                    "grid h-[22px] w-[22px] shrink-0 place-items-center rounded-sm font-mono text-[11px] font-semibold",
                     isHighlighted
                       ? "bg-card text-primary"
                       : "bg-code-bg text-foreground-muted group-hover:bg-card group-hover:text-primary",

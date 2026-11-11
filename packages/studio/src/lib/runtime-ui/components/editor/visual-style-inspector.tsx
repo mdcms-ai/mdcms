@@ -317,10 +317,10 @@ export function VisualStyleInspector({
       >
         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-md p-1 text-xs font-medium text-foreground outline-none transition-colors hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-primary/40">
           <span>Advanced CSS object</span>
-          <span className="font-mono text-[10px] uppercase text-foreground-muted group-open:hidden">
+          <span className="text-xs text-foreground-muted group-open:hidden">
             Show JSON
           </span>
-          <span className="hidden font-mono text-[10px] uppercase text-foreground-muted group-open:inline">
+          <span className="hidden text-xs text-foreground-muted group-open:inline">
             Hide JSON
           </span>
         </summary>
@@ -381,9 +381,7 @@ function StyleSection({
 }) {
   return (
     <section data-mdcms-visual-style-section={id} className="space-y-2">
-      <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-foreground-muted">
-        {title}
-      </p>
+      <p className="text-xs text-foreground-muted">{title}</p>
       {children}
     </section>
   );
@@ -499,9 +497,7 @@ function BoxModelControl({
           {title}
         </span>
         <div className="flex min-w-0 items-center gap-1.5">
-          <span className="font-mono text-[10px] uppercase text-foreground-muted">
-            All
-          </span>
+          <span className="text-xs text-foreground-muted">All</span>
           <StyleValueInput
             styleKey={allKey}
             value={getStyleValue(style, allKey)}
@@ -533,7 +529,7 @@ function BoxModelControl({
             ariaLabel={`${title} left`}
           />
         </div>
-        <div className="col-start-2 row-start-2 flex h-8 items-center justify-center rounded-md border border-dashed border-border bg-foreground/[0.03] font-mono text-[10px] uppercase text-foreground-muted">
+        <div className="col-start-2 row-start-2 flex h-8 items-center justify-center rounded-md border border-dashed border-border bg-foreground/[0.03] font-mono text-xs text-foreground-muted">
           {title}
         </div>
         <div className="col-start-3 row-start-2">

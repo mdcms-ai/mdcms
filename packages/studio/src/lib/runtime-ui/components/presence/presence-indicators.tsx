@@ -65,7 +65,7 @@ export function PresenceIndicators({
                 >
                   <Avatar className="size-5">
                     <AvatarFallback
-                      className="text-[8px] font-bold text-white"
+                      className="text-[8px] font-semibold text-white"
                       style={{ backgroundColor: user.color }}
                     >
                       {getPresenceInitials(user.label)}
@@ -80,7 +80,7 @@ export function PresenceIndicators({
         {hiddenCount > 0 && (
           <span
             aria-label={`${hiddenCount} more collaborator${hiddenCount === 1 ? "" : "s"}`}
-            className="inline-flex size-5 shrink-0 items-center justify-center rounded-full border border-card bg-background-subtle font-mono text-[8px] font-bold text-foreground-muted ring-1 ring-background"
+            className="inline-flex size-5 shrink-0 items-center justify-center rounded-full border border-card bg-background-subtle font-mono text-[8px] font-semibold text-foreground-muted ring-1 ring-background"
           >
             +{hiddenCount}
           </span>

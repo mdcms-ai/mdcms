@@ -506,7 +506,7 @@ function MediaLibraryTopbar({
         <Input
           aria-label="Search media"
           className="h-9 rounded-md bg-background-subtle pl-9 font-mono text-xs"
-          placeholder="Search media..."
+          placeholder="Search media"
           value={searchInput}
           onChange={(event) => onSearchInputChange(event.target.value)}
         />
@@ -591,7 +591,7 @@ function MediaLibraryControlsBar({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-72 p-2">
-            <DropdownMenuLabel className="font-mono text-[10px] uppercase tracking-wide text-foreground-muted">
+            <DropdownMenuLabel className="text-xs text-foreground-muted">
               Type
             </DropdownMenuLabel>
             <div className="flex flex-wrap gap-1.5 px-2 pb-2">
@@ -616,7 +616,7 @@ function MediaLibraryControlsBar({
               })}
             </div>
             <DropdownMenuSeparator />
-            <DropdownMenuLabel className="font-mono text-[10px] uppercase tracking-wide text-foreground-muted">
+            <DropdownMenuLabel className="text-xs text-foreground-muted">
               Uploaded by
             </DropdownMenuLabel>
             <DropdownMenuRadioGroup
@@ -714,7 +714,7 @@ function MediaUploadFileRow({
     <li className="flex items-center gap-2.5">
       <span
         aria-hidden="true"
-        className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted font-mono text-[9px] font-semibold uppercase text-foreground-muted"
+        className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted font-mono text-[11px] font-medium text-foreground-muted"
       >
         {extension}
       </span>
@@ -965,7 +965,7 @@ function MediaLibraryEmptyPanel({
         <div className="mb-4 rounded-full border border-border bg-card p-4 shadow-sm">
           <FileSearch className="size-7 text-foreground-muted" />
         </div>
-        <h3 className="mb-1.5 font-heading text-xl font-bold text-foreground">
+        <h3 className="mb-1.5 font-heading text-xl font-medium text-foreground">
           {emptyState.title}
         </h3>
         <p className="max-w-sm text-sm text-foreground-muted">{description}</p>
@@ -974,43 +974,17 @@ function MediaLibraryEmptyPanel({
   }
 
   const panelClassName = [
-    "relative isolate flex min-h-[26rem] flex-1 overflow-hidden rounded-2xl border-2 border-dashed bg-card transition-colors",
-    isDragActive ? "border-primary bg-accent-subtle" : "border-border/70",
+    "relative isolate flex min-h-[26rem] flex-1 overflow-hidden rounded-xl border border-dashed bg-card transition-colors",
+    isDragActive ? "border-primary bg-accent-subtle" : "border-border",
   ].join(" ");
 
   return (
     <section data-mdcms-media-library-state="empty" className={panelClassName}>
-      <div
-        aria-hidden="true"
-        className="absolute inset-0 grid grid-cols-2 gap-4 p-6 opacity-50 sm:grid-cols-4 lg:grid-cols-5"
-      >
-        {Array.from({ length: 15 }).map((_, index) => (
-          <div
-            key={index}
-            className="rounded-lg border border-dashed border-border/50"
-            style={{
-              backgroundImage:
-                "repeating-linear-gradient(135deg, transparent 0 11px, rgba(120,120,135,0.06) 11px 12px)",
-            }}
-          />
-        ))}
-      </div>
-      <div
-        aria-hidden="true"
-        className="absolute inset-0"
-        style={{
-          background:
-            "radial-gradient(ellipse 60% 55% at 50% 46%, var(--card) 42%, transparent 78%)",
-        }}
-      />
       <div className="relative m-auto flex max-w-md flex-col items-center px-6 py-16 text-center">
-        <div className="mb-5 flex size-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-lg">
-          <Upload className="size-6" />
+        <div className="mb-4 flex size-10 items-center justify-center rounded-lg border border-border bg-card">
+          <Upload className="size-[18px] text-foreground-muted" />
         </div>
-        <p className="mb-3 font-mono text-[11px] uppercase tracking-[0.12em] text-primary">
-          Media library
-        </p>
-        <h3 className="font-heading text-[28px] font-bold leading-tight tracking-tight text-foreground">
+        <h3 className="font-heading text-xl font-medium leading-tight text-foreground">
           {emptyState.title}
         </h3>
         <p className="mt-3 max-w-sm text-sm leading-relaxed text-foreground-muted">
@@ -1064,7 +1038,7 @@ function MediaKindChip({ category }: { category: MediaAssetCategory }) {
   return (
     <span
       className={[
-        "inline-flex items-center rounded-sm px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide",
+        "inline-flex items-center rounded-sm px-1.5 py-0.5 font-mono text-[11px] font-medium",
         MEDIA_KIND_CHIP_STYLES[category],
       ].join(" ")}
     >
@@ -1264,7 +1238,7 @@ function MediaAssetCard({
     <article className={cardClassName} onClick={() => onSelect(asset)}>
       <div className="relative">
         <MediaAssetPreview asset={asset} category={category} />
-        <span className="absolute left-2 top-2 rounded-sm border border-border/50 bg-card/90 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-foreground-muted shadow-sm">
+        <span className="absolute left-2 top-2 rounded-sm border border-border/50 bg-card/90 px-1.5 py-0.5 font-mono text-[11px] font-medium text-foreground-muted shadow-sm">
           {getMediaAssetExtension(asset.filename)}
         </span>
         {selectable ? (
@@ -1362,9 +1336,7 @@ function MediaAssetDetailDrawer({
       className="flex min-h-0 w-full shrink-0 flex-col overflow-y-auto border-t border-border bg-card lg:w-[340px] lg:border-l lg:border-t-0"
     >
       <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-border bg-card px-5 py-4">
-        <p className="font-mono text-[10px] uppercase tracking-wide text-foreground-muted">
-          Asset details
-        </p>
+        <p className="text-xs text-foreground-muted">Asset details</p>
         {onClose ? (
           <Button
             type="button"
@@ -1387,9 +1359,7 @@ function MediaAssetDetailDrawer({
       </div>
 
       <div className="flex-1 p-5">
-        <p className="mb-3 font-mono text-[10px] uppercase tracking-wide text-foreground-muted">
-          Properties
-        </p>
+        <p className="mb-3 text-xs text-foreground-muted">Properties</p>
         <dl>
           <MediaPropertyRow label="kind">
             <MediaKindChip category={category} />
@@ -1425,9 +1395,7 @@ function MediaAssetDetailDrawer({
       </div>
 
       <div className="mt-auto flex items-center justify-between gap-2 border-t border-border p-4">
-        <span className="font-mono text-[10px] uppercase tracking-wide text-foreground-muted">
-          Actions
-        </span>
+        <span className="text-xs text-foreground-muted">Actions</span>
         <MediaAssetActions asset={asset} onCopyUrl={onCopyUrl} />
       </div>
     </aside>
@@ -1871,7 +1839,7 @@ export function MediaLibraryPageView({
         ) : state.status === "empty" || state.status === "no-match" ? (
           <section className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <div className="px-6 pt-7 lg:px-8">
-              <h1 className="font-heading text-[36px] font-bold leading-[1.05] text-foreground">
+              <h1 className="font-heading text-[32px] font-medium leading-[1.1] tracking-tight text-foreground">
                 Media
               </h1>
               <p className="mt-1.5 font-mono text-xs text-foreground-muted">
@@ -1909,7 +1877,7 @@ export function MediaLibraryPageView({
           >
             <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
               <div className="px-6 pt-7 lg:px-8">
-                <h1 className="font-heading text-[36px] font-bold leading-[1.05] text-foreground">
+                <h1 className="font-heading text-[32px] font-medium leading-[1.1] tracking-tight text-foreground">
                   Media
                 </h1>
               </div>

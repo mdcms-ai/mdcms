@@ -76,7 +76,7 @@ function ThreadList({
   return (
     <div className="flex h-full w-[220px] shrink-0 flex-col border-r border-divider/40 bg-background-subtle">
       <div className="flex items-center gap-2 border-b border-divider/40 px-3 py-2.5">
-        <span className="flex-1 font-mono text-[10px] uppercase tracking-wider text-foreground-muted">
+        <span className="flex-1 text-xs text-foreground-muted">
           Conversations
         </span>
         <Button
@@ -293,7 +293,7 @@ function MentionPicker({
       aria-label="Document picker"
       className="absolute bottom-full left-3 right-3 mb-1 max-h-72 overflow-y-auto rounded-md border border-divider/60 bg-popover py-1 shadow-lg"
     >
-      <div className="border-b border-divider/40 px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider text-foreground-muted">
+      <div className="border-b border-divider/40 px-3 py-1.5 text-xs text-foreground-muted">
         Attach document
       </div>
       {filtered.map((c) => (
@@ -305,7 +305,7 @@ function MentionPicker({
           onClick={() => onPick(c)}
           className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left transition-colors hover:bg-accent-subtle"
         >
-          <span className="shrink-0 rounded-sm bg-blue-100 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-primary">
+          <span className="shrink-0 rounded-sm bg-blue-100 px-1.5 py-0.5 font-mono text-[11px] text-primary">
             {c.type}
           </span>
           <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-foreground">
@@ -349,9 +349,7 @@ function ContextChips({
     : thread.contextDocs;
   return (
     <div className="-mb-px flex flex-wrap items-center gap-1.5 rounded-t-lg border border-b-0 border-divider/60 bg-card px-2.5 py-1.5">
-      <span className="mr-0.5 font-mono text-[9px] uppercase tracking-wider text-foreground-muted">
-        Context
-      </span>
+      <span className="mr-0.5 text-[11px] text-foreground-muted">Context</span>
       {activeDocument && (
         <span
           className="inline-flex items-center gap-1.5 rounded-sm border border-divider/60 bg-card px-1.5 py-0.5 font-mono text-[10.5px] text-foreground-muted"
@@ -513,7 +511,7 @@ function ProgressRows({ events }: { events: AssistantProgressEvent[] }) {
             </span>
             <span className="min-w-0 flex-1 truncate">{event.message}</span>
             {usage ? (
-              <span className="shrink-0 font-mono text-[10px] uppercase tracking-wide text-foreground-subtle">
+              <span className="shrink-0 text-xs text-foreground-subtle">
                 {usage}
               </span>
             ) : null}
@@ -909,7 +907,7 @@ function TurnGroup({
         />
       ) : (
         <div className="flex items-center gap-2 border-t border-divider/40 bg-background-subtle px-3 py-2">
-          <span className="flex-1 font-mono text-[10px] uppercase tracking-wider text-foreground-muted">
+          <span className="flex-1 text-xs text-foreground-muted">
             {pendingProposals.length} of {proposals.length} pending
           </span>
           <button
@@ -994,7 +992,7 @@ function TurnRow({
       <div className="flex items-center gap-2.5">
         <span
           className={cn(
-            "inline-flex shrink-0 items-center gap-1.5 rounded-sm px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider",
+            "inline-flex shrink-0 items-center gap-1.5 rounded-sm px-1.5 py-0.5 font-mono text-[11px]",
             turnChipPaletteFor(proposal.kind),
           )}
         >
@@ -1009,9 +1007,9 @@ function TurnRow({
           <span
             aria-hidden
             title="Invalid"
-            className="shrink-0 text-[11px] text-destructive"
+            className="shrink-0 text-destructive"
           >
-            ⚠
+            <TriangleAlert className="size-3.5" />
           </span>
         )}
         <span className="flex-1" />
@@ -1120,7 +1118,7 @@ function TurnRejectFeedback({
         className="w-full resize-none rounded border border-border bg-card px-2 py-1.5 text-[12px] text-foreground placeholder:text-foreground-muted/60 focus:outline-none focus:ring-1 focus:ring-primary"
       />
       <div className="flex items-center gap-2">
-        <span className="flex-1 font-mono text-[10px] uppercase tracking-wider text-foreground-muted">
+        <span className="flex-1 text-xs text-foreground-muted">
           rejecting whole turn
         </span>
         <button

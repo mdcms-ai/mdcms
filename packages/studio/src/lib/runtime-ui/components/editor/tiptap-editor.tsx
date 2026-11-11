@@ -1023,7 +1023,7 @@ export function MediaImagePickerView({
             <input
               aria-label="Search image library"
               className="h-8 w-full rounded-md border border-border bg-background px-8 text-xs text-foreground outline-none transition-colors placeholder:text-foreground-muted focus:border-primary/50 focus:ring-2 focus:ring-primary/20"
-              placeholder="Search images..."
+              placeholder="Search images"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
             />
@@ -3400,7 +3400,7 @@ function useTipTapEditorElement({
                                   setLinkInputValue("");
                                 }
                               }}
-                              placeholder="Paste a link..."
+                              placeholder="Paste a link"
                               className="h-7 w-48 rounded border-none bg-transparent px-2 text-sm outline-none placeholder:text-muted-foreground"
                             />
                             <Separator

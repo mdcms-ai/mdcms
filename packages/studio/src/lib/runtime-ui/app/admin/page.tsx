@@ -1,12 +1,11 @@
 "use client";
 
 import Link from "../../adapters/next-link.js";
-import { AlertCircle, ShieldAlert } from "lucide-react";
+import { AlertCircle, Plus, ShieldAlert } from "lucide-react";
 import { cn } from "../../lib/utils.js";
 import { Button } from "../../components/ui/button.js";
 import { Skeleton } from "../../components/ui/skeleton.js";
 import { PageHeader } from "../../components/layout/page-header.js";
-import { useStudioSession } from "./session-context.js";
 import { useStudioMountInfo } from "./mount-info-context.js";
 import { useAdminCapabilities } from "./capabilities-context.js";
 import type {
@@ -39,30 +38,17 @@ function formatRelativeTime(dateStr: string): string {
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-function deriveUserLabel(email: string): string | null {
-  const local = (email || "").split("@")[0];
-  if (!local) return null;
-  return local.charAt(0).toUpperCase() + local.slice(1);
-}
-
-const STAT_LABEL_CLASS =
-  "font-mono text-[10px] uppercase tracking-[0.08em] text-foreground-muted";
+const STAT_LABEL_CLASS = "text-xs text-foreground-muted";
 const STAT_VALUE_CLASS =
-  "mt-2 font-heading text-[40px] font-bold leading-none tracking-tight text-foreground";
+  "mt-3 font-heading text-[36px] font-medium leading-none tracking-tight tabular-nums text-foreground";
 const STAT_DELTA_CLASS = "mt-2 font-mono text-[11px] text-foreground-muted";
 
 export default function DashboardPage() {
-  const session = useStudioSession();
   const mountInfo = useStudioMountInfo();
   const { canCreateContent } = useAdminCapabilities();
   const query = useDashboardData();
   const showLoadingSkeleton =
     query.isFetching && query.data === undefined && !query.isError;
-
-  const userLabel =
-    session.status === "authenticated"
-      ? deriveUserLabel(session.session.email)
-      : null;
 
   const result: DashboardState = query.isError
     ? {
@@ -185,18 +171,21 @@ export default function DashboardPage() {
       <div className="space-y-8 p-6 lg:p-8">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <h1 className="font-heading text-[36px] font-semibold leading-[1.05] tracking-tight text-foreground">
+            <h1 className="font-heading text-[32px] font-medium leading-[1.1] tracking-tight text-foreground">
               Dashboard
             </h1>
-            {(subtitle || userLabel) && (
-              <p className="mt-1.5 font-mono text-[12px] text-foreground-muted">
-                {subtitle || `Welcome back, ${userLabel}`}
+            {subtitle && (
+              <p className="mt-2 font-mono text-xs text-foreground-muted">
+                {subtitle}
               </p>
             )}
           </div>
           {canCreateContent && (
             <Button asChild>
-              <Link href="/admin/content">+ New document</Link>
+              <Link href="/admin/content">
+                <Plus />
+                New document
+              </Link>
             </Button>
           )}
         </div>
@@ -251,7 +240,7 @@ function StatCard({
   tone?: "ok" | "warn";
 }) {
   return (
-    <div className="rounded-lg border border-card-border bg-card p-5 shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
+    <div className="rounded-lg border border-card-border bg-card p-5">
       <p className={STAT_LABEL_CLASS}>{label}</p>
       <p className={STAT_VALUE_CLASS}>{value.toLocaleString()}</p>
       {delta && (
@@ -273,14 +262,14 @@ function ContentTypesCard({ data }: { data: DashboardData }) {
   return (
     <div className="overflow-hidden rounded-lg border border-card-border bg-card">
       <div className="flex items-center justify-between px-5 py-3.5">
-        <h2 className="font-heading text-[16px] font-semibold text-foreground">
+        <h2 className="font-heading text-base font-medium text-foreground">
           Content types
         </h2>
         <Link
           href="/admin/schema"
-          className="font-mono text-[11px] text-primary hover:underline"
+          className="text-xs font-medium text-primary hover:underline"
         >
-          browse schema →
+          Browse schema
         </Link>
       </div>
       {data.contentTypes.length === 0 ? (
@@ -293,28 +282,24 @@ function ContentTypesCard({ data }: { data: DashboardData }) {
             ct.totalCount > 0
               ? Math.round((ct.publishedCount / ct.totalCount) * 100)
               : 0;
-          const initial = (ct.type[0] ?? "?").toUpperCase();
           return (
             <Link
               key={ct.type}
               href={`/admin/content/${ct.type}`}
               className="group flex items-center gap-3 border-t border-divider/60 border-l-2 border-l-transparent px-5 py-2.5 transition-colors hover:border-l-primary hover:bg-accent-subtle"
             >
-              <span className="grid size-7 shrink-0 place-items-center rounded bg-blue-100 font-mono text-[11px] font-bold text-primary">
-                {initial}
-              </span>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5">
-                  <span className="truncate text-[13px] font-semibold text-foreground">
+                  <span className="truncate text-sm font-medium text-foreground">
                     {ct.type}
                   </span>
                   {ct.localized && (
-                    <span className="rounded-sm bg-blue-100 px-1.5 py-0 font-mono text-[9px] font-bold tracking-wider text-primary">
+                    <span className="rounded-sm bg-blue-100 px-1.5 font-mono text-[11px] font-medium text-primary">
                       i18n
                     </span>
                   )}
                 </div>
-                <div className="truncate font-mono text-[10px] text-foreground-muted">
+                <div className="truncate font-mono text-[11px] text-foreground-muted">
                   /{ct.directory}
                 </div>
               </div>
@@ -323,7 +308,7 @@ function ContentTypesCard({ data }: { data: DashboardData }) {
               </span>
               <div className="h-1 w-14 shrink-0 overflow-hidden rounded-full bg-background-subtle">
                 <div
-                  className="h-full bg-primary transition-all"
+                  className="h-full bg-primary"
                   style={{ width: `${pct}%` }}
                 />
               </div>
@@ -345,14 +330,14 @@ function RecentDraftsCard({
   return (
     <div className="overflow-hidden rounded-lg border border-card-border bg-card">
       <div className="flex items-center justify-between px-5 py-3.5">
-        <h2 className="font-heading text-[16px] font-semibold text-foreground">
+        <h2 className="font-heading text-base font-medium text-foreground">
           Recently updated
         </h2>
         <Link
           href="/admin/content"
-          className="font-mono text-[11px] text-primary hover:underline"
+          className="text-xs font-medium text-primary hover:underline"
         >
-          all content →
+          All content
         </Link>
       </div>
       {data.recentDocuments.length === 0 ? (
@@ -378,11 +363,11 @@ function RecentDraftsCard({
                     draft ? "bg-vibrant-green" : "bg-success",
                   )}
                 />
-                <span className="truncate text-[13px] font-semibold text-foreground">
+                <span className="truncate text-sm font-medium text-foreground">
                   {title}
                 </span>
               </div>
-              <div className="truncate font-mono text-[10px] text-foreground-muted">
+              <div className="truncate pl-3.5 font-mono text-[11px] text-foreground-muted">
                 {doc.type} · {doc.path} · {formatTime(doc.updatedAt)}
                 {draft && " · draft"}
               </div>
