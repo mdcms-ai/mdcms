@@ -1130,6 +1130,8 @@ Define it inside `mountContentApiRoutes` so it closes over `options`. Use it in 
         return response;
 ```
 
+- [ ] **Step 5b: Allow the header cross-origin.** SPEC-005 lists `X-MDCMS-Client` as an allowed CORS request header. In `apps/server/src/lib/server.ts`, add `"X-MDCMS-Client",` to `STUDIO_CORS_ALLOW_HEADERS` after `"X-MDCMS-CSRF-Token",`. Find the existing CORS test (search `Access-Control-Allow-Headers` in `apps/server/src/lib/*.test.ts`) and extend its expected header list so the test fails before this change and passes after.
+
 - [ ] **Step 6: Run the route tests**
 
 Run: `bun test --cwd apps/server ./src/lib/content-api.test.ts`
