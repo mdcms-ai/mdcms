@@ -81,6 +81,16 @@ wss://<host>/api/v1/collaboration?project=marketing-site&environment=staging&doc
 
 The browser must send a valid Studio session cookie; API keys are not accepted on that endpoint.
 
+### Client Identification Header
+
+Clients may send `X-MDCMS-Client: <name>/<version>` (for example
+`cli/0.4.0`) on any request. The value is recorded as the `declared` part of
+the change origin for content writes (SPEC-003 "Change Attribution"). It is
+informational, never used for authorization, and ignored when it is empty,
+longer than 120 characters, or contains characters outside printable ASCII.
+Surrounding whitespace is trimmed. The MDCMS CLI sends it on every request to
+the configured server.
+
 ### Cross-Origin Studio Browser Contract (Normative)
 
 Cross-origin Studio embedding is a first-class deployment path. MDCMS must support a host app on a different origin from `MDCMS_SERVER_URL` without requiring a reverse proxy.
@@ -111,6 +121,7 @@ For an allowlisted origin, the server must:
   - `X-MDCMS-Locale`
   - `X-MDCMS-Schema-Hash`
   - `X-MDCMS-CSRF-Token`
+  - `X-MDCMS-Client`
 
 Studio browser request modes:
 
@@ -178,7 +189,7 @@ Normative rules:
       "tags": ["intro", "tutorial"]
     },
     "body": "# Hello World\n\nThis is my first blog post...",
-    "createdBy": "uuid",
+    "createdBy": "user-id",
     "createdAt": "2026-02-12T10:00:00Z",
     "updatedAt": "2026-02-12T12:30:00Z"
   }
@@ -214,6 +225,8 @@ Implemented via **better-auth**.
 - Enterprise providers supported include Okta, Azure AD, Google Workspace, Auth0.
 
 Authentication state is managed via sessions. The Studio communicates with the backend over the same session.
+
+Content writes made with a session are attributed to the session user (SPEC-003 "Change Attribution").
 
 #### OIDC Provider Support
 
@@ -432,6 +445,7 @@ Machine-to-machine access (SDK, CI/CD) uses API keys:
 - Keys are scoped as an allowlist of `(project, environment)` tuples.
 - Keys authorize access only; they do not select routing targets.
 - API keys are not accepted by the collaboration WebSocket endpoint.
+- Content writes made with an API key are attributed to the key's creator, with the key id in the change origin (SPEC-003 "Change Attribution").
 
 #### API Key Scope Model
 

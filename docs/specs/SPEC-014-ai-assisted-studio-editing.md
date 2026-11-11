@@ -633,6 +633,11 @@ All AI write application paths must:
   proposal kind, accepted/rejected outcome, model/provider metadata, and
   validation result
 
+Applying and undoing a proposal through the apply endpoints records the
+accepting user as the actor with change origin
+`{ channel: "studio_ai", credential: <caller credential> }` (SPEC-003 "Change
+Attribution").
+
 Active collaboration exception:
 
 - For current-document body/frontmatter proposals accepted while a Studio
@@ -651,6 +656,8 @@ Active collaboration exception:
 - Creating documents, deleting documents, and proposals targeting any document
   other than the current active collaboration document continue to use the
   server apply endpoint.
+- A proposal applied in the browser while a collaboration room is open reaches
+  the server as a collaborative edit and is recorded with channel `studio`.
 
 ## Endpoint Contracts
 
