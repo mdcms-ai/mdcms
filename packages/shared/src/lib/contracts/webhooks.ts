@@ -1,6 +1,8 @@
 import { RuntimeError } from "../runtime/error.js";
 import { z } from "zod";
 
+import type { ContentChangeOrigin } from "./content-change-origin.js";
+
 export const WEBHOOK_EVENTS = [
   "content.created",
   "content.updated",
@@ -129,6 +131,8 @@ export type WebhookContentPayload = {
     id: string;
     email: string;
   };
+  /** Change origin of the write that caused the event, when recorded. */
+  origin?: ContentChangeOrigin;
 };
 
 export type WebhookMediaPayload = {
