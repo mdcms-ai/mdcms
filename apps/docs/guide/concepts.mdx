@@ -349,7 +349,8 @@ MDCMS uses role-based access control for user permissions. Roles are hierarchica
 ### Scope and Constraints
 
 - **Viewer** and **Editor** roles can be scoped to a specific project, or even a folder prefix within a project/environment. This allows fine-grained access like "editor for `content/blog/` in `production`".
-- **Admin** and **Owner** roles are always instance-wide (global scope).
+- **Owner** is always instance-wide (global scope).
+- **Admin** can be instance-wide or scoped to a single project. A project-scoped Admin can do everything an Admin can inside that project (schema sync, environments, API keys, publishing) but cannot see other projects or manage users.
 - Exactly **one Owner** must exist at all times. The system prevents removing or demoting the last Owner.
 
 ## Architecture at a Glance

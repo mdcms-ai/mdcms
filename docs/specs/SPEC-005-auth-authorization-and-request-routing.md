@@ -513,12 +513,12 @@ Studio traffic uses session authentication by default and may use bearer API key
 
 **Roles:**
 
-| Role       | Capabilities                                                                                                                                                                           |
-| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Owner**  | Full access. Cannot be removed. Manages instance-level settings, billing (future SaaS), and can assign all roles. One per instance.                                                    |
-| **Admin**  | User management, settings, read-only schema browsing, schema sync, all content operations, and destructive media operations. Can assign Editor and Viewer roles.                       |
-| **Editor** | Create, edit, publish, unpublish, and delete content. Can browse schema read-only and upload media for assigned project contexts. Limited to assigned folders for document operations. |
-| **Viewer** | Read-only access to CMS dashboard, schema, content, and media metadata. Can view content but not modify. Limited to assigned folders for document operations.                          |
+| Role       | Capabilities                                                                                                                                                                                                                               |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Owner**  | Full access. Cannot be removed. Manages instance-level settings, billing (future SaaS), and can assign all roles. Always instance-wide.                                                                                                    |
+| **Admin**  | User management (instance-wide Admin only), settings, read-only schema browsing, schema sync, all content operations, and destructive media operations. Can assign Editor and Viewer roles. Granted instance-wide or for a single project. |
+| **Editor** | Create, edit, publish, unpublish, and delete content. Can browse schema read-only and upload media for assigned project contexts. Limited to assigned folders for document operations.                                                     |
+| **Viewer** | Read-only access to CMS dashboard, schema, content, and media metadata. Can view content but not modify. Limited to assigned folders for document operations.                                                                              |
 
 **Folder-level assignment:**
 
@@ -526,7 +526,7 @@ Studio traffic uses session authentication by default and may use bearer API key
 - A user can have different roles for different folders.
 - Permissions cascade: access to `blog/` includes access to `blog/posts/`, `blog/drafts/`, etc.
 - If multiple grants apply, the most permissive grant wins.
-- Admin and Owner roles are instance-wide (not folder-scoped).
+- Owner is always instance-wide. Admin is instance-wide or project-scoped. Neither can be folder-scoped.
 
 ### Project-Scoped and Global Authorization
 
@@ -536,6 +536,35 @@ Permissions can be assigned at two levels:
 - **Project-scoped:** a role assigned to a specific project applies only to that project. A user may therefore have different roles on different projects.
 
 When both global and project-scoped roles exist, the most permissive applicable role wins for that project.
+
+Which scopes each role may be granted with:
+
+| Role     | Global | Project | Folder prefix |
+| -------- | ------ | ------- | ------------- |
+| `owner`  | yes    | no      | no            |
+| `admin`  | yes    | yes     | no            |
+| `editor` | yes    | yes     | yes           |
+| `viewer` | yes    | yes     | yes           |
+
+Grants that pair a role with a scope it does not support are rejected
+(`VALIDATION_ERROR`, `400`, on the user management endpoints).
+
+A project-scoped Admin has Admin capabilities for targets inside that project
+only: content operations, schema sync, media deletion, environment management,
+project settings, and issuing API keys whose allowlist stays inside the
+project. A project-scoped Admin has no access to other projects.
+
+User management is instance-level. Listing users, inviting users, changing
+grants, removing users, and revoking another user's sessions require an
+instance-wide Admin or Owner grant. A project-scoped Admin cannot perform them,
+and the capabilities endpoint reports `users.manage = false` for a caller whose
+only Admin grant is project-scoped.
+
+`projects:write` is evaluated against the project the request creates or
+changes, not against the routed project (see SPEC-004 "Project and Environment
+Management Endpoints"). A project-scoped Admin grant may name a project slug
+that does not exist yet; its holder may then create exactly that project. This
+is how an operator reserves a project for a user in advance.
 
 API keys follow the same project/environment scoping model through tuple allowlists:
 

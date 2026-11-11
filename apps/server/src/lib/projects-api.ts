@@ -35,10 +35,26 @@ export type ProjectStore = {
   ) => Promise<{ id: string; name: string }>;
 };
 
+export type ProjectAuthorizationInput = {
+  scope: "projects:read" | "projects:write";
+  /**
+   * Project the request creates, reads or changes. When omitted the scope is
+   * evaluated for the routed project.
+   */
+  project?: string;
+};
+
 export type MountProjectApiRoutesOptions = {
   store: ProjectStore;
-  authorizeRead: (request: Request) => Promise<void>;
-  authorizeWrite: (request: Request) => Promise<void>;
+  authorize: (
+    request: Request,
+    input: ProjectAuthorizationInput,
+  ) => Promise<void>;
+  /** Narrows project slugs to the ones the caller may see. */
+  filterAccessibleProjects: (
+    request: Request,
+    projectSlugs: readonly string[],
+  ) => Promise<string[]>;
 };
 
 type ProjectRouteApp = {
@@ -290,20 +306,33 @@ export function mountProjectApiRoutes(
 
   projectApp.get?.("/api/v1/projects", ({ request }: any) => {
     return executeWithRuntimeErrorsHandled(request, async () => {
-      await options.authorizeRead(request);
+      await options.authorize(request, { scope: "projects:read" });
+
+      const projects = await options.store.list();
+      const accessible = new Set(
+        await options.filterAccessibleProjects(
+          request,
+          projects.map((project) => project.slug),
+        ),
+      );
 
       return {
-        data: await options.store.list(),
+        data: projects.filter((project) => accessible.has(project.slug)),
       };
     });
   });
 
   projectApp.post?.("/api/v1/projects", ({ request, body }: any) => {
     return executeWithRuntimeErrorsHandled(request, async () => {
-      await options.authorizeWrite(request);
-
       const payload = (body ?? {}) as Record<string, unknown>;
-      assertRequiredString(payload.name, "name");
+      const name = assertRequiredString(payload.name, "name");
+
+      // Creating a project is authorized for the slug being created, so a
+      // project-scoped grant cannot be used to create some other project.
+      await options.authorize(request, {
+        scope: "projects:write",
+        project: slugify(name),
+      });
 
       return {
         data: await options.store.create(payload as { name: string }),
@@ -315,8 +344,11 @@ export function mountProjectApiRoutes(
     "/api/v1/projects/:slug/environments",
     ({ request, params }: any) => {
       return executeWithRuntimeErrorsHandled(request, async () => {
-        await options.authorizeRead(request);
         const slug = assertRequiredString(params.slug, "slug");
+        await options.authorize(request, {
+          scope: "projects:read",
+          project: slug,
+        });
 
         return {
           data: await options.store.listEnvironments(slug),
@@ -329,8 +361,11 @@ export function mountProjectApiRoutes(
     "/api/v1/projects/:slug/environments",
     ({ request, params, body }: any) => {
       return executeWithRuntimeErrorsHandled(request, async () => {
-        await options.authorizeWrite(request);
         const slug = assertRequiredString(params.slug, "slug");
+        await options.authorize(request, {
+          scope: "projects:write",
+          project: slug,
+        });
 
         const payload = (body ?? {}) as Record<string, unknown>;
         assertRequiredString(payload.name, "name");

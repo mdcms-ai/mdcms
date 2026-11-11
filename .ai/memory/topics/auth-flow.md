@@ -56,3 +56,10 @@ If the listener doesn't receive a callback within a timeout, the CLI surfaces "T
 ## Open extensions
 
 OIDC and SAML provider support are upcoming-work items; see `docs/specs/` for the current spec inventory and check whether a dedicated spec has landed before assuming behavior.
+
+## Role scopes
+
+- `owner` is always instance-wide. `admin` is instance-wide or scoped to one project; `editor` and `viewer` can also be folder-scoped. The pairing is enforced in `rbac.ts` (`isRoleScopeKindAllowed`), in grant validation, and by the `rbac_grants_owner_admin_scope_check` constraint.
+- Instance-level actions (`user:manage`) are decided by global grants only, so a project-scoped Admin never manages users. Routes that use `requireAdminSession` are instance-level by definition.
+- Authorize a route against the project it touches, not the routed project. The project endpoints once authorized against the routing header, which would let a project-scoped grant act on another project.
+- A project-scoped grant may name a slug that does not exist yet; its holder can then create that project. An operator can use this to reserve a project for a user in advance.

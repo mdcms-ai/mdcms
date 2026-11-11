@@ -263,6 +263,9 @@ function createAuthServiceStub(overrides: Partial<AuthService>): AuthService {
     async acceptInvite() {
       return { userId: "user-1" };
     },
+    async filterAccessibleProjects(_request, projectSlugs) {
+      return [...projectSlugs];
+    },
   };
 
   return {

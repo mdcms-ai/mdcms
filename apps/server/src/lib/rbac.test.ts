@@ -312,12 +312,12 @@ test("RBAC folder prefix grants do not authorize project-wide media operations",
   assert.equal(mediaUpload.effectiveRole, undefined);
 });
 
-test("RBAC rejects non-global Owner/Admin grants", () => {
+test("RBAC rejects Owner grants below global scope and folder-scoped Admin grants", () => {
   assert.throws(() =>
     evaluateEffectiveRole(
       [
         {
-          role: "admin",
+          role: "owner",
           scope: {
             kind: "project",
             project: "marketing-site",
@@ -334,7 +334,7 @@ test("RBAC rejects non-global Owner/Admin grants", () => {
     evaluateEffectiveRole(
       [
         {
-          role: "owner",
+          role: "admin",
           scope: {
             kind: "folder_prefix",
             project: "marketing-site",
@@ -349,6 +349,82 @@ test("RBAC rejects non-global Owner/Admin grants", () => {
         path: "blog/a",
       },
     ),
+  );
+});
+
+test("project-scoped Admin has Admin actions inside its project only", () => {
+  const grants: RbacGrant[] = [
+    { role: "admin", scope: { kind: "project", project: "marketing-site" } },
+  ];
+
+  for (const action of [
+    "schema:write",
+    "projects:write",
+    "media:delete",
+    "settings:manage",
+    "content:publish",
+  ] as const) {
+    assert.deepEqual(
+      evaluatePermission({
+        grants,
+        target: { project: "marketing-site", environment: "production" },
+        action,
+      }),
+      { allowed: true, effectiveRole: "admin" },
+    );
+  }
+
+  assert.deepEqual(
+    evaluatePermission({
+      grants,
+      target: { project: "docs-site", environment: "production" },
+      action: "content:read",
+    }),
+    { allowed: false },
+  );
+});
+
+test("user management needs a global grant, not a project-scoped Admin", () => {
+  const target = { project: "marketing-site", environment: "production" };
+
+  assert.equal(
+    evaluatePermission({
+      grants: [
+        {
+          role: "admin",
+          scope: { kind: "project", project: "marketing-site" },
+        },
+      ],
+      target,
+      action: "user:manage",
+    }).allowed,
+    false,
+  );
+
+  assert.equal(
+    evaluatePermission({
+      grants: [{ role: "admin", scope: { kind: "global" } }],
+      target,
+      action: "user:manage",
+    }).allowed,
+    true,
+  );
+
+  // A global Editor grant next to a project Admin grant does not add up to
+  // instance-level user management.
+  assert.equal(
+    evaluatePermission({
+      grants: [
+        { role: "editor", scope: { kind: "global" } },
+        {
+          role: "admin",
+          scope: { kind: "project", project: "marketing-site" },
+        },
+      ],
+      target,
+      action: "user:manage",
+    }).allowed,
+    false,
   );
 });
 

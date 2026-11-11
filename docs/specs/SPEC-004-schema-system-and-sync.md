@@ -362,23 +362,31 @@ This ensures schemas only change through deliberate, reviewable actions.
 
 - **Auth**: Bearer token, scope `projects:read`
 - **Response**: `{ "data": [{ "id": "uuid", "slug": "my-blog", "name": "my-blog", "environmentCount": 3, "createdAt": "ISO8601" }] }`
-- Returns projects accessible to the authenticated user.
+- Returns only the projects accessible to the caller. A session sees every
+  project when it holds a global grant, otherwise the projects named by its
+  project-scoped or folder-scoped grants. An API key sees the projects in its
+  allowlist.
 
 ### `POST /api/v1/projects`
 
 - **Auth**: Bearer token, scope `projects:write`
 - **Body**: `{ "name": "awesome-docs" }`
 - Slug auto-generated from name. Creates default "production" environment.
+- `projects:write` is evaluated for the slug being created, not for the routed
+  project. A session needs an instance-wide Admin or Owner grant, or a
+  project-scoped Admin grant for that slug. An API key needs the slug in its
+  allowlist. Otherwise the request fails with `FORBIDDEN` (`403`) or
+  `TARGET_ROUTING_MISMATCH` (`400`).
 - **Response**: `{ "data": { "id": "uuid", "slug": "awesome-docs", "name": "awesome-docs", "environments": [{ "id": "uuid", "name": "production" }] } }`
 
 ### `GET /api/v1/projects/:slug/environments`
 
-- **Auth**: Bearer token, scope `projects:read`
+- **Auth**: Bearer token, scope `projects:read`, evaluated for `:slug`
 - **Response**: `{ "data": [{ "id": "uuid", "name": "production" }, { "id": "uuid", "name": "staging" }] }`
 
 ### `POST /api/v1/projects/:slug/environments`
 
-- **Auth**: Bearer token, scope `projects:write`
+- **Auth**: Bearer token, scope `projects:write`, evaluated for `:slug`
 - **Body**: `{ "name": "development" }`
 - **Response**: `{ "data": { "id": "uuid", "name": "development" } }`
 

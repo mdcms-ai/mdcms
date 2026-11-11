@@ -120,6 +120,13 @@
       "when": 1781575562356,
       "tag": "0016_dashing_magus",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1794342839923,
+      "tag": "0017_heavy_shadow_king",
+      "breakpoints": true
     }
   ]
 }

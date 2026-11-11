@@ -113,12 +113,13 @@ Roles form an ordered hierarchy. Higher roles inherit all capabilities of lower 
 | -------- | ----- | --------------------------------- |
 | `viewer` | 0     | Global, project, or folder prefix |
 | `editor` | 1     | Global, project, or folder prefix |
-| `admin`  | 2     | Global only                       |
+| `admin`  | 2     | Global or project                 |
 | `owner`  | 3     | Global only                       |
 
 <Note>
-  `admin` and `owner` roles are restricted to global scope by a database check
-  constraint. They cannot be scoped to a specific project or folder prefix.
+  A database check constraint restricts `owner` to global scope and `admin` to
+  global or project scope. User management always requires a global `admin` or
+  `owner` grant.
 </Note>
 
 ### Scopes
