@@ -1,5 +1,11 @@
 # @mdcms/cli
 
+## 0.4.0
+
+### Minor Changes
+
+- 558aa7f: Add the preview `mdcms mcp` command: a stdio MCP server that lets agent clients read the schema and read, create, update and publish documents for the configured project and environment.
+
 ## 0.3.1
 
 ### Patch Changes
