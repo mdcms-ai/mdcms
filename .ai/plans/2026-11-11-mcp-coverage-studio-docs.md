@@ -20,6 +20,9 @@ Run focused tests after each task; parent integration owns commits and the full 
 
 SPEC-005/009 extend environment listing to narrowly scoped bearer credentials.
 The existing role requirement remains; creation/deletion remain session-only.
+SPEC-009 also requires server-derived attribution for every clone/promote target
+head and newly inserted version, preserving existing target creation attribution
+on overwrite and leaving dry runs without writes or events.
 
 SPEC-015 enumerates tools, schemas and domain errors. SPEC-006 adds Connected apps
 using SPEC-005 contracts. Acceptance requires coverage without weaker route auth,
@@ -27,7 +30,10 @@ Studio failure states, public setup guidance and integration evidence.
 Dependencies: shared tools, OAuth/MCP and CLI bridge plans. Shared-tools Task 3a
 repairs atomic restore/delete and published restore before those tools/undo ship.
 Task 1b below repairs existing clone/promote authorization before registering those
-remote tools. Thin dispatch alone cannot satisfy either dependency.
+remote tools. Task 1c carries authenticated attribution through their raw SQL
+writes and depends on Task 1b plus the shared ContentWriteAttribution/auth helpers.
+Both tasks must be complete before clone/promote integration is accepted. Thin
+dispatch alone cannot satisfy these dependencies.
 
 ### Task 1: Remaining route-backed tools
 
@@ -117,6 +123,83 @@ supplied source/destination IDs; this task must precede remote tool exposure.
 - [ ] Run `bun test apps/server/src/lib/environments-api.route.test.ts` and
       `bun test apps/server/src/lib/environments-clone-promote.integration.test.ts`
       with configured PostgreSQL. Record skipped database coverage explicitly.
+
+### Task 1c: Carry attribution through clone/promote raw persistence
+
+Modify only the relevant interfaces and paths in:
+
+- `apps/server/src/lib/environments-api.ts`: EnvironmentScopedAuthorizer,
+  EnvironmentStore.clone/promote, createDatabaseEnvironmentStore adapters and
+  mountEnvironmentApiRoutes handlers.
+- `apps/server/src/lib/runtime-with-modules.ts`: the authorizeScoped callback
+  supplied to mountEnvironmentApiRoutes.
+- `apps/server/src/lib/environments-clone-promote.ts`: CloneEnvironmentInput,
+  PromoteEnvironmentInput, cloneEnvironment, promoteDocuments, createTargetDraft,
+  overwriteTargetDraft and publishTargetDocument.
+- `apps/server/src/lib/environments-api.route.test.ts`,
+  `apps/server/src/lib/environments-api.test.ts`,
+  `apps/server/src/lib/runtime-with-modules.test.ts`,
+  `apps/server/src/lib/environments-clone-promote.integration.test.ts` and the
+  registry environment-tool tests introduced in Task 1.
+
+Reuse ContentWriteAttribution from `@mdcms/shared` and
+attributionFromAuthorizedRequest from
+`apps/server/src/lib/content-api/attribution.ts`. The attribution helper's OAuth
+branch and trusted internal-channel handling are prerequisites from the OAuth and
+shared-dispatch plans; do not duplicate or weaken them here.
+
+- [ ] Change EnvironmentScopedAuthorizer from Promise<void> to return the
+      AuthorizedRequest (or Task 1b's resolved authorization context containing it).
+      The runtime callback currently discards authorizeRequest's result: return
+      it and preserve Task 1b's source/destination authorization checks. Derive
+      attribution using the same Request and authorized principal, once those
+      checks succeed. Do not infer the actor from source rows or body fields.
+- [ ] Add a required final store argument `context: { attribution: ContentWriteAttribution }` to clone/promote, alongside any resolved
+      authorization context required by Task 1b. Update both route calls and
+      createDatabaseEnvironmentStore implementations. Do not add attribution to
+      the public clone/promote payload contracts or supply a default context.
+- [ ] Add required attribution to the internal CloneEnvironmentInput and
+      PromoteEnvironmentInput engine types. In adapters, spread the validated
+      operation input first, then assign the trusted project, destination and
+      attribution so client fields cannot override them. Preserve the separately
+      authorized source context; attribution must not replace it.
+- [ ] Remove the engine's DEFAULT_ACTOR, cloneActor and promoteActor fallbacks.
+      Pass the full attribution object through createTargetDraft,
+      overwriteTargetDraft and publishTargetDocument instead of actor-only input.
+      Clone's direct inserts must receive it too. Genuine internal job/test callers
+      explicitly pass systemAttribution or fixture attribution; request paths must
+      never invoke systemAttribution to satisfy a required argument.
+- [ ] On new target heads, write createdBy/updatedBy=attribution.actorId and
+      createdOrigin/updatedOrigin=attribution.origin. On existing target overwrite,
+      preserve createdBy/createdOrigin and update only updatedBy/updatedOrigin.
+      Set publishedBy/publishedOrigin on cloned version 1 and each new promoted
+      version to this operation's attribution, not the source snapshot author.
+      Keep source attribution and old target version rows unchanged.
+- [ ] Ensure attribution commits within the same clone/promote transaction and
+      emitted lifecycle payloads use that same context. Keep dryRun free of all
+      content, author/origin and event writes; failed authorization/remap/transaction
+      paths must leave attribution unchanged along with the content.
+- [ ] Add route/runtime tests for session studio, external API-key api and trusted
+      MCP mcp channels, including OAuth's granting user/client ID. Submit body actor,
+      origin and channel fields and forged internal headers; prove they cannot
+      select persisted attribution. Assert denied source/destination calls never
+      reach the mutation engine, even when attribution was derivable.
+- [ ] Add PostgreSQL assertions for clone with and without draft inclusion, promoted
+      create and overwrite, and settings-only clone. Use source and target actors
+      distinct from the acting user. Verify new version authors/origins, preserved
+      target creation fields (including null origin), unchanged source rows and old
+      history, and no additional content attribution rows for settings-only clone.
+- [ ] Snapshot content/version attribution before dryRun and before forced remap
+      failure; assert exact equality afterward and zero lifecycle events. Re-run
+      Task 1b's wrong-target, source-scope, tuple and path denial cases with these
+      persistence assertions. A channel-only mock is not enough to prove storage.
+- [ ] Run `bun test apps/server/src/lib/environments-api.route.test.ts`,
+      `bun test apps/server/src/lib/environments-api.test.ts`,
+      `bun test apps/server/src/lib/runtime-with-modules.test.ts` and
+      `bun test apps/server/src/lib/environments-clone-promote.integration.test.ts`
+      with PostgreSQL configured; run the registry environment suite after wiring.
+      Report unavailable database/OAuth coverage explicitly. Implementation and
+      complete test bodies remain pending; this task is an execution outline.
 
 ### Task 2: Connected apps Studio surface
 

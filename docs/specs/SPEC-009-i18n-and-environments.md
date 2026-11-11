@@ -435,3 +435,47 @@ The endpoint contract table's required scopes include these conditional source
 scopes and settings destination scope. Routing errors include
 TARGET_ROUTING_MISMATCH (400). No environment is created by clone: the destination
 must already exist; provisioning it remains a separate session-only action.
+
+### Clone and Promote Content Attribution
+
+Every clone/promote content mutation requires a server-derived
+ContentWriteAttribution containing actorId and origin, as defined by SPEC-003.
+After authorizing the operation and its source/destination contexts, carry this
+required value through the route, environment store and transactional engine.
+It is execution context, never part of EnvironmentCloneInput or
+EnvironmentPromoteInput accepted from the client. HTTP callers cannot choose an
+actor, credential, origin or channel through request bodies or untrusted headers.
+Unexpected attribution fields follow normal request validation and cannot affect
+the attribution passed to persistence.
+
+The actor is the session user, API key creator, or OAuth granting user. Ordinary
+session operations use channel studio and credential session; external API-key
+operations use channel api and credential api_key. Trusted MCP dispatch uses
+channel mcp with the actual API-key or OAuth credential and its verified
+identifier. Declared client metadata remains unverified under SPEC-005/015 and
+never changes actor, channel or permissions. systemAttribution is reserved for
+explicit server-internal jobs; it is not a missing-context fallback for a request.
+
+Persistence rules apply to all raw inserts and updates inside clone/promote:
+
+- A newly created target head records createdBy and updatedBy as actorId, and
+  createdOrigin and updatedOrigin as origin. Do not copy the source document's
+  authorship or substitute a default actor.
+- An overwritten target head preserves its existing createdBy and createdOrigin,
+  including a historical null origin, and sets updatedBy and updatedOrigin to the
+  current operation's actor and origin.
+- A newly inserted cloned version 1 and every newly inserted promoted version
+  record publishedBy as actorId and publishedOrigin as origin. These are new
+  target publication events, even when their content came from an existing source
+  snapshot. Source publication attribution is not the target publication actor.
+- Source heads and versions remain unchanged. Clone does not copy a complete
+  historical series, and promotion does not rewrite old target versions.
+- Attribution fields commit in the same transaction as their head/version changes.
+  Any lifecycle event emitted for the operation carries the same actor/origin;
+  failed operations emit no successful mutation event or attribution change.
+
+Promotion dryRun computes the authorized plan without writing heads, versions,
+origins, authors or lifecycle events. It does not refresh last-editor metadata.
+The same source scopes, destination binding, tuple restrictions and per-path
+checks defined above apply before returning a dry-run result. Passing attribution
+is not authorization and cannot bypass any of those checks.
