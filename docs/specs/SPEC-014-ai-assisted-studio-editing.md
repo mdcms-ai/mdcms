@@ -469,7 +469,12 @@ aesthetic instead of inventing a disconnected one-off visual system.
 
 Document lookup tools are capability-gated on `content:read:draft`; absent
 capability removes the tool from the model's surface and the model gracefully
-responds in text. The component reference tool is available only when the
+responds in text. The capability is evaluated for the routed project and
+environment without a document path, so it is held only through a grant that
+covers the whole routed project or an API key holding the scope for that
+target; folder-prefix grants alone do not enable the lookup tools. When the
+lookup tools are absent, the system prompt's tool availability notes mark
+document lookup as unavailable so the model can explain why. The component reference tool is available only when the
 request supplies component reference snapshots for the active Studio host.
 The server never imports host app component source to render references inside
 the AI module.

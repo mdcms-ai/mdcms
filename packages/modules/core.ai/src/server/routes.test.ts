@@ -2220,3 +2220,133 @@ describe("mountAiRoutes — proposals/:id/undo", () => {
     assert.ok(setup.audits.some((record) => record.outcome === "undo_failed"));
   });
 });
+
+describe("mountAiRoutes: chat document lookup gate", () => {
+  type CapturedTurn = { toolNames: string[]; system: string };
+
+  function captureTurn(target: CapturedTurn) {
+    return (options: unknown) => {
+      const callOptions = options as {
+        tools?: Array<{ name: string }>;
+        prompt: Array<{
+          role: string;
+          content: string | Array<{ type: string; text?: string }>;
+        }>;
+      };
+      target.toolNames = (callOptions.tools ?? []).map((tool) => tool.name);
+      const system = callOptions.prompt.find(
+        (message) => message.role === "system",
+      );
+      target.system = Array.isArray(system?.content)
+        ? (system.content.find((part) => part.type === "text")?.text ?? "")
+        : (system?.content ?? "");
+      return "Answered in text.";
+    };
+  }
+
+  function lookupSetup(scopes: ReadonlySet<string>) {
+    const captured: CapturedTurn = { toolNames: [], system: "" };
+    const backendCalls: string[] = [];
+    const setup = createTestSetup({
+      authorize: authorizeWithScopes(scopes),
+      echoRespond: captureTurn(captured),
+      listEntries: async () => {
+        backendCalls.push("listEntries");
+        return { matches: [], total: 0 };
+      },
+      getEntry: async () => {
+        backendCalls.push("getEntry");
+        return undefined;
+      },
+    });
+    return { ...setup, captured, backendCalls };
+  }
+
+  const CHAT_ROUTES = [
+    {
+      label: "chat/messages",
+      path: "https://test.local/api/v1/ai/chat/messages",
+      headers: TARGET_HEADERS,
+    },
+    {
+      label: "chat/messages/stream",
+      path: "https://test.local/api/v1/ai/chat/messages/stream",
+      headers: { ...TARGET_HEADERS, accept: "text/event-stream" },
+    },
+  ] as const;
+
+  for (const route of CHAT_ROUTES) {
+    test(`${route.label} omits document lookup tools without content:read:draft`, async () => {
+      const { app, captured, backendCalls } = lookupSetup(
+        new Set(["ai:use", "content:write"]),
+      );
+
+      const response = await app.fetch("POST", route.path, {
+        method: "POST",
+        headers: route.headers,
+        body: JSON.stringify({ message: "find the post about pricing" }),
+      });
+
+      assert.equal(response.status, 200);
+      await response.text();
+      assert.ok(captured.system.length > 0, "model should have been called");
+      assert.equal(captured.toolNames.includes("find_entries"), false);
+      assert.equal(captured.toolNames.includes("get_entry"), false);
+      assert.ok(
+        captured.toolNames.includes("propose_create_document"),
+        "write tools stay available with content:write",
+      );
+      assert.match(
+        captured.system,
+        /Document lookup \(`find_entries`, `get_entry`\): UNAVAILABLE/,
+      );
+      assert.doesNotMatch(captured.system, /<tool>find_entries<\/tool>/);
+      assert.deepEqual(backendCalls, []);
+    });
+
+    test(`${route.label} registers document lookup tools with content:read:draft`, async () => {
+      const { app, captured } = lookupSetup(
+        new Set(["ai:use", "content:read:draft"]),
+      );
+
+      const response = await app.fetch("POST", route.path, {
+        method: "POST",
+        headers: route.headers,
+        body: JSON.stringify({ message: "find the post about pricing" }),
+      });
+
+      assert.equal(response.status, 200);
+      await response.text();
+      assert.ok(captured.toolNames.includes("find_entries"));
+      assert.ok(captured.toolNames.includes("get_entry"));
+      assert.match(
+        captured.system,
+        /Document lookup \(`find_entries`, `get_entry`\): available/,
+      );
+    });
+
+    test(`${route.label} surfaces non-permission failures from the content:read:draft probe`, async () => {
+      const { app } = createTestSetup({
+        authorize: async (_request, { requiredScope }) => {
+          if (requiredScope === "content:read:draft") {
+            throw new RuntimeError({
+              code: "UNAUTHORIZED",
+              message: "Session expired.",
+              statusCode: 401,
+            });
+          }
+          return { actorId: "user_1" };
+        },
+        listEntries: async () => ({ matches: [], total: 0 }),
+      });
+
+      const response = await app.fetch("POST", route.path, {
+        method: "POST",
+        headers: route.headers,
+        body: JSON.stringify({ message: "hi" }),
+      });
+
+      assert.equal(response.status, 401);
+    });
+  }
+});

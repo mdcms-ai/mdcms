@@ -169,6 +169,7 @@ test("buildChatSystemPrompt allows bounded document lookup tools when registered
       canEditDocument: true,
       canCreateDocument: true,
       canDeleteDocument: false,
+      canReadEntries: true,
     },
     registeredToolNames: ["find_entries", "get_entry"],
     projectKnowledge: {
@@ -183,6 +184,38 @@ test("buildChatSystemPrompt allows bounded document lookup tools when registered
   assert.match(prompt, /get_entry/);
   assert.doesNotMatch(prompt, /no such tool yet/);
   assert.match(prompt, /Unbounded autonomous crawling/);
+  assert.match(
+    prompt,
+    /Document lookup \(`find_entries`, `get_entry`\): available/,
+  );
+});
+
+test("buildChatSystemPrompt marks document lookup unavailable without draft read access", () => {
+  const prompt = buildChatSystemPrompt({
+    hasActiveDocument: false,
+    hasAttachedSelection: false,
+    capabilities: {
+      canEditDocument: true,
+      canCreateDocument: true,
+      canDeleteDocument: false,
+      canReadEntries: false,
+    },
+    registeredToolNames: ["propose_create_document"],
+    projectKnowledge: {
+      project: "demo",
+      environment: "draft",
+      registeredTypes: [],
+      supportedLocales: ["en"],
+    },
+  });
+
+  assert.match(
+    prompt,
+    /Document lookup \(`find_entries`, `get_entry`\): UNAVAILABLE/,
+  );
+  assert.match(prompt, /content:read:draft/);
+  assert.doesNotMatch(prompt, /<tool>find_entries<\/tool>/);
+  assert.doesNotMatch(prompt, /<tool>get_entry<\/tool>/);
 });
 
 test("buildChatSystemPrompt guides UI proposals toward the existing aesthetic", () => {
@@ -193,6 +226,7 @@ test("buildChatSystemPrompt guides UI proposals toward the existing aesthetic", 
       canEditDocument: true,
       canCreateDocument: true,
       canDeleteDocument: true,
+      canReadEntries: false,
     },
     registeredToolNames: ["get_component_reference", "propose_insert_block"],
     projectKnowledge: {
@@ -218,6 +252,7 @@ test("buildChatSystemPrompt uses stable XML-style sections", () => {
       canEditDocument: true,
       canCreateDocument: true,
       canDeleteDocument: true,
+      canReadEntries: false,
     },
     registeredToolNames: ["propose_edit_selection"],
     projectKnowledge: {
@@ -251,6 +286,7 @@ test("buildChatSystemPrompt escapes XML-like project knowledge content", () => {
       canEditDocument: true,
       canCreateDocument: true,
       canDeleteDocument: true,
+      canReadEntries: false,
     },
     registeredToolNames: [],
     projectKnowledge: {

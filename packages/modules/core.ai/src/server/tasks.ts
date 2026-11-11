@@ -527,6 +527,7 @@ export function buildChatSystemPrompt(input: {
     canEditDocument: boolean;
     canCreateDocument: boolean;
     canDeleteDocument: boolean;
+    canReadEntries: boolean;
   };
   registeredToolNames: string[];
   projectKnowledge: ProjectKnowledgeInput;
@@ -631,6 +632,19 @@ export function buildChatSystemPrompt(input: {
   } else {
     reasons.push(
       "- Delete document (`propose_delete_document`): available. Use ONLY when the user explicitly asks to delete THIS draft. Documents with a published version cannot be deleted.",
+    );
+  }
+
+  // Document lookup (find_entries / get_entry). These tools return
+  // draft bodies, so they are registered only when the caller can read
+  // drafts in the routed project and environment.
+  if (!input.capabilities.canReadEntries) {
+    reasons.push(
+      "- Document lookup (`find_entries`, `get_entry`): UNAVAILABLE. The signed-in user does not have draft read permission (`content:read:draft`). Answer from the context already in this conversation; if they ask you to find or read other documents, explain they need draft read access.",
+    );
+  } else {
+    reasons.push(
+      "- Document lookup (`find_entries`, `get_entry`): available. Use for bounded lookups such as reference resolution, duplicate checks, or reading a referenced document.",
     );
   }
 
