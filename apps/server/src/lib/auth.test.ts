@@ -6,6 +6,8 @@ import { and, eq } from "drizzle-orm";
 import postgres from "postgres";
 
 import {
+  assertGrantsCanIssueApiKeyScopes,
+  authorizeSessionGrants,
   buildStaticSamlProviders,
   buildStaticSsoPluginOptions,
   buildStaticOidcProviders,
@@ -42,6 +44,7 @@ import {
   projects,
   rbacGrants,
 } from "./db/schema.js";
+import { RBAC_ROLES, type RbacGrant, type RbacRole } from "./rbac.js";
 import { createServerRequestHandlerWithModules } from "./runtime-with-modules.js";
 
 const env = {
@@ -390,6 +393,172 @@ test("resolveApiKeyRbacAction rejects operation scopes that sessions cannot mint
     (error: unknown) =>
       error instanceof Error && "code" in error && error.code === "FORBIDDEN",
   );
+});
+
+test("resolveApiKeyRbacAction maps environment API key scopes", () => {
+  assert.equal(
+    resolveApiKeyRbacAction("environments:clone"),
+    "environments:clone",
+  );
+  assert.equal(
+    resolveApiKeyRbacAction("environments:promote"),
+    "environments:promote",
+  );
+});
+
+const sessionTarget = {
+  project: "marketing-site",
+  environment: "staging",
+};
+
+const sessionGrantsByRole: Record<RbacRole, RbacGrant[]> = {
+  viewer: [
+    {
+      role: "viewer",
+      scope: { kind: "project", project: sessionTarget.project },
+    },
+  ],
+  editor: [
+    {
+      role: "editor",
+      scope: { kind: "project", project: sessionTarget.project },
+    },
+  ],
+  admin: [{ role: "admin", scope: { kind: "global" } }],
+  owner: [{ role: "owner", scope: { kind: "global" } }],
+};
+
+function isForbiddenError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    error.code === "FORBIDDEN" &&
+    "statusCode" in error &&
+    error.statusCode === 403
+  );
+}
+
+test("session authorization denies environment clone and promote to viewer and editor roles", () => {
+  for (const role of ["viewer", "editor"] as const) {
+    for (const requiredScope of [
+      "environments:clone",
+      "environments:promote",
+    ] as const) {
+      assert.throws(
+        () =>
+          authorizeSessionGrants(sessionGrantsByRole[role], {
+            requiredScope,
+            project: sessionTarget.project,
+            environment: sessionTarget.environment,
+          }),
+        isForbiddenError,
+        `${role} ${requiredScope}`,
+      );
+    }
+  }
+});
+
+test("session authorization allows environment clone and promote for admin and owner roles", () => {
+  for (const role of ["admin", "owner"] as const) {
+    for (const requiredScope of [
+      "environments:clone",
+      "environments:promote",
+    ] as const) {
+      assert.equal(
+        authorizeSessionGrants(sessionGrantsByRole[role], {
+          requiredScope,
+          project: sessionTarget.project,
+          environment: sessionTarget.environment,
+        }),
+        role,
+        `${role} ${requiredScope}`,
+      );
+    }
+  }
+});
+
+test("session authorization denies operation scopes that have no role mapping", () => {
+  for (const role of RBAC_ROLES) {
+    assert.throws(
+      () =>
+        authorizeSessionGrants(sessionGrantsByRole[role], {
+          requiredScope: "migrations:run",
+          project: sessionTarget.project,
+          environment: sessionTarget.environment,
+        }),
+      isForbiddenError,
+      role,
+    );
+  }
+});
+
+test("session authorization keeps the legacy content:write:draft alias mapped to content:write", () => {
+  assert.equal(
+    authorizeSessionGrants(sessionGrantsByRole.editor, {
+      requiredScope: "content:write:draft",
+      project: sessionTarget.project,
+      environment: sessionTarget.environment,
+    }),
+    "editor",
+  );
+  assert.throws(
+    () =>
+      authorizeSessionGrants(sessionGrantsByRole.viewer, {
+        requiredScope: "content:write:draft",
+        project: sessionTarget.project,
+        environment: sessionTarget.environment,
+      }),
+    isForbiddenError,
+  );
+});
+
+test("API key issuance allows environment scopes for admin and owner sessions", () => {
+  for (const role of ["admin", "owner"] as const) {
+    assert.doesNotThrow(
+      () =>
+        assertGrantsCanIssueApiKeyScopes(
+          sessionGrantsByRole[role],
+          ["environments:clone", "environments:promote"],
+          [sessionTarget],
+        ),
+      role,
+    );
+  }
+});
+
+test("API key issuance rejects environment scopes for viewer and editor sessions", () => {
+  for (const role of ["viewer", "editor"] as const) {
+    for (const scope of [
+      "environments:clone",
+      "environments:promote",
+    ] as const) {
+      assert.throws(
+        () =>
+          assertGrantsCanIssueApiKeyScopes(
+            sessionGrantsByRole[role],
+            [scope],
+            [sessionTarget],
+          ),
+        isForbiddenError,
+        `${role} ${scope}`,
+      );
+    }
+  }
+});
+
+test("API key issuance rejects migrations:run for every role", () => {
+  for (const role of RBAC_ROLES) {
+    assert.throws(
+      () =>
+        assertGrantsCanIssueApiKeyScopes(
+          sessionGrantsByRole[role],
+          ["migrations:run"],
+          [sessionTarget],
+        ),
+      isForbiddenError,
+      role,
+    );
+  }
 });
 
 if (dbAvailable) {

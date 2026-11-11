@@ -213,6 +213,55 @@ test("RBAC permission evaluation keeps schema write restricted to admin and owne
   assert.equal(adminSchemaWrite.effectiveRole, "admin");
 });
 
+test("RBAC permission evaluation restricts environment clone and promote to admin and owner", () => {
+  const target = { project: "marketing-site", environment: "staging" };
+  const cases: { grant: RbacGrant; allowed: boolean }[] = [
+    {
+      grant: { role: "viewer", scope: { kind: "global" } },
+      allowed: false,
+    },
+    {
+      grant: {
+        role: "editor",
+        scope: { kind: "project", project: "marketing-site" },
+      },
+      allowed: false,
+    },
+    {
+      grant: { role: "editor", scope: { kind: "global" } },
+      allowed: false,
+    },
+    {
+      grant: { role: "admin", scope: { kind: "global" } },
+      allowed: true,
+    },
+    {
+      grant: { role: "owner", scope: { kind: "global" } },
+      allowed: true,
+    },
+  ];
+
+  for (const { grant: candidate, allowed } of cases) {
+    for (const action of [
+      "environments:clone",
+      "environments:promote",
+    ] as const) {
+      const decision = evaluatePermission({
+        grants: [candidate],
+        target,
+        action,
+      });
+
+      assert.equal(
+        decision.allowed,
+        allowed,
+        `${candidate.role} (${candidate.scope.kind}) ${action}`,
+      );
+      assert.equal(decision.effectiveRole, candidate.role);
+    }
+  }
+});
+
 test("RBAC permission evaluation maps media actions to viewer editor and admin roles", () => {
   const target = {
     project: "marketing-site",
