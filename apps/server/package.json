@@ -31,7 +31,7 @@
     "test:integration:mcp": "MDCMS_MCP_INTEGRATION=1 bun test ./src/lib/mcp/mcp.integration.test.ts"
   },
   "dependencies": {
-    "@better-auth/sso": "1.5.1",
+    "@better-auth/sso": "1.7.22",
     "@hocuspocus/server": "^4",
     "@hocuspocus/transformer": "^4",
     "@mdcms/editor-core": "workspace:*",
