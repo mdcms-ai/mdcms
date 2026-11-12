@@ -113,3 +113,9 @@ Entries are reverse-chronological (newest first).
 **Rule:** Use drizzle operators (`lt`, `gt`, `eq`) for `Date` values; do not interpolate a `Date` into a raw `sql` template.
 **Why:** With the postgres.js driver, a `Date` interpolated into `sql` is sent as its `toString()` form and the query fails at runtime, while the same comparison through `lt(column, date)` is serialized correctly. Typecheck does not catch it.
 **How to apply:** In server queries, reach for `like`/`lt`/`gt` and friends first; reserve raw `sql` for expressions drizzle has no operator for, and pass dates as ISO strings there.
+
+## 2026-11-12: exempt server-rendered pages from the Studio origin check
+
+**Rule:** A page the server renders and whose form posts back to itself must be excluded in `isStudioBrowserRoute`, like the CLI login pages.
+**Why:** The origin check allows same-origin requests by comparing `Origin` with `new URL(request.url).origin`. Behind a proxy (Railway), `request.url` is the internal `http://` address while the browser sends the public `https://` origin, so the form post is rejected with `FORBIDDEN_ORIGIN`. Local tests pass because there both origins match.
+**How to apply:** When adding a server-hosted HTML flow under a Studio browser route prefix, add its path to the exclusions and cover it with a test whose request URL differs from the `Origin` header.
