@@ -12,7 +12,7 @@
 
 ---
 
-Run commands from the repository root. Preserve unrelated working changes.
+Run from the repository root. Preserve unrelated working changes.
 This plan does not authorize commit, push, publish, deployment or external messages.
 Run focused tests after each task; parent integration owns commits and the full gate.
 
@@ -223,6 +223,94 @@ that same admin directory.
       fixtures and tests together. Otherwise record the consumer as absent, not tested;
       do not fabricate preview coverage or create an unrelated app.
 
+### Task 2a: Isolate the whole-stack integration harness
+
+Spec delta: SPEC-011 requires invocation-owned stacks for health, migration and
+content integration. This task is a prerequisite for Task 3 and the full CI gate.
+Do not change ordinary developer Compose defaults. This plan is preparation;
+container/database execution occurs only during its implementation and verification.
+
+Create:
+
+- `docker-compose.integration.yml`: loopback port and controlled service-environment
+  overrides, using `!override` with a minimum Compose version of 2.24.4.
+- `scripts/lib/integration-stack.sh`: invocation identity, private configuration,
+  scoped Compose wrapper, validation, health/mapping checks and cleanup traps.
+- `scripts/lib/allocate-integration-ports.mjs`: OS-assigned distinct loopback ports
+  recorded once per invocation, with no static-port fallback.
+- `scripts/integration-stack.test.ts`: helper/config/failure-path tests with a
+  recording fake Docker executable and synthetic environment values.
+
+Modify:
+
+- `scripts/compose-health-check.sh`
+- `scripts/migration-startup-check.sh`
+- `scripts/content-api-integration-check.sh`
+- `apps/server/src/lib/content-api-test-support.ts`: explicit integration opt-in
+  and mandatory generated test database URL; unit discovery does not connect to
+  the current fallback on port 5432.
+- `apps/server/package.json`, root `package.json` and `.github/workflows/ci.yml`
+  only where required to pass the explicit mode and preserve existing gate order.
+
+- [ ] Implement the helper with a random project prefix/nonce, collision check,
+      private temporary directory, generated env file and one Compose argv array
+      containing explicit -p and both -f paths. Sanitize subprocess environment:
+      allow needed Docker/process configuration, but discard ambient Compose
+      selection, app credentials and service URLs. Use task-specific variable
+      names, not HOME or other system variables. Keep raw secrets out of logs.
+- [ ] Allocate all seven loopback host ports once, retain the map across down/up
+      restart checks, and fail on any bind conflict. Use !override for each ports
+      list and controlled service environment maps. Keep container ports fixed;
+      synthetic database credentials and URLs must agree across postgres,
+      db-migrate, server, healthchecks and SQL verification commands. Override
+      inherited AI/provider secrets, S3 endpoints and SMTP configuration.
+- [ ] Generate canonical server and public media URLs from the same saved ports.
+      Use internal service DNS/ports for container dependencies. Set NODE_ENV=test,
+      internal PORT=4000, a test-marked database name and synthetic bucket/credentials.
+      Validate the merged Compose config before resource creation: no old default
+      host mappings, wildcard bindings, external volumes/networks or unrelated mounts.
+- [ ] Replace every bare Compose invocation in all three scripts with the wrapper,
+      including ps, port, exec, logs, run, up, restart and cleanup. Remove initial
+      cleanup/reset calls. Replace fixed host curl URLs and host-port assertions
+      with the recorded mappings; fixed container-port assertions remain valid.
+- [ ] Verify project/service labels, actual mapped addresses and expected server
+      configuration before host health checks. Require healthy for healthchecked
+      services and exit zero for migration/init jobs. Test missing containers,
+      duplicate IDs, mismatched labels/mappings, unhealthy/exited states and
+      init failures; none may fall through to a responsive existing listener.
+- [ ] Keep persistence sentinels and migration-idempotency checks in owned volumes.
+      Recreate using identical project/configuration and host ports, without volume
+      deletion. Recheck mappings and sentinels; do not silently reallocate a port
+      after restart or inspect another project's volume.
+- [ ] Supply generated MDCMS_TEST_DATABASE_URL explicitly to content tests and
+      enable an explicit integration mode. Validate test marker and verified
+      loopback mapping, probe availability, and fail rather than test.skip when
+      explicitly requested database coverage is unavailable. Remove automatic
+      development-database fallback during ordinary unit discovery. Do not alter
+      the separate OAuth-only explicit-database contract.
+- [ ] Trap exit/signals after recording ownership, before startup. Cleanup must
+      use the same scoped argv and delete only invocation-owned resources. Test
+      startup failure, partial startup, assertion failure, interrupt, repeated
+      cleanup, ownership mismatch and cleanup failure. Preserve failing test exit
+      codes and report cleanup errors; successful tests plus failed cleanup fail.
+- [ ] Before Docker execution, run `bash -n` on the helper and three scripts and
+      `bun test scripts/integration-stack.test.ts`. Source-review all destructive
+      calls and endpoints with `rg -n 'docker compose|down|prune|4000|5432|DATABASE_URL|curl'`
+      over those files. Inspect fake-Docker traces to prove every command has the
+      unique project/files and no ambient service URL or default-project cleanup.
+      Test poisoned inherited env values and an occupied allocated port as failures.
+- [ ] After implementing the isolation contract, inspect rendered config with
+      synthetic values, then run `bun run compose:health`, `bun run migrate:check`
+      and `bun run integration:content`. Verify actual ownership, mapped URLs,
+      restart persistence and cleanup. Compare unrelated stack resource identities
+      before/after read-only; do not stop, recreate or clean that stack for the test.
+- [ ] Run actual `bun run ci:required` after all relevant changes. Give any Studio
+      embed smoke process its own free loopback port through the documented
+      MDCMS_STUDIO_EMBED_SMOKE_PORT setting, and verify that process owns its
+      listener. Record exit status and which stages ran, with database cases
+      executed rather than skipped. A source review or focused green test does
+      not replace this full run; report unavailable stages as remaining gates.
+
 ### Task 3: Integration protocol proof
 
 Create `apps/server/src/lib/mcp/mcp.integration.test.ts`; modify the existing
@@ -234,7 +322,7 @@ Create `apps/server/src/lib/mcp/mcp.integration.test.ts`; modify the existing
 - [ ] Exercise OAuth with fixture consent and S256: redeem once, refresh, revoke,
       verify both access and refresh fail afterward. Test wrong resource and target.
       Keep fixture credentials ephemeral and omit them from logs/artifacts.
-- [ ] Run the integration command locally against the required database/services;
+- [ ] After Task 2a, run the integration command against its owned database/services;
       CI must fail if MCP cases fail, not merely emit their output.
 - [ ] Run `bun run format:check`, `bun run check`, focused unit suites and
       `bun run ci:required` before parent push. Record unavailable dependencies as gaps.
