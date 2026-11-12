@@ -117,10 +117,10 @@ This compares local content with the server and the config's schema with the las
 
 ```text
 Schema:
-  Local schema differs from last sync. Run `cms schema sync`.
+  Local schema differs from last sync. Run `mdcms schema sync`.
 ```
 
-The CLI binary is `mdcms`; run `npx mdcms schema sync`. `mdcms status` exits with code 1 while content or schema differs.
+Older CLI versions print `cms schema sync` here; the command is `mdcms schema sync` either way. `mdcms status` exits with code 1 while content or schema differs.
 
 ### 4. Sync the schema to the server
 
