@@ -1,5 +1,11 @@
 # @mdcms/studio
 
+## 0.5.2
+
+### Patch Changes
+
+- 9195aa7: Studio signs in through a redirect to the MDCMS server and sends its session in the X-MDCMS-Session header, so sign-in works in browsers that block third-party cookies.
+
 ## 0.5.1
 
 ### Patch Changes
