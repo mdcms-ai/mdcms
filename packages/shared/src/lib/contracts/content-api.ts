@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import type { ContentChangeOrigin } from "./content-change-origin.js";
+
 export type ApiDataEnvelope<T> = {
   data: T;
 };
@@ -65,8 +67,10 @@ export type ContentDocumentResponse = {
   localesPresent?: string[];
   publishedLocales?: string[];
   createdBy: string;
+  createdOrigin?: ContentChangeOrigin;
   createdAt: string;
   updatedBy: string;
+  updatedOrigin?: ContentChangeOrigin;
   updatedAt: string;
 };
 
@@ -134,6 +138,7 @@ export type ContentVersionSummaryResponse = {
   format: "md" | "mdx";
   publishedAt: string;
   publishedBy: string;
+  publishedOrigin?: ContentChangeOrigin;
   changeSummary?: string;
 };
 

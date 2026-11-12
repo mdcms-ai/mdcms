@@ -226,8 +226,10 @@ test("schema snapshot includes CMS-11/CMS-12 core tables and columns", () => {
       "published_version",
       "draft_revision",
       "created_by",
+      "created_origin",
       "created_at",
       "updated_by",
+      "updated_origin",
       "updated_at",
     ],
     "public.document_versions": [
@@ -244,6 +246,7 @@ test("schema snapshot includes CMS-11/CMS-12 core tables and columns", () => {
       "frontmatter",
       "version",
       "published_by",
+      "published_origin",
       "published_at",
       "change_summary",
     ],
@@ -874,5 +877,57 @@ test("migration SQL encodes published-version delete restriction and no extensio
     allMigrationSql,
     /concat_ws\(\s+E'\\n',\s+"document_versions"\."path",\s+regexp_replace\("document_versions"\."path",\s+'\[\/\._-\]\+',\s+' ',\s+'g'\),\s+"document_versions"\."body",\s+"document_versions"\."frontmatter"::text\s+\)/i,
     "expected backfill vector text to include separator-normalized path segments",
+  );
+});
+
+test("actor columns store text user ids", () => {
+  const { snapshot } = readLatestArtifacts();
+  const documentsTable = snapshot.tables["public.documents"];
+  const documentVersionsTable = snapshot.tables["public.document_versions"];
+
+  assert.equal(documentsTable?.columns.created_by?.type, "text");
+  assert.equal(documentsTable?.columns.updated_by?.type, "text");
+  assert.equal(documentVersionsTable?.columns.published_by?.type, "text");
+  assert.equal(documentsTable?.columns.created_origin?.type, "jsonb");
+  assert.equal(documentsTable?.columns.updated_origin?.type, "jsonb");
+  assert.equal(documentVersionsTable?.columns.published_origin?.type, "jsonb");
+});
+
+test("OAuth persistence has indexed expiry and cascading principal ownership", () => {
+  const { snapshot } = readLatestArtifacts();
+  for (const name of [
+    "oauth_clients",
+    "oauth_consents",
+    "oauth_codes",
+    "oauth_grants",
+    "oauth_families",
+    "oauth_tokens",
+    "oauth_counters",
+  ]) {
+    assert.ok(snapshot.tables[`public.${name}`], `missing ${name}`);
+  }
+  for (const name of [
+    "oauth_consents",
+    "oauth_codes",
+    "oauth_tokens",
+    "oauth_counters",
+  ]) {
+    const table = snapshot.tables[`public.${name}`]!;
+    assert.ok(
+      Object.values(table.indexes).some((index) =>
+        indexColumnExpressions(index).includes("expires_at"),
+      ),
+    );
+  }
+  const grant = snapshot.tables["public.oauth_grants"]!;
+  assert.ok(
+    Object.values(grant.foreignKeys).some(
+      (key) => key.tableTo === "users" && key.onDelete === "cascade",
+    ),
+  );
+  assert.ok(
+    Object.values(grant.foreignKeys).some(
+      (key) => key.tableTo === "projects" && key.onDelete === "cascade",
+    ),
   );
 });

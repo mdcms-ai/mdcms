@@ -481,12 +481,20 @@ All webhook deliveries use the following envelope:
     "format": "mdx",
     "version": 4
   },
+  "origin": {
+    "channel": "api",
+    "credential": "api_key",
+    "apiKeyId": "key_8f2k1"
+  },
   "user": {
     "id": "user_01HZX9N8Y6M2J4K7V3P6Q8R9SA",
     "email": "editor@example.com"
   }
 }
 ```
+
+Content webhook `origin` is the document's `updatedOrigin` from the write that
+triggered the event. It is omitted when no change origin is available.
 
 ### Signature Verification
 

@@ -2,7 +2,7 @@
 status: live
 canonical: true
 created: 2026-03-11
-last_updated: 2026-06-14
+last_updated: 2026-11-11
 ---
 
 # SPEC-005 Auth, Authorization, and Request Routing
@@ -31,10 +31,11 @@ Every endpoint contract in this section specifies:
 
 ## Authentication
 
-MDCMS supports two auth modes:
+MDCMS supports the following auth modes:
 
 - **Studio/browser clients:** session authentication (better-auth) by default. Embedded Studio may also use bearer API key authentication when the host selects Studio token mode.
 - **SDK/CLI/machine clients:** API key authentication.
+- **Remote MCP clients:** resource-bound OAuth bearer tokens or API keys. OAuth tokens are accepted only at the MCP boundary and its trusted internal dispatch.
 - **Collaboration socket:** Studio session authentication only. API keys are not accepted.
 
 API key format:
@@ -81,6 +82,16 @@ wss://<host>/api/v1/collaboration?project=marketing-site&environment=staging&doc
 
 The browser must send a valid Studio session cookie; API keys are not accepted on that endpoint.
 
+### Client Identification Header
+
+Clients may send `X-MDCMS-Client: <name>/<version>` (for example
+`cli/0.4.0`) on any request. The value is recorded as the `declared` part of
+the change origin for content writes (SPEC-003 "Change Attribution"). It is
+informational, never used for authorization, and ignored when it is empty,
+longer than 120 characters, or contains characters outside printable ASCII.
+Surrounding whitespace is trimmed. The MDCMS CLI sends it on every request to
+the configured server.
+
 ### Cross-Origin Studio Browser Contract (Normative)
 
 Cross-origin Studio embedding is a first-class deployment path. MDCMS must support a host app on a different origin from `MDCMS_SERVER_URL` without requiring a reverse proxy.
@@ -111,6 +122,7 @@ For an allowlisted origin, the server must:
   - `X-MDCMS-Locale`
   - `X-MDCMS-Schema-Hash`
   - `X-MDCMS-CSRF-Token`
+  - `X-MDCMS-Client`
 
 Studio browser request modes:
 
@@ -178,7 +190,7 @@ Normative rules:
       "tags": ["intro", "tutorial"]
     },
     "body": "# Hello World\n\nThis is my first blog post...",
-    "createdBy": "uuid",
+    "createdBy": "user-id",
     "createdAt": "2026-02-12T10:00:00Z",
     "updatedAt": "2026-02-12T12:30:00Z"
   }
@@ -214,6 +226,8 @@ Implemented via **better-auth**.
 - Enterprise providers supported include Okta, Azure AD, Google Workspace, Auth0.
 
 Authentication state is managed via sessions. The Studio communicates with the backend over the same session.
+
+Content writes made with a session are attributed to the session user (SPEC-003 "Change Attribution").
 
 #### OIDC Provider Support
 
@@ -432,6 +446,7 @@ Machine-to-machine access (SDK, CI/CD) uses API keys:
 - Keys are scoped as an allowlist of `(project, environment)` tuples.
 - Keys authorize access only; they do not select routing targets.
 - API keys are not accepted by the collaboration WebSocket endpoint.
+- Content writes made with an API key are attributed to the key's creator, with the key id in the change origin (SPEC-003 "Change Attribution").
 
 #### API Key Scope Model
 
@@ -452,6 +467,7 @@ Machine-to-machine access (SDK, CI/CD) uses API keys:
   - `media:delete`
   - `webhooks:read`
   - `webhooks:write`
+  - `environments:read`
   - `environments:clone`
   - `environments:promote`
   - `ai:use`
@@ -590,6 +606,30 @@ Media authorization semantics:
 - API key issuance rejects reserved scopes that the authorizing session may not grant. In particular, non-admin and non-owner sessions cannot mint or authorize API keys with `schema:write`.
 
 Environment authorization semantics:
+
+- `environments:read` authorizes read-only environment metadata discovery in one
+  routed project through the SPEC-009 list endpoint. Only a global `admin` or
+  `owner` may issue this scope to an API key or consent to it for OAuth. An
+  `editor`, `viewer` or folder-prefix grant cannot issue or exercise it.
+- At every bearer list request, require `environments:read` and re-check that the
+  API key creator or OAuth granting user still has global admin/owner privileges.
+  Possession of the scope alone never replaces the role check. Role removal
+  yields `FORBIDDEN` (`403`) even if the credential remains otherwise valid.
+- An API-key list request requires explicit project routing and at least one
+  context-allowlist tuple for that project. If an environment is also supplied,
+  it must match an allowed tuple. An OAuth list request is accepted only through
+  trusted MCP dispatch, derives project from the immutable token target, and
+  rejects conflicting project or environment routing. No external REST OAuth
+  access is added.
+- Listing returns only metadata for environments in the routed project visible
+  to that current user. This project-scoped metadata read may include environment
+  names other than the credential's selected environment. It does not add those
+  environments to an API key's context allowlist or OAuth target, authorize their
+  content, or permit any mutation. SPEC-009 owns the response and error contract.
+- Environment create/delete remain session-only admin/owner actions. The read
+  scope does not imply `environments:clone` or `environments:promote`, and those
+  scopes do not imply `environments:read`. Existing login default scopes do not
+  automatically acquire the new read scope.
 
 - `environments:clone` authorizes cloning content from a source environment into a target environment of the routed project.
 - `environments:promote` authorizes promoting documents from a source environment into a target environment of the routed project.
@@ -846,3 +886,286 @@ Normative semantics:
 - `schema.write` corresponds to the same authorization required by `PUT /api/v1/schema`.
 - `schema.read` corresponds to the same authorization required by `GET /api/v1/schema`.
 - `media.read`, `media.upload`, and `media.delete` correspond to the same authorization required by `GET /api/v1/media/:id`, `POST /api/v1/media/upload`, and `DELETE /api/v1/media/:id`.
+
+## MCP OAuth Authorization (Normative)
+
+OAuth grants are distinct from the CLI browser-login API-key flow. The canonical
+resource is `${MDCMS_SERVER_URL}/api/v1/mcp`, derived from trusted startup
+configuration, never Host or forwarded request headers. OAuth tokens do not grant
+access to externally called REST routes, Studio or collaboration sockets.
+
+### Principal and storage
+
+An OAuth principal contains `{ type: "oauth", clientId, userId, scopes, target }`.
+Target is exactly one project/environment chosen at consent and immutable for the
+whole grant and refresh family. Supplied routing must match it; a mismatch is
+TARGET_ROUTING_MISMATCH (400). Omitted routing resolves from the token only for
+OAuth. API-key explicit routing requirements remain unchanged.
+
+Effective authorization intersects token scopes, consented target and the user's
+current grants, including path rules. Use the same scope-issuance rules as API
+keys; never expand a path-scoped grant to project-wide access. Re-check grants at
+consent, redemption, refresh and every operation. Deleted users, revoked grants,
+expired tokens and invalid resources fail closed. Attribution is the granting
+user, credential oauth and verified oauthClientId; declared names remain untrusted.
+
+Codes, access tokens, refresh tokens and consent handles are generated with at
+least 256 bits of cryptographic randomness and persisted only as SHA-256 hashes.
+Access tokens use `mdcms_oat_` and expire after at most 3600 seconds, capped by
+the remaining absolute family lifetime. Compute issuance time once and return
+the actual positive integer expires*in matching the persisted expiry. Refresh
+with less than one full second remaining returns invalid_grant. Refresh tokens use
+`mdcms_ort*` and expire after 30 days; rotation never extends the original family's
+absolute expiry. Authorization codes expire after 5 minutes and are single-use.
+Atomic conditional consumption prevents concurrent code/refresh redemption.
+Refresh reuse revokes the entire family including access tokens. Grant revocation
+invalidates all its families immediately. Never persist or log raw credentials.
+
+### HTTP endpoint contracts
+
+OAuth protocol endpoints use OAuth JSON, not the domain `{data}` envelope. Token
+responses include Cache-Control: no-store and Pragma: no-cache. All endpoint URLs
+in metadata are absolute and use the configured canonical origin.
+
+| Method | Path                                               | Auth mode                                                     | Scope            | Routing                    | Request                                                                               | Success                                                                                                 | Deterministic errors                                                                                                                                                               |
+| ------ | -------------------------------------------------- | ------------------------------------------------------------- | ---------------- | -------------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/.well-known/oauth-protected-resource/api/v1/mcp` | public                                                        | none             | none                       | none                                                                                  | 200 `{resource, authorization_servers:[issuer], scopes_supported, bearer_methods_supported:["header"]}` | 500 server_error for invalid server configuration                                                                                                                                  |
+| GET    | `/.well-known/oauth-authorization-server`          | public                                                        | none             | none                       | none                                                                                  | 200 metadata described below                                                                            | 500 server_error for invalid server configuration                                                                                                                                  |
+| POST   | `/api/v1/oauth/register`                           | public                                                        | none             | none                       | JSON registration below                                                               | 201 registered public client                                                                            | 400 invalid_redirect_uri or invalid_client_metadata; 429 rate_limit_exceeded; 503 temporarily_unavailable                                                                          |
+| GET    | `/api/v1/oauth/authorize`                          | session, with sign-in if absent                               | requested scopes | target selected at consent | Query authorization request below                                                     | 200 server-rendered sign-in/consent; approved redirect is issued by consent POST                        | 400 invalid_request, invalid_client, invalid_scope, unsupported_response_type, invalid_target; 429 rate_limit_exceeded; 503 temporarily_unavailable                                |
+| POST   | `/api/v1/oauth/authorize`                          | session plus CSRF                                             | requested scopes | consent target             | Form `{consent, decision:"allow" or "deny", project, environment, scope?, csrfToken}` | 303 to registered redirect with code/state or error/state                                               | 401 UNAUTHORIZED; 403 FORBIDDEN; 400 invalid_request, invalid_scope, invalid_target; 410 invalid_request for expired consent; 429 rate_limit_exceeded; 503 temporarily_unavailable |
+| POST   | `/api/v1/oauth/token`                              | public client identified by client_id and proof below         | grant scopes     | immutable stored target    | application/x-www-form-urlencoded token request below                                 | 200 token response below                                                                                | 400 invalid_request, invalid_grant, invalid_scope, invalid_target, unsupported_grant_type; 401 invalid_client; 429 rate_limit_exceeded; 503 temporarily_unavailable                |
+| POST   | `/api/v1/oauth/revoke`                             | public client identified by client_id and possession of token | none             | stored grant               | Form `{client_id, token, token_type_hint?:"access_token" or "refresh_token"}`         | 200 empty, including unknown/already-revoked token                                                      | 400 invalid_request; 401 invalid_client; 429 rate_limit_exceeded; 503 temporarily_unavailable                                                                                      |
+| GET    | `/api/v1/oauth/connections`                        | session                                                       | none             | explicit project           | no body                                                                               | 200 `{data: OAuthConnection[]}`                                                                         | MISSING_TARGET_ROUTING (400), UNAUTHORIZED (401), FORBIDDEN (403)                                                                                                                  |
+| DELETE | `/api/v1/oauth/connections/:id`                    | session plus CSRF                                             | none             | explicit project           | path id                                                                               | 200 `{data:{id, revoked:true}}`                                                                         | MISSING_TARGET_ROUTING (400), UNAUTHORIZED (401), FORBIDDEN (403), NOT_FOUND (404)                                                                                                 |
+
+Metadata includes issuer, authorization_endpoint, token_endpoint,
+registration_endpoint, revocation_endpoint, response_types_supported=["code"],
+grant_types_supported=["authorization_code","refresh_token"],
+token_endpoint_auth_methods_supported=["none"],
+code_challenge_methods_supported=["S256"] and scopes_supported containing only
+issuable existing MDCMS operation scopes. Dynamic registration is supported;
+client-ID metadata document fetching is not advertised.
+
+Registration accepts `{client_name, redirect_uris:string[],
+token_endpoint_auth_method:"none", grant_types?:["authorization_code","refresh_token"],
+response_types?:["code"]}`. client_name is nonempty printable text up to 120
+characters and displayed escaped as unverified. Require 1 to 10 distinct absolute
+redirect URIs, HTTPS or HTTP with literal loopback host 127.0.0.1 or [::1]. Reject
+userinfo, fragments, wildcards, non-loopback HTTP and unsupported client metadata.
+No client secret is generated. Response is `{client_id, client_id_issued_at,
+client_name, redirect_uris, token_endpoint_auth_method:"none", grant_types,
+response_types}`. Registered redirect matching is exact, except that an HTTP redirect on literal
+127.0.0.1 or [::1] may use a different port during authorization, as required by
+[RFC 8252 section 7.3](https://www.rfc-editor.org/rfc/rfc8252.html#section-7.3).
+Only the port may differ: scheme, literal host, path and query must match. IPv4
+and IPv6 loopback hosts are not interchangeable. HTTPS redirects have no port
+exception. Store the concrete authorized redirect URI, including its selected
+port, in consent and code records. Token redemption requires that exact URI;
+the registration-time port exception must never apply to redemption.
+
+Authorization query requires response_type=code, client_id, redirect_uri, scope
+(space-delimited operation scopes), code_challenge, code_challenge_method=S256,
+resource and state. Reject missing/invalid values. Validate redirect before any
+redirect response; an invalid redirect gets a local error page, never a redirect.
+S256 challenge is base64url SHA-256 with no padding. Unsupported resource returns
+invalid_target. An opaque consent handle expires 10 minutes after creation,
+without sliding renewal, and binds the validated request to
+the signed-in user and session; sign-in completion must bind the handle to that
+user/session before consent without extending its original expiresAt. An expired
+handle requires a new authorization request.
+GET never grants access. POST verifies the session, CSRF cookie/form token and
+consent ownership, then atomically consumes the handle. Switching users requires
+fresh consent. The page shows escaped client name, redirect host, target options
+limited to the user's grants and requested access levels. A denial redirects with
+error=access_denied and unchanged state. Approval redirects with code and unchanged
+state. Neither form fields nor callback query may replace client, redirect,
+resource, challenge or requested scopes stored in the consent record.
+
+Code exchange requires grant_type=authorization_code, client_id, code,
+redirect_uri, code_verifier and resource. Verifier is 43 to 128 RFC 7636 unreserved
+characters. Check client, exact concrete authorized redirect (including loopback port),
+resource, expiry, unconsumed status and
+S256 proof atomically before issuing. Failure is invalid_grant except malformed
+parameters (invalid_request), wrong resource (invalid_target) or unknown client
+(invalid_client). Refresh requires grant_type=refresh_token, client_id,
+refresh_token and resource, with optional scope limited to the existing grant.
+No request may change target or expand scopes. Response is `{access_token,
+token_type:"Bearer", expires_in:positive_integer_up_to_3600, refresh_token, scope}`. Error responses are
+`{error, error_description?}` with no token or account information.
+
+Revoking a recognized token owned by the supplied client revokes its grant and
+families. Unknown tokens or tokens belonging to another client return empty 200
+without affecting another client's grant. Studio connection deletion uses the same
+revocation operation. OAuthConnection is `{id, clientId, clientName, userId,
+project, environment, scopes:string[], createdAt:string, lastUsedAt:string|null}`;
+it never contains tokens, hashes or redirect secrets. Members see their own
+connections in the target project; project admins/owners may see and revoke all
+connections there. Cross-project or inaccessible IDs return NOT_FOUND. Repeated
+revocation of an accessible stored connection succeeds idempotently.
+
+Rate-limit registration, authorization, token and revocation endpoints using
+bounded server-side counters; return Retry-After on 429. Production OAuth requires
+HTTPS. Existing session CSRF protections remain mandatory for consent and Studio
+revocation; token and registration endpoints do not use session authentication.
+
+### Canonical Origin Configuration
+
+MDCMS_SERVER_URL is a typed, validated server setting and the single source for
+auth base URL, OAuth issuer, metadata endpoint URLs and the MCP resource. It is an
+absolute origin: HTTP or HTTPS scheme, host and optional valid port only. Trim
+outer whitespace; permit an absent path or one trailing slash and normalize to
+URL.origin with no trailing slash. Reject username/password, other paths, query,
+fragment, invalid/empty hosts, non-HTTP schemes and malformed ports with INVALID_ENV
+at boot. Never fall back after an explicitly supplied invalid value.
+
+With NODE_ENV=production, MDCMS_SERVER_URL is required and must be HTTPS;
+missing, empty or HTTP values fail boot with INVALID_ENV. TLS may terminate at a
+trusted reverse proxy while the process listens on HTTP, but the configured
+external origin must still be HTTPS. There is no request-header inference or
+HTTP production bypass. In development/test, an absent value defaults to
+http://localhost:<validated PORT>, with PORT defaulting to 4000. Explicit HTTP
+origins are allowed only in development/test. These server-origin rules do not
+remove the HTTP loopback redirect exception for native clients.
+
+The environment example documents the local development origin and production
+HTTPS requirement. Docker Compose must forward MDCMS_SERVER_URL into the server
+container; an absent/empty forwarded value counts as absent in development/test
+and fails in production. OAuth and existing auth use the same parsed ServerEnv
+value, rather than independent raw-environment resolvers. Changing the canonical
+origin changes the OAuth issuer/resource; tokens bound to the former resource
+are rejected and clients reconnect and authorize against the new origin.
+
+### OAuth and MCP External Ingress
+
+Preserve server-rendered text/html error Responses at the exact
+/api/v1/oauth/authorize path (GET and POST), as well as the existing CLI sign-in
+path. Preserve status, content type and security/cache/rate-limit headers; do not
+wrap the HTML in a domain JSON envelope. Render untrusted names and error text
+escaped. OAuth JSON endpoints return explicit application/json Responses with
+OAuth error bodies; shared error normalization must retain their status/body and
+Cache-Control, Pragma and Retry-After. Do not throw a domain RuntimeError through
+the outer handler for an already-classified OAuth protocol error.
+
+Origin checks and CORS cover /api/v1/mcp, OAuth endpoints and the two discovery
+metadata paths. Accept the configured canonical origin or a configured Studio
+allowed origin; reject any other present Origin (including null) with 403
+FORBIDDEN_ORIGIN. No-Origin native/server clients continue normally. Cross-origin
+preflight is processed before bearer auth: an allowed OPTIONS returns 204 with
+no body, the exact origin, Vary: Origin, allowed methods, and allowed headers.
+Never use wildcard origin with credentials. In addition to the existing headers,
+permit Accept, MCP-Protocol-Version and X-MDCMS-Client. Expose WWW-Authenticate and
+Retry-After to browser callers, including on error responses. Session-based
+consent and connection management still require their ordinary CSRF checks.
+
+Do not add a blanket target guard to /.well-known or /api/v1/oauth or a pre-auth
+project/environment guard on /api/v1/mcp. Discovery, registration and token flows
+have no routing context. Connections enforce project routing at their own
+boundary; MCP authenticates first and then resolves explicit API-key or stored
+OAuth routing. Internal domain calls retain their ordinary target guards.
+
+### Bounded Consent and Endpoint Throttling
+
+Consent handles are single-use and expire at createdAt + 600 seconds, including
+time spent signing in. At expiry, POST returns an escaped HTML 410 invalid_request
+page with a restart instruction; no code is issued. A new consent GET creates a
+new handle and never extends the previous handle's lifetime.
+
+Use 60-second fixed-window counters shared across server instances in PostgreSQL.
+Every request, successful or failed, consumes its endpoint-global counter. Also
+count per known client ID for token/revoke and per signed-in user for consent POST,
+with the same endpoint limit. Do not create per-value buckets for unregistered
+client IDs. Counters expire after two windows; remove expired counters before
+allocation and cap active counters at 10,000. At capacity or store unavailability,
+fail closed with 503 temporarily_unavailable and Retry-After: 60; do not disable
+throttling or evict a live bucket. Limit changes apply on restart.
+
+| Typed server setting             | Default requests per 60 seconds | Accepted integer range |
+| -------------------------------- | ------------------------------- | ---------------------- |
+| MDCMS_OAUTH_REGISTER_RATE_LIMIT  | 10                              | 1 to 100               |
+| MDCMS_OAUTH_AUTHORIZE_RATE_LIMIT | 120                             | 1 to 1000              |
+| MDCMS_OAUTH_TOKEN_RATE_LIMIT     | 300                             | 1 to 3000              |
+| MDCMS_OAUTH_REVOKE_RATE_LIMIT    | 120                             | 1 to 1000              |
+
+Invalid settings fail boot with INVALID_ENV. Count authorize GET and POST together.
+Use atomic increment/check so concurrent instances cannot exceed a limit through
+races. Limit exhaustion returns 429 rate_limit_exceeded with Retry-After equal to
+the integer seconds until the current window ends (minimum 1), never a token or
+code. Return OAuth JSON on machine endpoints and HTML on authorization pages,
+with no-store. Password-entry backoff remains independently enforced. The local
+environment example and Compose server environment document and forward these
+settings. Logs must not include token, consent or verifier values.
+
+### OAuth Storage Capacity and Retention
+
+Registration admits at most 10,000 registered clients per instance database.
+Admission is atomic across server processes. At capacity return
+503 temporarily_unavailable with Retry-After: 60. Clients have no automatic expiry
+or eviction. This is an operator capacity limit; no client-management endpoint
+is defined. Registration throttling remains independent of this storage limit.
+
+Cleanup uses indexed expiry predicates and bounded batches, never an unbounded
+request-time sweep. Expired authorization codes and access tokens may be removed.
+Consumed refresh token hashes must remain available for replay detection until
+the family's original absolute expiry, including after rotation or revocation.
+Grant and connection records remain available for idempotent revocation.
+
+Expired consent payloads may be discarded, retaining a minimal hashed-handle
+tombstone until 24 hours after expiry. Known expired handles, including consumed handles, return HTML 410
+invalid_request. After tombstone retention, purged or unknown handles return HTML
+400 invalid_request. Cleanup does not extend any credential or consent lifetime.
+
+### Consent Sign-in Continuation
+
+GET /api/v1/oauth/authorize?consent=<handle> resumes an existing consent request.
+Exactly one consent parameter is accepted, with no other query parameters.
+Duplicate handles or mixed OAuth parameters return invalid_request (400).
+For a signed-in user, atomically bind an unbound, unexpired, unconsumed handle to
+that user and session. Never rebind or extend expiry. A different bound user or
+session receives FORBIDDEN (403) with fresh-start guidance. GET never issues code.
+
+The same-origin sign-in page reuses POST /api/v1/auth/login and its password
+backoff. Credentials stay in the POST body; the fetch rejects redirects. After
+successful sign-in, navigate to the continuation URL for the existing handle.
+HTML uses a restrictive CSP with a nonce for any inline script, same-origin
+connect actions, and escaped unverified names and URLs. Sign-in and error pages
+use `form-action 'self'`. Authenticated consent pages permit only `'self'` and
+the already validated registered callback origin in `form-action`, allowing the
+303 redirect after approval or denial. Construct that source with the parsed
+callback URL's `origin`; never interpolate raw request headers or use wildcards.
+The sign-in form declares `method="POST"` and the explicit same-origin
+`/api/v1/auth/login` action, so disabling or blocking JavaScript never places
+email or password in a URL. The sign-in CSP never permits the callback origin.
+
+### OAuth Request Body Bound
+
+POST bodies on /api/v1/oauth/authorize, /api/v1/oauth/register,
+/api/v1/oauth/token and /api/v1/oauth/revoke are capped at 64 KiB. Enforce the
+byte limit while reading the stream even without Content-Length; cancel excess
+input. Oversized bodies return 413 invalid_request, as HTML on authorization and
+OAuth JSON on machine endpoints. Consume the endpoint-global request counter
+before allocating or parsing the body, including malformed and oversized bodies.
+After resolving a known client or signed-in user, consume its separate bucket
+without counting the global request again. Existing auth/login is unchanged.
+
+### Explicit Consent Downscoping
+
+For each available target, compute the subset of the immutable requested scopes
+that the user's current grants permit issuing. Show the exact proposed granted
+scopes and unavailable requested scopes. Offer Allow only for a nonempty subset.
+Consent POST includes scope as the explicitly selected space-delimited subset
+when decision=allow. Reject malformed spacing, duplicates, scopes outside the
+stored request, and scopes no longer issuable in the selected target with
+invalid_scope. Recheck the submitted selection; do not silently add newly granted
+permissions or silently remove revoked ones. Unknown or unissuable protocol
+scopes return invalid_scope even before target selection. Denial does not require
+a scope selection. Store only the selected subset in the grant, return it in the
+token response, and prohibit refresh scope expansion. This permits clients that
+request all advertised scopes to receive a limited grant suited to an editor.
+
+Authorization HTML uses `Referrer-Policy: same-origin`: same-origin form POSTs
+retain a verifiable Origin while cross-origin callbacks receive no referrer.
+The configured canonical origin is also trusted on `/api/v1/auth` browser routes,
+including login and session calls, when a TLS proxy forwards an internal HTTP
+request URL. Forwarded headers never establish trust; null and unknown origins
+remain rejected, and the configured Studio origin allowlist remains supported.

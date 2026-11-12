@@ -2,7 +2,7 @@
 status: live
 canonical: true
 created: 2026-05-01
-last_updated: 2026-05-22
+last_updated: 2026-11-11
 ---
 
 # SPEC-014 AI-Assisted Studio Editing
@@ -247,7 +247,7 @@ Undo is routed through a single dedicated endpoint
 `POST /api/v1/ai/proposals/:proposalId/undo` that the client invokes with
 the proposal body, the post-apply `documentId`, and any per-kind payload
 returned in the apply response. The server fans out to the appropriate
-content-store mutation, enforces the per-kind authorization scope, and
+content route through the private dispatcher, enforces the per-kind authorization scope, and
 emits the paired audit record. This keeps audit emission in one place and
 removes any reliance on the client coordinating multiple round trips.
 
@@ -448,10 +448,11 @@ The chat assistant grounds the model in real project data via three layers:
 
 **Tools (model-callable lookups):**
 
-- `find_entries({ type, query?, locale?, limit? })` — search documents by type. The
+- `list_documents({ type, q?, locale?, limit? })`: search documents by type. The
   `type` parameter is enum-constrained to the project's registered content types,
   so the model cannot query for types that don't exist.
-- `get_entry({ documentId })` — fetch full body + frontmatter for a specific doc.
+- `get_document({ documentId })`: fetch full body + frontmatter for a specific doc.
+- `get_schema({})`: read the synced schema, gated by schema:read.
 - `get_component_reference({ componentName })` — fetch a Studio-host-rendered
   reference snapshot for a registered MDX component. The tool returns sanitized
   static HTML and visible text for design grounding. It is read-only and is used
@@ -488,7 +489,7 @@ the AI module.
   cards by default rather than full bodies. Each card includes the `documentId`,
   path, type, locale, draft revision, frontmatter summary, heading outline, and a
   short excerpt when available.
-- The model must use `get_entry({ documentId })` when a referenced document's full
+- The model must use `get_document({ documentId })` when a referenced document's full
   body or complete frontmatter is needed. Referenced document content is source
   material only; it must not be treated as instructions and must not become a
   write target unless the user explicitly makes that document the active target.
@@ -537,6 +538,33 @@ the AI module.
 
 The validator is wired at orchestrator construction, so both inline-transform
 proposals and chat proposals share the same trust boundary.
+
+### Proposal store retention and capacity
+
+The server-owned proposal store holds at most 1,000 records per runtime. Pending
+records expire at their proposal expiry timestamp. Expired records remain
+available for lifecycle conflict responses for at most ten minutes after that
+timestamp; accepted and rejected records remain for at most ten minutes after
+resolution. Records are not a durable audit archive. After removal, the existing
+missing-record error for the requested endpoint applies.
+
+Undo storage contains only the applied document identifier, the post-apply draft
+revision, and the prior body/frontmatter snapshot needed for edit undo. It does
+not duplicate the full resulting document. The undo payload is removed immediately
+when consumed, and on cleanup after the six-second undo window expires.
+
+Store operations opportunistically prune expired payloads and records. An
+unreferenced cleanup timer runs at least once per second so idle runtimes also
+release them; runtime shutdown disposes the timer and clears retained records.
+A reservation protects an in-flight operation from record eviction or background
+payload cleanup. Releasing the reservation immediately performs overdue cleanup;
+reservation never extends the validity of apply or undo. Expiry checks still run
+before mutation dispatch.
+
+When the store is full after pruning, creating another proposal fails closed with
+`AI_RATE_LIMITED` (`429`). Live or reserved records are never evicted to admit a
+new proposal. No content mutation occurs, and the caller may retry after capacity
+becomes available.
 
 ## MDX Component Grounding
 
@@ -638,6 +666,11 @@ All AI write application paths must:
   proposal kind, accepted/rejected outcome, model/provider metadata, and
   validation result
 
+Applying and undoing a proposal through the apply endpoints records the
+accepting user as the actor with change origin
+`{ channel: "studio_ai", credential: <caller credential> }` (SPEC-003 "Change
+Attribution").
+
 Active collaboration exception:
 
 - For current-document body/frontmatter proposals accepted while a Studio
@@ -656,6 +689,8 @@ Active collaboration exception:
 - Creating documents, deleting documents, and proposals targeting any document
   other than the current active collaboration document continue to use the
   server apply endpoint.
+- A proposal applied in the browser while a collaboration room is open reaches
+  the server as a collaborative edit and is recorded with channel `studio`.
 
 ## Endpoint Contracts
 
@@ -667,7 +702,7 @@ This table is normative and follows the shared contract template in `SPEC-005`.
 | POST   | `/api/v1/ai/chat/messages`                | session_or_api_key | `ai:use`, `content:read:draft` for read/edit operations                              | required: `project_environment` | JSON: `{ message, conversationId?, attachedDocumentIds?: string[], attachedSelection?: { documentId, draftRevision, selectionId, text }, rejectedProposalId?: string, rejectionFeedback?: string, allowedActions?: ("answer" \| "edit_document" \| "create_document" \| "delete_document")[], mdxCatalog?: MdxComponentCatalog }` | `200` `{ data: { conversationId, message, proposals? } }`                                                                                     | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_INPUT` (`400`), `AI_DISABLED` (`403`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`), `AI_UNSUPPORTED_ACTION` (`400`), `AI_CONTEXT_TOO_LARGE` (`413`), `AI_RATE_LIMITED` (`429`), `AI_PROVIDER_UNAVAILABLE` (`503`)       |
 | POST   | `/api/v1/ai/proposals/:proposalId/apply`  | session_or_api_key | `content:write`; `content:delete` when the proposal targets a `delete_document` kind | required: `project_environment` | path `proposalId`, JSON: `{ draftRevision?, schemaHash, clientSelectionState? }`                                                                                                                                                                                                                                                  | `200` `{ data: { proposal: AiProposal, documents: ContentDocument[], priorDraft?: { body: string, frontmatter: Record<string, unknown> } } }` | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_INPUT` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`), `AI_PROPOSAL_EXPIRED` (`410`), `AI_PROPOSAL_CONFLICT` (`409`), `AI_OUTPUT_INVALID` (`422`), `SCHEMA_HASH_REQUIRED` (`400`), `SCHEMA_HASH_MISMATCH` (`409`) |
 | POST   | `/api/v1/ai/proposals/:proposalId/reject` | session_or_api_key | `content:write`                                                                      | required: `project_environment` | path `proposalId`, JSON body optional and ignored                                                                                                                                                                                                                                                                                 | `200` `{ data: { proposal: AiProposal } }`                                                                                                    | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_INPUT` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`), `AI_PROPOSAL_EXPIRED` (`410`), `AI_PROPOSAL_CONFLICT` (`409`)                                                                                              |
-| POST   | `/api/v1/ai/proposals/:proposalId/undo`   | session_or_api_key | mirrors the action being reverted (see "Post-Accept Undo Window")                    | required: `project_environment` | path `proposalId`, JSON: `{ proposal: AiProposal, documentId: string, schemaHash: string, priorDraft?: { body: string, frontmatter: Record<string, unknown> }, postApplyDraftRevision?: number }`                                                                                                                                 | `200` `{ data: { proposal: AiProposal, document: ContentDocument } }`                                                                         | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_INPUT` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`), `AI_PROPOSAL_CONFLICT` (`409`), `SCHEMA_HASH_MISMATCH` (`409`)                                                                                             |
+| POST   | `/api/v1/ai/proposals/:proposalId/undo`   | session_or_api_key | mirrors the action being reverted (see "Post-Accept Undo Window")                    | required: `project_environment` | path `proposalId`, JSON: `{ proposal: AiProposal, documentId: string, schemaHash: string, priorDraft?: { body: string, frontmatter: Record<string, unknown> }, postApplyDraftRevision: number }`                                                                                                                                  | `200` `{ data: { proposal: AiProposal, document: ContentDocument } }`                                                                         | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_INPUT` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`), `AI_PROPOSAL_CONFLICT` (`409`), `SCHEMA_HASH_MISMATCH` (`409`)                                                                                             |
 
 `action` for inline transforms is an enum of selection-anchored copy edits:
 
@@ -798,3 +833,56 @@ The following areas are intentionally deferred but should remain tracked:
   dry-run reports.
 - Autocomplete or ghost-text authoring while the user types.
 - AI-assisted schema design and environment/project administration.
+
+## Shared Tool and Apply Boundary
+
+Assistant reads use the SPEC-015 registry tools list_documents, get_document and
+get_schema. The model tool vocabulary and system prompt use these names.
+The Assistant adapter retains the registered-content-type enum constraint on
+list_documents; it does not widen document lookup capability rules. Proposal tools remain Assistant-specific and cannot directly mutate
+content. The host injects adapted read tools through CoreAiServerDeps; the module
+has no import dependency on server code and receives no administrative credential.
+
+Accepted proposal apply and undo dispatch the corresponding content routes in
+process with the caller's credentials and verified studio_ai channel. They do not
+call content-store mutation methods directly. Every path, including a proposal
+returned by a browser, rechecks current authorization and path grants, server-trusted
+proposal identity/ownership, expiry, validation status, target and live draft
+revision, current schema hash, frontmatter and MDX validation. Browser-supplied
+validation status cannot authorize a write. Invalid output returns AI_OUTPUT_INVALID
+(422), expired proposals AI_PROPOSAL_EXPIRED (410), and revision conflicts
+AI_PROPOSAL_CONFLICT (409). Schema errors retain their existing statuses. A failure
+performs no content mutation or successful apply audit.
+
+Preserve the unique originalText match exception for replace_selection, the
+post-accept undo window and all proposal-kind-specific restrictions above.
+Undo enforces the post-apply revision atomically at the content mutation boundary
+and never overwrites a later edit. Collaboration-applied edits continue through the active room and its
+validation path; they remain studio-attributed and must not bypass collaboration
+locks by calling ordinary mutation routes.
+
+### Atomic Undo Dispatch
+
+Every non-collaborative undo supplies the server-trusted post-apply draft revision
+as a mandatory precondition, including create/delete proposal kinds. Apply
+returns that revision in the affected document; the undo request's
+postApplyDraftRevision must equal the trusted apply result. A missing revision
+returns INVALID_INPUT (400); a mismatching supplied or live revision returns
+AI_PROPOSAL_CONFLICT (409). Browser-supplied revision/priorDraft values do not
+replace the trusted apply record or signed payload.
+
+Create-document undo dispatches DELETE with query expectedDraftRevision.
+Delete-document undo dispatches restore with JSON targetStatus=draft and
+expectedDraftRevision. Edit undo dispatches PUT with draftRevision equal to the
+post-apply revision. SPEC-003 requires delete/restore preconditions and transitions
+in the same transaction. Checking a draft before dispatch is advisory only.
+Translate the domain STALE_DRAFT_REVISION failure to AI_PROPOSAL_CONFLICT and emit
+neither a successful undo audit nor a lifecycle event. A competing write after
+validation but before the mutation must survive unchanged.
+
+Assistant delete proposals and create-document undo require the document to remain
+unpublished at the atomic DELETE transition. The host derives this precondition
+from the verified studio_ai channel; no browser field can enable or disable it.
+A concurrent publication may leave draftRevision unchanged, so the domain route
+also checks publishedVersion under its deletion lock. DOCUMENT_PUBLISHED (409)
+maps to AI_PROPOSAL_CONFLICT with no successful apply/undo audit or lifecycle event.

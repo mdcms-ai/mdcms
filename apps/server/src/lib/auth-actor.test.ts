@@ -28,3 +28,40 @@ test("authorized API key actors resolve to the API key owner email", () => {
     email: "owner@example.com",
   });
 });
+
+test("OAuth attribution uses the granting user", () => {
+  assert.deepEqual(
+    actorFromAuthorizedRequest({
+      mode: "oauth",
+      principal: {
+        type: "oauth",
+        clientId: "client",
+        userId: "user",
+        email: "user@example.invalid",
+        scopes: ["content:read"],
+        target: { project: "project", environment: "draft" },
+      },
+    }),
+    { id: "user", email: "user@example.invalid" },
+  );
+});
+
+test("environment metadata scopes are issuable only by global admins and owners", async () => {
+  const { assertGrantsCanIssueApiKeyScopes } = await import("./auth.js");
+  for (const role of ["admin", "owner"] as const)
+    assert.doesNotThrow(() =>
+      assertGrantsCanIssueApiKeyScopes(
+        [{ role, scope: { kind: "global" } }],
+        ["environments:read"],
+        [{ project: "p", environment: "draft" }],
+      ),
+    );
+  for (const role of ["viewer", "editor"] as const)
+    assert.throws(() =>
+      assertGrantsCanIssueApiKeyScopes(
+        [{ role, scope: { kind: "global" } }],
+        ["environments:read"],
+        [{ project: "p", environment: "draft" }],
+      ),
+    );
+});

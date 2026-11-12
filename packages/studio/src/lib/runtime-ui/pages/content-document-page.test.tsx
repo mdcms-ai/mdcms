@@ -1,3 +1,4 @@
+import { QueryClient } from "@tanstack/react-query";
 import assert from "node:assert/strict";
 
 import { test } from "bun:test";
@@ -20,10 +21,12 @@ import {
   LIVE_PREVIEW_IFRAME_SANDBOX,
   MDCMS_LIVE_PREVIEW_READY_MESSAGE,
   SidebarInfoTab,
+  SidebarHistoryTab,
   canPublishContentDocumentReadyState,
   createLivePreviewIframeRoute,
   createContentDocumentPresenceInput,
   getContentDocumentListInvalidationKeys,
+  getContentDocumentLastEditQueryKey,
   getLivePreviewViewportFrame,
   isLivePreviewReadyMessage,
   readContentDocumentPreviewModeSearchParam,
@@ -3671,4 +3674,152 @@ test("variant creation buttons show creating state", () => {
   assert.ok(html.includes("Creating..."));
   // The creating button has a disabled="" attribute in the rendered HTML
   assert.ok(html.includes('disabled=""'));
+});
+
+test("document Info shows the last editor and declared client", () => {
+  const markup = renderToStaticMarkup(
+    createElement(SidebarInfoTab, {
+      state: createReadyState(),
+      lastEdit: {
+        name: "Ada Lovelace",
+        origin: {
+          channel: "mcp",
+          credential: "oauth",
+          declared: "claude-code 1.2",
+        },
+      },
+    }),
+  );
+  assert.match(markup, /Ada Lovelace · MCP \(claude-code 1\.2\)/);
+});
+
+for (const known of [true, false]) {
+  test(`document History shows ${known ? "resolved" : "unknown"} publication author`, () => {
+    const markup = renderToStaticMarkup(
+      createElement(SidebarHistoryTab, {
+        state: createReadyState({
+          versionHistory: {
+            status: "ready",
+            versions: [
+              createVersionSummary(1, {
+                publishedBy: "user-1",
+                publishedOrigin: { channel: "studio", credential: "session" },
+              }),
+            ],
+            ...(known
+              ? {
+                  users: {
+                    "user-1": {
+                      name: "Ada Lovelace",
+                      email: "ada@example.com",
+                    },
+                  },
+                }
+              : {}),
+          },
+        }),
+      }),
+    );
+    assert.ok(
+      markup.includes(`${known ? "Ada Lovelace" : "Unknown"} · Studio`),
+    );
+  });
+}
+
+test("collaboration save refreshes last editor when persisted revision changes without a new timestamp", async () => {
+  const initial = createReadyState();
+  const saving = reduceContentDocumentPageReadyState(
+    reduceContentDocumentPageReadyState(initial, {
+      type: "draftChanged",
+      body: "Updated by collaborator",
+    }),
+    { type: "saveStarted" },
+  );
+  const saved = applySuccessfulDraftSaveToReadyState({
+    state: saving,
+    requestBody: saving.draftBody,
+    requestFrontmatter: saving.draftFrontmatter,
+    persistedBody: saving.draftBody,
+    persistedFrontmatter: saving.draftFrontmatter,
+    updatedAt: initial.document.updatedAt,
+    draftRevision: (initial.document.draftRevision ?? 0) + 1,
+  });
+  assert.equal(saved.document.updatedAt, initial.document.updatedAt);
+  const client = new QueryClient();
+  const key = (state: typeof initial) =>
+    getContentDocumentLastEditQueryKey({
+      project: "site",
+      environment: "draft",
+      locale: state.locale,
+      document: state.document,
+    });
+  try {
+    await client.fetchQuery({
+      queryKey: key(initial),
+      staleTime: Infinity,
+      queryFn: async () => "Previous editor",
+    });
+    assert.equal(
+      await client.fetchQuery({
+        queryKey: key(saving),
+        staleTime: Infinity,
+        queryFn: async () => "Unsaved edit",
+      }),
+      "Previous editor",
+    );
+    assert.equal(
+      await client.fetchQuery({
+        queryKey: key(saved),
+        staleTime: Infinity,
+        queryFn: async () => "Collaborating editor",
+      }),
+      "Collaborating editor",
+    );
+  } finally {
+    client.clear();
+  }
+});
+
+test("Info exposes the complete editor and declared client in its title", () => {
+  const markup = renderToStaticMarkup(
+    createElement(SidebarInfoTab, {
+      state: createReadyState(),
+      lastEdit: {
+        name: "Ada Lovelace",
+        origin: {
+          channel: "mcp",
+          credential: "oauth",
+          declared: "research-client/1.0",
+        },
+      },
+    }),
+  );
+  assert.match(
+    markup,
+    /title="Ada Lovelace · MCP \(research-client\/1\.0\); client name as reported by the client"/,
+  );
+});
+
+test("Studio auth invalidation refreshes last editor without a document revision change", async () => {
+  const client = new QueryClient();
+  const queryKey = getContentDocumentLastEditQueryKey({
+    project: "site",
+    environment: "draft",
+    document: createReadyState().document,
+  });
+  let calls = 0;
+  const query = {
+    queryKey,
+    staleTime: Infinity,
+    queryFn: async () =>
+      ++calls === 1 ? "Previous session author" : "Current session author",
+  };
+  try {
+    assert.equal(await client.fetchQuery(query), "Previous session author");
+    await client.invalidateQueries({ queryKey: ["studio"] });
+    assert.equal(await client.fetchQuery(query), "Current session author");
+    assert.equal(calls, 2);
+  } finally {
+    client.clear();
+  }
 });

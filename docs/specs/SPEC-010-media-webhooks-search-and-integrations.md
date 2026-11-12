@@ -249,6 +249,10 @@ Content lifecycle events include `document`. The `version` field is the current
 published version after the mutation, or `null` when no published snapshot
 exists.
 
+Content lifecycle events also include `origin?: ContentChangeOrigin`: the
+change origin of the write that caused the event (SPEC-003 "Change
+Attribution"). Absent for documents last written before attribution existed.
+
 ```json
 {
   "event": "content.published",
@@ -265,8 +269,14 @@ exists.
     "version": 5
   },
   "user": {
-    "id": "uuid",
+    "id": "user-id",
     "email": "alice@example.com"
+  },
+  "origin": {
+    "channel": "api",
+    "credential": "api_key",
+    "apiKeyId": "api-key-id",
+    "declared": "cli/0.4.0"
   }
 }
 ```
@@ -287,7 +297,7 @@ Media events include `media` and omit `document`:
     "url": "https://cdn.example.com/media/hero.png"
   },
   "user": {
-    "id": "uuid",
+    "id": "user-id",
     "email": "alice@example.com"
   }
 }

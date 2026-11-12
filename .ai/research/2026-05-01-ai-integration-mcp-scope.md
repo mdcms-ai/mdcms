@@ -1,7 +1,7 @@
 # AI Integration and MCP Scope Decision Memo
 
 Date: 2026-05-01
-Status: Updated decision memo. MCP is deferred; in-product Studio AI is the next focus.
+Status: Superseded for MCP by `2026-11-11-mcp-and-shared-tools-design.md`. The Studio AI baseline this memo prioritized has shipped.
 
 ## Decision
 

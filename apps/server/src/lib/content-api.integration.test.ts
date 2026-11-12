@@ -23,6 +23,7 @@ import {
   stableFixturePath,
   stableFixtureUuid,
   testWithDatabase,
+  testAttribution,
 } from "./content-api-test-support.js";
 import {
   documentVersions,
@@ -1806,28 +1807,38 @@ testWithDatabase(
     try {
       await seedCms26ReferenceSchema(dbConnection.db, scope);
       const store = createDatabaseContentStore({ db: dbConnection.db });
-      const page = await store.create(scope, {
-        path: stableFixturePath("pages", "cms28-db-page"),
-        type: "Page",
-        locale: "en",
-        format: "md",
-        frontmatter: {
-          slug: stableFixtureName("cms28-db-page"),
+      const page = await store.create(
+        scope,
+        {
+          path: stableFixturePath("pages", "cms28-db-page"),
+          type: "Page",
+          locale: "en",
+          format: "md",
+          frontmatter: {
+            slug: stableFixtureName("cms28-db-page"),
+          },
+          body: "page body",
         },
-        body: "page body",
-      });
+        { attribution: testAttribution },
+      );
       const blogPayload = createCms28BlogPostPayload({
         title: "db base",
       });
-      const blog = await store.create(scope, blogPayload);
+      const blog = await store.create(scope, blogPayload, {
+        attribution: testAttribution,
+      });
 
       await assert.rejects(
         () =>
-          store.create(scope, {
-            ...createCms28BlogPostPayload({
-              author: page.documentId,
-            }),
-          }),
+          store.create(
+            scope,
+            {
+              ...createCms28BlogPostPayload({
+                author: page.documentId,
+              }),
+            },
+            { attribution: testAttribution },
+          ),
         (error: unknown) => {
           assert.equal((error as { code?: string }).code, "INVALID_INPUT");
           return true;
@@ -1836,14 +1847,19 @@ testWithDatabase(
 
       await assert.rejects(
         () =>
-          store.update(scope, blog.documentId, {
-            frontmatter: {
-              ...(blogPayload.frontmatter ?? {}),
-              author: stableFixtureUuid(
-                "cms28-reference-write-db-update-author",
-              ),
+          store.update(
+            scope,
+            blog.documentId,
+            {
+              frontmatter: {
+                ...(blogPayload.frontmatter ?? {}),
+                author: stableFixtureUuid(
+                  "cms28-reference-write-db-update-author",
+                ),
+              },
             },
-          }),
+            { attribution: testAttribution },
+          ),
         (error: unknown) => {
           assert.equal((error as { code?: string }).code, "INVALID_INPUT");
           return true;
@@ -3068,14 +3084,18 @@ testWithDatabase(
         ],
       });
       const sourceStore = createDatabaseContentStore({ db: dbConnection.db });
-      const sourceDocument = await sourceStore.create(scope, {
-        path: stableFixturePath("blog", "race-source"),
-        type: "BlogPost",
-        locale: "en",
-        format: "md",
-        frontmatter: { slug: "race-source" },
-        body: "source body",
-      });
+      const sourceDocument = await sourceStore.create(
+        scope,
+        {
+          path: stableFixturePath("blog", "race-source"),
+          type: "BlogPost",
+          locale: "en",
+          format: "md",
+          frontmatter: { slug: "race-source" },
+          body: "source body",
+        },
+        { attribution: testAttribution },
+      );
 
       const wrappedDb = Object.assign(Object.create(dbConnection.db), {
         query: dbConnection.db.query,
@@ -3155,15 +3175,19 @@ testWithDatabase(
 
       await assert.rejects(
         () =>
-          store.create(scope, {
-            path: stableFixturePath("blog", "race-target"),
-            type: "BlogPost",
-            locale: "fr",
-            format: "md",
-            frontmatter: { slug: "race-target" },
-            body: "variant body",
-            sourceDocumentId: sourceDocument.documentId,
-          }),
+          store.create(
+            scope,
+            {
+              path: stableFixturePath("blog", "race-target"),
+              type: "BlogPost",
+              locale: "fr",
+              format: "md",
+              frontmatter: { slug: "race-target" },
+              body: "variant body",
+              sourceDocumentId: sourceDocument.documentId,
+            },
+            { attribution: testAttribution },
+          ),
         (error: unknown) => {
           assert.equal(
             (error as { code?: string }).code,
@@ -3203,23 +3227,31 @@ testWithDatabase(
         ],
       });
       const sourceStore = createDatabaseContentStore({ db: dbConnection.db });
-      const sourceDocument = await sourceStore.create(scope, {
-        path: stableFixturePath("blog", "race-update-source"),
-        type: "BlogPost",
-        locale: "en",
-        format: "md",
-        frontmatter: { slug: "race-update-source" },
-        body: "source body",
-      });
-      const deVariant = await sourceStore.create(scope, {
-        path: stableFixturePath("blog", "race-update-de"),
-        type: "BlogPost",
-        locale: "de",
-        format: "md",
-        frontmatter: { slug: "race-update-de" },
-        body: "de body",
-        sourceDocumentId: sourceDocument.documentId,
-      });
+      const sourceDocument = await sourceStore.create(
+        scope,
+        {
+          path: stableFixturePath("blog", "race-update-source"),
+          type: "BlogPost",
+          locale: "en",
+          format: "md",
+          frontmatter: { slug: "race-update-source" },
+          body: "source body",
+        },
+        { attribution: testAttribution },
+      );
+      const deVariant = await sourceStore.create(
+        scope,
+        {
+          path: stableFixturePath("blog", "race-update-de"),
+          type: "BlogPost",
+          locale: "de",
+          format: "md",
+          frontmatter: { slug: "race-update-de" },
+          body: "de body",
+          sourceDocumentId: sourceDocument.documentId,
+        },
+        { attribution: testAttribution },
+      );
       const sourceRow = await dbConnection.db.query.documents.findFirst({
         where: eq(documents.documentId, sourceDocument.documentId),
       });
@@ -3352,9 +3384,14 @@ testWithDatabase(
 
       await assert.rejects(
         () =>
-          store.update(scope, deVariant.documentId, {
-            locale: "fr",
-          }),
+          store.update(
+            scope,
+            deVariant.documentId,
+            {
+              locale: "fr",
+            },
+            { attribution: testAttribution },
+          ),
         (error: unknown) => {
           assert.equal(
             (error as { code?: string }).code,
@@ -3951,26 +3988,34 @@ testWithDatabase(
       });
 
       const store = createDatabaseContentStore({ db: dbConnection.db });
-      const sourceDocument = await store.create(scope, {
-        path: stableFixturePath("authors", "non-localized-source"),
-        type: "Author",
-        locale: "__mdcms_default__",
-        format: "md",
-        frontmatter: { slug: "non-localized-source" },
-        body: "author body",
-      });
+      const sourceDocument = await store.create(
+        scope,
+        {
+          path: stableFixturePath("authors", "non-localized-source"),
+          type: "Author",
+          locale: "__mdcms_default__",
+          format: "md",
+          frontmatter: { slug: "non-localized-source" },
+          body: "author body",
+        },
+        { attribution: testAttribution },
+      );
 
       await assert.rejects(
         () =>
-          store.create(scope, {
-            path: stableFixturePath("authors", "non-localized-variant"),
-            type: "Author",
-            locale: "fr",
-            format: "md",
-            frontmatter: { slug: "non-localized-variant" },
-            body: "variant body",
-            sourceDocumentId: sourceDocument.documentId,
-          }),
+          store.create(
+            scope,
+            {
+              path: stableFixturePath("authors", "non-localized-variant"),
+              type: "Author",
+              locale: "fr",
+              format: "md",
+              frontmatter: { slug: "non-localized-variant" },
+              body: "variant body",
+              sourceDocumentId: sourceDocument.documentId,
+            },
+            { attribution: testAttribution },
+          ),
         (error: unknown) => {
           assert.equal((error as { code?: string }).code, "INVALID_INPUT");
           return true;
@@ -4009,26 +4054,34 @@ testWithDatabase(
       });
 
       const store = createDatabaseContentStore({ db: dbConnection.db });
-      const sourceDocument = await store.create(scope, {
-        path: stableFixturePath("blog", "unsupported-locale-source"),
-        type: "BlogPost",
-        locale: "en",
-        format: "md",
-        frontmatter: { slug: "unsupported-locale-source" },
-        body: "source body",
-      });
+      const sourceDocument = await store.create(
+        scope,
+        {
+          path: stableFixturePath("blog", "unsupported-locale-source"),
+          type: "BlogPost",
+          locale: "en",
+          format: "md",
+          frontmatter: { slug: "unsupported-locale-source" },
+          body: "source body",
+        },
+        { attribution: testAttribution },
+      );
 
       await assert.rejects(
         () =>
-          store.create(scope, {
-            path: stableFixturePath("blog", "unsupported-locale-variant"),
-            type: "BlogPost",
-            locale: "de",
-            format: "md",
-            frontmatter: { slug: "unsupported-locale-variant" },
-            body: "variant body",
-            sourceDocumentId: sourceDocument.documentId,
-          }),
+          store.create(
+            scope,
+            {
+              path: stableFixturePath("blog", "unsupported-locale-variant"),
+              type: "BlogPost",
+              locale: "de",
+              format: "md",
+              frontmatter: { slug: "unsupported-locale-variant" },
+              body: "variant body",
+              sourceDocumentId: sourceDocument.documentId,
+            },
+            { attribution: testAttribution },
+          ),
         (error: unknown) => {
           const runtimeError = error as {
             code?: string;

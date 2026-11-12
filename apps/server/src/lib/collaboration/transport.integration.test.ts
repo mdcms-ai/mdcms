@@ -1,3 +1,4 @@
+import type { ContentWriteAttribution } from "@mdcms/shared";
 import assert from "node:assert/strict";
 import { createServer } from "node:net";
 import { test } from "bun:test";
@@ -17,7 +18,6 @@ import type {
   CollaborationSessionContext,
 } from "../collaboration-auth.js";
 import {
-  DEFAULT_ACTOR,
   type ContentDocument,
   type ContentScope,
 } from "../content-api/types.js";
@@ -144,8 +144,11 @@ class IntegrationContentStore implements CollaborationRuntimeContentStore {
   readonly updates: Array<{
     scope: ContentScope;
     documentId: string;
-    payload: { body: string; updatedBy: string };
-    options?: { expectedDraftRevision?: number };
+    payload: { body: string };
+    options: {
+      expectedDraftRevision?: number;
+      attribution: ContentWriteAttribution;
+    };
   }> = [];
 
   constructor(document: ContentDocument) {
@@ -169,14 +172,18 @@ class IntegrationContentStore implements CollaborationRuntimeContentStore {
   async update(
     scope: ContentScope,
     documentId: string,
-    payload: { body: string; updatedBy: string },
-    options?: { expectedDraftRevision?: number },
+    payload: { body: string },
+    options: {
+      expectedDraftRevision?: number;
+      attribution: ContentWriteAttribution;
+    },
   ): Promise<ContentDocument> {
     this.updates.push({ scope, documentId, payload, options });
     this.document = {
       ...this.document,
       body: payload.body,
-      updatedBy: payload.updatedBy,
+      updatedBy: options.attribution.actorId,
+      updatedOrigin: options.attribution.origin,
       updatedAt: "2026-06-11T10:01:00.000Z",
       draftRevision: this.document.draftRevision + 1,
     };
@@ -186,7 +193,7 @@ class IntegrationContentStore implements CollaborationRuntimeContentStore {
   async publish(
     scope: ContentScope,
     documentId: string,
-    input: { actorId?: string },
+    input: { attribution: ContentWriteAttribution },
   ): Promise<ContentDocument> {
     assert.deepEqual(scope, {
       project: this.document.project,
@@ -200,7 +207,7 @@ class IntegrationContentStore implements CollaborationRuntimeContentStore {
       hasUnpublishedChanges: false,
       version: nextVersion,
       publishedVersion: nextVersion,
-      updatedBy: input.actorId ?? this.document.updatedBy,
+      updatedBy: input.attribution.actorId,
       updatedAt: "2026-06-11T10:02:00.000Z",
     };
     return this.document;
@@ -639,7 +646,10 @@ test("Bun collaboration sockets sync Yjs updates and finalize the document room 
     );
 
     assert.match(contentStore.updates[0]?.payload.body ?? "", /Updated from A/);
-    assert.equal(contentStore.updates[0]?.payload.updatedBy, DEFAULT_ACTOR);
+    assert.equal(
+      contentStore.updates[0]?.options.attribution.actorId,
+      "writer-1",
+    );
     assert.equal(contentStore.updates[0]?.options?.expectedDraftRevision, 5);
     assert.deepEqual(redisStore.metadata, {
       draftRevision: 6,

@@ -1,3 +1,4 @@
+import { withMdcmsClientHeader } from "./client-header.js";
 import { resolve } from "node:path";
 import { stdin as processStdin } from "node:process";
 
@@ -607,7 +608,13 @@ export async function runMdcmsCli(
       environment: resolved.environment,
       apiKey: resolved.apiKey,
       args: commandArgs,
-      fetcher,
+      fetcher: resolved.serverUrl
+        ? withMdcmsClientHeader(
+            fetcher,
+            resolved.serverUrl,
+            `cli/${options.version ?? "0.0.0"}`,
+          )
+        : fetcher,
       confirm,
       multiSelect,
       stdout,

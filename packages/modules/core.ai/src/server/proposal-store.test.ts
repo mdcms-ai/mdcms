@@ -37,6 +37,158 @@ function buildProposal(overrides: Partial<AiProposal> = {}): AiProposal {
 }
 
 describe("createInMemoryAiProposalStore", () => {
+  test("undo records are immutable snapshots that expire and can be consumed once", () => {
+    let now = new Date("2026-05-01T00:00:00.000Z");
+    const store = createInMemoryAiProposalStore({ clock: () => now });
+    const proposal = buildProposal();
+    store.insert({ proposal, actorId: "user_1" });
+    const release = store.reserve(proposal.proposalId);
+    assert.throws(
+      () => store.reserve(proposal.proposalId),
+      /already in progress/,
+    );
+    release();
+    store.markAccepted({ proposalId: proposal.proposalId, actorId: "user_1" });
+    // Only the snapshot lifetime is relevant to this store test.
+    const result = {
+      document: {
+        documentId: "doc_1",
+        draftRevision: 4,
+        body: "large-current-document",
+      },
+      priorDraft: { body: "prior", frontmatter: {} },
+    } as import("./apply.js").AiApplyResult;
+    store.saveUndo(proposal.proposalId, result);
+    result.document.draftRevision = 10;
+    assert.deepEqual(store.getUndo(proposal.proposalId), {
+      documentId: "doc_1",
+      postApplyDraftRevision: 4,
+      priorDraft: { body: "prior", frontmatter: {} },
+    });
+    const accepted = store.peek(proposal.proposalId)!;
+    store.consumeUndo(proposal.proposalId);
+    assert.equal(accepted.undo, undefined);
+    assert.throws(
+      () => store.getUndo(proposal.proposalId),
+      /unavailable or expired/,
+    );
+    store.saveUndo(proposal.proposalId, result);
+    now = new Date(now.getTime() + 6001);
+    assert.throws(
+      () => store.getUndo(proposal.proposalId),
+      /unavailable or expired/,
+    );
+    assert.equal(accepted.undo, undefined);
+    store.dispose();
+  });
+
+  test("cleanup bounds terminal retention and capacity without evicting reservations", () => {
+    let now = new Date("2026-05-01T00:00:00.000Z");
+    const store = createInMemoryAiProposalStore({
+      clock: () => now,
+      capacity: 2,
+    });
+    const first = store.insert({
+      proposal: buildProposal(),
+      actorId: "user_1",
+    });
+    store.insert({
+      proposal: buildProposal({ proposalId: "p_2" }),
+      actorId: "user_1",
+    });
+    const release = store.reserve("p_1");
+    assert.throws(
+      () =>
+        store.insert({
+          proposal: buildProposal({ proposalId: "p_3" }),
+          actorId: "user_1",
+        }),
+      (error) =>
+        error instanceof RuntimeError &&
+        error.code === "AI_RATE_LIMITED" &&
+        error.statusCode === 429,
+    );
+    store.markRejected({ proposalId: "p_2", actorId: "user_1" });
+    now = new Date(now.getTime() + 16 * 60_000);
+    store.cleanup();
+    assert.equal(store.peek("p_1"), first);
+    assert.equal(store.peek("p_2"), undefined);
+    release();
+    assert.equal(store.peek("p_1"), undefined);
+    store.insert({
+      proposal: buildProposal({
+        proposalId: "p_3",
+        expiresAt: new Date(now.getTime() + 60_000).toISOString(),
+      }),
+      actorId: "user_1",
+    });
+    assert.equal(store.list().length, 1);
+    store.dispose();
+    assert.deepEqual(store.list(), []);
+    assert.throws(
+      () => store.insert({ proposal: buildProposal(), actorId: "user_1" }),
+      /disposed/,
+    );
+  });
+
+  test("cleanup releases idle expired undo payloads and defers reserved cleanup until release", () => {
+    let now = new Date("2026-05-01T00:00:00.000Z");
+    const store = createInMemoryAiProposalStore({ clock: () => now });
+    store.insert({ proposal: buildProposal(), actorId: "user_1" });
+    const accepted = store.markAccepted({
+      proposalId: "p_1",
+      actorId: "user_1",
+    });
+    const result = {
+      document: { documentId: "doc", draftRevision: 4 },
+      priorDraft: { body: "private prior body", frontmatter: {} },
+    } as import("./apply.js").AiApplyResult;
+    store.saveUndo("p_1", result);
+    now = new Date(now.getTime() + 6001);
+    store.cleanup();
+    assert.equal(accepted.undo, undefined);
+    store.saveUndo("p_1", result);
+    const release = store.reserve("p_1");
+    now = new Date(now.getTime() + 6001);
+    store.cleanup();
+    assert.ok(accepted.undo);
+    release();
+    assert.equal(accepted.undo, undefined);
+    store.saveUndo("p_1", result);
+    store.dispose();
+    assert.equal(accepted.undo, undefined);
+  });
+  test("idle timer clears expired payloads and dispose stops the timer", async () => {
+    let now = new Date("2026-05-01T00:00:00.000Z");
+    let clockCalls = 0;
+    const store = createInMemoryAiProposalStore({
+      clock: () => {
+        clockCalls++;
+        return now;
+      },
+    });
+    try {
+      store.insert({ proposal: buildProposal(), actorId: "user_1" });
+      const record = store.markAccepted({
+        proposalId: "p_1",
+        actorId: "user_1",
+      });
+      store.saveUndo("p_1", {
+        document: { documentId: "doc", draftRevision: 1 },
+        priorDraft: { body: "old", frontmatter: {} },
+      } as import("./apply.js").AiApplyResult);
+      now = new Date(now.getTime() + 6001);
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+      assert.equal(record.undo, undefined);
+      store.dispose();
+      const callsAtDisposal = clockCalls;
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+      assert.equal(clockCalls, callsAtDisposal);
+    } finally {
+      store.dispose();
+    }
+  });
+
   test("inserts and observes pending proposals before expiry", () => {
     const clock = () => new Date("2026-05-01T00:00:00.000Z");
     const store = createInMemoryAiProposalStore({ clock });

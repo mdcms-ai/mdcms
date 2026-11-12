@@ -54,6 +54,14 @@ Every request to the MDCMS API must include the following headers:
   Must be `application/json` for all requests with a JSON body.
 </ParamField>
 
+<ParamField header="X-MDCMS-Client" type="string">
+  Optional client name and version, for example `cli/0.4.0`. Content writes
+  record this as the informational declared client name. The server trims
+  surrounding whitespace and ignores empty values, values containing characters
+  outside printable ASCII, and values longer than 120 characters. This header
+  does not establish identity or grant permissions.
+</ParamField>
+
 ## Response Envelopes
 
 All API responses follow one of three envelope formats.

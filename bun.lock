@@ -49,6 +49,7 @@
         "@mdcms/modules": "workspace:*",
         "@mdcms/shared": "workspace:*",
         "@mdcms/studio": "workspace:*",
+        "@modelcontextprotocol/sdk": "1.32.2",
         "better-auth": "^1.5.1",
         "crossws": "0.4.6",
         "drizzle-orm": "^0.45.1",
@@ -163,6 +164,9 @@
       "version": "0.6.0",
       "dependencies": {
         "elysia": "^1.4.25",
+        "mdast-util-from-markdown": "^2.0.3",
+        "mdast-util-mdx": "^3.0.0",
+        "micromark-extension-mdx": "^2.0.0",
         "tslib": "^2.3.0",
         "typescript": "~5.9.2",
         "zod": "^4.3.6",

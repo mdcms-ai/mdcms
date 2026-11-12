@@ -4,7 +4,12 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_DIR="$ROOT_DIR/apps/studio-example"
 HOST="127.0.0.1"
-PORT="4173"
+PORT="${MDCMS_STUDIO_EMBED_SMOKE_PORT-4173}"
+if [[ ! "$PORT" =~ ^[0-9]{1,5}$ ]] || ((10#$PORT < 1 || 10#$PORT > 65535)); then
+  echo "ERROR: MDCMS_STUDIO_EMBED_SMOKE_PORT must be an integer from 1 to 65535" >&2
+  exit 1
+fi
+PORT="$((10#$PORT))"
 BASE_URL="http://${HOST}:${PORT}"
 STARTUP_TIMEOUT_SECONDS=180
 NEXT_LOG_FILE="${TMPDIR:-/tmp}/mdcms-studio-embed-smoke.log"

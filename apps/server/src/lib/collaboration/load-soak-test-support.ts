@@ -1,3 +1,4 @@
+import type { ContentWriteAttribution } from "@mdcms/shared";
 import { performance } from "node:perf_hooks";
 import { isDeepStrictEqual } from "node:util";
 
@@ -255,9 +256,11 @@ class BaselineContentStore implements CollaborationRuntimeContentStore {
     payload: {
       body: string;
       frontmatter: Record<string, unknown>;
-      updatedBy: string;
     },
-    options?: { expectedDraftRevision?: number },
+    options: {
+      expectedDraftRevision?: number;
+      attribution: ContentWriteAttribution;
+    },
   ): Promise<ContentDocument> {
     const current = this.documents.get(documentId);
 
@@ -285,7 +288,8 @@ class BaselineContentStore implements CollaborationRuntimeContentStore {
       body: payload.body,
       frontmatter: cloneJsonObject(payload.frontmatter),
       draftRevision: current.draftRevision + 1,
-      updatedBy: payload.updatedBy,
+      updatedBy: options.attribution.actorId,
+      updatedOrigin: options.attribution.origin,
       updatedAt: BASELINE_UPDATED_AT,
     };
 
@@ -301,7 +305,7 @@ class BaselineContentStore implements CollaborationRuntimeContentStore {
   async publish(
     scope: ContentScope,
     documentId: string,
-    input: { actorId?: string },
+    input: { attribution: ContentWriteAttribution },
   ): Promise<ContentDocument> {
     const current = this.documents.get(documentId);
 
@@ -321,7 +325,7 @@ class BaselineContentStore implements CollaborationRuntimeContentStore {
       hasUnpublishedChanges: false,
       version: nextVersion,
       publishedVersion: nextVersion,
-      updatedBy: input.actorId ?? current.updatedBy,
+      updatedBy: input.attribution.actorId,
       updatedAt: BASELINE_UPDATED_AT,
     };
 

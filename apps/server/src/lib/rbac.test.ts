@@ -477,10 +477,11 @@ test("user management needs a global grant, not a project-scoped Admin", () => {
   );
 });
 
-test("environment clone and promote need a global grant, not a project-scoped Admin", () => {
+test("environment discovery, clone and promote need a global grant, not a project-scoped Admin", () => {
   const target = { project: "marketing-site", environment: "production" };
 
   for (const action of [
+    "environments:read",
     "environments:clone",
     "environments:promote",
   ] as const) {

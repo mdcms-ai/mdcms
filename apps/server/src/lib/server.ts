@@ -1,5 +1,6 @@
 import { brotliCompress, gzip } from "node:zlib";
 import { promisify } from "node:util";
+import { stripInternalHeaders } from "./agent-tools/dispatcher.js";
 
 const brotliCompressAsync = promisify(brotliCompress);
 const gzipAsync = promisify(gzip);
@@ -55,14 +56,21 @@ const STUDIO_CORS_ALLOW_METHODS =
   "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS";
 const STUDIO_CORS_ALLOW_HEADERS = [
   "Authorization",
+  "Accept",
+  "MCP-Protocol-Version",
   "Content-Type",
   "X-MDCMS-Project",
   "X-MDCMS-Environment",
   "X-MDCMS-Locale",
   "X-MDCMS-Schema-Hash",
   "X-MDCMS-CSRF-Token",
+  "X-MDCMS-Client",
 ].join(", ");
 const STUDIO_BROWSER_ROUTE_PREFIXES = [
+  "/api/v1/mcp",
+  "/api/v1/oauth",
+  "/.well-known/oauth-protected-resource/api/v1/mcp",
+  "/.well-known/oauth-authorization-server",
   "/api/v1/studio",
   "/api/v1/actions",
   "/api/v1/auth",
@@ -120,6 +128,7 @@ function createStudioCorsHeaders(origin: string): Record<string, string> {
     "access-control-allow-credentials": "true",
     "access-control-allow-methods": STUDIO_CORS_ALLOW_METHODS,
     "access-control-allow-headers": STUDIO_CORS_ALLOW_HEADERS,
+    "access-control-expose-headers": "WWW-Authenticate, Retry-After",
     vary: "Origin",
   };
 }
@@ -204,6 +213,7 @@ function studioLoopbackEnabled(): boolean {
 function resolveStudioCorsContext(
   request: Request,
   allowedOrigins: readonly string[],
+  canonicalOrigin: string,
 ): { headers: Record<string, string> } | null {
   const pathname = resolvePathname(request);
 
@@ -217,12 +227,24 @@ function resolveStudioCorsContext(
     return null;
   }
 
-  const requestOrigin = new URL(request.url).origin;
+  const isOAuthOrMcp =
+    pathname === "/api/v1/mcp" ||
+    pathname.startsWith("/api/v1/oauth/") ||
+    pathname.startsWith("/.well-known/oauth-");
+  const requestOrigin = isOAuthOrMcp
+    ? canonicalOrigin
+    : new URL(request.url).origin;
   const loopbackAllowed =
-    studioLoopbackEnabled() && STUDIO_LOOPBACK_DEV_ORIGINS.includes(origin);
+    !isOAuthOrMcp &&
+    studioLoopbackEnabled() &&
+    STUDIO_LOOPBACK_DEV_ORIGINS.includes(origin);
 
   if (
     origin !== requestOrigin &&
+    !(
+      (pathname === "/api/v1/auth" || pathname.startsWith("/api/v1/auth/")) &&
+      origin === canonicalOrigin
+    ) &&
     !allowedOrigins.includes(origin) &&
     !loopbackAllowed
   ) {
@@ -257,13 +279,25 @@ function createNotFoundResponse(): Response {
   return new Response("Route not found.", { status: 404 });
 }
 
+function safeLoggedRequestUrl(request: Request): string {
+  const url = new URL(request.url);
+  if (
+    url.pathname.startsWith("/api/v1/oauth/") ||
+    url.pathname === "/api/v1/mcp"
+  )
+    return url.origin + url.pathname;
+  return request.url;
+}
+
 function shouldPreserveHtmlErrorResponse(
   request: Request,
   contentType: string | null,
 ): boolean {
   return (
     contentType?.includes("text/html") === true &&
-    resolvePathname(request) === "/api/v1/auth/cli/login/authorize"
+    ["/api/v1/auth/cli/login/authorize", "/api/v1/oauth/authorize"].includes(
+      resolvePathname(request),
+    )
   );
 }
 
@@ -760,12 +794,27 @@ async function normalizeElysiaErrorResponse(input: {
 
   input.logger.error("request_failed", {
     method: input.request.method,
-    url: input.request.url,
+    url: safeLoggedRequestUrl(input.request),
     statusCode: errorResponse.statusCode,
     code: errorResponse.body.code,
   });
 
-  return createJsonResponse(errorResponse.body, errorResponse.statusCode);
+  const headers: Record<string, string> = {};
+  for (const name of [
+    "allow",
+    "www-authenticate",
+    "retry-after",
+    "cache-control",
+    "pragma",
+  ]) {
+    const value = input.response.headers.get(name);
+    if (value !== null) headers[name] = value;
+  }
+  return createJsonResponse(
+    errorResponse.body,
+    errorResponse.statusCode,
+    headers,
+  );
 }
 
 /**
@@ -773,6 +822,14 @@ async function normalizeElysiaErrorResponse(input: {
  * including `/healthz` and unified error envelope responses.
  */
 export function createServerRequestHandler(
+  options: CreateServerRequestHandlerOptions = {},
+): ServerRequestHandler {
+  const internalHandler = createInternalServerRequestHandler(options);
+  return (request) => internalHandler(stripInternalHeaders(request));
+}
+
+/** Host-only handler behind the external ingress header boundary. */
+export function createInternalServerRequestHandler(
   options: CreateServerRequestHandlerOptions = {},
 ): ServerRequestHandler {
   const env = parseServerEnv(options.env ?? process.env);
@@ -810,6 +867,7 @@ export function createServerRequestHandler(
       corsContext = resolveStudioCorsContext(
         request,
         env.MDCMS_STUDIO_ALLOWED_ORIGINS,
+        env.MDCMS_SERVER_URL,
       );
 
       if (corsContext && isStudioPreflightRequest(request)) {
@@ -841,7 +899,7 @@ export function createServerRequestHandler(
 
       logger.error("request_failed", {
         method: request.method,
-        url: request.url,
+        url: safeLoggedRequestUrl(request),
         statusCode: errorResponse.statusCode,
         code: errorResponse.body.code,
       });

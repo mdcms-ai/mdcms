@@ -1,3 +1,4 @@
+import type { ContentWriteAttribution } from "@mdcms/shared";
 import { createHash, randomUUID } from "node:crypto";
 
 import { Hocuspocus, type Configuration } from "@hocuspocus/server";
@@ -15,7 +16,6 @@ import type {
   CollaborationSessionContext,
 } from "../collaboration-auth.js";
 import {
-  DEFAULT_ACTOR,
   type ContentDocument,
   type ContentLifecycleEventSink,
   type ContentScope,
@@ -44,8 +44,6 @@ export const COLLABORATION_FINALIZED_ROOM_LEASE_TTL_MS =
   COLLABORATION_INACTIVE_CACHE_TTL_SECONDS * 1000;
 export const COLLABORATION_YJS_FIELD_NAME = "default";
 export const COLLABORATION_FRONTMATTER_FIELD_NAME = "frontmatter";
-const POSTGRES_UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export type CollaborationDocumentFlushResult = {
   status: "saved" | "unchanged";
@@ -99,14 +97,16 @@ export type CollaborationRuntimeContentStore = {
     payload: {
       body: string;
       frontmatter: Record<string, unknown>;
-      updatedBy: string;
     },
-    options?: { expectedDraftRevision?: number },
+    options: {
+      expectedDraftRevision?: number;
+      attribution: ContentWriteAttribution;
+    },
   ) => Promise<ContentDocument>;
   publish: (
     scope: ContentScope,
     documentId: string,
-    input: { changeSummary?: string; actorId?: string },
+    input: { changeSummary?: string; attribution: ContentWriteAttribution },
   ) => Promise<ContentDocument>;
 };
 
@@ -681,10 +681,11 @@ function createLifecycleActor(writer: CollaborationRuntimeLastWriter): {
   };
 }
 
-function toContentStoreActorId(userId: string): string {
-  const normalized = userId.trim();
-
-  return POSTGRES_UUID_PATTERN.test(normalized) ? normalized : DEFAULT_ACTOR;
+function collaborationAttribution(userId: string): ContentWriteAttribution {
+  return {
+    actorId: userId,
+    origin: { channel: "studio", credential: "session" },
+  };
 }
 
 function createActiveLockLostError(documentId: string): RuntimeError {
@@ -969,9 +970,11 @@ export function createCollaborationRuntimeHooks(
       {
         body: nextBody,
         frontmatter: nextFrontmatter,
-        updatedBy: toContentStoreActorId(input.writer.userId),
       },
-      { expectedDraftRevision },
+      {
+        expectedDraftRevision,
+        attribution: collaborationAttribution(input.writer.userId),
+      },
     );
 
     const metadata = {
@@ -1072,7 +1075,7 @@ export function createCollaborationRuntimeHooks(
         scope,
         context.documentId,
         {
-          actorId: toContentStoreActorId(context.userId),
+          attribution: collaborationAttribution(context.userId),
           changeSummary: input.changeSummary,
         },
       );

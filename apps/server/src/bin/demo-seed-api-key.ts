@@ -1,3 +1,4 @@
+import { systemAttribution } from "../lib/content-api/attribution.js";
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { and, eq, isNull } from "drizzle-orm";
@@ -493,8 +494,8 @@ async function ensureDemoContent(input: {
           {
             frontmatter: template.frontmatter,
             body: template.body,
-            updatedBy: input.actorId,
           },
+          { attribution: systemAttribution(input.actorId) },
         );
       }
 
@@ -512,7 +513,7 @@ async function ensureDemoContent(input: {
           },
           existing.documentId,
           {
-            actorId: input.actorId,
+            attribution: systemAttribution(input.actorId),
             changeSummary: DEMO_CONTENT_CHANGE_SUMMARY,
           },
         );
@@ -547,10 +548,9 @@ async function ensureDemoContent(input: {
         format: template.format,
         frontmatter: template.frontmatter,
         body: template.body,
-        createdBy: input.actorId,
-        updatedBy: input.actorId,
         ...(sourceDocumentId ? { sourceDocumentId } : {}),
       },
+      { attribution: systemAttribution(input.actorId) },
     );
 
     if (template.publish) {
@@ -561,7 +561,7 @@ async function ensureDemoContent(input: {
         },
         created.documentId,
         {
-          actorId: input.actorId,
+          attribution: systemAttribution(input.actorId),
           changeSummary: DEMO_CONTENT_CHANGE_SUMMARY,
         },
       );

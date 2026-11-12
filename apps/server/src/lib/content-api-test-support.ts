@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { test } from "bun:test";
 
-import { createConsoleLogger } from "@mdcms/shared";
+import {
+  createConsoleLogger,
+  type ContentWriteAttribution,
+} from "@mdcms/shared";
 import { and, eq } from "drizzle-orm";
 import postgres from "postgres";
 
@@ -41,7 +44,9 @@ export const baseEnv = {
 
 export const dbEnv = {
   ...baseEnv,
-  DATABASE_URL: "postgres://mdcms:mdcms@127.0.0.1:5432/mdcms",
+  DATABASE_URL:
+    process.env.MDCMS_TEST_DATABASE_URL ??
+    "postgres://mdcms:mdcms@127.0.0.1:5432/mdcms",
 } as NodeJS.ProcessEnv;
 
 export const logger = createConsoleLogger({
@@ -240,6 +245,7 @@ export { wrapHandlerWithAutoSchemaHash };
 
 export function createHandler(
   options: {
+    resolveUsers?: MountContentApiRoutesOptions["resolveUsers"];
     lookupMediaAsset?: ContentMediaAssetLookup;
     activeCollaboration?: MountContentApiRoutesOptions["activeCollaboration"];
     inactiveCollaborationCache?: MountContentApiRoutesOptions["inactiveCollaborationCache"];
@@ -260,6 +266,7 @@ export function createHandler(
     configureApp: (app) => {
       mountContentApiRoutes(app, {
         store,
+        resolveUsers: options.resolveUsers,
         authorize: authorizeTestRequest,
         requireCsrf: async () => undefined,
         getWriteSchemaSyncState: async () => ({
@@ -943,3 +950,8 @@ export async function deleteContentDocument(
 
   assert.equal(response.status, 200);
 }
+
+export const testAttribution = {
+  actorId: "user-1",
+  origin: { channel: "studio", credential: "session" },
+} satisfies ContentWriteAttribution;

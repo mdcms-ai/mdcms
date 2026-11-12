@@ -1,5 +1,23 @@
+import { mountOAuthRoutes } from "./oauth/routes.js";
+import { mountMcpRoutes } from "./mcp/routes.js";
+import { adaptAssistantReadTool } from "./agent-tools/assistant-reads.js";
+import type { AgentReadToolDefinition } from "@mdcms/shared";
 import {
-  createServerRequestHandler,
+  documentEnvelopeSchema,
+  schemaEnvelopeSchema,
+} from "./agent-tools/schema.js";
+import { createAssistantContentExecutor } from "./agent-tools/assistant.js";
+import { createAgentToolRegistry } from "./agent-tools/registry.js";
+import { randomBytes } from "node:crypto";
+import {
+  createInternalDispatcher,
+  stripInternalHeaders,
+  trustedInternalChannel,
+} from "./agent-tools/dispatcher.js";
+import type { AuthorizationRequirement } from "./auth.js";
+import { attributionFromAuthorizedRequest } from "./content-api/attribution.js";
+import {
+  createInternalServerRequestHandler,
   type CreateServerRequestHandlerOptions,
   type ServerRequestHandler,
 } from "./server.js";
@@ -208,16 +226,16 @@ export function createCollaborationGuardedAiContentStore(
       await invalidateInactiveCache(documentId);
       return document;
     },
-    softDelete: async (scope, documentId) => {
+    softDelete: async (scope, documentId, opts) => {
       await assertNoActiveCollaboration(activeCollaboration, documentId);
-      const document = await store.softDelete(scope, documentId);
+      const document = await store.softDelete(scope, documentId, opts);
       await invalidateInactiveCache(documentId);
       return document;
     },
     restore: restore
-      ? async (scope, documentId) => {
+      ? async (scope, documentId, opts) => {
           await assertNoActiveCollaboration(activeCollaboration, documentId);
-          const document = await restore(scope, documentId);
+          const document = await restore(scope, documentId, opts);
           await invalidateInactiveCache(documentId);
           return document;
         }
@@ -228,12 +246,14 @@ export function createCollaborationGuardedAiContentStore(
 export async function shutdownServerRuntime({
   collaborationWebSocketTransport,
   dbConnection,
+  disposeAiProposals,
 }: {
   collaborationWebSocketTransport: Pick<
     CollaborationWebSocketTransport,
     "shutdown"
   >;
   dbConnection: Pick<DatabaseConnection, "close">;
+  disposeAiProposals?: () => void;
 }): Promise<void> {
   let collaborationDrainError: unknown;
 
@@ -243,6 +263,7 @@ export async function shutdownServerRuntime({
     collaborationDrainError = error;
   }
 
+  disposeAiProposals?.();
   await dbConnection.close();
 
   if (collaborationDrainError) {
@@ -253,12 +274,14 @@ export async function shutdownServerRuntime({
 function createServerRuntimeShutdown({
   collaborationWebSocketTransport,
   dbConnection,
+  disposeAiProposals,
 }: {
   collaborationWebSocketTransport: Pick<
     CollaborationWebSocketTransport,
     "shutdown"
   >;
   dbConnection: Pick<DatabaseConnection, "close">;
+  disposeAiProposals?: () => void;
 }): () => Promise<void> {
   let shutdownPromise: Promise<void> | undefined;
 
@@ -266,6 +289,7 @@ function createServerRuntimeShutdown({
     shutdownPromise ??= shutdownServerRuntime({
       collaborationWebSocketTransport,
       dbConnection,
+      disposeAiProposals,
     });
 
     return shutdownPromise;
@@ -300,11 +324,29 @@ export function createServerRequestHandlerWithModules(
   const dbConnection = createDatabaseConnection({ env: rawEnv });
   const dal = createContentDAL({ db: dbConnection.db });
   const emailService = env.SMTP_HOST ? createEmailService(env) : undefined;
+  const internalSecret = randomBytes(32).toString("hex");
   const authService = createAuthService({
     db: dbConnection.db,
     env: rawEnv,
     emailService,
+    isTrustedAgentRequest: (request) =>
+      trustedInternalChannel(request, internalSecret) !== undefined,
+    isTrustedMcpRequest: (request) =>
+      trustedInternalChannel(request, internalSecret) === "mcp",
   });
+  const authorizeInternalRequest = async (
+    request: Request,
+    requirement: AuthorizationRequirement,
+  ) => {
+    const authorization = await authService.authorizeRequest(
+      request,
+      requirement,
+    );
+    const internalChannel = trustedInternalChannel(request, internalSecret);
+    return internalChannel
+      ? { ...authorization, internalChannel }
+      : authorization;
+  };
   const mediaStore = createDatabaseMediaStore({ db: dbConnection.db });
   const contentStore = createDatabaseContentStore({
     db: dbConnection.db,
@@ -369,7 +411,7 @@ export function createServerRequestHandlerWithModules(
         shapePublishedDocument: async ({ document, request, scope }) =>
           shapeContentDocumentResponse({
             authorize: (request, requirement) =>
-              authService.authorizeRequest(request, requirement),
+              authorizeInternalRequest(request, requirement),
             request,
             requiredScope: "content:publish",
             scope,
@@ -487,30 +529,6 @@ export function createServerRequestHandlerWithModules(
   });
   const aiProposalStore = createInMemoryAiProposalStore();
 
-  const contentTypesLookup = async ({
-    project,
-    environment,
-  }: {
-    project: string;
-    environment: string;
-  }) => {
-    const resolvedScope = await resolveProjectEnvironmentScope(
-      dbConnection.db,
-      { project, environment },
-    );
-    if (!resolvedScope) return [];
-    const rows = await dbConnection.db.query.schemaRegistryEntries.findMany({
-      where: and(
-        eq(schemaRegistryEntries.projectId, resolvedScope.project.id),
-        eq(schemaRegistryEntries.environmentId, resolvedScope.environment.id),
-      ),
-    });
-    return rows.map(
-      (r) =>
-        r.resolvedSchema as import("@mdcms/shared").SchemaRegistryTypeSnapshot,
-    );
-  };
-
   const supportedLocalesLookup = async ({
     project,
     environment,
@@ -544,132 +562,90 @@ export function createServerRequestHandlerWithModules(
       : { id: userId, displayName: userId };
   };
 
-  const listEntries = async ({
-    project,
-    environment,
-    type,
-    query,
-    locale,
-    limit,
-  }: {
-    project: string;
-    environment: string;
-    type: string;
-    query?: string;
-    locale?: string;
-    limit?: number;
-  }) => {
-    const listResponse = await contentStore.list(
-      { project, environment },
-      {
-        type,
-        ...(query ? { q: query } : {}),
-        ...(locale ? { locale } : {}),
-        limit: String(limit ?? 10),
-        draft: "true",
-      },
-    );
-    return {
-      matches: listResponse.rows.map((row) => ({
-        documentId: row.documentId,
-        path: row.path,
-        type: row.type,
-        locale: row.locale,
-        ...(typeof row.frontmatter.title === "string"
-          ? { title: row.frontmatter.title }
-          : {}),
-        ...(typeof row.frontmatter.excerpt === "string"
-          ? { summary: row.frontmatter.excerpt.slice(0, 200) }
-          : {}),
-        updatedAt: row.updatedAt,
-        hasUnpublishedChanges: row.hasUnpublishedChanges,
-      })),
-      total: listResponse.total,
-    };
+  const agentRegistry = createAgentToolRegistry();
+  const executeAssistantTool = async (
+    request: Request,
+    name: string,
+    input: unknown,
+  ) => {
+    const target = resolveRequestTargetRouting(request);
+    const project = target.project!;
+    const environment = target.environment!;
+    const authorization = await authorizeInternalRequest(request, {
+      requiredScope:
+        name === "get_schema" ? "schema:read" : "content:read:draft",
+      project,
+      environment,
+    });
+    return agentRegistry.execute(name, input, {
+      authorization,
+      target: { project, environment },
+      dispatch: createInternalDispatcher(internalHandler, internalSecret, {
+        request,
+        project,
+        environment,
+        channel: "studio_ai",
+      }),
+    });
   };
-
-  const getEntryBackend = async ({
-    project,
-    environment,
-    documentId,
-  }: {
-    project: string;
-    environment: string;
-    documentId: string;
-  }) => {
-    const doc = await contentStore.getById(
-      { project, environment },
-      documentId,
-      { draft: true },
-    );
-    if (!doc || doc.isDeleted) return undefined;
-    return {
-      documentId: doc.documentId,
-      path: doc.path,
-      type: doc.type,
-      locale: doc.locale,
-      draftRevision: doc.draftRevision,
-      hasUnpublishedChanges: doc.hasUnpublishedChanges,
-      publishedVersion: doc.publishedVersion,
-      frontmatter: doc.frontmatter,
-      body: doc.body,
-    };
+  const readToolsForRequest: NonNullable<
+    CoreAiServerDeps["readToolsForRequest"]
+  > = async (request, narrowing) => {
+    const target = resolveRequestTargetRouting(request);
+    const definitions: AgentReadToolDefinition[] = [];
+    for (const name of [
+      "list_documents",
+      "get_document",
+      "get_schema",
+    ] as const) {
+      let authorization;
+      try {
+        authorization = await authorizeInternalRequest(request, {
+          requiredScope:
+            name === "get_schema" ? "schema:read" : "content:read:draft",
+          project: target.project,
+          environment: target.environment,
+        });
+      } catch (error) {
+        if (error instanceof RuntimeError && error.code === "FORBIDDEN")
+          continue;
+        throw error;
+      }
+      const definition = agentRegistry
+        .list(authorization)
+        .find((tool) => tool.name === name);
+      if (!definition) continue;
+      definitions.push(
+        adaptAssistantReadTool(
+          definition,
+          (input) => executeAssistantTool(request, name, input),
+          narrowing,
+        ),
+      );
+    }
+    return definitions;
   };
 
   const aiModuleDeps: CoreAiServerDeps = {
     orchestrator: aiOrchestrator,
     proposalStore: aiProposalStore,
-    contentStore: createCollaborationGuardedAiContentStore(
-      {
-        getById: (scope, documentId, opts) =>
-          contentStore.getById(scope, documentId, opts),
-        update: (scope, documentId, payload, opts) =>
-          contentStore.update(scope, documentId, payload, opts),
-        create: (scope, payload, opts) =>
-          contentStore.create(scope, payload, opts),
-        softDelete: (scope, documentId) =>
-          contentStore.softDelete(scope, documentId),
-        restore: (scope, documentId) => contentStore.restore(scope, documentId),
-      },
-      activeCollaboration,
-      inactiveCollaborationCache,
-    ),
+    contentStore: (request) => {
+      const target = resolveRequestTargetRouting(request);
+      return createAssistantContentExecutor(
+        createInternalDispatcher(internalHandler, internalSecret, {
+          request,
+          project: target.project!,
+          environment: target.environment!,
+          channel: "studio_ai",
+        }),
+      );
+    },
     contextResolver: {
-      loadDraftContext: async ({
-        request,
-        project,
-        environment,
-        documentId,
-      }) => {
-        await authService.authorizeRequest(request, {
-          requiredScope: "content:read:draft",
-          project,
-          environment,
-        });
-        const document = await contentStore.getById(
-          { project, environment },
-          documentId,
-          { draft: true },
-        );
-
-        if (!document || document.isDeleted) {
-          throw new RuntimeError({
-            code: "NOT_FOUND",
-            message: "Document not found.",
-            statusCode: 404,
-            details: { documentId },
-          });
-        }
-
-        await authService.authorizeRequest(request, {
-          requiredScope: "content:read:draft",
-          project,
-          environment,
-          documentPath: document.path,
-        });
-
-        return { document };
-      },
+      loadDraftContext: async ({ request, documentId }) => ({
+        document: documentEnvelopeSchema.parse(
+          await executeAssistantTool(request, "get_document", { documentId }),
+        ).data,
+      }),
     },
     schemaHashLookup: ({ project, environment }) =>
       lookupSchemaHashForScope({ project, environment }),
@@ -681,8 +657,17 @@ export function createServerRequestHandlerWithModules(
       const actorId =
         authorized.principal.type === "session"
           ? authorized.principal.session.userId
-          : authorized.principal.keyId;
-      return { actorId };
+          : authorized.principal.type === "oauth"
+            ? authorized.principal.userId
+            : authorized.principal.createdByUserId;
+      return {
+        actorId,
+        attribution: attributionFromAuthorizedRequest({
+          request,
+          authorization: authorized,
+          channel: "studio_ai",
+        }),
+      };
     },
     requireCsrf: (request) => authService.requireCsrfProtection(request),
     emitAudit: (record) => {
@@ -713,11 +698,20 @@ export function createServerRequestHandlerWithModules(
         logger.info("ai.audit", payload);
       }
     },
-    contentTypesLookup,
+    contentTypesLookup: async ({ request }) => {
+      try {
+        return schemaEnvelopeSchema
+          .parse(await executeAssistantTool(request, "get_schema", {}))
+          .data.types.map((type) => type.resolvedSchema);
+      } catch (error) {
+        if (error instanceof RuntimeError && error.code === "FORBIDDEN")
+          return [];
+        throw error;
+      }
+    },
     supportedLocalesLookup,
     userLookup,
-    listEntries,
-    getEntry: getEntryBackend,
+    readToolsForRequest,
   };
 
   const moduleDeps: ServerModuleAppDeps = {
@@ -726,23 +720,37 @@ export function createServerRequestHandlerWithModules(
     ai: aiModuleDeps,
   };
 
-  const handler = createServerRequestHandler({
+  const internalHandler = createInternalServerRequestHandler({
     ...(options.serverOptions ?? {}),
     env: rawEnv,
     logger,
     actions,
     configureApp: (app) => {
       mountAuthRoutes(app, { authService });
+      mountOAuthRoutes(app, { db: dbConnection.db, auth: authService, env });
+      mountMcpRoutes(app, {
+        origin: env.MDCMS_SERVER_URL,
+        version: env.APP_VERSION,
+        registry: agentRegistry,
+        authenticate: (request) => authService.authenticateMcp(request),
+        dispatch: (request, target, declared) =>
+          createInternalDispatcher(internalHandler, internalSecret, {
+            request,
+            ...target,
+            channel: "mcp",
+            declared,
+          }),
+      });
       mountWebhookApiRoutes(app, {
         store: webhookRuntime.store,
         authorize: (request, requirement) =>
-          authService.authorizeRequest(request, requirement),
+          authorizeInternalRequest(request, requirement),
         requireCsrf: (request) => authService.requireCsrfProtection(request),
       });
       mountContentApiRoutes(app, {
         store: contentStore,
         authorize: (request, requirement) =>
-          authService.authorizeRequest(request, requirement),
+          authorizeInternalRequest(request, requirement),
         requireCsrf: (request) => authService.requireCsrfProtection(request),
         getWriteSchemaSyncState: async (scope) => {
           const schemaHash = await lookupSchemaHashForScope(scope);
@@ -774,7 +782,7 @@ export function createServerRequestHandlerWithModules(
       mountSchemaApiRoutes(app, {
         store: schemaStore,
         authorize: (request, requirement) =>
-          authService.authorizeRequest(request, requirement),
+          authorizeInternalRequest(request, requirement),
         requireCsrf: (request) => authService.requireCsrfProtection(request),
       });
       mountEnvironmentApiRoutes(app, {
@@ -791,6 +799,8 @@ export function createServerRequestHandlerWithModules(
           return session;
         },
         authorizeAdmin: (request) => authService.requireAdminSession(request),
+        authorizeList: (request, project) =>
+          authService.authorizeEnvironmentList(request, project),
         authorizeScoped: async (request, requiredScope) => {
           const routing = resolveRequestTargetRouting(request);
           await authService.authorizeRequest(request, {
@@ -826,7 +836,7 @@ export function createServerRequestHandlerWithModules(
         store: mediaStore,
         objectStore: mediaObjectStore,
         authorize: (request, requirement) =>
-          authService.authorizeRequest(request, requirement),
+          authorizeInternalRequest(request, requirement),
         authorizeSettings: async (request) => {
           const session = await authService.requireAdminSession(request);
 
@@ -838,6 +848,8 @@ export function createServerRequestHandlerWithModules(
       mountLoadedServerModules(app, moduleDeps, moduleLoadReport);
     },
   });
+  const handler: ServerRequestHandler = (request) =>
+    internalHandler(stripInternalHeaders(request));
   const handleRequest = async (
     request: Request,
     server?: BunUpgradeServer,
@@ -863,6 +875,7 @@ export function createServerRequestHandlerWithModules(
     shutdown: createServerRuntimeShutdown({
       collaborationWebSocketTransport,
       dbConnection,
+      disposeAiProposals: () => aiProposalStore.dispose(),
     }),
   };
 }
@@ -972,12 +985,19 @@ export async function prepareServerRequestHandlerWithModules(
     },
   };
 
+  let shutdownPromise: Promise<void> | undefined;
   return {
     ...runtime,
     dbConnection,
-    shutdown: createServerRuntimeShutdown({
-      collaborationWebSocketTransport: runtime.collaborationWebSocketTransport,
-      dbConnection,
-    }),
+    shutdown: () => {
+      shutdownPromise ??= (async () => {
+        try {
+          await runtime.shutdown();
+        } finally {
+          await collaborationRedisDependency.close?.();
+        }
+      })();
+      return shutdownPromise;
+    },
   };
 }

@@ -2,7 +2,7 @@
 status: live
 canonical: true
 created: 2026-03-11
-last_updated: 2026-03-11
+last_updated: 2026-11-11
 ---
 
 # SPEC-009 i18n and Environments
@@ -166,7 +166,7 @@ On initial setup, a `production` environment is created automatically. Additiona
 
 ### Cloning
 
-Cloning creates a **new** environment with copies of content from the source. The clone payload is **configurable** — the user chooses what to include:
+Cloning copies content from the source into an existing destination environment. Creating that destination is a separate session-only operation. The clone payload is **configurable**: the user chooses what to include:
 
 - **Content** — Current mutable head rows (plus latest published snapshots when present), not full history
 - **Settings** — Environment-level configuration
@@ -289,7 +289,16 @@ Notes:
 
 Rules:
 
-- Environment management requires global `owner` or `admin` privileges. List, create, and delete accept only an authenticated Studio session. Clone and promote accept either an authenticated Studio session with global `owner` or `admin` privileges or an API key holding the matching `environments:clone` or `environments:promote` scope. Session callers with only `editor` or `viewer` access receive `FORBIDDEN` (`403`).
+- Environment management requires global `owner` or `admin` privileges. Create
+  and delete accept only an authenticated Studio session. List accepts an
+  admin/owner session or a bearer credential with `environments:read` whose API
+  key creator or OAuth granting user currently retains global admin/owner
+  privileges. OAuth is accepted only through trusted MCP dispatch, never on the
+  externally called REST endpoint. Clone and promote accept either an
+  authenticated Studio session with global `owner` or `admin` privileges or an
+  API key holding the matching `environments:clone` or `environments:promote`
+  scope. Session callers with only `editor` or `viewer` access receive
+  `FORBIDDEN` (`403`).
 - The latest synced project config snapshot derived from `mdcms.config.ts` is authoritative for valid environment names and `extends` chains.
 - `GET /api/v1/environments` may return existing environment rows even when no synced project config snapshot is available yet. In that case:
   - `meta.definitionsStatus` is `missing`
@@ -307,10 +316,166 @@ Rules:
   - returns `NOT_FOUND` when the environment id does not belong to the routed project
   - must not fail solely because the latest synced project config snapshot is missing
 
-| Method | Path                                     | Auth Mode          | Required Scope         | Target Routing      | Request                                                                                                  | Success                                                                  | Deterministic Errors                                                                                                                                           |
-| ------ | ---------------------------------------- | ------------------ | ---------------------- | ------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| GET    | `/api/v1/environments`                   | session            | none                   | required: `project` | explicit project routing only                                                                            | `200` `{ data: EnvironmentSummary[], meta: EnvironmentDefinitionsMeta }` | `MISSING_TARGET_ROUTING` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`)                                                                                  |
-| POST   | `/api/v1/environments`                   | session            | none                   | required: `project` | JSON: `{ name, extends? }`                                                                               | `200` `{ data: EnvironmentSummary }`                                     | `MISSING_TARGET_ROUTING` (`400`), `INVALID_INPUT` (`400`), `CONFIG_SNAPSHOT_REQUIRED` (`409`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `CONFLICT` (`409`) |
-| DELETE | `/api/v1/environments/:id`               | session            | none                   | required: `project` | path `id`                                                                                                | `200` `{ data: { deleted: true, id } }`                                  | `MISSING_TARGET_ROUTING` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`), `CONFLICT` (`409`)                                         |
-| POST   | `/api/v1/environments/:id/clone`         | session_or_api_key | `environments:clone`   | required: `project` | path `id`; JSON: `{ sourceEnvironmentId, include: { content, settings }, includeDrafts, preservePaths }` | `200` `{ data: { targetEnvironmentId, documentsCloned } }`               | `MISSING_TARGET_ROUTING` (`400`), `INVALID_INPUT` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`), `REFERENCE_REMAP_FAILED` (`409`)  |
-| POST   | `/api/v1/environments/:targetId/promote` | session_or_api_key | `environments:promote` | required: `project` | path `targetId`; JSON: `{ sourceEnvironmentId, documentIds, includeUnpublished, dryRun }`                | `200` `{ data: { promoted: DocumentPromotionResult[] } }`                | `MISSING_TARGET_ROUTING` (`400`), `INVALID_INPUT` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`), `REFERENCE_REMAP_FAILED` (`409`)  |
+| Method | Path                                     | Auth Mode                                               | Required Scope                                                      | Target Routing                                                                    | Request                                                                                                  | Success                                                                  | Deterministic Errors                                                                                                                                                                             |
+| ------ | ---------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------- | --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| GET    | `/api/v1/environments`                   | session_or_api_key; oauth only via trusted MCP dispatch | `environments:read` for bearer; global admin/owner for every caller | explicit `project` for session/API key; immutable token target for internal OAuth | routing only, no body                                                                                    | `200` `{ data: EnvironmentSummary[], meta: EnvironmentDefinitionsMeta }` | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`)                                                                                 |
+| POST   | `/api/v1/environments`                   | session                                                 | none                                                                | required: `project`                                                               | JSON: `{ name, extends? }`                                                                               | `200` `{ data: EnvironmentSummary }`                                     | `MISSING_TARGET_ROUTING` (`400`), `INVALID_INPUT` (`400`), `CONFIG_SNAPSHOT_REQUIRED` (`409`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `CONFLICT` (`409`)                                   |
+| DELETE | `/api/v1/environments/:id`               | session                                                 | none                                                                | required: `project`                                                               | path `id`                                                                                                | `200` `{ data: { deleted: true, id } }`                                  | `MISSING_TARGET_ROUTING` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`), `CONFLICT` (`409`)                                                                           |
+| POST   | `/api/v1/environments/:id/clone`         | session_or_api_key; oauth only via trusted MCP dispatch | `environments:clone` plus source/settings scopes below              | required: `project`                                                               | path `id`; JSON: `{ sourceEnvironmentId, include: { content, settings }, includeDrafts, preservePaths }` | `200` `{ data: { targetEnvironmentId, documentsCloned } }`               | `MISSING_TARGET_ROUTING` (`400`), `INVALID_INPUT` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`), `REFERENCE_REMAP_FAILED` (`409`), `TARGET_ROUTING_MISMATCH` (`400`) |
+| POST   | `/api/v1/environments/:targetId/promote` | session_or_api_key; oauth only via trusted MCP dispatch | `environments:promote` plus source/settings scopes below            | required: `project`                                                               | path `targetId`; JSON: `{ sourceEnvironmentId, documentIds, includeUnpublished, dryRun }`                | `200` `{ data: { promoted: DocumentPromotionResult[] } }`                | `MISSING_TARGET_ROUTING` (`400`), `INVALID_INPUT` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`), `REFERENCE_REMAP_FAILED` (`409`), `TARGET_ROUTING_MISMATCH` (`400`) |
+
+### Bearer Environment Listing
+
+`GET /api/v1/environments` is a metadata discovery operation. It does not create
+an environment, provision a project, read content, or modify the caller's target.
+Session callers retain the existing global admin/owner requirement and explicit
+project routing. Bearer callers must satisfy both the `environments:read` scope
+and the same current global admin/owner requirement for the credential's user.
+
+API keys send project using `X-MDCMS-Project` or `project` query routing. The key
+must have at least one allowed tuple in that project. An optional supplied
+environment must match an allowed tuple. For MCP, the outer request still requires
+the explicit project/environment tuple defined in SPEC-015. OAuth internal
+requests use the token's stored project/environment; a supplied value that differs
+from either field is rejected. No tool argument may override this routing.
+
+The success body uses the existing EnvironmentListResponse contract:
+
+```ts
+type EnvironmentListResponse = {
+  data: {
+    id: string;
+    project: string;
+    name: string;
+    extends: string | null;
+    isDefault: boolean;
+    createdAt: string;
+  }[];
+  meta:
+    | { definitionsStatus: "missing" }
+    | {
+        definitionsStatus: "ready";
+        configSnapshotHash: string;
+        syncedAt: string;
+      };
+};
+```
+
+Filter data to the routed project and the granting user's currently visible
+environments before serialization. Global admin/owner currently sees all
+existing environment rows in that project. Metadata discovery is project-scoped,
+so the list can include environments outside the credential's selected tuple;
+it grants no content access or mutation rights to those environments. Never
+return rows from another project, credentials or config snapshot contents.
+`extends` remains the parent environment name or null, and createdAt/syncedAt are
+ISO timestamps. There is no pagination or additional request filter. No visible
+rows returns an empty data array with the normal project definitions metadata.
+Missing synced config uses definitionsStatus=missing rather than failing listing.
+
+Deterministic errors use the normal domain error envelope:
+
+- Missing required session/API-key project: MISSING_TARGET_ROUTING (400).
+- Project outside an API key's allowed contexts, a supplied environment outside
+  its tuples, or routing inconsistent with an OAuth token: TARGET_ROUTING_MISMATCH
+  (400).
+- Missing, invalid, expired or revoked credential, including OAuth presented to
+  the external REST endpoint: UNAUTHORIZED (401).
+- Missing environments:read on a bearer credential, or a credential user without
+  current global admin/owner privileges: FORBIDDEN (403).
+
+Listing with environments:read alone never authorizes clone/promote, which keep
+independent operation scopes and source/destination checks. POST create and DELETE
+environment remain session-only even for an admin-owned bearer credential.
+
+### Clone and Promote Authorization Boundary
+
+Before loading source payloads or mutating the destination, resolve both environment
+IDs in the routed project. Missing or foreign-project IDs return NOT_FOUND (404).
+The path destination ID must resolve to the environment named by any supplied
+routing environment; mismatch returns TARGET_ROUTING_MISMATCH (400). An MCP call
+always has a destination environment: explicit API-key routing or the immutable
+OAuth token target. The resolved path destination must equal that environment.
+Session and direct API-key requests with project-only routing use the resolved
+path destination as their effective environment; this does not bypass allowlists.
+
+Require environments:clone or environments:promote at the resolved destination,
+plus the current granting user's global admin/owner role. For API keys, both source
+and destination tuples must be allowed. For OAuth, source and destination must be
+in the token's project and destination must equal the stored target. Source reads
+are a narrowly defined part of this operation: intersect the token's scopes with
+the granting user's current source grants. This does not permit an OAuth request
+to route to the source as its target or to call arbitrary source-content tools.
+
+Source permissions, also required for dry runs:
+
+| Operation                                            | Required source operation scopes              | Data permitted                                                                            |
+| ---------------------------------------------------- | --------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Clone with include.content=true, includeDrafts=false | content:read, schema:read                     | Published snapshots and schema needed for reference remapping; never mutable draft fields |
+| Clone with include.content=true, includeDrafts=true  | content:read:draft, content:read, schema:read | Mutable heads and any latest published snapshots copied with them                         |
+| Clone with include.settings=true                     | schema:read                                   | Source schema registry and sync snapshot; also require schema:write at destination        |
+| Promote with either includeUnpublished value         | content:read:draft, schema:read               | Mutable source heads and schema needed for remapping                                      |
+
+Clone content defaults to included and includeDrafts defaults to true. Settings
+defaults to false. Promote includeUnpublished=false skips documents with no
+published version; it does not select the published snapshot instead of the
+mutable head. Thus it never reduces the source scope to content:read.
+
+Check source-read grants for every selected document path and destination write
+and publish grants for every affected path, including the old path of an
+existing overwritten document and its resulting path. The destination environment
+operation scope authorizes its defined copy/publish behavior; it does not imply
+source-read scopes or settings schema:write. Reference resolution must not expose
+otherwise unreadable documents. Any denied source or destination fails the whole
+operation with FORBIDDEN (403), without partial writes, events or a dry-run plan
+containing denied data. Existing atomic reference-remap failure semantics remain.
+Authorization must cover the exact rows/paths consumed by the transaction; a
+preflight outside the transaction cannot justify consuming a changed source set.
+
+The endpoint contract table's required scopes include these conditional source
+scopes and settings destination scope. Routing errors include
+TARGET_ROUTING_MISMATCH (400). No environment is created by clone: the destination
+must already exist; provisioning it remains a separate session-only action.
+
+### Clone and Promote Content Attribution
+
+Every clone/promote content mutation requires a server-derived
+ContentWriteAttribution containing actorId and origin, as defined by SPEC-003.
+After authorizing the operation and its source/destination contexts, carry this
+required value through the route, environment store and transactional engine.
+It is execution context, never part of EnvironmentCloneInput or
+EnvironmentPromoteInput accepted from the client. HTTP callers cannot choose an
+actor, credential, origin or channel through request bodies or untrusted headers.
+Unexpected attribution fields follow normal request validation and cannot affect
+the attribution passed to persistence.
+
+The actor is the session user, API key creator, or OAuth granting user. Ordinary
+session operations use channel studio and credential session; external API-key
+operations use channel api and credential api_key. Trusted MCP dispatch uses
+channel mcp with the actual API-key or OAuth credential and its verified
+identifier. Declared client metadata remains unverified under SPEC-005/015 and
+never changes actor, channel or permissions. systemAttribution is reserved for
+explicit server-internal jobs; it is not a missing-context fallback for a request.
+
+Persistence rules apply to all raw inserts and updates inside clone/promote:
+
+- A newly created target head records createdBy and updatedBy as actorId, and
+  createdOrigin and updatedOrigin as origin. Do not copy the source document's
+  authorship or substitute a default actor.
+- An overwritten target head preserves its existing createdBy and createdOrigin,
+  including a historical null origin, and sets updatedBy and updatedOrigin to the
+  current operation's actor and origin.
+- A newly inserted cloned version 1 and every newly inserted promoted version
+  record publishedBy as actorId and publishedOrigin as origin. These are new
+  target publication events, even when their content came from an existing source
+  snapshot. Source publication attribution is not the target publication actor.
+- Source heads and versions remain unchanged. Clone does not copy a complete
+  historical series, and promotion does not rewrite old target versions.
+- Attribution fields commit in the same transaction as their head/version changes.
+  Any lifecycle event emitted for the operation carries the same actor/origin;
+  failed operations emit no successful mutation event or attribution change.
+
+Promotion dryRun computes the authorized plan without writing heads, versions,
+origins, authors or lifecycle events. It does not refresh last-editor metadata.
+The same source scopes, destination binding, tuple restrictions and per-path
+checks defined above apply before returning a dry-run result. Passing attribution
+is not authorization and cannot bypass any of those checks.

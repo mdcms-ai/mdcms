@@ -107,3 +107,25 @@ Entries are reverse-chronological (newest first).
 **Rule:** Treat loopback listener failures on port `0` in CLI tests as a likely sandbox artifact before debugging login code.
 **Why:** `bun test --cwd apps/cli ./src` can fail `loopback callback returns styled HTML success page` with `Failed to start server. Is port 0 in use?` under Codex sandboxing, while the same targeted test passes outside the sandbox.
 **How to apply:** When a CLI test that binds `127.0.0.1` fails with a port-bind error, rerun the targeted test with sandbox escalation before attributing the failure to product code.
+
+## 2026-11-11: distinguish store contracts when migrating callers
+
+**Rule:** Identify the owning store contract before updating calls to common methods such as `create`, `update`, and `restore`.
+**Why:** Content, environment, and webhook stores use the same method names but accept different authorization metadata.
+**How to apply:** Scope edits by the concrete store type, preserve existing actor semantics outside that contract, and typecheck all affected callers.
+
+- Validate agent-tool response schemas against mounted domain routes, including database-backed fixtures.
+  Why: Handwritten fixtures can accidentally add fields that the actual response omits, hiding incompatible envelope or nested schema definitions.
+  How to apply: Parse successful registry and adapted Assistant outputs with their advertised schemas and include a real runtime integration case.
+
+## OAuth transactional authorization
+
+**Rule:** Reuse the active PostgreSQL transaction for current-grant checks during token issuance and refresh.
+**Why:** Opening another pooled connection while holding transaction locks can exhaust the pool and deadlock concurrent exchanges.
+**How to apply:** Pass the transaction into authorization reads and verify exchange and refresh with a one-connection pool. Commit replay revocation before returning an OAuth error.
+
+## 2026-11-12: preserve released migration indices across branches
+
+**Rule:** Keep released Drizzle migrations and regenerate unpublished schema deltas against the current released snapshot.
+**Why:** Independent branches can allocate the same migration index with different snapshots; combining those journals can skip or misapply schema changes.
+**How to apply:** Preserve the released migration and snapshot, regenerate the unpublished delta from the merged schema, then verify both a fresh database and legacy-data preservation.

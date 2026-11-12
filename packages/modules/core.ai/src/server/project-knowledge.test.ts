@@ -259,7 +259,7 @@ test("renders reference field with target type", () => {
   // Reference fields trigger the "use real UUIDs" guidance section so
   // the model doesn't paste a display name into a reference field.
   assert.ok(block.includes("### Reference fields require real entry ids"));
-  assert.ok(block.includes("find_entries"));
+  assert.ok(block.includes("list_documents"));
 });
 
 test("omits the reference-guidance section when no schema has a reference", () => {

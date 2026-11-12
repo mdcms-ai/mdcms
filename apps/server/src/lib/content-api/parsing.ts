@@ -20,6 +20,49 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+export function parseExpectedDraftRevision(
+  value: unknown,
+  query = false,
+): number | undefined {
+  if (value === undefined) return undefined;
+  const parsed =
+    query && typeof value === "string" && /^\d+$/.test(value)
+      ? Number(value)
+      : value;
+  if (
+    typeof parsed !== "number" ||
+    !Number.isSafeInteger(parsed) ||
+    parsed < 0
+  ) {
+    throw new RuntimeError({
+      code: "INVALID_INPUT",
+      message: "expectedDraftRevision must be a nonnegative integer.",
+      statusCode: 400,
+    });
+  }
+  return parsed;
+}
+
+export function assertExpectedDraftRevision(
+  documentId: string,
+  current: number,
+  expected?: number,
+): void {
+  parseExpectedDraftRevision(expected);
+  if (expected !== undefined && expected !== current) {
+    throw new RuntimeError({
+      code: "STALE_DRAFT_REVISION",
+      message: "The document draft has changed.",
+      statusCode: 409,
+      details: {
+        documentId,
+        expectedDraftRevision: expected,
+        currentDraftRevision: current,
+      },
+    });
+  }
+}
+
 export function parseQueryParam<T>(
   schema: z.ZodType<T>,
   value: unknown,

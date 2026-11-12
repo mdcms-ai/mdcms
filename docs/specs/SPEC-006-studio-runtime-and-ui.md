@@ -479,8 +479,8 @@ type within the active `(project, environment)` target. It is backed by:
 - `GET /api/v1/me/capabilities` for action gating (inherited from layout)
 
 The list response includes an optional `users` sidecar map that batch-resolves
-`createdBy` user IDs to `{ name, email }` for author display without per-user
-lookups.
+`createdBy` and `updatedBy` user IDs to `{ name, email }` for author display
+without per-user lookups (SPEC-003 "User Summary Sidecar").
 
 Normative behavior:
 
@@ -838,7 +838,27 @@ Normative behavior:
   controls.
 - `Info` shows the read-only document metadata as a monospace key/value
   block (`status`, `type`, `locale`, `publishedVersion`, `updatedAt`,
-  `path`).
+  `updatedBy`, `path`).
+- The `Info` `updatedBy` row shows the last editor and the channel of the last
+  write in the change attribution display format below, using the document's
+  `updatedBy` and `updatedOrigin` and the `users` map returned by
+  `GET /api/v1/content/:documentId`. The row refreshes after the document
+  changes.
+- The `History` tab lists published versions. Each version shows the publishing
+  user's name, resolved from the `users` map of
+  `GET /api/v1/content/:documentId/versions` by `publishedBy`, in the change
+  attribution display format below, using `publishedOrigin`.
+- Change attribution display format (SPEC-003 "Change Attribution"):
+  - The user's name comes first. A user ID that the `users` map cannot resolve
+    is shown as "Unknown".
+  - When an origin is present, the name is followed by `·` and the channel
+    label: `Studio` (`studio`), `Studio AI` (`studio_ai`), `MCP` (`mcp`), `API`
+    (`api`), or `System` (`system`).
+  - When the origin has a `declared` client name, it follows the channel label
+    in parentheses, for example `Ada Lovelace · MCP (claude-code 1.2)`. Studio
+    labels the declared name as reported by the client (for example in an
+    accessible description or tooltip), because the server does not verify it.
+  - When no origin is present, only the name is shown.
 - The default selected sidebar tab is `Properties` unless an MDX component
   is actively selected, in which case `Component` becomes the selected
   tab.
@@ -1242,3 +1262,19 @@ Execution mode:
 | GET    | `/api/v1/studio/bootstrap`         | public             | none           | none                | optional query pair: `rejectedBuildId`, `rejectionReason`                                                                   | `200` `StudioBootstrapReadyResponse`                        | `INVALID_QUERY_PARAM` (`400`), `FORBIDDEN_ORIGIN` (`403`), `STUDIO_RUNTIME_DISABLED` (`503`), `STUDIO_RUNTIME_UNAVAILABLE` (`503`), `INTERNAL_ERROR` (`500`) |
 | GET    | `/api/v1/studio/assets/:buildId/*` | public             | none           | none                | `buildId` path param                                                                                                        | `200` immutable runtime asset stream                        | `FORBIDDEN_ORIGIN` (`403`), `NOT_FOUND` (`404`)                                                                                                              |
 | GET    | `/api/v1/me/capabilities`          | session_or_api_key | none           | project+environment | session cookie or `Authorization: Bearer <mdcms_key_...>` plus explicit `X-MDCMS-Project` and `X-MDCMS-Environment` routing | `200` `{ data: { project, environment, capabilities } }`    | `UNAUTHORIZED` (`401`), `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `FORBIDDEN_ORIGIN` (`403`)                                      |
+
+## Connected Apps
+
+Settings includes Connected apps for session-authenticated users. It consumes
+SPEC-005's OAuth connection list and revoke endpoints with explicit project
+routing. Members see their connections; project admins/owners see project-wide
+connections. Token-mode Studio shows that session sign-in is required and must
+not attempt an API-key workaround.
+
+Each row shows escaped client name labeled unverified, granting user, environment,
+scopes, creation time and last use (or Never used). Revoke identifies the client
+and target before confirmation, then invalidates the grant through the session
+CSRF-protected endpoint. Refresh the list after success. A failed request leaves
+the row visible with an actionable error; do not claim revocation before success.
+Show loading, empty, unauthorized and unavailable states. Do not display tokens or
+hashes. The Studio review consumer must mirror these contracts and states.

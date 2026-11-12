@@ -53,7 +53,9 @@ const env = {
   APP_VERSION: "9.9.9",
   PORT: "4000",
   SERVICE_NAME: "mdcms-server",
-  DATABASE_URL: "postgres://mdcms:mdcms@localhost:5432/mdcms",
+  DATABASE_URL:
+    process.env.MDCMS_TEST_DATABASE_URL ??
+    "postgres://mdcms:mdcms@localhost:5432/mdcms",
 } as NodeJS.ProcessEnv;
 
 const logger = createConsoleLogger({
@@ -969,6 +971,61 @@ testWithDatabase(
       assert.ok(location);
       assert.equal(location.startsWith(provider.authorizationEndpoint), true);
       assert.ok(extractSetCookie(response));
+    } finally {
+      await provider.close();
+      await dbConnection.close();
+    }
+  },
+);
+
+testWithDatabase(
+  "auth canonical callback origin ignores Host and forwarded headers",
+  async () => {
+    const provider = await startMockOidcProvider(
+      {
+        sub: "oidc-user-1",
+        email: "oidc-user@example.com",
+        email_verified: true,
+        name: "OIDC User",
+      },
+      {
+        clientId: "okta-client-id",
+      },
+    );
+    const { handler, dbConnection } = createServerRequestHandlerWithModules({
+      env: createOidcEnv(provider, {
+        ...env,
+        MDCMS_SERVER_URL: "https://cms.example.com/",
+      }),
+      logger,
+    });
+
+    try {
+      const response = await handler(
+        new Request("http://localhost/api/v1/auth/sign-in/sso", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            host: "attacker.invalid",
+            forwarded: "host=attacker.invalid;proto=http",
+            "x-forwarded-host": "attacker.invalid",
+            "x-forwarded-proto": "http",
+          },
+          body: JSON.stringify({
+            providerId: "okta",
+            callbackURL: "/studio",
+          }),
+        }),
+      );
+
+      assert.equal(response.status, 302);
+      const location = response.headers.get("location");
+      assert.ok(location);
+      assert.equal(location.startsWith(provider.authorizationEndpoint), true);
+      assert.equal(
+        new URL(location).searchParams.get("redirect_uri"),
+        "https://cms.example.com/api/v1/auth/sso/callback/okta",
+      );
     } finally {
       await provider.close();
       await dbConnection.close();

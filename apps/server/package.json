@@ -26,7 +26,8 @@
     "start": "bun --conditions @mdcms/source src/bin/http-server.ts",
     "demo:seed": "bun --conditions @mdcms/source src/bin/demo-seed-api-key.ts",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
-    "db:migrate": "drizzle-kit migrate --config drizzle.config.ts"
+    "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
+    "test:integration:oauth": "MDCMS_OAUTH_INTEGRATION=1 bun test ./src/lib/oauth ./src/lib/mcp"
   },
   "dependencies": {
     "@better-auth/sso": "1.5.1",
@@ -36,6 +37,7 @@
     "@mdcms/modules": "workspace:*",
     "@mdcms/shared": "workspace:*",
     "@mdcms/studio": "workspace:*",
+    "@modelcontextprotocol/sdk": "1.32.2",
     "better-auth": "^1.5.1",
     "crossws": "0.4.6",
     "drizzle-orm": "^0.45.1",
