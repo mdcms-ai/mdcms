@@ -1,5 +1,14 @@
 # @mdcms/sdk
 
+## 0.4.2
+
+### Patch Changes
+
+- b1a1405: Add @mdcms/studio/client-config with toSerializableStudioConfig and createStudioClientConfig for passing a prepared Studio config, including registered MDX components, from a server component to the browser, and re-export the document response types from @mdcms/sdk.
+- d0f4b37: A document's md/mdx format now follows its body: it is mdx when it contains a component or an import/export line. The SDK renderer compiles with that format, the CLI names files after it and treats a .md/.mdx rename as the same document, and a component's load may return its module.
+- Updated dependencies [d0f4b37]
+  - @mdcms/shared@0.6.1
+
 ## 0.4.1
 
 ### Patch Changes

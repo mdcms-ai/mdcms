@@ -1,6 +1,6 @@
 {
   "name": "@mdcms/editor-core",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Reusable non-React editor schema and Markdown/MDX conversion primitives for MDCMS",
   "type": "module",
   "main": "./dist/index.js",
@@ -47,7 +47,7 @@
     "test": "bun test ./src"
   },
   "dependencies": {
-    "@mdcms/shared": "^0.6.0",
+    "@mdcms/shared": "^0.6.1",
     "@tiptap/core": "^3.7.0",
     "@tiptap/extension-code-block-lowlight": "^3.7.0",
     "@tiptap/extension-highlight": "^3.7.0",
