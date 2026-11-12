@@ -14,12 +14,27 @@ Create a catch-all route for Studio:
 
 ```tsx
 // app/admin/[[...path]]/page.tsx
-import { createStudioEmbedConfig } from "@mdcms/studio/runtime";
+import { prepareStudioConfig } from "@mdcms/studio/runtime";
+
 import config from "../../../mdcms.config";
 import { AdminStudioClient } from "./admin-studio-client";
 
+export const dynamic = "force-dynamic";
+
 export default async function AdminPage() {
-  return <AdminStudioClient config={createStudioEmbedConfig(config)} />;
+  // Runs on the server, where the full schema is available. The schema hash
+  // it computes is what lets Studio write to the project.
+  const prepared = await prepareStudioConfig(config, { cwd: process.cwd() });
+
+  return (
+    <AdminStudioClient
+      project={prepared.project}
+      environment={prepared.environment}
+      serverUrl={prepared.serverUrl}
+      schemaHash={prepared._schemaHash}
+      documentRouteMetadata={prepared._documentRouteMetadata}
+    />
+  );
 }
 ```
 
@@ -29,10 +44,28 @@ export default async function AdminPage() {
 
 import { Studio, type MdcmsConfig } from "@mdcms/studio";
 
-export function AdminStudioClient({ config }: { config: MdcmsConfig }) {
+export function AdminStudioClient(props: {
+  project: string;
+  environment: string;
+  serverUrl: string;
+  schemaHash?: string;
+  documentRouteMetadata?: MdcmsConfig["_documentRouteMetadata"];
+}) {
+  const config = {
+    project: props.project,
+    environment: props.environment,
+    serverUrl: props.serverUrl,
+    ...(props.schemaHash ? { _schemaHash: props.schemaHash } : {}),
+    ...(props.documentRouteMetadata
+      ? { _documentRouteMetadata: props.documentRouteMetadata }
+      : {}),
+  } as MdcmsConfig;
+
   return <Studio config={config} basePath="/admin" />;
 }
 ```
+
+`prepareStudioConfig` runs on the server, where the full `mdcms.config.ts` is available, and computes the schema hash Studio needs before it allows edits. Pass only these plain values to the client component: the full config holds Zod schemas and functions that cannot cross the server/client boundary. Do not use `createStudioEmbedConfig` for an editing Studio: it carries no schema hash, so every document opens read-only.
 
 `basePath` tells Studio where it's mounted so deep links resolve correctly.
 
