@@ -8,6 +8,7 @@ import {
 } from "@mdcms/shared";
 
 import { RemoteStudioApp } from "./remote-studio-app.js";
+import { activateStudioSessionToken } from "./studio-session-token.js";
 import {
   installStudioRuntimeStyles,
   resolveStudioRuntimeStylesheetUrl,
@@ -37,6 +38,10 @@ export const mount: RemoteStudioModule["mount"] = (
     resolveStudioRuntimeStylesheetUrl(import.meta.url),
   );
   const root = createRoot(target);
+
+  if (context.auth.mode === "cookie") {
+    activateStudioSessionToken(context.apiBaseUrl);
+  }
 
   root.render(createElement(RemoteStudioApp, { context }));
 

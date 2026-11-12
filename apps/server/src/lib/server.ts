@@ -27,6 +27,10 @@ import {
   type StudioBootstrapRetryContext,
   type StudioRuntimePublicationInput,
 } from "./studio-bootstrap.js";
+import {
+  isAllowedStudioOrigin,
+  STUDIO_SIGN_IN_PATH,
+} from "./studio-sign-in.js";
 
 export type ServerRequestHandler = (request: Request) => Promise<Response>;
 
@@ -61,6 +65,7 @@ const STUDIO_CORS_ALLOW_HEADERS = [
   "X-MDCMS-Locale",
   "X-MDCMS-Schema-Hash",
   "X-MDCMS-CSRF-Token",
+  "X-MDCMS-Session",
 ].join(", ");
 const STUDIO_BROWSER_ROUTE_PREFIXES = [
   "/api/v1/studio",
@@ -177,30 +182,6 @@ function appendResponseHeaders(
   });
 }
 
-/**
- * Loopback origins implicitly trusted for Studio browser routes when
- * running outside production. The dev-time convenience saves operators
- * from listing both `localhost` and `127.0.0.1` variants of the same
- * port in `MDCMS_STUDIO_ALLOWED_ORIGINS`; production deployments rely
- * exclusively on the env-configured allowlist.
- */
-const STUDIO_LOOPBACK_DEV_ORIGINS: readonly string[] = [
-  "http://localhost:4173",
-  "http://127.0.0.1:4173",
-];
-
-function studioLoopbackEnabled(): boolean {
-  // Resolved at request time so test env mutations are honored without
-  // restarting the process.
-  try {
-    return (
-      typeof process !== "undefined" && process.env?.NODE_ENV !== "production"
-    );
-  } catch {
-    return false;
-  }
-}
-
 function resolveStudioCorsContext(
   request: Request,
   allowedOrigins: readonly string[],
@@ -218,13 +199,10 @@ function resolveStudioCorsContext(
   }
 
   const requestOrigin = new URL(request.url).origin;
-  const loopbackAllowed =
-    studioLoopbackEnabled() && STUDIO_LOOPBACK_DEV_ORIGINS.includes(origin);
 
   if (
     origin !== requestOrigin &&
-    !allowedOrigins.includes(origin) &&
-    !loopbackAllowed
+    !isAllowedStudioOrigin(origin, allowedOrigins)
   ) {
     throw createForbiddenOriginError(origin, pathname);
   }
@@ -263,7 +241,8 @@ function shouldPreserveHtmlErrorResponse(
 ): boolean {
   return (
     contentType?.includes("text/html") === true &&
-    resolvePathname(request) === "/api/v1/auth/cli/login/authorize"
+    (resolvePathname(request) === "/api/v1/auth/cli/login/authorize" ||
+      resolvePathname(request) === STUDIO_SIGN_IN_PATH)
   );
 }
 

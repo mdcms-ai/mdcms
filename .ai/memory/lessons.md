@@ -107,3 +107,9 @@ Entries are reverse-chronological (newest first).
 **Rule:** Treat loopback listener failures on port `0` in CLI tests as a likely sandbox artifact before debugging login code.
 **Why:** `bun test --cwd apps/cli ./src` can fail `loopback callback returns styled HTML success page` with `Failed to start server. Is port 0 in use?` under Codex sandboxing, while the same targeted test passes outside the sandbox.
 **How to apply:** When a CLI test that binds `127.0.0.1` fails with a port-bind error, rerun the targeted test with sandbox escalation before attributing the failure to product code.
+
+## 2026-11-12: compare dates with drizzle operators, not raw `sql`
+
+**Rule:** Use drizzle operators (`lt`, `gt`, `eq`) for `Date` values; do not interpolate a `Date` into a raw `sql` template.
+**Why:** With the postgres.js driver, a `Date` interpolated into `sql` is sent as its `toString()` form and the query fails at runtime, while the same comparison through `lt(column, date)` is serialized correctly. Typecheck does not catch it.
+**How to apply:** In server queries, reach for `like`/`lt`/`gt` and friends first; reserve raw `sql` for expressions drizzle has no operator for, and pass dates as ISO strings there.

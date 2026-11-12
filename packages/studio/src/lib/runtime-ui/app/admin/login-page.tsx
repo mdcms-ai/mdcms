@@ -1,11 +1,16 @@
 "use client";
 
-import { useReducer, useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useBasePath } from "../../navigation.js";
 import { Button } from "../../components/ui/button.js";
-import { Input } from "../../components/ui/input.js";
 import { MDCMSLogo } from "../../components/mdcms-logo.js";
 import { createLoginApi, type SsoProvider } from "../../../login-api.js";
+import { clearStudioSessionToken } from "../../../studio-session-token.js";
+import {
+  completeStudioSignIn,
+  createStudioSignInUrl,
+  readStudioSignInCallback,
+} from "../../lib/studio-sign-in.js";
 import { useStudioSession } from "./session-context.js";
 import { useStudioMountInfo } from "./mount-info-context.js";
 
@@ -22,61 +27,62 @@ function stripAdminPrefix(path: string): string {
   return path.startsWith("/admin") ? path.slice("/admin".length) : path;
 }
 
-const EMPTY_SSO_PROVIDERS: SsoProvider[] = [];
-
-type LoginState = {
-  email: string;
-  password: string;
-  submitting: boolean;
-  error: string | null;
-  sso: { status: "loading" } | { status: "ready"; providers: SsoProvider[] };
-};
-
-type LoginAction =
-  | { type: "email-change"; value: string }
-  | { type: "password-change"; value: string }
-  | { type: "submit-start" }
-  | { type: "submit-error"; message: string }
-  | { type: "sso-ready"; providers: SsoProvider[] };
-
-const initialLoginState: LoginState = {
-  email: "",
-  password: "",
-  submitting: false,
-  error: null,
-  sso: { status: "loading" },
-};
-
-function loginReducer(state: LoginState, action: LoginAction): LoginState {
-  switch (action.type) {
-    case "email-change":
-      return { ...state, email: action.value };
-    case "password-change":
-      return { ...state, password: action.value };
-    case "submit-start":
-      return { ...state, submitting: true, error: null };
-    case "submit-error":
-      return { ...state, submitting: false, error: action.message };
-    case "sso-ready":
-      return {
-        ...state,
-        sso: { status: "ready", providers: action.providers },
-      };
-  }
+function toErrorMessage(error: unknown): string {
+  return error instanceof Error && error.message
+    ? error.message
+    : "Sign-in failed. Try again.";
 }
 
+type LoginStatus =
+  | { kind: "working"; message: string }
+  | { kind: "choose" }
+  | { kind: "error"; message: string };
+
+/**
+ * Studio does not collect passwords itself. It sends the browser to the MDCMS
+ * server's sign-in page, which redirects back here with a one-time code that
+ * is exchanged for a session (see `studio-sign-in.ts`). When SSO providers are
+ * configured, the page offers them next to email sign-in.
+ */
 export default function LoginPage() {
   const { replace } = useRouter();
   const basePath = useBasePath();
   const sessionState = useStudioSession();
   const mountInfo = useStudioMountInfo();
   const returnTo = useReturnTo();
+  const serverUrl = mountInfo.apiBaseUrl;
 
-  const [state, dispatch] = useReducer(loginReducer, initialLoginState);
-  const { email, password, submitting, error } = state;
-  const ssoProviders =
-    state.sso.status === "ready" ? state.sso.providers : EMPTY_SSO_PROVIDERS;
-  const ssoLoading = state.sso.status === "loading";
+  const [status, setStatus] = useState<LoginStatus>({
+    kind: "working",
+    message: "Opening sign-in…",
+  });
+  const [ssoProviders, setSsoProviders] = useState<SsoProvider[]>([]);
+  const startedRef = useRef(false);
+
+  const resolveStudioUrl = useCallback(
+    (path: string) => {
+      const target = path.startsWith("/admin") ? path : "/admin";
+      return basePath ? `${basePath}${stripAdminPrefix(target)}` : target;
+    },
+    [basePath],
+  );
+
+  const startSignIn = useCallback(async () => {
+    setStatus({ kind: "working", message: "Opening sign-in…" });
+
+    try {
+      clearStudioSessionToken(serverUrl);
+      const url = await createStudioSignInUrl({
+        serverUrl,
+        redirectUri: `${window.location.origin}${window.location.pathname}`,
+        returnTo,
+        storage: window.sessionStorage,
+      });
+      window.location.assign(url);
+    } catch (error) {
+      setStatus({ kind: "error", message: toErrorMessage(error) });
+    }
+  }, [returnTo, serverUrl]);
 
   useEffect(() => {
     if (sessionState.status === "authenticated") {
@@ -85,69 +91,53 @@ export default function LoginPage() {
   }, [sessionState.status, returnTo, replace]);
 
   useEffect(() => {
-    if (!mountInfo.apiBaseUrl) {
-      dispatch({ type: "sso-ready", providers: EMPTY_SSO_PROVIDERS });
+    if (
+      startedRef.current ||
+      sessionState.status === "loading" ||
+      sessionState.status === "authenticated" ||
+      !serverUrl
+    ) {
       return;
     }
 
-    let cancelled = false;
-    const api = createLoginApi({ serverUrl: mountInfo.apiBaseUrl });
+    startedRef.current = true;
+    const callback = readStudioSignInCallback(window.location.search);
 
-    void api
-      .getSsoProviders()
-      .then((providers) => {
-        if (!cancelled) {
-          dispatch({ type: "sso-ready", providers });
-        }
+    if (callback.kind === "code") {
+      setStatus({ kind: "working", message: "Signing in…" });
+      completeStudioSignIn({
+        serverUrl,
+        code: callback.code,
+        state: callback.state,
+        storage: window.sessionStorage,
       })
-      .catch(() => {
-        if (!cancelled) {
-          dispatch({ type: "sso-ready", providers: EMPTY_SSO_PROVIDERS });
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [mountInfo.apiBaseUrl]);
-
-  const handleSubmit = async (event: React.FormEvent) => {
-    event.preventDefault();
-    dispatch({ type: "submit-start" });
-
-    const api = createLoginApi({ serverUrl: mountInfo.apiBaseUrl });
-    const result = await api.login(email, password);
-
-    switch (result.outcome) {
-      case "success":
-        window.location.href = basePath
-          ? `${basePath}${stripAdminPrefix(returnTo)}`
-          : returnTo;
-        return;
-      case "invalid_credentials":
-        dispatch({
-          type: "submit-error",
-          message: "Invalid email or password.",
+        .then(({ returnTo: next }) => {
+          window.location.href = resolveStudioUrl(next);
+        })
+        .catch((error: unknown) => {
+          setStatus({ kind: "error", message: toErrorMessage(error) });
         });
-        break;
-      case "throttled":
-        dispatch({
-          type: "submit-error",
-          message: `Too many attempts. Try again in ${result.retryAfterSeconds}s.`,
-        });
-        break;
-      case "error":
-        dispatch({ type: "submit-error", message: result.message });
-        break;
+      return;
     }
-  };
+
+    void createLoginApi({ serverUrl })
+      .getSsoProviders()
+      .catch(() => [] as SsoProvider[])
+      .then((providers) => {
+        if (providers.length > 0) {
+          setSsoProviders(providers);
+          setStatus({ kind: "choose" });
+          return;
+        }
+
+        void startSignIn();
+      });
+  }, [resolveStudioUrl, serverUrl, sessionState.status, startSignIn]);
 
   const handleSsoClick = (providerId: string) => {
-    const callbackURL = basePath
-      ? `${basePath}${stripAdminPrefix(returnTo)}`
-      : returnTo;
+    const callbackURL = resolveStudioUrl(returnTo);
 
-    void fetch(`${mountInfo.apiBaseUrl}/api/v1/auth/sign-in/sso`, {
+    void fetch(`${serverUrl}/api/v1/auth/sign-in/sso`, {
       method: "POST",
       credentials: "include",
       headers: { "content-type": "application/json" },
@@ -163,16 +153,16 @@ export default function LoginPage() {
         if (redirectUrl) {
           window.location.href = redirectUrl;
         } else {
-          dispatch({
-            type: "submit-error",
+          setStatus({
+            kind: "error",
             message:
               "SSO provider did not return a redirect. Please try again.",
           });
         }
       })
       .catch(() => {
-        dispatch({
-          type: "submit-error",
+        setStatus({
+          kind: "error",
           message: "SSO sign-in failed. Please try again.",
         });
       });
@@ -190,89 +180,52 @@ export default function LoginPage() {
             <MDCMSLogo collapsed={false} />
           </div>
           <p className="text-sm text-foreground-muted">
-            Sign in to your workspace
+            {status.kind === "working"
+              ? status.message
+              : "Sign in to your workspace"}
           </p>
         </div>
 
-        {!ssoLoading && ssoProviders.length > 0 && (
-          <>
-            <div className="space-y-2">
-              {ssoProviders.map((provider) => (
-                <Button
-                  key={provider.id}
-                  type="button"
-                  variant="ghost"
-                  className="w-full"
-                  onClick={() => handleSsoClick(provider.id)}
-                >
-                  Continue with {provider.name}
-                </Button>
-              ))}
+        {status.kind === "error" && (
+          <div className="space-y-4">
+            <div
+              role="alert"
+              className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive"
+            >
+              {status.message}
             </div>
-
-            <div className="flex items-center gap-3">
-              <div className="h-px flex-1 bg-border" />
-              <span className="text-xs text-foreground-muted">or</span>
-              <div className="h-px flex-1 bg-border" />
-            </div>
-          </>
+            <Button
+              type="button"
+              className="w-full"
+              onClick={() => void startSignIn()}
+            >
+              Try again
+            </Button>
+          </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {error && (
-            <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
-              {error}
-            </div>
-          )}
-
+        {status.kind === "choose" && (
           <div className="space-y-2">
-            <label
-              htmlFor="login-email"
-              className="text-sm font-medium text-foreground"
+            {ssoProviders.map((provider) => (
+              <Button
+                key={provider.id}
+                type="button"
+                variant="ghost"
+                className="w-full"
+                onClick={() => handleSsoClick(provider.id)}
+              >
+                Continue with {provider.name}
+              </Button>
+            ))}
+            <Button
+              type="button"
+              className="w-full"
+              onClick={() => void startSignIn()}
             >
-              Email
-            </label>
-            <Input
-              id="login-email"
-              type="email"
-              placeholder="you@company.com"
-              value={email}
-              onChange={(e) =>
-                dispatch({ type: "email-change", value: e.target.value })
-              }
-              required
-              autoComplete="email"
-            />
+              Sign in with email
+            </Button>
           </div>
-
-          <div className="space-y-2">
-            <label
-              htmlFor="login-password"
-              className="text-sm font-medium text-foreground"
-            >
-              Password
-            </label>
-            <Input
-              id="login-password"
-              type="password"
-              placeholder="••••••••"
-              value={password}
-              onChange={(e) =>
-                dispatch({ type: "password-change", value: e.target.value })
-              }
-              required
-              autoComplete="current-password"
-            />
-          </div>
-
-          <Button
-            type="submit"
-            className="w-full"
-            disabled={submitting || !email || !password}
-          >
-            {submitting ? "Signing in..." : "Sign in"}
-          </Button>
-        </form>
+        )}
       </div>
     </div>
   );

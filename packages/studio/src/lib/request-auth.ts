@@ -1,5 +1,10 @@
 import type { StudioMountContext } from "@mdcms/shared";
 
+import {
+  STUDIO_SESSION_HEADER,
+  getActiveStudioSessionToken,
+} from "./studio-session-token.js";
+
 export type StudioRuntimeAuth = StudioMountContext["auth"];
 
 export function isStudioCookieAuth(
@@ -27,6 +32,15 @@ export function applyStudioAuthToRequestInit(
 
   if (auth?.mode === "cookie" && nextInit.credentials === undefined) {
     nextInit.credentials = "include";
+  }
+
+  // Session auth signed in through the server redirect sends its session in
+  // a header, which works where the browser blocks the server's cookie.
+  const sessionToken =
+    auth?.mode === "cookie" ? getActiveStudioSessionToken() : undefined;
+
+  if (sessionToken) {
+    headers.set(STUDIO_SESSION_HEADER, sessionToken);
   }
 
   const headerEntries = Array.from(headers.entries());

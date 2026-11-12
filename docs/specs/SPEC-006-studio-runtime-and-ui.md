@@ -86,7 +86,8 @@ export type StudioMountContext = {
 
 `auth` semantics:
 
-- `cookie` mode is the default. The remote Studio runtime uses credentialed browser requests against `apiBaseUrl` and obtains CSRF bootstrap state from the auth/session endpoints.
+- `cookie` mode is the default. The remote Studio runtime uses credentialed browser requests against `apiBaseUrl` and obtains CSRF bootstrap state from the auth/session endpoints. Sign-in uses Studio browser sign-in (`SPEC-005`): the resulting session token is stored in `localStorage` under a key derived from `apiBaseUrl`, so other tabs of the host stay signed in, and is sent as `X-MDCMS-Session` on every Studio API request. Sign-out revokes that session and removes the stored token.
+- While Studio uses a header-carried session, real-time collaboration and presence are off, because the collaboration WebSocket handshake authenticates with the session cookie only. Document edits are saved through the HTTP draft routes, as in `token` mode.
 - `token` mode uses `Authorization: Bearer <token>` on Studio API requests. In MVP, this bearer token is an MDCMS API key.
 - In both auth modes, the runtime may call `GET /api/v1/me/capabilities` with explicit `X-MDCMS-Project` and `X-MDCMS-Environment` routing to determine target-scoped UI capabilities. Capability responses drive UI gating only; backend authorization remains the final authority.
 
@@ -141,7 +142,13 @@ the component catalog.
 Cookie-authenticated Studio routes must redirect to `/admin/login` when the
 session bootstrap request cannot verify the active browser session, including
 `401` responses and network-level failures. The redirect includes `returnTo`
-for the current Studio route. Token-authenticated embeds must not redirect to
+for the current Studio route. `/admin/login` does not collect passwords: it
+clears any stored session token and sends the browser to
+`GET /api/v1/auth/studio/sign-in` with its own URL as `redirect_uri`. When the
+server redirects back with `code` and `state`, the page exchanges the code and
+opens `returnTo`. When SSO providers are configured, the page lists them next to
+a "Sign in with email" action instead of redirecting immediately. Exchange and
+configuration errors are shown on the page with a way to start again. Token-authenticated embeds must not redirect to
 the login route; token authentication failures remain inline operator-facing
 states because the host application, not the Studio login form, owns the token.
 When a cookie-authenticated Studio tab returns to focus or becomes visible again,

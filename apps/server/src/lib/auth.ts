@@ -15,7 +15,7 @@ import {
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { createAuthMiddleware } from "better-auth/api";
-import { and, desc, eq, gt, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, isNull, like, lt, or, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import type { DrizzleDatabase } from "./db.js";
@@ -37,6 +37,22 @@ import {
   type OidcTokenEndpointAuthMethod,
   type SamlProviderConfig,
 } from "./env.js";
+import {
+  STUDIO_SIGN_IN_CODE_TTL_MS,
+  STUDIO_SIGN_IN_EXCHANGE_PATH,
+  STUDIO_SIGN_IN_PATH,
+  appendStudioSignInResult,
+  codeVerifierMatchesChallenge,
+  isAllowedStudioOrigin,
+  isValidCodeVerifier,
+  parseStudioSignInCodeRecord,
+  parseStudioSignInParams,
+  readStudioSessionHeader,
+  signSessionTokenForCookie,
+  toStudioSignInCodeIdentifier,
+  type StudioSignInCodeRecord,
+  type StudioSignInParams,
+} from "./studio-sign-in.js";
 import {
   createJsonResponse,
   executeWithRuntimeErrorsHandled,
@@ -191,6 +207,35 @@ export type CliLoginStartResult = {
   expiresAt: string;
 };
 
+export type StudioSignInAuthorizeInput = {
+  request: Request;
+  params: StudioSignInParams;
+  /**
+   * `continue` confirms the account already signed in on the server;
+   * `switch` signs it out so another account can sign in.
+   */
+  action?: "continue" | "switch";
+  email?: string;
+  password?: string;
+};
+
+export type StudioSignInAuthorizeResult =
+  | { outcome: "login_required"; setCookie?: string }
+  | { outcome: "confirm"; email: string; name?: string }
+  | { outcome: "throttled"; retryAfterSeconds: number }
+  | { outcome: "redirect"; location: string; setCookie?: string };
+
+export type StudioSignInExchangeInput = {
+  code?: unknown;
+  codeVerifier?: unknown;
+  redirectUri?: unknown;
+};
+
+export type StudioSignInExchangeResult = {
+  sessionToken: string;
+  expiresAt: string;
+};
+
 export type CliLoginAuthorizeInput = {
   challengeId: string;
   state: string;
@@ -263,6 +308,13 @@ export type AuthService = {
   exchangeCliLogin: (
     input: CliLoginExchangeInput,
   ) => Promise<{ key: string; metadata: ApiKeyMetadata }>;
+  isAllowedStudioOrigin: (origin: string) => boolean;
+  authorizeStudioSignIn: (
+    input: StudioSignInAuthorizeInput,
+  ) => Promise<StudioSignInAuthorizeResult>;
+  exchangeStudioSignIn: (
+    input: StudioSignInExchangeInput,
+  ) => Promise<StudioSignInExchangeResult>;
   revokeAllUserSessions: (userId: string) => Promise<number>;
   revokeAllSessionsForUserByAdmin: (
     request: Request,
@@ -1113,6 +1165,68 @@ function renderCliAuthorizeLoginForm(input: {
   <label>Email<input name="email" type="email" autocomplete="email" placeholder="you@company.com" required /></label>
   <label>Password<input name="password" type="password" autocomplete="current-password" placeholder="••••••••" required /></label>
   <button type="submit">Authorize</button>
+</form>`,
+  });
+}
+
+function studioSignInFormAction(params: StudioSignInParams): string {
+  const query = new URLSearchParams({
+    redirect_uri: params.redirectUri,
+    state: params.state,
+    code_challenge: params.codeChallenge,
+    code_challenge_method: "S256",
+  });
+
+  return `${STUDIO_SIGN_IN_PATH}?${query.toString()}`;
+}
+
+function renderStudioSignInTarget(params: StudioSignInParams): string {
+  return `<p class="subtitle">Sign in to Studio at <strong>${escapeHtml(new URL(params.redirectUri).origin)}</strong></p>`;
+}
+
+function renderStudioSignInForm(input: {
+  params: StudioSignInParams;
+  errorMessage?: string;
+}): string {
+  const errorBanner = input.errorMessage
+    ? `<div class="error-banner">${escapeHtml(input.errorMessage)}</div>`
+    : "";
+
+  return renderCliHtmlPage({
+    title: "Sign in to MDCMS Studio",
+    body: `
+${renderStudioSignInTarget(input.params)}
+<form method="post" action="${escapeHtml(studioSignInFormAction(input.params))}">
+  ${errorBanner}
+  <label>Email<input name="email" type="email" autocomplete="email" placeholder="you@company.com" required autofocus /></label>
+  <label>Password<input name="password" type="password" autocomplete="current-password" placeholder="••••••••" required /></label>
+  <button type="submit">Sign in</button>
+</form>`,
+  });
+}
+
+function renderStudioSignInConfirm(input: {
+  params: StudioSignInParams;
+  email: string;
+  name?: string;
+}): string {
+  const action = escapeHtml(studioSignInFormAction(input.params));
+  const account = input.name
+    ? `<strong>${escapeHtml(input.name)}</strong><br />${escapeHtml(input.email)}`
+    : `<strong>${escapeHtml(input.email)}</strong>`;
+
+  return renderCliHtmlPage({
+    title: "Sign in to MDCMS Studio",
+    body: `
+${renderStudioSignInTarget(input.params)}
+<p class="message" style="margin-bottom:1rem;">You are signed in as<br />${account}</p>
+<form method="post" action="${action}">
+  <input type="hidden" name="action" value="continue" />
+  <button type="submit" autofocus>Continue</button>
+</form>
+<form method="post" action="${action}">
+  <input type="hidden" name="action" value="switch" />
+  <button type="submit" style="background:transparent;color:#2F49E5;border:1px solid #D4D6E0;margin-top:0.5rem;">Use another account</button>
 </form>`,
   });
 }
@@ -3403,9 +3517,33 @@ export function createAuthService(
     return revoked.length;
   }
 
+  /**
+   * Headers used to look up the request's session. A request that carries the
+   * Studio session header is resolved from that header alone: its cookies are
+   * dropped so an ambient browser cookie can never authenticate it.
+   */
+  async function resolveSessionLookupHeaders(
+    request: Request,
+  ): Promise<Headers> {
+    const headerToken = readStudioSessionHeader(request);
+
+    if (!headerToken) {
+      return request.headers;
+    }
+
+    const context = await auth.$context;
+    const headers = new Headers(request.headers);
+    headers.set(
+      "cookie",
+      `${context.authCookies.sessionToken.name}=${signSessionTokenForCookie(headerToken, secret)}`,
+    );
+
+    return headers;
+  }
+
   async function requireSession(request: Request): Promise<StudioSession> {
     const session = (await auth.api.getSession({
-      headers: request.headers,
+      headers: await resolveSessionLookupHeaders(request),
     })) as BetterAuthLikeSession | null;
 
     if (!session) {
@@ -3716,6 +3854,12 @@ export function createAuthService(
       return;
     }
 
+    // Neither are Studio session-header requests: browsers never attach that
+    // header on their own, and its presence disables cookie authentication.
+    if (readStudioSessionHeader(request)) {
+      return;
+    }
+
     const session = await getSessionIfAvailable(request);
 
     if (!session) {
@@ -3838,16 +3982,20 @@ export function createAuthService(
 
     async logout(request) {
       const response = await auth.api.signOut({
-        headers: request.headers,
+        headers: await resolveSessionLookupHeaders(request),
         asResponse: true,
       });
 
       return {
         revoked: response.status < 400,
-        setCookie: appendSetCookieHeaders(
-          response.headers.get("set-cookie"),
-          createClearedCsrfCookie(),
-        ),
+        // A session-header logout must not touch cookies the browser holds
+        // for other sessions on this server.
+        setCookie: readStudioSessionHeader(request)
+          ? undefined
+          : appendSetCookieHeaders(
+              response.headers.get("set-cookie"),
+              createClearedCsrfCookie(),
+            ),
       };
     },
 
@@ -4263,6 +4411,184 @@ export function createAuthService(
         .where(eq(cliLoginChallenges.id, challenge.id));
 
       return created;
+    },
+
+    isAllowedStudioOrigin(origin) {
+      return isAllowedStudioOrigin(
+        origin,
+        parsedEnv.MDCMS_STUDIO_ALLOWED_ORIGINS,
+      );
+    },
+
+    async authorizeStudioSignIn(input) {
+      if (input.action === "switch") {
+        let signOutCookie: string | null = null;
+
+        try {
+          const response = await auth.api.signOut({
+            headers: input.request.headers,
+            asResponse: true,
+          });
+          signOutCookie = response.headers.get("set-cookie");
+        } catch {
+          // No active session to end; show the sign-in form either way.
+        }
+
+        return {
+          outcome: "login_required",
+          setCookie: appendSetCookieHeaders(
+            signOutCookie,
+            createClearedCsrfCookie(),
+          ),
+        };
+      }
+
+      let session: StudioSession | undefined;
+      let setCookie: string | undefined;
+
+      if (input.email && input.password) {
+        const loginResult = await loginWithEmailPassword(
+          input.request,
+          input.email,
+          input.password,
+        );
+
+        if (loginResult.outcome === "throttled") {
+          return {
+            outcome: "throttled",
+            retryAfterSeconds: loginResult.retryAfterSeconds,
+          };
+        }
+
+        session = loginResult.session;
+        setCookie = loginResult.setCookie;
+      } else {
+        const existing = await getSessionIfAvailable(input.request);
+
+        if (!existing) {
+          return { outcome: "login_required" };
+        }
+
+        // An existing server session is never used silently: the person
+        // confirms the account or switches to another one.
+        if (input.action !== "continue") {
+          return {
+            outcome: "confirm",
+            email: existing.email,
+            ...(existing.name ? { name: existing.name } : {}),
+          };
+        }
+
+        session = existing;
+      }
+
+      const now = new Date();
+      const code = randomBytes(32).toString("base64url");
+      const record: StudioSignInCodeRecord = {
+        userId: session.userId,
+        redirectUri: input.params.redirectUri,
+        codeChallenge: input.params.codeChallenge,
+      };
+
+      await options.db
+        .delete(authVerifications)
+        .where(
+          and(
+            like(authVerifications.identifier, "studio-sign-in:%"),
+            lt(authVerifications.expiresAt, now),
+          ),
+        );
+      await options.db.insert(authVerifications).values({
+        id: randomBytes(16).toString("hex"),
+        identifier: toStudioSignInCodeIdentifier(code),
+        value: JSON.stringify(record),
+        expiresAt: new Date(now.getTime() + STUDIO_SIGN_IN_CODE_TTL_MS),
+      });
+
+      return {
+        outcome: "redirect",
+        location: appendStudioSignInResult(input.params.redirectUri, {
+          code,
+          state: input.params.state,
+        }),
+        ...(setCookie ? { setCookie } : {}),
+      };
+    },
+
+    async exchangeStudioSignIn(input) {
+      const code = typeof input.code === "string" ? input.code.trim() : "";
+      let redirectUri = "";
+
+      try {
+        redirectUri =
+          typeof input.redirectUri === "string"
+            ? new URL(input.redirectUri.trim()).toString()
+            : "";
+      } catch {
+        redirectUri = "";
+      }
+
+      if (!code || !redirectUri || !isValidCodeVerifier(input.codeVerifier)) {
+        throw new RuntimeError({
+          code: "INVALID_INPUT",
+          message:
+            'Body must include "code", "redirectUri" and a "codeVerifier" of 43 to 128 characters.',
+          statusCode: 400,
+        });
+      }
+
+      const invalidExchange = () =>
+        new RuntimeError({
+          code: "INVALID_LOGIN_EXCHANGE",
+          message: "Studio sign-in code is invalid or was already used.",
+          statusCode: 400,
+        });
+
+      // Deleting the record consumes the code, so it can be exchanged once.
+      const [row] = await options.db
+        .delete(authVerifications)
+        .where(
+          eq(authVerifications.identifier, toStudioSignInCodeIdentifier(code)),
+        )
+        .returning();
+
+      if (!row) {
+        throw invalidExchange();
+      }
+
+      if (row.expiresAt.getTime() <= Date.now()) {
+        throw new RuntimeError({
+          code: "LOGIN_CHALLENGE_EXPIRED",
+          message: "Studio sign-in code expired. Sign in again.",
+          statusCode: 410,
+        });
+      }
+
+      const record = parseStudioSignInCodeRecord(row.value);
+
+      if (
+        !record ||
+        record.redirectUri !== redirectUri ||
+        !codeVerifierMatchesChallenge(input.codeVerifier, record.codeChallenge)
+      ) {
+        throw invalidExchange();
+      }
+
+      const user = await options.db.query.authUsers.findFirst({
+        where: eq(authUsers.id, record.userId),
+      });
+
+      if (!user) {
+        throw invalidExchange();
+      }
+
+      const context = await auth.$context;
+      const created = await context.internalAdapter.createSession(user.id);
+
+      return {
+        sessionToken: created.token,
+        expiresAt: new Date(created.expiresAt).toISOString(),
+      };
     },
 
     revokeAllUserSessions,
@@ -5602,6 +5928,166 @@ export function mountAuthRoutes(
           ...exchanged.metadata,
         },
       };
+    }),
+  );
+
+  const studioSignInHtml = (
+    html: string,
+    status: number,
+    setCookie?: string,
+  ): Response =>
+    new Response(html, {
+      status,
+      headers: {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "no-store",
+        "x-frame-options": "DENY",
+        "content-security-policy": "frame-ancestors 'none'",
+        ...(setCookie ? { "set-cookie": setCookie } : {}),
+      },
+    });
+
+  const handleStudioSignIn = async (
+    request: Request,
+    form: {
+      action?: "continue" | "switch";
+      email?: string;
+      password?: string;
+    },
+  ): Promise<Response> => {
+    let params: StudioSignInParams;
+
+    try {
+      params = parseStudioSignInParams(
+        new URL(request.url).searchParams,
+        (origin) => options.authService.isAllowedStudioOrigin(origin),
+      );
+    } catch (error) {
+      if (!isRuntimeErrorLike(error)) throw error;
+      return studioSignInHtml(
+        renderCliErrorPage({
+          title: "Studio sign-in",
+          heading: "This sign-in link is not valid",
+          message: `${escapeHtml(error.message)} Open Studio again to start a new sign-in.`,
+        }),
+        400,
+      );
+    }
+
+    try {
+      const result = await options.authService.authorizeStudioSignIn({
+        request,
+        params,
+        ...form,
+      });
+
+      switch (result.outcome) {
+        case "login_required":
+          return studioSignInHtml(
+            renderStudioSignInForm({ params }),
+            200,
+            result.setCookie,
+          );
+        case "confirm":
+          return studioSignInHtml(
+            renderStudioSignInConfirm({
+              params,
+              email: result.email,
+              name: result.name,
+            }),
+            200,
+          );
+        case "throttled":
+          return studioSignInHtml(
+            renderStudioSignInForm({
+              params,
+              errorMessage: `Too many attempts. Try again in ${result.retryAfterSeconds}s.`,
+            }),
+            429,
+          );
+        case "redirect":
+          return new Response(null, {
+            status: 302,
+            headers: {
+              location: result.location,
+              "cache-control": "no-store",
+              ...(result.setCookie ? { "set-cookie": result.setCookie } : {}),
+            },
+          });
+      }
+    } catch (error) {
+      if (
+        isRuntimeErrorLike(error) &&
+        error.code === "AUTH_INVALID_CREDENTIALS"
+      ) {
+        return studioSignInHtml(
+          renderStudioSignInForm({
+            params,
+            errorMessage: "Email or password is invalid.",
+          }),
+          401,
+        );
+      }
+
+      throw error;
+    }
+  };
+
+  const readStudioSignInForm = async (
+    request: Request,
+    body: unknown,
+  ): Promise<{
+    action?: "continue" | "switch";
+    email?: string;
+    password?: string;
+  }> => {
+    let fields: Record<string, unknown> =
+      body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+
+    if (Object.keys(fields).length === 0) {
+      const formData = await request.formData().catch(() => undefined);
+      fields = {
+        action: formData?.get("action") ?? undefined,
+        email: formData?.get("email") ?? undefined,
+        password: formData?.get("password") ?? undefined,
+      };
+    }
+
+    const action =
+      fields.action === "continue" || fields.action === "switch"
+        ? fields.action
+        : undefined;
+    const email = typeof fields.email === "string" ? fields.email : undefined;
+    const password =
+      typeof fields.password === "string" ? fields.password : undefined;
+
+    return {
+      ...(action ? { action } : {}),
+      ...(email ? { email } : {}),
+      ...(password ? { password } : {}),
+    };
+  };
+
+  authApp.get?.(STUDIO_SIGN_IN_PATH, ({ request }: any) =>
+    executeWithRuntimeErrorsHandled(request, async () =>
+      handleStudioSignIn(request, {}),
+    ),
+  );
+
+  authApp.post?.(STUDIO_SIGN_IN_PATH, ({ request, body }: any) =>
+    executeWithRuntimeErrorsHandled(request, async () =>
+      handleStudioSignIn(request, await readStudioSignInForm(request, body)),
+    ),
+  );
+
+  authApp.post?.(STUDIO_SIGN_IN_EXCHANGE_PATH, ({ request, body }: any) =>
+    executeWithRuntimeErrorsHandled(request, async () => {
+      const payload = (body ?? {}) as StudioSignInExchangeInput;
+      const result = await options.authService.exchangeStudioSignIn(payload);
+
+      return createJsonResponse({ data: result }, 200, {
+        "cache-control": "no-store",
+      });
     }),
   );
 
