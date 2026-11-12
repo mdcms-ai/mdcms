@@ -12,6 +12,8 @@ import {
 } from "@mdcms/shared";
 import { and, eq, inArray, sql } from "drizzle-orm";
 
+import type { ContentActiveCollaborationChecker } from "./content-api.js";
+import { createDocumentCollaborationActiveError } from "./collaboration/errors.js";
 import type { ApiKeyOperationScope } from "./auth.js";
 import type { DrizzleDatabase } from "./db.js";
 import {
@@ -748,6 +750,7 @@ async function copyEnvironmentSettings(
 }
 
 export type PromoteEnvironmentInput = EnvironmentPromoteInput & {
+  activeCollaboration?: ContentActiveCollaborationChecker;
   project: string;
   targetEnvironmentId: string;
   attribution: ContentWriteAttribution;
@@ -951,6 +954,12 @@ export async function promoteDocuments(
           continue;
         }
 
+        if (
+          existingTargetId &&
+          (await input.activeCollaboration?.isDocumentActive(existingTargetId))
+        ) {
+          throw createDocumentCollaborationActiveError(existingTargetId);
+        }
         const targetDocumentId =
           existingTargetId ??
           (await createTargetDraft(txDb, {

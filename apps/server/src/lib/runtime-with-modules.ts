@@ -356,9 +356,6 @@ export function createServerRequestHandlerWithModules(
     lookupMediaAsset: (scope, id) => mediaStore.getAsset(scope, id),
   });
   const schemaStore = createDatabaseSchemaStore({ db: dbConnection.db });
-  const environmentStore = createDatabaseEnvironmentStore({
-    db: dbConnection.db,
-  });
   const projectStore = createDatabaseProjectStore({ db: dbConnection.db });
   const mediaObjectStore = createRuntimeMediaObjectStore(env);
   const webhookRuntime = createRuntimeWebhookRuntime({
@@ -375,6 +372,10 @@ export function createServerRequestHandlerWithModules(
             collaborationRedisStore.isActive(documentId),
         }
       : undefined);
+  const environmentStore = createDatabaseEnvironmentStore({
+    db: dbConnection.db,
+    activeCollaboration,
+  });
   const inactiveCollaborationCache = collaborationRedisStore
     ? {
         invalidateDocument: (documentId: string) =>

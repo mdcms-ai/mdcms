@@ -16,6 +16,7 @@ import {
 } from "@mdcms/shared";
 import { and, eq, sql } from "drizzle-orm";
 
+import type { ContentActiveCollaborationChecker } from "./content-api.js";
 import { attributionFromAuthorizedRequest } from "./content-api/attribution.js";
 import type { AuthorizedRequest, StudioSession } from "./auth.js";
 import type { DrizzleDatabase } from "./db.js";
@@ -120,6 +121,7 @@ export type MountEnvironmentApiRoutesOptions = {
 
 export type CreateDatabaseEnvironmentStoreOptions = {
   db: DrizzleDatabase;
+  activeCollaboration?: ContentActiveCollaborationChecker;
 };
 
 function createInvalidInputError(
@@ -576,6 +578,7 @@ export function createDatabaseEnvironmentStore(
 
       return promoteDocumentsImpl(db, {
         ...input,
+        activeCollaboration: options.activeCollaboration,
         project: normalizedProject,
         targetEnvironmentId: normalizedTargetId,
         attribution: context.attribution,

@@ -1184,10 +1184,20 @@ integrationTest(
 integrationTest(
   "mounted bearer environment operations bind destination, both tuples, source scopes and current global role",
   async () => {
+    let collaborationState: "inactive" | "active" | "unavailable" = "inactive";
     const runtime = createServerRequestHandlerWithModules({
       env,
       logger,
       config: cloneTestConfig,
+      activeCollaboration: {
+        isDocumentActive: async () => {
+          if (collaborationState === "unavailable")
+            throw (
+              await import("./collaboration/errors.js")
+            ).createCollaborationUnavailableError();
+          return collaborationState === "active";
+        },
+      },
     });
     const db = runtime.dbConnection.db;
     const userId = randomUUID();
@@ -1379,6 +1389,45 @@ integrationTest(
         assert.equal(row.createdBy, userId);
         assert.equal((row.createdOrigin as any).channel, "api");
       }
+      const historyBeforeGuard = await db
+        .select()
+        .from(documentVersions)
+        .where(eq(documentVersions.environmentId, fixture.productionEnvId));
+      for (const state of ["active", "unavailable"] as const) {
+        collaborationState = state;
+        const blocked = await request(
+          fullKey,
+          `/${fixture.productionEnvId}/promote`,
+          {
+            sourceEnvironmentId: fixture.stagingEnvId,
+            documentIds: [fixture.authorDocumentId, fixture.blogDocumentId],
+            includeUnpublished: false,
+            dryRun: false,
+          },
+        );
+        assert.equal(blocked.status, state === "active" ? 409 : 503);
+        assert.equal(
+          (await blocked.json()).code,
+          state === "active"
+            ? "DOCUMENT_COLLABORATION_ACTIVE"
+            : "COLLABORATION_UNAVAILABLE",
+        );
+        assert.deepEqual(
+          await db
+            .select()
+            .from(documents)
+            .where(eq(documents.environmentId, fixture.productionEnvId)),
+          target,
+        );
+        assert.deepEqual(
+          await db
+            .select()
+            .from(documentVersions)
+            .where(eq(documentVersions.environmentId, fixture.productionEnvId)),
+          historyBeforeGuard,
+        );
+      }
+      collaborationState = "inactive";
       const promotedThroughMcp = await runtime.handler(
         new Request("http://localhost/api/v1/mcp", {
           method: "POST",
@@ -1709,6 +1758,101 @@ integrationTest(
         }),
         /reference denied/,
       );
+    } finally {
+      if (projectId) await teardownProject(db, projectId);
+      await runtime.dbConnection.close();
+    }
+  },
+);
+
+integrationTest(
+  "promotion rejects active or unavailable collaboration atomically for existing target batches",
+  async () => {
+    const { createCollaborationUnavailableError } = await import(
+      "./collaboration/errors.js"
+    );
+    const runtime = createServerRequestHandlerWithModules({
+      env,
+      logger,
+      config: cloneTestConfig,
+    });
+    const db = runtime.dbConnection.db;
+    const slug = uniqueProjectSlug("promote-collaboration");
+    let projectId: string | undefined;
+    try {
+      const fixture = await provisionTwoEnvironments(db, slug);
+      projectId = fixture.projectId;
+      await cloneEnvironment(db, {
+        project: slug,
+        sourceEnvironmentId: fixture.stagingEnvId,
+        targetEnvironmentId: fixture.productionEnvId,
+        attribution,
+        authorize: async () => {},
+      });
+      const snapshot = async () => ({
+        heads: (
+          await db
+            .select()
+            .from(documents)
+            .where(eq(documents.projectId, fixture.projectId))
+        ).sort((a, b) => a.documentId.localeCompare(b.documentId)),
+        versions: (
+          await db
+            .select()
+            .from(documentVersions)
+            .where(eq(documentVersions.projectId, fixture.projectId))
+        ).sort(
+          (a, b) =>
+            a.documentId.localeCompare(b.documentId) || a.version - b.version,
+        ),
+      });
+      const before = await snapshot();
+      for (const unavailable of [false, true]) {
+        let checks = 0;
+        await assert.rejects(
+          promoteDocuments(db, {
+            project: slug,
+            sourceEnvironmentId: fixture.stagingEnvId,
+            targetEnvironmentId: fixture.productionEnvId,
+            attribution,
+            authorize: async () => {},
+            documentIds: [fixture.authorDocumentId, fixture.blogDocumentId],
+            activeCollaboration: {
+              isDocumentActive: async () => {
+                checks++;
+                if (checks === 1) return false;
+                if (unavailable) throw createCollaborationUnavailableError();
+                return true;
+              },
+            },
+          }),
+          (error: any) =>
+            error.code ===
+            (unavailable
+              ? "COLLABORATION_UNAVAILABLE"
+              : "DOCUMENT_COLLABORATION_ACTIVE"),
+        );
+        assert.equal(checks, 2);
+        assert.deepEqual(await snapshot(), before);
+      }
+      let dryRunChecks = 0;
+      await promoteDocuments(db, {
+        project: slug,
+        sourceEnvironmentId: fixture.stagingEnvId,
+        targetEnvironmentId: fixture.productionEnvId,
+        attribution,
+        authorize: async () => {},
+        documentIds: [fixture.authorDocumentId, fixture.blogDocumentId],
+        dryRun: true,
+        activeCollaboration: {
+          isDocumentActive: async () => {
+            dryRunChecks++;
+            return true;
+          },
+        },
+      });
+      assert.equal(dryRunChecks, 0);
+      assert.deepEqual(await snapshot(), before);
     } finally {
       if (projectId) await teardownProject(db, projectId);
       await runtime.dbConnection.close();
