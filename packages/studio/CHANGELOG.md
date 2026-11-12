@@ -1,5 +1,11 @@
 # @mdcms/studio
 
+## 0.5.3
+
+### Patch Changes
+
+- 3c9d1c8: The README embedding example prepares the Studio config with prepareStudioConfig, so the embedded Studio receives the schema hash and can edit documents.
+
 ## 0.5.2
 
 ### Patch Changes
