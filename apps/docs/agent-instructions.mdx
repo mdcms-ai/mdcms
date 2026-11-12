@@ -414,7 +414,7 @@ Set up GitHub Actions CI/CD for MDCMS schema sync and content deployment.
          - uses: actions/checkout@v4
          - uses: oven-sh/setup-bun@v2
          - run: bun install
-         - run: bunx mdcms push --force
+         - run: bunx mdcms push --yes
            env:
              MDCMS_API_KEY: ${{ secrets.MDCMS_API_KEY }}
              MDCMS_PROJECT: marketing-site

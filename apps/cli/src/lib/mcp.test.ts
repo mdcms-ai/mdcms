@@ -185,6 +185,7 @@ test("mcp server exposes the preview tool surface", async () => {
 
     assert.deepEqual(tools.map((tool) => tool.name).sort(), [
       "create_document",
+      "get_credentials_info",
       "get_document",
       "get_schema",
       "list_documents",
@@ -411,6 +412,134 @@ test("server error envelopes pass through with their original code", async () =>
     assert.equal(payload.code, "FORBIDDEN");
     assert.equal(payload.message, "Missing required scope content:publish.");
   });
+});
+
+test("tool descriptions state the API key scopes each tool needs", async () => {
+  await withHarness(async ({ client }) => {
+    const { tools } = await client.listTools();
+    const byName = new Map(tools.map((tool) => [tool.name, tool]));
+
+    assert.match(
+      byName.get("publish_document")!.description!,
+      /content:publish/,
+    );
+    assert.match(
+      byName.get("update_document")!.description!,
+      /schema:read, content:read:draft, content:write/,
+    );
+    assert.match(byName.get("sync_schema")!.description!, /schema:write/);
+  });
+});
+
+test("get_credentials_info reports the target, granted scopes, and allowed tools", async () => {
+  await withHarness(async ({ client, requests, setRoute }) => {
+    setRoute((request) =>
+      request.url.pathname === "/api/v1/me/capabilities"
+        ? json({
+            data: {
+              project: PROJECT,
+              environment: ENVIRONMENT,
+              capabilities: {
+                schema: { read: true, write: true },
+                content: {
+                  read: true,
+                  readDraft: true,
+                  write: true,
+                  publish: false,
+                  unpublish: false,
+                  delete: true,
+                },
+                media: { read: false, upload: false, delete: false },
+                users: { manage: false },
+                settings: { manage: false },
+                ai: { use: false },
+              },
+            },
+          })
+        : undefined,
+    );
+
+    const { isError, payload } = readResult(
+      await client.callTool({ name: "get_credentials_info", arguments: {} }),
+    );
+
+    assert.equal(isError, false);
+    assert.equal(payload.serverUrl, SERVER_URL);
+    assert.equal(payload.project, PROJECT);
+    assert.equal(payload.environment, ENVIRONMENT);
+    assert.deepEqual(payload.grantedScopes, [
+      "schema:read",
+      "schema:write",
+      "content:read",
+      "content:read:draft",
+      "content:write",
+      "content:delete",
+    ]);
+    assert.equal(payload.tools.update_document.allowed, true);
+    assert.equal(payload.tools.publish_document.allowed, false);
+    assert.deepEqual(payload.tools.publish_document.requiredScopes, [
+      "content:publish",
+    ]);
+    assert.match(payload.publishing, /content:publish/);
+
+    const request = requests[0]!;
+    assert.equal(request.headers.get("authorization"), "Bearer mdcms_key_test");
+    assert.equal(request.headers.get("x-mdcms-project"), PROJECT);
+    assert.equal(request.headers.get("x-mdcms-environment"), ENVIRONMENT);
+  });
+});
+
+test("a 401 for the stored key tells the user to run mdcms login", async () => {
+  await withHarness(async ({ client, setRoute }) => {
+    setRoute(() =>
+      json(
+        {
+          status: "error",
+          code: "UNAUTHORIZED",
+          message: "API key is invalid or revoked.",
+        },
+        401,
+      ),
+    );
+
+    const { isError, payload } = readResult(
+      await client.callTool({ name: "get_schema", arguments: {} }),
+    );
+
+    assert.equal(isError, true);
+    assert.equal(payload.code, "UNAUTHORIZED");
+    assert.match(payload.message, /mdcms login/);
+    assert.equal(payload.details.status, 401);
+    assert.equal(
+      payload.details.serverMessage,
+      "API key is invalid or revoked.",
+    );
+  });
+});
+
+test("mcp help lists the scopes each tool needs and the login key scopes", async () => {
+  let stdout = "";
+
+  const exitCode = await runMdcmsCli(["mcp", "--help"], {
+    commands: [createMcpCommand()],
+    env: {},
+    loadConfig: async () => ({
+      config: {
+        serverUrl: SERVER_URL,
+        project: PROJECT,
+        environment: ENVIRONMENT,
+      },
+      configPath: "/tmp/mdcms.config.ts",
+    }),
+    resolveStoredApiKey: async () => undefined,
+    stdout: { write: (chunk) => (stdout += chunk) },
+    stderr: { write: () => true },
+  });
+
+  assert.equal(exitCode, 0);
+  assert.match(stdout, /publish_document\s+content:publish/);
+  assert.match(stdout, /get_credentials_info/);
+  assert.match(stdout, /does not include content:publish/);
 });
 
 test("network failures report SERVER_UNREACHABLE", async () => {

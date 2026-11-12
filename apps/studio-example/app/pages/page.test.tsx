@@ -82,6 +82,10 @@ test("pages index lists pages before posts with rendered previews", async () => 
                 "",
                 "This page has unsupported raw browser script.",
                 "",
+                // The component makes this body MDX, where the raw
+                // <style>/<script> below cannot be compiled.
+                '<Text children="Carousel" />',
+                "",
                 "<style>",
                 ".carousel { position: relative; overflow: hidden; }",
                 "</style>",
@@ -138,6 +142,7 @@ test("pages index lists pages before posts with rendered previews", async () => 
     assert.match(markup, /This page is rendered/i);
     assert.match(markup, /Image Carousel Demo/i);
     assert.match(markup, /Preview could not be rendered/i);
+    assert.doesNotMatch(markup, /querySelectorAll/);
     assert.match(markup, /Hello MDCMS/i);
     assert.match(markup, /This post is rendered/i);
     assert.doesNotMatch(markup, /Documents could not be loaded/i);

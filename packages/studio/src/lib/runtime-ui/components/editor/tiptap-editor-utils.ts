@@ -3,11 +3,14 @@ import type { Editor } from "@tiptap/core";
 import type { StudioMountContext } from "@mdcms/shared";
 
 import { serializeDocumentToMarkdown } from "../../../markdown-pipeline.js";
+import { createMdxComponentInsertContent } from "./mdx-component-catalog.js";
 import {
   getSlashTriggerCoords,
+  replaceSlashTriggerWithMdxComponent,
   type MdxComponentSlashTrigger,
   type SlashTriggerCoords,
 } from "./mdx-component-slash.js";
+import type { MdxCatalogComponent } from "./visual-composition-types.js";
 
 export type TipTapEditorSerializedSelection = {
   text: string;
@@ -108,4 +111,50 @@ export function resolveVisualDropPosition(
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Whether an insert that captured `editor` may still dispatch to it.
+ *
+ * The editor is recreated when its dependencies change (for example when the
+ * host bridge changes). A picker, dialog or slash menu opened against the
+ * previous instance must not dispatch to it: its state no longer matches the
+ * live editor, so the insert would be lost or rejected as a mismatched
+ * transaction.
+ */
+export function isLiveTipTapEditor(
+  editor: Editor | null,
+  liveEditor: Editor | null,
+): editor is Editor {
+  return editor !== null && editor === liveEditor && !editor.isDestroyed;
+}
+
+/**
+ * Inserts a component chosen in the slash menu or the toolbar picker.
+ * With a slash trigger the `/query` text is replaced; otherwise the component
+ * goes at the current selection. Returns `false` without touching any
+ * document when the captured editor is no longer the live one or the slash
+ * trigger no longer matches the document.
+ */
+export function insertMdxComponentFromPicker(input: {
+  editor: Editor | null;
+  liveEditor: Editor | null;
+  slashTrigger: MdxComponentSlashTrigger | null;
+  component: MdxCatalogComponent;
+}): boolean {
+  if (!isLiveTipTapEditor(input.editor, input.liveEditor)) {
+    return false;
+  }
+
+  if (input.slashTrigger) {
+    return replaceSlashTriggerWithMdxComponent(
+      input.editor,
+      input.slashTrigger,
+      input.component,
+    );
+  }
+
+  return input.editor.commands.insertContent(
+    createMdxComponentInsertContent(input.component),
+  );
 }

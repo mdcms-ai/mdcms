@@ -362,7 +362,7 @@ function printPlan(context: CliCommandContext, changes: PullChange[]): void {
   const serverUnchanged = groups.get("Locally modified (server unchanged)");
   if (serverUnchanged && serverUnchanged.length > 0) {
     context.stdout.write(
-      `\nNote: ${serverUnchanged.length} file(s) modified locally but unchanged on server. Use 'cms push' to upload your changes.\n`,
+      `\nNote: ${serverUnchanged.length} file(s) modified locally but unchanged on server. Use 'mdcms push' to upload your changes.\n`,
     );
   }
 
@@ -423,10 +423,12 @@ async function applyPullChanges(input: {
       change.nextContent,
     );
 
+    // The source of a move is removed unless it is the file just written.
     if (
       (change.status === "Moved/Renamed" ||
         change.status === "Moved/Renamed (locally modified)") &&
-      change.previousPath
+      change.previousPath &&
+      change.previousPath !== change.nextPath
     ) {
       await rm(join(input.context.cwd, change.previousPath), { force: true });
     }
@@ -495,15 +497,12 @@ async function computePullChanges(input: {
     }
 
     const manifestPath = manifestEntry.path;
-    // A file renamed locally between .md and .mdx is still this document, so
-    // its local edits are not overwritten silently.
-    const localHash = await readHash(
-      join(
-        input.context.cwd,
-        (await resolveTrackedFilePath(input.context.cwd, manifestPath)) ??
-          manifestPath,
-      ),
-    );
+    // A file renamed locally between .md and .mdx is still this document: its
+    // local edits are not overwritten silently, and a move starts from it.
+    const localPath =
+      (await resolveTrackedFilePath(input.context.cwd, manifestPath)) ??
+      manifestPath;
+    const localHash = await readHash(join(input.context.cwd, localPath));
     const localModified =
       localHash !== undefined && localHash !== manifestEntry.hash;
     const remoteChanged =
@@ -511,7 +510,9 @@ async function computePullChanges(input: {
       document.draftRevision !== manifestEntry.draftRevision ||
       document.publishedVersion !== manifestEntry.publishedVersion;
     const pathChanged =
-      manifestPath !== nextPath || manifestEntry.format !== format;
+      manifestPath !== nextPath ||
+      localPath !== nextPath ||
+      manifestEntry.format !== format;
 
     // Issue #3: move/rename must also check local modification
     if (pathChanged) {
@@ -520,7 +521,7 @@ async function computePullChanges(input: {
           ? "Moved/Renamed (locally modified)"
           : "Moved/Renamed",
         documentId: document.documentId,
-        previousPath: manifestPath,
+        previousPath: localPath,
         nextPath,
         format,
         draftRevision: document.draftRevision,
@@ -595,7 +596,9 @@ async function computePullChanges(input: {
     changes.push({
       status: "Deleted on server",
       documentId,
-      previousPath: manifestEntry.path,
+      previousPath:
+        (await resolveTrackedFilePath(input.context.cwd, manifestEntry.path)) ??
+        manifestEntry.path,
       format: manifestEntry.format,
       draftRevision: manifestEntry.draftRevision,
       publishedVersion: manifestEntry.publishedVersion,
@@ -700,6 +703,7 @@ export function createPullCommand(): CliCommand {
   return {
     name: "pull",
     description: "Pull content from MDCMS into local files.",
+    renderHelp: renderPullHelp,
     run: runPullCommand,
   };
 }

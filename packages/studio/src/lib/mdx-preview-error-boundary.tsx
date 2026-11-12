@@ -4,6 +4,11 @@ type MdxPreviewErrorBoundaryProps = {
   componentName: string;
   /** Rendered instead of the host component after it throws. */
   fallback: ReactNode;
+  /**
+   * A failed preview is retried when this value changes, for example when
+   * the component's props are edited.
+   */
+  resetKey?: string;
   children?: ReactNode;
 };
 
@@ -24,6 +29,14 @@ export class MdxPreviewErrorBoundary extends Component<
 
   static getDerivedStateFromError(): MdxPreviewErrorBoundaryState {
     return { hasError: true };
+  }
+
+  override componentDidUpdate(
+    previousProps: MdxPreviewErrorBoundaryProps,
+  ): void {
+    if (this.state.hasError && previousProps.resetKey !== this.props.resetKey) {
+      this.setState({ hasError: false });
+    }
   }
 
   override componentDidCatch(error: unknown, errorInfo: ErrorInfo): void {

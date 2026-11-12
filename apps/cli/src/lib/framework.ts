@@ -73,6 +73,11 @@ export type CliCommand = {
   description: string;
   requiresTarget?: boolean;
   requiresConfig?: boolean;
+  /**
+   * Command-specific help. `mdcms <command> --help` prints it without loading
+   * config or credentials; commands without it fall back to the global help.
+   */
+  renderHelp?: () => string;
   run: (context: CliCommandContext) => Promise<number | void> | number | void;
 };
 
@@ -479,7 +484,7 @@ export async function runMdcmsCli(
     return 0;
   }
 
-  if (invocation.global.help) {
+  if (invocation.global.help && !invocation.commandName) {
     stdout.write(renderHelp(commands));
     return 0;
   }
@@ -502,6 +507,11 @@ export async function runMdcmsCli(
 
   if (!command) {
     command = registry.get(invocation.commandName);
+  }
+
+  if (invocation.global.help) {
+    stdout.write(command?.renderHelp?.() ?? renderHelp(commands));
+    return 0;
   }
 
   if (!command) {

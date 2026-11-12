@@ -472,6 +472,7 @@ test("push without a terminal pushes changed documents without asking for confir
     try {
       let putCount = 0;
       let confirmCount = 0;
+      let stdout = "";
       const exitCode = await runMdcmsCli(["push"], {
         cwd,
         env: {} as NodeJS.ProcessEnv,
@@ -495,7 +496,11 @@ test("push without a terminal pushes changed documents without asking for confir
           config: BLOG_POST_CONFIG,
           configPath: join(cwd, "mdcms.config.ts"),
         }),
-        stdout: { write: () => undefined },
+        stdout: {
+          write: (chunk) => {
+            stdout += chunk;
+          },
+        },
         stderr: { write: () => undefined },
         confirm: async () => {
           confirmCount += 1;
@@ -506,6 +511,12 @@ test("push without a terminal pushes changed documents without asking for confir
       assert.equal(exitCode, 0);
       assert.equal(confirmCount, 0);
       assert.equal(putCount, 1);
+      assert.ok(
+        stdout.includes(
+          "Pushing 1 changed document(s) to marketing-site/staging without confirmation (no terminal). Preview with --dry-run.",
+        ),
+        `Expected the no-terminal notice, got: ${stdout}`,
+      );
     } finally {
       restoreTTY();
     }
@@ -1132,7 +1143,7 @@ test("push reports stale document as failed and continues pushing remaining docu
     assert.ok(output.includes("doc-fresh"));
 
     // Actionable summary printed
-    assert.ok(output.includes("cms pull"));
+    assert.ok(output.includes("mdcms pull"));
 
     // Manifest updated for fresh doc, stale doc unchanged
     const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as Record<
@@ -1378,8 +1389,8 @@ test("push reports schema-mismatch document as failed and continues pushing rema
 
     // Actionable summary printed — race-condition message (preflight passed but a concurrent sync changed server hash)
     assert.ok(output.includes("schema changed during push"));
-    assert.ok(output.includes("Re-run: cms push"));
-    assert.ok(!output.includes("'cms schema sync'"));
+    assert.ok(output.includes("Re-run: mdcms push"));
+    assert.ok(!output.includes("'mdcms schema sync'"));
 
     // Manifest updated for ok doc, mismatch doc unchanged
     const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as Record<
@@ -1910,6 +1921,40 @@ test("renderPushHelp documents --sync-schema and preflight behavior", () => {
   assert.ok(help.includes("--sync-schema"));
   assert.ok(help.includes("non-interactive"));
   assert.ok(help.includes("preflight"));
+});
+
+test("parsePushOptions treats --yes and -y as aliases of --force", () => {
+  assert.equal(parsePushOptions(["--yes"]).force, true);
+  assert.equal(parsePushOptions(["-y"]).force, true);
+  assert.equal(parsePushOptions([]).force, false);
+});
+
+test("renderPushHelp leads with --dry-run and says what --yes does not override", () => {
+  const help = renderPushHelp();
+  assert.ok(help.includes("mdcms push --dry-run"));
+  assert.ok(help.includes("-y, --yes"));
+  assert.ok(help.includes("--force is an alias"));
+  assert.ok(help.includes("Rejections are never overridden"));
+});
+
+test("mdcms push --help prints push help without loading config", async () => {
+  let stdout = "";
+
+  const exitCode = await runMdcmsCli(["push", "--help"], {
+    env: {} as NodeJS.ProcessEnv,
+    loadConfig: async () => {
+      throw new Error("config must not load for --help");
+    },
+    stdout: {
+      write: (chunk: string) => {
+        stdout += chunk;
+      },
+    },
+    stderr: { write: () => undefined },
+  });
+
+  assert.equal(exitCode, 0);
+  assert.equal(stdout, renderPushHelp());
 });
 
 // -----------------------------------------------------------------------------
