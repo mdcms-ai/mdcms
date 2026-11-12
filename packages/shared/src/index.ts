@@ -4,6 +4,8 @@ export * from "./lib/contracts/ai.js";
 export * from "./lib/contracts/collaboration.js";
 export * from "./lib/contracts/config.js";
 export * from "./lib/contracts/content-api.js";
+export * from "./lib/contracts/content-format.js";
+export * from "./lib/contracts/mdx-component-export.js";
 export * from "./lib/contracts/current-principal-capabilities.js";
 export * from "./lib/contracts/content-scope.js";
 export * from "./lib/contracts/environments.js";

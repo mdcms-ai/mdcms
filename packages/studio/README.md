@@ -124,7 +124,9 @@ defineConfig({
 });
 ```
 
-Registered components can be inserted from the toolbar or via `/` slash commands in the editor. Studio auto-generates a props editing panel from extracted component props, or you can provide a custom props editor.
+`load` may return the component or its module: Studio and `@mdcms/sdk/react` use the module's default export, then the export named like the component.
+
+Registered components can be inserted from the toolbar or via `/` slash commands in the editor. A document becomes MDX as soon as its body contains a component; there is no format to switch. Studio auto-generates a props editing panel from extracted component props, or you can provide a custom props editor.
 
 ## Exports
 

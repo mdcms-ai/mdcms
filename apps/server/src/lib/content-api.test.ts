@@ -5958,3 +5958,43 @@ test("in-memory store listVariants excludes soft-deleted variants", async () => 
   assert.equal(variants.length, 1);
   assert.equal(variants[0].locale, "en");
 });
+
+test("content format follows the body and ignores a client-sent format", async () => {
+  const scope = { project: "format-inference", environment: "production" };
+  const store = createInMemoryContentStore({
+    schemaScopes: [
+      {
+        project: scope.project,
+        environment: scope.environment,
+        schemas: createCms26ResolvedSchemas(),
+      },
+    ],
+  });
+  const slug = `format-${Math.random().toString(36).slice(2, 8)}`;
+
+  const created = await store.create(scope, {
+    path: `pages/${slug}`,
+    type: "Page",
+    locale: "en",
+    format: "md",
+    frontmatter: { slug },
+    body: "Intro\n\n<Cta />\n",
+  });
+  assert.equal(created.format, "mdx");
+
+  const plain = await store.update(scope, created.documentId, {
+    format: "mdx",
+    body: "Only Markdown now.",
+  });
+  assert.equal(plain.format, "md");
+
+  const frontmatterOnly = await store.update(scope, created.documentId, {
+    frontmatter: { slug: `${slug}-renamed` },
+  });
+  assert.equal(frontmatterOnly.format, "md");
+
+  const withComponent = await store.update(scope, created.documentId, {
+    body: "Text\n\n<Callout>\n\nInside\n\n</Callout>\n",
+  });
+  assert.equal(withComponent.format, "mdx");
+});

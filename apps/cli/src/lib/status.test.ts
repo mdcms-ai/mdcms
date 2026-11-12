@@ -811,3 +811,54 @@ test("status works with no manifest (never pulled)", async () => {
     assert.equal(text.includes("New on server"), true);
   });
 });
+
+test("status reports a .md to .mdx rename as a local change of the same document", async () => {
+  await withTempDir(async (cwd) => {
+    const content = "---\ntitle: Hello\n---\n\nOriginal body\n";
+
+    await writeManifest(cwd, {
+      "doc-1": {
+        path: "content/blog/about.en.md",
+        format: "md",
+        draftRevision: 8,
+        publishedVersion: null,
+        hash: hashContent(content),
+      },
+    });
+    await writeLocalFile(cwd, "content/blog/about.en.mdx", content);
+
+    let stdout = "";
+    const exitCode = await runMdcmsCli(["status"], {
+      cwd,
+      env: {} as NodeJS.ProcessEnv,
+      fetcher: async () =>
+        createContentListResponse({
+          rows: [
+            {
+              documentId: "doc-1",
+              type: "BlogPost",
+              locale: "en",
+              path: "content/blog/about",
+              format: "md",
+              frontmatter: { title: "Hello" },
+              body: "Original body\n",
+              draftRevision: 8,
+              publishedVersion: null,
+            },
+          ],
+        }),
+      loadConfig: defaultLoadConfig(cwd),
+      stdout: {
+        write: (chunk: string) => {
+          stdout += chunk;
+        },
+      },
+      stderr: { write: () => undefined },
+    });
+
+    assert.equal(exitCode, 1);
+    assert.ok(stdout.includes("Modified locally"), stdout);
+    assert.ok(stdout.includes("content/blog/about.en.mdx"), stdout);
+    assert.equal(stdout.includes("Deleted"), false, stdout);
+  });
+});

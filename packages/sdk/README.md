@@ -65,7 +65,7 @@ Schema file fields are expanded to `MediaAsset` objects by default. Pass `fileFi
 ### React rendering
 
 `@mdcms/sdk/react` renders fetched document bodies to React nodes on the server.
-It loads custom MDX components from `mdcms.config.ts`.
+It loads custom MDX components from `mdcms.config.ts`. A component's `load` may return the component or its module (default export, then the export named like the component). Each body is compiled as MDX when it contains a component or an `import`/`export` line, and as Markdown otherwise, whatever format the document was created with.
 
 ```tsx
 import { createClient } from "@mdcms/sdk";

@@ -280,6 +280,160 @@ test("push updates an existing manifest-tracked document via PUT", async () => {
   });
 });
 
+test("push treats a .md to .mdx rename as the same document and sends the inferred format", async () => {
+  await withTempDir(async (cwd) => {
+    const manifestPath = join(
+      cwd,
+      ".mdcms",
+      "manifests",
+      "marketing-site.staging.json",
+    );
+    await mkdir(join(cwd, ".mdcms", "manifests"), { recursive: true });
+    await writeSchemaStateFile(cwd, "marketing-site", "staging");
+    const original = '---\ntitle: "Hello World"\n---\n\nBody\n';
+    await writeFile(
+      manifestPath,
+      JSON.stringify({
+        "doc-1": {
+          path: "content/blog/hello-world.en.md",
+          format: "md",
+          draftRevision: 1,
+          publishedVersion: 1,
+          hash: "old-hash",
+        },
+      }),
+      "utf8",
+    );
+    await mkdir(join(cwd, "content", "blog"), { recursive: true });
+    // Renamed to .mdx and given a component, without touching the manifest.
+    await writeFile(
+      join(cwd, "content/blog/hello-world.en.mdx"),
+      original.replace("Body", 'Body\n\n<Cta label="Go" />'),
+      "utf8",
+    );
+
+    const requests: Array<{ url: string; method?: string; format?: string }> =
+      [];
+    const exitCode = await runMdcmsCli(["push", "--force"], {
+      cwd,
+      env: {} as NodeJS.ProcessEnv,
+      fetcher: async (input, init) => {
+        if (isSchemaGetRequest(input, init)) {
+          return createSchemaListResponse(BLOG_POST_CONFIG, "staging");
+        }
+        const body = JSON.parse(String(init?.body ?? "{}")) as {
+          format?: string;
+        };
+        requests.push({
+          url: String(input),
+          method: init?.method,
+          format: body.format,
+        });
+
+        return createSuccessResponse({
+          documentId: "doc-1",
+          type: "BlogPost",
+          locale: "en",
+          path: "content/blog/hello-world",
+          format: "mdx",
+          draftRevision: 2,
+          publishedVersion: 1,
+        });
+      },
+      loadConfig: async () => ({
+        config: BLOG_POST_CONFIG,
+        configPath: join(cwd, "mdcms.config.ts"),
+      }),
+      stdout: { write: () => undefined },
+      stderr: { write: () => undefined },
+      confirm: async () => true,
+    });
+
+    assert.equal(exitCode, 0);
+    // One update of the same document: no delete, no create.
+    assert.deepEqual(requests, [
+      {
+        url: "http://localhost:4000/api/v1/content/doc-1?fileFields=raw",
+        method: "PUT",
+        format: "mdx",
+      },
+    ]);
+
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as Record<
+      string,
+      { path: string; format: string; draftRevision: number }
+    >;
+    assert.equal(manifest["doc-1"]?.path, "content/blog/hello-world.en.mdx");
+    assert.equal(manifest["doc-1"]?.format, "mdx");
+    assert.equal(manifest["doc-1"]?.draftRevision, 2);
+  });
+});
+
+test("push sends md for a .mdx file whose body has no MDX syntax", async () => {
+  await withTempDir(async (cwd) => {
+    const manifestPath = join(
+      cwd,
+      ".mdcms",
+      "manifests",
+      "marketing-site.staging.json",
+    );
+    await mkdir(join(cwd, ".mdcms", "manifests"), { recursive: true });
+    await writeSchemaStateFile(cwd, "marketing-site", "staging");
+    await writeFile(
+      manifestPath,
+      JSON.stringify({
+        "doc-1": {
+          path: "content/blog/hello-world.en.mdx",
+          format: "mdx",
+          draftRevision: 1,
+          publishedVersion: 1,
+          hash: "old-hash",
+        },
+      }),
+      "utf8",
+    );
+    await mkdir(join(cwd, "content", "blog"), { recursive: true });
+    await writeFile(
+      join(cwd, "content/blog/hello-world.en.mdx"),
+      '---\ntitle: "Hello World"\n---\n\nPlain text with {braces}.\n',
+      "utf8",
+    );
+
+    let sentFormat: string | undefined;
+    const exitCode = await runMdcmsCli(["push", "--force"], {
+      cwd,
+      env: {} as NodeJS.ProcessEnv,
+      fetcher: async (input, init) => {
+        if (isSchemaGetRequest(input, init)) {
+          return createSchemaListResponse(BLOG_POST_CONFIG, "staging");
+        }
+        sentFormat = (JSON.parse(String(init?.body)) as { format: string })
+          .format;
+
+        return createSuccessResponse({
+          documentId: "doc-1",
+          type: "BlogPost",
+          locale: "en",
+          path: "content/blog/hello-world",
+          format: "md",
+          draftRevision: 2,
+          publishedVersion: 1,
+        });
+      },
+      loadConfig: async () => ({
+        config: BLOG_POST_CONFIG,
+        configPath: join(cwd, "mdcms.config.ts"),
+      }),
+      stdout: { write: () => undefined },
+      stderr: { write: () => undefined },
+      confirm: async () => true,
+    });
+
+    assert.equal(exitCode, 0);
+    assert.equal(sentFormat, "md");
+  });
+});
+
 test("push without a terminal pushes changed documents without asking for confirmation", async () => {
   await withTempDir(async (cwd) => {
     const manifestPath = join(

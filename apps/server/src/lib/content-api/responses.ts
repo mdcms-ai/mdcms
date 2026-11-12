@@ -4,14 +4,13 @@ import type {
   ContentVersionSummaryResponse,
   SchemaRegistryTypeSnapshot,
 } from "@mdcms/shared";
-import { RuntimeError } from "@mdcms/shared";
+import { RuntimeError, inferContentFormat } from "@mdcms/shared";
 
 import { documents, documentVersions } from "../db/schema.js";
 
 import { isRecord } from "./parsing.js";
 import type {
   ContentDocument,
-  ContentFormat,
   ContentScope,
   ContentVersionDocument,
   ContentVersionSummary,
@@ -28,7 +27,7 @@ export function toDocumentResponse(
     path: document.path,
     type: document.type,
     locale: document.locale,
-    format: document.format,
+    format: inferContentFormat(document.body),
     isDeleted: document.isDeleted,
     hasUnpublishedChanges: document.hasUnpublishedChanges,
     version: document.version,
@@ -194,7 +193,7 @@ export function toContentDocument(
     path: row.path,
     type: row.schemaType,
     locale: row.locale,
-    format: row.contentFormat as ContentFormat,
+    format: inferContentFormat(row.body),
     isDeleted: row.isDeleted,
     hasUnpublishedChanges: row.hasUnpublishedChanges,
     version: row.publishedVersion ?? 0,
@@ -222,7 +221,7 @@ export function toContentVersionDocument(
     path: row.path,
     type: row.schemaType,
     locale: row.locale,
-    format: row.contentFormat as ContentFormat,
+    format: inferContentFormat(row.body),
     publishedAt: toIsoString(row.publishedAt),
     publishedBy: row.publishedBy,
     changeSummary: row.changeSummary ?? undefined,

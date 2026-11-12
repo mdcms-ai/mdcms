@@ -23,6 +23,7 @@ import {
   type MediaAsset,
   type StudioDocumentRouteMountContext,
   type StudioMountContext,
+  inferContentFormat,
 } from "@mdcms/shared";
 import type * as Y from "yjs";
 
@@ -972,10 +973,13 @@ function DocumentCanvasHeader({
     if (formatted !== null) fmEntries.push([key, formatted]);
   }
   fmEntries.push(["locale", state.locale]);
-  fmEntries.push(["format", `.${state.document.format}`]);
+  // The format follows the current draft body, so inserting a component
+  // shows `.mdx` right away.
+  const format = inferContentFormat(state.draftBody);
+  fmEntries.push(["format", `.${format}`]);
 
   const path = state.document.path;
-  const pathSuffix = `.${state.document.format}`;
+  const pathSuffix = `.${format}`;
   const fullPath = path.endsWith(pathSuffix) ? path : `${path}${pathSuffix}`;
 
   return (

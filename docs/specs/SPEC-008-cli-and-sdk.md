@@ -262,7 +262,7 @@ For each candidate file discovered during `cms init`:
 ### `cms pull`
 
 - Downloads the latest **draft state** from the CMS as `.md`/`.mdx` files into the filesystem (draft-first default).
-- Pull preserves extension from server `content_format` (`md` or `mdx`).
+- Pull names each local file with the extension of the body's content format (SPEC-003 Content Format), applying `inferContentFormat` to the pulled body.
 - Always syncs the full content tree (no selective path filtering).
 - **Plan-first:** Before writing anything, the CLI compares local files against the server state and prints a summary of all changes that will be applied. `cms pull --dry-run` prints the plan and exits without writing.
 
@@ -329,7 +329,7 @@ This will overwrite locally modified files that also changed on server, and dele
 
 - **Locally modified detection:** The CLI hashes each local file and compares it against the `hash` recorded in the manifest. If the local file has been edited since the last pull/push, it is flagged as locally modified.
 - **Remote change detection:** Compares the server's `draftRevision` and `publishedVersion` against the manifest, plus a content hash comparison.
-- **Detects moves/renames:** Compares the manifest's `document_id` → `{ path, format }` mapping against the server. If a document's path and/or format changed (renamed slug, moved folder, or `.md`/`.mdx` extension change), the old local file is deleted and the new file is written at the new deterministic path. If the old file was locally modified, the change is flagged as **Moved/Renamed (locally modified)**.
+- **Detects moves/renames:** Compares the manifest's `document_id` → `{ path, format }` mapping against the server. If a document's path and/or format changed (renamed slug, moved folder, or a body that now needs the other extension), the old local file is deleted and the new file is written at the new deterministic path. If the old file was locally modified, the change is flagged as **Moved/Renamed (locally modified)**.
 - **Detects deletions:** If a document in the manifest is absent from the server response, the corresponding local file is removed.
 - **Unknown types:** Documents whose type is not defined in the local config are skipped with a warning to stderr summarizing the count per type.
 - Records draft revision, published version, content format, and content hash for each document in a scoped manifest (`.mdcms/manifests/<project>.<environment>.json`).
@@ -340,7 +340,7 @@ This will overwrite locally modified files that also changed on server, and dele
 
 - Localized types use deterministic paths: `<document.path>.<locale>.<ext>` (for example: `blog/hello-world.fr.mdx`).
 - Non-localized types use deterministic paths: `<document.path>.<ext>` (for example: `pages/about.md`).
-- `<ext>` is always `md` or `mdx` and is sourced from `documents.content_format`.
+- `<ext>` is always `md` or `mdx`: the content format of the body (SPEC-003 Content Format).
 - The file body stores the mutable head markdown/MDX content from `documents.body`.
 - Frontmatter stores schema fields only (no transport metadata such as revision/version tokens).
 - Transport metadata (`document_id`, `format`, `draftRevision`, `publishedVersion`, content hash) lives only in `.mdcms/manifests/<project>.<environment>.json`.
@@ -349,7 +349,8 @@ This will overwrite locally modified files that also changed on server, and dele
 ### `cms push`
 
 - Uploads changed, new, and deleted local `.md`/`.mdx` files to the CMS server as draft updates (publish is explicit and separate).
-- `cms push` derives `content_format` from file extension (`.md` => `md`, `.mdx` => `mdx`) and rejects unsupported extensions with a deterministic error.
+- `cms push` accepts `.md` and `.mdx` files and rejects other extensions with a deterministic error. The extension does not set the format: the format sent is `inferContentFormat(body)`, and the server derives it from the body regardless.
+- A tracked file renamed locally between `.md` and `.mdx` (same path otherwise) is the same document. `cms push` updates it under its `document_id` and records the new path in the manifest; `cms status` reports it as modified locally; neither treats it as a deletion plus a new file.
 - For known documents, identity is resolved from manifest `document_id`; file path is treated as mutable state that can rename/move without changing document identity.
 - Sends the base draft revision token and latest published version (from the manifest) with each document.
 - Change detection is hash-based against `.mdcms/manifests/<project>.<environment>.json`; unchanged documents are skipped and not sent.
@@ -521,7 +522,7 @@ Tool inputs:
   `100`), `offset` (default `0`). The result includes `pagination`.
 - `get_document`: `documentId`.
 - `create_document`: `type`, `path`, `frontmatter`, `body`, optional `locale`
-  and `format` (`md` or `mdx`, default `md`). `path` follows the create
+  and `format` (accepted for compatibility and ignored: the server derives the format from the body). `path` follows the create
   payload path rules in SPEC-003 and must be inside the content type's
   `directory`; a path outside it fails with `INVALID_INPUT`. `locale` applies
   to localized types and defaults to the configured default locale; a
