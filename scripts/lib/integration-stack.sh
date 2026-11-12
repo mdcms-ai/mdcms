@@ -100,7 +100,7 @@ integration_start() {
 verify_server_health() {
   integration_wait server
   local response
-  response="$("${integration_clean_env[@]}" curl --user-agent research-client/1.0 --noproxy '*' --max-time 10 --fail --silent --show-error "$INTEGRATION_SERVER_URL/healthz")"
+  response="$("${integration_clean_env[@]}" curl -q --user-agent research-client/1.0 --noproxy '*' --max-time 10 --fail --silent --show-error "$INTEGRATION_SERVER_URL/healthz")"
   [[ "$response" == *'"status":"ok"'* ]]
 }
 fail() { echo "ERROR: $*" >&2; exit 1; }

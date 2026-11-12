@@ -432,3 +432,70 @@ test("nested Bun suite invocation does not load repository dotenv credentials", 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("health curl ignores poisoned default configuration", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "integration-curl-config-"));
+  const requests: Array<{ target: string; header: string | null }> = [];
+  const intended = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch(request) {
+      requests.push({
+        target: "intended",
+        header: request.headers.get("x-poison"),
+      });
+      return Response.json({ status: "ok" });
+    },
+  });
+  const unrelated = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch(request) {
+      requests.push({
+        target: "unrelated",
+        header: request.headers.get("x-poison"),
+      });
+      return Response.json({ status: "ok" });
+    },
+  });
+  try {
+    writeFileSync(
+      join(dir, ".curlrc"),
+      [
+        `connect-to = "127.0.0.1:${intended.port}:127.0.0.1:${unrelated.port}"`,
+        `url = "http://127.0.0.1:${unrelated.port}/unexpected"`,
+        'header = "X-Poison: injected"',
+        "",
+      ].join("\n"),
+    );
+    const child = Bun.spawn(
+      [
+        "bash",
+        "-c",
+        [
+          "set -euo pipefail",
+          "source scripts/lib/integration-stack.sh",
+          // CURL_HOME selects the fixture without reading the operator's real config.
+          'integration_clean_env+=("CURL_HOME=$INTEGRATION_CURL_FIXTURE")',
+          "integration_wait() { :; }",
+          "verify_server_health",
+        ].join("; "),
+      ],
+      {
+        env: {
+          ...process.env,
+          INTEGRATION_CURL_FIXTURE: dir,
+          INTEGRATION_SERVER_URL: `http://127.0.0.1:${intended.port}`,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
+    expect(await child.exited).toBe(0);
+    expect(requests).toEqual([{ target: "intended", header: null }]);
+  } finally {
+    intended.stop(true);
+    unrelated.stop(true);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
