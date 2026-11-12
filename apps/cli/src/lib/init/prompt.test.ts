@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { createMockPrompter } from "./prompt.js";
+import { createMockPrompter, createTextPromptConfig } from "./prompt.js";
 
 test("mock prompter returns canned text responses in order", async () => {
   const prompter = createMockPrompter({ text: ["alice", "bob"] });
@@ -91,4 +91,22 @@ test("mock prompter throws when confirm responses exhausted", async () => {
   await assert.rejects(() => prompter.confirm("sure?"), {
     message: "No more canned confirm responses",
   });
+});
+
+test("text prompts without a default require a non-blank answer", () => {
+  const config = createTextPromptConfig("Project name");
+
+  assert.equal(config.required, true);
+  assert.equal(typeof config.validate, "function");
+  assert.notEqual(config.validate?.(""), true);
+  assert.notEqual(config.validate?.("   "), true);
+  assert.equal(config.validate?.("field-notes"), true);
+});
+
+test("text prompts with a default accept an empty answer", () => {
+  const config = createTextPromptConfig("Environment name", "production");
+
+  assert.equal(config.default, "production");
+  assert.equal(config.required, false);
+  assert.equal(config.validate, undefined);
 });

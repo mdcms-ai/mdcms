@@ -73,11 +73,10 @@ export function generateConfigSource(input: GenerateConfigInput): string {
   if (hasReferences(input.types)) {
     sharedImports.push("fieldTypes");
   }
-  lines.push(`import { ${sharedImports.join(", ")} } from "@mdcms/cli";`);
-
   if (hasZodFields(input.types)) {
-    lines.push('import { z } from "zod";');
+    sharedImports.push("z");
   }
+  lines.push(`import { ${sharedImports.join(", ")} } from "@mdcms/cli";`);
 
   lines.push("");
   lines.push("export default defineConfig({");

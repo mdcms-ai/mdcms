@@ -105,9 +105,9 @@ const http = createServer(async (req, res) => {
 await new Promise((r) => http.listen(0, "127.0.0.1", r));
 const url = `http://127.0.0.1:${http.address().port}`;
 const dependency = (field) =>
-  `import { z } from 'zod';\nenum Field { Name = ${JSON.stringify(field)} }\nconsole.log('schema-dependency-loaded', process.env.MDCMS_API_KEY);\nconsole.error('Bearer unknown-diagnostic-secret');\nprocess.stdout.write(Buffer.from('direct stdout Bear'));\nprocess.stdout.write(new Uint8Array(Buffer.from('er fixture-secret\\n')));\nprocess.stderr.write('split: fixture-');\nprocess.stderr.write('secret\\n');\nconsole.error('mdcms_key_synthetic');\nexport const fields = { [Field.Name]: z.string() };\n`;
+  `import { z } from '@mdcms/cli';\nenum Field { Name = ${JSON.stringify(field)} }\nconsole.log('schema-dependency-loaded', process.env.MDCMS_API_KEY);\nconsole.error('Bearer unknown-diagnostic-secret');\nprocess.stdout.write(Buffer.from('direct stdout Bear'));\nprocess.stdout.write(new Uint8Array(Buffer.from('er fixture-secret\\n')));\nprocess.stderr.write('split: fixture-');\nprocess.stderr.write('secret\\n');\nconsole.error('mdcms_key_synthetic');\nexport const fields = { [Field.Name]: z.string() };\n`;
 const config = (_title, target = url) =>
-  `import { defineConfig, defineType } from '@mdcms/shared';\nimport { fields } from './schema';\nconsole.log('config-loaded');\nexport default defineConfig({ project: 'original', serverUrl: ${JSON.stringify(target)}, environment: 'production', contentDirectories: ['content'], types: [defineType('Post', { directory: 'content/posts', fields })], environments: { production: {} } });\n`;
+  `import { defineConfig, defineType } from '@mdcms/cli';\nimport { fields } from './schema';\nconsole.log('config-loaded');\nexport default defineConfig({ project: 'original', serverUrl: ${JSON.stringify(target)}, environment: 'production', contentDirectories: ['content'], types: [defineType('Post', { directory: 'content/posts', fields })], environments: { production: {} } });\n`;
 await writeFile(join(fixture, "schema.ts"), dependency("title"));
 await writeFile(join(fixture, "mdcms.config.ts"), config("title"));
 await mkdir(join(fixture, "node-only"), { recursive: true });
