@@ -85,3 +85,28 @@ test("renders server authorized member or admin rows and escapes reported names"
   assert.match(html, /Never used/);
   assert.match(html, /content:read:draft/);
 });
+
+test("labels the granting user and formats dates with exact timestamps available", () => {
+  const stamp = "2026-11-01T10:00:00Z";
+  const html = render(false, [
+    {
+      id: "grant",
+      clientId: "client",
+      clientName: "Research assistant",
+      userId: "member",
+      project: "demo",
+      environment: "draft",
+      scopes: [],
+      createdAt: stamp,
+      lastUsedAt: stamp,
+    },
+  ]);
+  assert.match(html, /<dd>You<\/dd>/);
+  assert.ok(
+    html.includes(`dateTime="${stamp}"`) ||
+      html.includes(`datetime="${stamp}"`),
+  );
+  assert.ok(html.includes(`title="${stamp}"`));
+  assert.ok(html.includes(new Date(stamp).toLocaleString()));
+  assert.ok(!html.includes(`>${stamp}</time>`));
+});

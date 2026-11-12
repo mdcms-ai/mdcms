@@ -13,7 +13,16 @@ import {
 } from "../../components/ui/dialog.js";
 import { Button } from "../../components/ui/button.js";
 import { useStudioMountInfo } from "./mount-info-context.js";
+import { formatClientDate } from "./settings-webhooks-format.js";
 import { useStudioSession } from "./session-context.js";
+
+function ConnectionTime({ value }: { value: string }) {
+  return (
+    <time dateTime={value} title={value} suppressHydrationWarning>
+      {formatClientDate(value)}
+    </time>
+  );
+}
 
 export function SettingsConnectedAppsPanel() {
   const mount = useStudioMountInfo();
@@ -105,7 +114,12 @@ function ConnectedAppsTarget() {
                 </h3>
                 <dl className="grid gap-2 text-sm sm:grid-cols-[120px_minmax(0,1fr)]">
                   <dt>User</dt>
-                  <dd>{connection.userId}</dd>
+                  <dd>
+                    {authenticated &&
+                    connection.userId === session.session.userId
+                      ? "You"
+                      : connection.userId}
+                  </dd>
                   <dt>Target</dt>
                   <dd>
                     {connection.project} / {connection.environment}
@@ -113,9 +127,17 @@ function ConnectedAppsTarget() {
                   <dt>Scopes</dt>
                   <dd>{connection.scopes.join(", ")}</dd>
                   <dt>Created</dt>
-                  <dd>{connection.createdAt}</dd>
+                  <dd>
+                    <ConnectionTime value={connection.createdAt} />
+                  </dd>
                   <dt>Last used</dt>
-                  <dd>{connection.lastUsedAt ?? "Never used"}</dd>
+                  <dd>
+                    {connection.lastUsedAt ? (
+                      <ConnectionTime value={connection.lastUsedAt} />
+                    ) : (
+                      "Never used"
+                    )}
+                  </dd>
                 </dl>
                 <Button
                   variant="secondary"

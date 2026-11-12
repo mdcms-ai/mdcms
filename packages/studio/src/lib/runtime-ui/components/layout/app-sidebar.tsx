@@ -70,7 +70,7 @@ const adminNavItems: ReadonlyArray<NavItem> = [
   {
     icon: Settings,
     label: "Connected apps",
-    href: "/admin/settings/connected-apps",
+    href: "/settings/connected-apps",
   },
 ];
 
