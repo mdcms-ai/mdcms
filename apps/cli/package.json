@@ -1,6 +1,6 @@
 {
   "name": "@mdcms/cli",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "CLI for MDCMS content workflows",
   "type": "module",
   "main": "./dist/index.js",
@@ -61,7 +61,7 @@
   "dependencies": {
     "@elysiajs/eden": "^1.4.8",
     "@inquirer/prompts": "^7.0.0",
-    "@mdcms/shared": "^0.6.0",
+    "@mdcms/shared": "^0.6.1",
     "@modelcontextprotocol/sdk": "^1.32.2",
     "dotenv": "^16.4.7",
     "elysia": "^1.4.25",

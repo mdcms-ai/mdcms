@@ -1,5 +1,14 @@
 # @mdcms/cli
 
+## 0.4.3
+
+### Patch Changes
+
+- d0f4b37: A document's md/mdx format now follows its body: it is mdx when it contains a component or an import/export line. The SDK renderer compiles with that format, the CLI names files after it and treats a .md/.mdx rename as the same document, and a component's load may return its module.
+- f9d2990: The CLI prints mdcms commands in its guidance, mdcms status shows moves as local path to path after pull and skips unknown types like pull, mdcms push gains --yes (with --force as an alias) and per-command --help works, and mdcms mcp documents tool scopes, adds get_credentials_info, and tells the user to run mdcms login on a 401.
+- Updated dependencies [d0f4b37]
+  - @mdcms/shared@0.6.1
+
 ## 0.4.2
 
 ### Patch Changes
