@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { pathToFileURL } from "node:url";
+import { createJiti } from "jiti";
 
 import {
   RuntimeError,
@@ -59,9 +59,15 @@ export async function loadCliConfig(options: {
 
   let configModule: Record<string, unknown>;
   try {
-    configModule = await import(
-      `${pathToFileURL(configPath).href}?t=${Date.now()}`
-    );
+    // Re-evaluate the config and its local imports on every schema sync.
+    // Native import caches dependencies even when the entry URL changes.
+    const loader = createJiti(configPath, {
+      moduleCache: false,
+      fsCache: false,
+      tryNative: false,
+      interopDefault: false,
+    });
+    configModule = await loader.import<Record<string, unknown>>(configPath);
   } catch (error) {
     const message =
       error instanceof Error

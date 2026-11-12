@@ -1,3 +1,4 @@
+import { createTestReadTools } from "./read-tools.test-support.js";
 import assert from "node:assert/strict";
 import { describe, test } from "bun:test";
 
@@ -685,18 +686,20 @@ describe("createAiOrchestrator", () => {
           canReadEntries,
         },
         toolBackends: {
-          findEntries: async () => ({ matches: [], total: 0 }),
-          getEntry: async () => undefined,
+          readTools: createTestReadTools({
+            findEntriesBackend: async () => ({ matches: [], total: 0 }),
+            getEntryBackend: async () => undefined,
+          }),
         },
       });
 
-      assert.equal(toolNames.includes("find_entries"), canReadEntries);
-      assert.equal(toolNames.includes("get_entry"), canReadEntries);
+      assert.equal(toolNames.includes("list_documents"), canReadEntries);
+      assert.equal(toolNames.includes("get_document"), canReadEntries);
       assert.match(
         system,
         canReadEntries
-          ? /Document lookup \(`find_entries`, `get_entry`\): available/
-          : /Document lookup \(`find_entries`, `get_entry`\): UNAVAILABLE/,
+          ? /Document lookup \(`list_documents`, `get_document`\): available/
+          : /Document lookup \(`list_documents`, `get_document`\): UNAVAILABLE/,
       );
     });
   }

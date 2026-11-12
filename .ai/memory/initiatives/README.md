@@ -19,7 +19,7 @@ Keep each file under ~200 lines. If it grows beyond that, split it into a parent
 
 ## Active
 
-(none yet)
+- [MCP server and shared agent tools](2026-11-11-mcp-server.md)
 
 ## Completed
 

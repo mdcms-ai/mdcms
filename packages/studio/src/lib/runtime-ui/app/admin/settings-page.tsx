@@ -58,6 +58,7 @@ import {
   WebhookCreateConfigurationPage,
   WebhookEditConfigurationPage,
 } from "./settings-webhook-configurations.js";
+import { SettingsConnectedAppsPanel } from "./settings-connected-apps-panel.js";
 import { SettingsMediaPanel } from "./settings-media-panel.js";
 import type { MediaSettingsDraft } from "./settings-media-model.js";
 import { SettingsWebhooksPanel } from "./settings-webhooks-panel.js";
@@ -69,6 +70,12 @@ export type { SettingsPageWebhookHistoryState } from "../../hooks/use-webhook-de
 export type { SettingsPageWebhookConfigState } from "../../hooks/use-webhook-config-list.js";
 
 const settingsTabs = [
+  {
+    id: "connected-apps",
+    label: "Connected apps",
+    icon: Key,
+    href: "/settings/connected-apps",
+  },
   { id: "general", label: "General", icon: Settings, href: "/settings" },
   {
     id: "api-keys",
@@ -94,7 +101,12 @@ type SettingsTabId = (typeof settingsTabs)[number]["id"];
 type SettingsSectionId = string | null;
 
 function toSettingsTabId(value: string | undefined): SettingsTabId {
-  if (value === "api-keys" || value === "webhooks" || value === "media") {
+  if (
+    value === "connected-apps" ||
+    value === "api-keys" ||
+    value === "webhooks" ||
+    value === "media"
+  ) {
     return value;
   }
 
@@ -795,7 +807,7 @@ export function SettingsPageView({
   );
 }
 
-export default function SettingsPage({ initialTab }: { initialTab?: string }) {
+function AdminSettingsPage({ initialTab }: { initialTab?: string }) {
   const params = useParams<{ tab?: string; section?: string }>();
   const activeTab = toSettingsTabId(initialTab ?? params.tab);
   const activeSection = toSettingsSectionId({
@@ -871,5 +883,34 @@ export default function SettingsPage({ initialTab }: { initialTab?: string }) {
       isCreating={isCreating}
       createError={createError}
     />
+  );
+}
+
+export default function SettingsPage({ initialTab }: { initialTab?: string }) {
+  const params = useParams<{ tab?: string }>();
+  const canManage = useCanManageSettings();
+  if ((initialTab ?? params.tab) === "connected-apps")
+    return (
+      <div className="min-h-screen bg-background">
+        <PageHeader
+          breadcrumbs={[{ label: "Settings" }, { label: "Connected apps" }]}
+        />
+        <div className="grid gap-5 p-6 lg:grid-cols-[220px_minmax(0,1fr)] lg:p-8">
+          {canManage ? (
+            <SettingsSubnav activeTab="connected-apps" />
+          ) : (
+            <nav>
+              <Link href="/settings/connected-apps">Connected apps</Link>
+            </nav>
+          )}
+          <main className="min-w-0">
+            <SettingsConnectedAppsPanel />
+          </main>
+        </div>
+      </div>
+    );
+  if (!canManage) return <SettingsForbiddenState />;
+  return (
+    <AdminSettingsPage {...(initialTab === undefined ? {} : { initialTab })} />
   );
 }

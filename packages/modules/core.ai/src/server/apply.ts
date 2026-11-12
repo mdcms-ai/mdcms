@@ -1,3 +1,4 @@
+import type { ContentWriteAttribution } from "@mdcms/shared";
 import {
   RuntimeError,
   type AiProposal,
@@ -20,8 +21,6 @@ export type AiApplyWritePayload = {
   frontmatter?: Record<string, unknown>;
   body?: string;
   draftRevision?: number;
-  updatedBy?: string;
-  createdBy?: string;
 };
 
 export type AiApplyContentStore = {
@@ -35,6 +34,7 @@ export type AiApplyContentStore = {
     documentId: string,
     payload: AiApplyWritePayload,
     options: {
+      attribution: ContentWriteAttribution;
       expectedSchemaHash: string;
       expectedDraftRevision?: number;
     },
@@ -46,11 +46,19 @@ export type AiApplyContentStore = {
       path: string;
       locale: string;
     },
-    options: { expectedSchemaHash: string },
+    options: {
+      expectedSchemaHash: string;
+      attribution: ContentWriteAttribution;
+    },
   ): Promise<AiApplyContentDocument>;
   softDelete(
     scope: AiApplyContentScope,
     documentId: string,
+    options: {
+      attribution: ContentWriteAttribution;
+      expectedDraftRevision?: number;
+      expectedSchemaHash?: string;
+    },
   ): Promise<AiApplyContentDocument>;
   /**
    * Restore a previously soft-deleted document back to draft state.
@@ -61,21 +69,20 @@ export type AiApplyContentStore = {
   restore?(
     scope: AiApplyContentScope,
     documentId: string,
+    options: {
+      attribution: ContentWriteAttribution;
+      expectedDraftRevision?: number;
+      expectedSchemaHash?: string;
+    },
   ): Promise<AiApplyContentDocument>;
 };
 
 export type AiApplyInput = {
   proposal: AiProposal;
   expectedSchemaHash: string;
-  /**
-   * Authenticated caller for audit purposes. Document writes pass
-   * through the content store WITHOUT this id — `createdBy`/`updatedBy`
-   * fall through to the store's `DEFAULT_ACTOR` placeholder, matching
-   * the behaviour of the manual content endpoints. The real actor is
-   * captured in the AI audit record instead. See
-   * `core.ai/server/apply.ts` create/update branches for context.
-   */
+  /** Authenticated caller used for the audit record. */
   actorId: string;
+  attribution: ContentWriteAttribution;
   store: AiApplyContentStore;
 };
 
@@ -83,7 +90,7 @@ export type AiApplyInput = {
  * Snapshot of the pre-apply draft state captured at the moment of
  * write. Returned by `applyAiProposal` for body/frontmatter mutating
  * kinds so the post-accept undo path can replay the prior values
- * without storing them server-side. The shape is intentionally simple
+ * from the trusted server undo record. The shape is intentionally simple
  * — body and frontmatter are the only fields content edits touch.
  */
 export type AiApplyPriorDraft = {
@@ -106,7 +113,7 @@ export type AiUndoInput = {
   documentId: string;
   expectedSchemaHash: string;
   /**
-   * Caller-supplied draft snapshot to replay for body/frontmatter
+   * Server-trusted draft snapshot to replay for body/frontmatter
    * kinds. Required for `replace_selection`, `insert_block`, and
    * `update_frontmatter`; ignored for create/delete kinds.
    */
@@ -119,6 +126,7 @@ export type AiUndoInput = {
    */
   postApplyDraftRevision?: number;
   actorId: string;
+  attribution: ContentWriteAttribution;
   store: AiApplyContentStore;
 };
 
@@ -268,15 +276,10 @@ function mergeFrontmatter(
  * underlying store enforces the same conflict semantics as a regular
  * `PUT /api/v1/content/:id`.
  */
-export async function applyAiProposal(
+async function applyAiProposalInternal(
   input: AiApplyInput,
 ): Promise<AiApplyResult> {
   const { proposal, expectedSchemaHash, store } = input;
-  // `actorId` is intentionally not destructured into a local — the
-  // store calls below fall through to DEFAULT_ACTOR for createdBy/
-  // updatedBy. The id is still part of the input shape because the
-  // route handler uses it for audit-record emission.
-  void input.actorId;
   const scope: AiApplyContentScope = {
     project: proposal.project,
     environment: proposal.environment,
@@ -300,14 +303,8 @@ export async function applyAiProposal(
         format: operation.format,
         frontmatter: operation.frontmatter,
         body: operation.body,
-        // Intentionally omit `createdBy`/`updatedBy` so the store
-        // falls through to the same DEFAULT_ACTOR placeholder the
-        // manual content endpoints use. The real actor identity is
-        // captured in the AI audit record — the underlying document
-        // attribution gap is shared with the manual UI flow and is
-        // tracked separately as a follow-up.
       },
-      { expectedSchemaHash },
+      { expectedSchemaHash, attribution: input.attribution },
     );
     return { document };
   }
@@ -398,13 +395,15 @@ export async function applyAiProposal(
     // here because content paths can shift via rename without affecting
     // identity, and we already proved we're deleting the doc the model
     // intended via the existing draft load.
-    const document = await store.softDelete(scope, proposal.documentId);
+    const document = await store.softDelete(scope, proposal.documentId, {
+      expectedDraftRevision: existing.draftRevision,
+      attribution: input.attribution,
+    });
     return { document };
   }
 
   // Snapshot the pre-apply body and frontmatter before the write so the
-  // post-accept undo path can replay the prior state without persisting
-  // it server-side. `existing.frontmatter` is captured by reference here
+  // post-accept undo path can replay the server-trusted prior state. `existing.frontmatter` is captured by reference here
   // — the store guarantees frontmatter is a fresh object per fetch.
   const priorDraft: AiApplyPriorDraft = {
     body: existing.body,
@@ -433,16 +432,11 @@ export async function applyAiProposal(
     {
       body: nextBody,
       frontmatter: nextFrontmatter,
-      // Omit `updatedBy` so the store falls through to DEFAULT_ACTOR
-      // — same path the manual `PUT /api/v1/content/:id` route takes.
     },
     {
       expectedSchemaHash,
-      expectedDraftRevision: hasBaseDraftRevision
-        ? canApplyReplaceSelectionAgainstLiveRevision
-          ? existing.draftRevision
-          : proposal.baseDraftRevision
-        : undefined,
+      attribution: input.attribution,
+      expectedDraftRevision: existing.draftRevision,
     },
   );
   return { document, priorDraft };
@@ -462,15 +456,19 @@ export async function applyAiProposal(
  * frontmatter kinds — a concurrent edit landed inside the 6-second
  * window and a blind replay would clobber the user's work.
  */
-export async function applyAiProposalUndo(
+async function applyAiProposalUndoInternal(
   input: AiUndoInput,
 ): Promise<AiUndoResult> {
   const { proposal, documentId, expectedSchemaHash, store } = input;
-  void input.actorId; // audit-only — store mutations use DEFAULT_ACTOR.
   const scope: AiApplyContentScope = {
     project: proposal.project,
     environment: proposal.environment,
   };
+
+  if (typeof input.postApplyDraftRevision !== "number")
+    throw aiOutputInvalid("Undo requires a trusted post-apply revision.", {
+      proposalId: proposal.proposalId,
+    });
 
   if (proposal.kind === "create_document") {
     // Soft-delete the newly created document. The store's soft-delete
@@ -486,7 +484,16 @@ export async function applyAiProposalUndo(
         details: { documentId },
       });
     }
-    const document = await store.softDelete(scope, documentId);
+    if (existing.publishedVersion !== null)
+      throw aiProposalConflict(
+        "Cannot undo creation of a published document.",
+        { documentId },
+      );
+    const document = await store.softDelete(scope, documentId, {
+      expectedDraftRevision: input.postApplyDraftRevision,
+      expectedSchemaHash,
+      attribution: input.attribution,
+    });
     return { document };
   }
 
@@ -519,7 +526,11 @@ export async function applyAiProposalUndo(
         { documentId, proposalId: proposal.proposalId },
       );
     }
-    const document = await store.restore(scope, documentId);
+    const document = await store.restore(scope, documentId, {
+      expectedDraftRevision: input.postApplyDraftRevision,
+      expectedSchemaHash,
+      attribution: input.attribution,
+    });
     return { document };
   }
 
@@ -571,8 +582,35 @@ export async function applyAiProposalUndo(
     },
     {
       expectedSchemaHash,
+      attribution: input.attribution,
       expectedDraftRevision: existing.draftRevision,
     },
   );
   return { document };
+}
+
+async function mapRevisionConflict<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    if (
+      error instanceof RuntimeError &&
+      ["STALE_DRAFT_REVISION", "DOCUMENT_PUBLISHED"].includes(error.code)
+    )
+      throw aiProposalConflict(error.message, error.details ?? {});
+    if (
+      error instanceof RuntimeError &&
+      ["INVALID_FRONTMATTER", "INVALID_MDX", "UNKNOWN_TYPE"].includes(
+        error.code,
+      )
+    )
+      throw aiOutputInvalid(error.message, error.details ?? {});
+    throw error;
+  }
+}
+export function applyAiProposal(input: AiApplyInput): Promise<AiApplyResult> {
+  return mapRevisionConflict(() => applyAiProposalInternal(input));
+}
+export function applyAiProposalUndo(input: AiUndoInput): Promise<AiUndoResult> {
+  return mapRevisionConflict(() => applyAiProposalUndoInternal(input));
 }

@@ -68,7 +68,7 @@ function createCandidate(
     provider: {
       providerId: "echo",
       model: "echo-1",
-      promptTemplateId: "chat_tools.v1",
+      promptTemplateId: "chat_tools.v2",
     },
     ...overrides,
   };
@@ -304,7 +304,7 @@ describe("createSchemaAwareProposalValidator — update_frontmatter", () => {
       provider: {
         providerId: "echo",
         model: "echo-1",
-        promptTemplateId: "chat_tools.v1",
+        promptTemplateId: "chat_tools.v2",
       },
     });
     assert.equal(result.status, "valid");
@@ -332,7 +332,7 @@ describe("createSchemaAwareProposalValidator — update_frontmatter", () => {
       provider: {
         providerId: "echo",
         model: "echo-1",
-        promptTemplateId: "chat_tools.v1",
+        promptTemplateId: "chat_tools.v2",
       },
     });
     assert.equal(result.status, "invalid");
@@ -364,7 +364,7 @@ describe("createSchemaAwareProposalValidator — update_frontmatter", () => {
       provider: {
         providerId: "echo",
         model: "echo-1",
-        promptTemplateId: "chat_tools.v1",
+        promptTemplateId: "chat_tools.v2",
       },
     });
     assert.equal(result.status, "valid");
@@ -396,7 +396,7 @@ describe("createSchemaAwareProposalValidator — other kinds", () => {
       provider: {
         providerId: "echo",
         model: "echo-1",
-        promptTemplateId: "chat_tools.v1",
+        promptTemplateId: "chat_tools.v2",
       },
     });
     assert.equal(result.status, "valid");
@@ -424,7 +424,7 @@ describe("createSchemaAwareProposalValidator — other kinds", () => {
       provider: {
         providerId: "echo",
         model: "echo-1",
-        promptTemplateId: "chat_tools.v1",
+        promptTemplateId: "chat_tools.v2",
       },
     });
     assert.equal(result.status, "valid");
@@ -453,7 +453,7 @@ describe("createSchemaAwareProposalValidator — other kinds", () => {
       provider: {
         providerId: "echo",
         model: "echo-1",
-        promptTemplateId: "chat_tools.v1",
+        promptTemplateId: "chat_tools.v2",
       },
     });
 
@@ -489,7 +489,7 @@ describe("createSchemaAwareProposalValidator — other kinds", () => {
       provider: {
         providerId: "echo",
         model: "echo-1",
-        promptTemplateId: "chat_tools.v1",
+        promptTemplateId: "chat_tools.v2",
       },
     });
     assert.equal(result.status, "valid");
@@ -565,7 +565,7 @@ describe("createMdxCatalogProposalValidator", () => {
       provider: {
         providerId: "echo",
         model: "echo-1",
-        promptTemplateId: "chat_tools.v1",
+        promptTemplateId: "chat_tools.v2",
       },
     });
 
@@ -596,7 +596,7 @@ describe("createMdxCatalogProposalValidator", () => {
       provider: {
         providerId: "echo",
         model: "echo-1",
-        promptTemplateId: "chat_tools.v1",
+        promptTemplateId: "chat_tools.v2",
       },
     });
 
@@ -639,7 +639,7 @@ describe("createMdxCatalogProposalValidator", () => {
       provider: {
         providerId: "echo",
         model: "echo-1",
-        promptTemplateId: "chat_tools.v1",
+        promptTemplateId: "chat_tools.v2",
       },
     });
 
@@ -687,7 +687,7 @@ describe("createMdxCatalogProposalValidator", () => {
         provider: {
           providerId: "echo",
           model: "echo-1",
-          promptTemplateId: "chat_tools.v1",
+          promptTemplateId: "chat_tools.v2",
         },
       });
 
@@ -733,7 +733,7 @@ describe("createMdxCatalogProposalValidator", () => {
       provider: {
         providerId: "echo",
         model: "echo-1",
-        promptTemplateId: "chat_tools.v1",
+        promptTemplateId: "chat_tools.v2",
       },
     });
 
@@ -774,7 +774,7 @@ describe("createMdxCatalogProposalValidator", () => {
       provider: {
         providerId: "echo",
         model: "echo-1",
-        promptTemplateId: "chat_tools.v1",
+        promptTemplateId: "chat_tools.v2",
       },
     });
 
@@ -1054,7 +1054,7 @@ describe("createSchemaAwareProposalValidator — UNKNOWN_REFERENCE", () => {
       provider: {
         providerId: "echo",
         model: "echo-1",
-        promptTemplateId: "chat_tools.v1",
+        promptTemplateId: "chat_tools.v2",
       },
     });
     assert.equal(result.status, "invalid");

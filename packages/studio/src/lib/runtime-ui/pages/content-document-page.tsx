@@ -10,9 +10,11 @@ import {
   useState,
 } from "react";
 
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   appendMdcmsPreviewTokenToUrl,
+  formatContentChangeOrigin,
+  type ContentChangeOrigin,
   type CollaborationPresenceCursor,
   type CollaborationPresenceMode,
   type CollaborationPresenceSnapshot,
@@ -602,7 +604,33 @@ function formatMediaUploadError(error: unknown): string {
   return "Media upload failed.";
 }
 
+export type ContentDocumentLastEdit = {
+  name?: string;
+  origin?: ContentChangeOrigin;
+};
+
+export function getContentDocumentLastEditQueryKey(input: {
+  serverUrl?: string;
+  project?: string | null;
+  environment?: string | null;
+  locale?: string;
+  document?: ContentDocumentPageReadyState["document"];
+}) {
+  return [
+    "studio",
+    "document-last-edit",
+    input.serverUrl,
+    input.project,
+    input.environment,
+    input.document?.documentId,
+    input.locale,
+    input.document?.updatedAt,
+    input.document?.draftRevision,
+  ] as const;
+}
+
 type ContentDocumentPageViewProps = {
+  lastEdit?: ContentDocumentLastEdit;
   state: ContentDocumentPageState;
   context?: StudioMountContext;
   sidebarOpen?: boolean;
@@ -1036,9 +1064,13 @@ function SidebarTabButton({
 }
 
 export function SidebarInfoTab(props: {
+  lastEdit?: ContentDocumentLastEdit;
   state: ContentDocumentPageReadyState;
 }) {
   const status = getStatusBadge(props.state);
+  const lastEditLabel = props.lastEdit
+    ? `${props.lastEdit.name ?? "Unknown"}${props.lastEdit.origin ? ` · ${formatContentChangeOrigin(props.lastEdit.origin)}` : ""}`
+    : undefined;
 
   return (
     <div className="px-5 py-4">
@@ -1072,6 +1104,22 @@ export function SidebarInfoTab(props: {
             {formatRelativeTime(props.state.document.updatedAt)}
           </span>
         </div>
+        {props.lastEdit ? (
+          <div className="flex items-start justify-between gap-3">
+            <span className="shrink-0 text-foreground-muted">updatedBy</span>
+            <span
+              className="min-w-0 break-words text-right text-foreground"
+              data-mdcms-last-edit
+              title={
+                props.lastEdit.origin?.declared
+                  ? `${lastEditLabel}; client name as reported by the client`
+                  : lastEditLabel
+              }
+            >
+              {lastEditLabel}
+            </span>
+          </div>
+        ) : null}
         <div className="flex items-start justify-between gap-3">
           <span className="shrink-0 text-foreground-muted">path</span>
           <span className="break-all text-right text-foreground">
@@ -1400,7 +1448,7 @@ function SidebarComponentTab(props: {
   );
 }
 
-function SidebarHistoryTab(props: {
+export function SidebarHistoryTab(props: {
   state: ContentDocumentPageReadyState;
   onViewVersion?: (version: number) => void;
   onBackToDraft?: () => void;
@@ -1486,6 +1534,23 @@ function SidebarHistoryTab(props: {
                 <p className="mt-0.5 text-xs text-foreground-muted">
                   {version.changeSummary ?? "No summary"}
                 </p>
+                <p
+                  className="mt-0.5 text-xs text-foreground-muted"
+                  data-mdcms-version-author
+                  title={
+                    version.publishedOrigin?.declared
+                      ? "Client name as reported by the client"
+                      : undefined
+                  }
+                >
+                  {versionHistory.status === "ready"
+                    ? (versionHistory.users?.[version.publishedBy]?.name ??
+                      "Unknown")
+                    : "Unknown"}
+                  {version.publishedOrigin
+                    ? ` · ${formatContentChangeOrigin(version.publishedOrigin)}`
+                    : ""}
+                </p>
                 <p className="mt-0.5 text-xs text-foreground-muted">
                   {formatRelativeTime(version.publishedAt)}
                 </p>
@@ -1499,6 +1564,7 @@ function SidebarHistoryTab(props: {
 }
 
 function ContentDocumentPageSidebar(props: {
+  lastEdit?: ContentDocumentLastEdit;
   state: ContentDocumentPageReadyState;
   context?: StudioMountContext;
   activeMdxComponent?: MdxPropsPanelSelection | null;
@@ -1586,7 +1652,7 @@ function ContentDocumentPageSidebar(props: {
             referenceContentListApi={props.referenceContentListApi}
           />
         ) : (
-          <SidebarInfoTab state={props.state} />
+          <SidebarInfoTab state={props.state} lastEdit={props.lastEdit} />
         )}
       </div>
     </aside>
@@ -2204,6 +2270,7 @@ export function ContentDocumentPageView(props: ContentDocumentPageViewProps) {
 
 function useContentDocumentPageViewElement({
   state,
+  lastEdit,
   context,
   sidebarOpen = false,
   activeMdxComponent = null,
@@ -2959,6 +3026,7 @@ function useContentDocumentPageViewElement({
                 }}
               >
                 <ContentDocumentPageSidebar
+                  lastEdit={lastEdit}
                   state={state}
                   context={context}
                   activeMdxComponent={activeMdxComponent}
@@ -2978,6 +3046,7 @@ function useContentDocumentPageViewElement({
                 className="relative flex w-80 shrink-0"
               >
                 <ContentDocumentPageSidebar
+                  lastEdit={lastEdit}
                   state={state}
                   context={context}
                   activeMdxComponent={activeMdxComponent}
@@ -3566,6 +3635,32 @@ function useContentDocumentPageController({
       route: nextRoute,
     });
   }
+
+  const readyDocument = state.status === "ready" ? state.document : undefined;
+  const lastEditLocale = state.status === "ready" ? state.locale : undefined;
+  const documentRouteApi = createRouteApi();
+  const lastEditQuery = useQuery({
+    queryKey: getContentDocumentLastEditQueryKey({
+      serverUrl: apiConfig?.config.serverUrl,
+      project: mountInfo.project,
+      environment: mountInfo.environment,
+      document: readyDocument,
+      locale: lastEditLocale,
+    }),
+    enabled: Boolean(readyDocument && documentRouteApi),
+    staleTime: 10_000,
+    queryFn: async (): Promise<ContentDocumentLastEdit> => {
+      const document = await documentRouteApi!.loadDraft({
+        type: typeId,
+        documentId: readyDocument!.documentId,
+        locale: lastEditLocale,
+      });
+      return {
+        name: document.users?.[document.updatedBy]?.name,
+        origin: document.updatedOrigin,
+      };
+    },
+  });
 
   const loadSelectedVersionDiff = useLatestCallback(async () => {
     const currentState = stateRef.current;
@@ -4662,6 +4757,7 @@ function useContentDocumentPageController({
 
   return {
     state,
+    lastEdit: lastEditQuery.data,
     context: activeContext,
     sidebarOpen,
     activeMdxComponent,

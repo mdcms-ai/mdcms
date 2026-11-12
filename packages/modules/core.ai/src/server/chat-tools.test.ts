@@ -1,3 +1,7 @@
+import {
+  createTestReadTools,
+  type TestReadBackends,
+} from "./read-tools.test-support.js";
 import assert from "node:assert/strict";
 import { describe, test } from "bun:test";
 
@@ -9,7 +13,9 @@ import {
 } from "./chat-tools.js";
 import type { AiProposal } from "@mdcms/shared";
 
-function baseDeps(overrides: Partial<ChatToolDeps> = {}): ChatToolDeps {
+function baseDeps(
+  overrides: Partial<ChatToolDeps> & TestReadBackends = {},
+): ChatToolDeps {
   return {
     envelope: {
       project: "p",
@@ -37,10 +43,11 @@ function baseDeps(overrides: Partial<ChatToolDeps> = {}): ChatToolDeps {
     registeredTypeIds: ["author", "post"],
     supportedLocales: ["en", "pl"],
     ...overrides,
+    readTools: overrides.readTools ?? createTestReadTools(overrides),
   };
 }
 
-describe("find_entries tool", () => {
+describe("list_documents tool", () => {
   test("is registered when caller has read capability and backend present", () => {
     const tools = buildChatTools(
       baseDeps({
@@ -53,7 +60,7 @@ describe("find_entries tool", () => {
         findEntriesBackend: async () => ({ matches: [], total: 0 }),
       }),
     );
-    assert.ok(tools.find_entries, "find_entries tool should be registered");
+    assert.ok(tools.list_documents, "list_documents tool should be registered");
   });
 
   test("is NOT registered when read capability is absent", () => {
@@ -62,11 +69,11 @@ describe("find_entries tool", () => {
         findEntriesBackend: async () => ({ matches: [], total: 0 }),
       }),
     );
-    assert.equal(tools.find_entries, undefined);
+    assert.equal(tools.list_documents, undefined);
   });
 
   test("execute calls backend with model-supplied args and returns result", async () => {
-    let captured: { type: string; query?: string; limit?: number } | undefined;
+    let captured: { type: string; q?: string; limit?: number } | undefined;
     const tools = buildChatTools(
       baseDeps({
         capabilities: {
@@ -94,11 +101,11 @@ describe("find_entries tool", () => {
         },
       }),
     );
-    const result = (await tools.find_entries!.execute!(
-      { type: "author", query: "john", limit: 5 },
+    const result = (await tools.list_documents!.execute!(
+      { type: "author", q: "john", limit: 5 },
       { toolCallId: "tc_1", messages: [] },
     )) as FindEntriesResult;
-    assert.deepEqual(captured, { type: "author", query: "john", limit: 5 });
+    assert.deepEqual(captured, { type: "author", q: "john", limit: 5 });
     assert.equal(result.matches.length, 1);
     assert.equal(result.matches[0]?.documentId, "doc_1");
     assert.equal(result.total, 1);
@@ -118,7 +125,7 @@ describe("find_entries tool", () => {
         },
       }),
     );
-    const result = (await tools.find_entries!.execute!(
+    const result = (await tools.list_documents!.execute!(
       { type: "author" },
       { toolCallId: "tc_1", messages: [] },
     )) as { queued: false; error: string };
@@ -127,7 +134,7 @@ describe("find_entries tool", () => {
   });
 });
 
-describe("get_entry tool", () => {
+describe("get_document tool", () => {
   test("is registered when caller has read capability and backend present", () => {
     const tools = buildChatTools(
       baseDeps({
@@ -140,7 +147,7 @@ describe("get_entry tool", () => {
         getEntryBackend: async () => undefined,
       }),
     );
-    assert.ok(tools.get_entry);
+    assert.ok(tools.get_document);
   });
 
   test("returns the full document when backend resolves it", async () => {
@@ -165,7 +172,7 @@ describe("get_entry tool", () => {
         }),
       }),
     );
-    const result = (await tools.get_entry!.execute!(
+    const result = (await tools.get_document!.execute!(
       { documentId: "doc_1" },
       { toolCallId: "tc_1", messages: [] },
     )) as { documentId: string; body: string };
@@ -185,7 +192,7 @@ describe("get_entry tool", () => {
         getEntryBackend: async () => undefined,
       }),
     );
-    const result = (await tools.get_entry!.execute!(
+    const result = (await tools.get_document!.execute!(
       { documentId: "missing" },
       { toolCallId: "tc_1", messages: [] },
     )) as { queued: false; error: string };

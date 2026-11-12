@@ -1,0 +1,107 @@
+---
+title: "Connect agents with MCP"
+description: "Use local stdio or remote OAuth to work with MDCMS content."
+---
+
+MDCMS exposes tools through the Model Context Protocol (MCP). Tools act as the authenticated user in one project and environment. MCP writes execute directly, so review the proposed operation before allowing an agent to call a mutation tool.
+
+## Local stdio setup
+
+Use Node.js **24.11.1 or later**. Install the CLI in the host project before using its `mdcms` binary through `npx`:
+
+```bash
+npm install --save-dev @mdcms/cli
+npx mdcms login
+npx mdcms mcp
+```
+
+Run from the directory containing `mdcms.config.ts`. Configure a stdio-capable agent to launch:
+
+```json
+{
+  "mcpServers": {
+    "mdcms": {
+      "command": "npx",
+      "args": ["mdcms", "mcp"]
+    }
+  }
+}
+```
+
+Set the agent's working directory to the host project, or pass `--config` with the config location. Server, project and environment resolve from CLI flags, then `MDCMS_SERVER_URL`, `MDCMS_PROJECT`, `MDCMS_ENVIRONMENT`, then config. API keys resolve from `--api-key`, then `MDCMS_API_KEY`, then the stored login profile for that server/project/environment. The CLI loads `.env*` before config; existing shell variables win. Use `--no-env-file` to disable this. Keep credentials out of committed agent configuration.
+
+The bridge fixes its connection at startup. Restart it to change server, project, environment or credentials. It relays the 27-tool remote catalog and adds two local tools. `sync_schema` reloads local config and imported modules and syncs the schema to that fixed target. `get_credentials_info` reads capabilities for the fixed target and reports capability-derived scopes, publishing-key guidance, and scope requirements for common content/schema tools. Its `allowed` flags do not guarantee path access or describe the complete remote inventory; remote discovery and execution remain authoritative. These two local tools are unavailable through remote MCP alone. stdout carries protocol messages; diagnostics use stderr. Closing stdin stops the bridge.
+
+## Remote OAuth setup
+
+In an agent supporting Streamable HTTP and OAuth, add your server endpoint, for example:
+
+```text
+https://cms.example.com/api/v1/mcp
+```
+
+Sign in to MDCMS in the browser consent flow. Review the unverified app name, select the project and environment, and approve only the requested scopes you need. Consent can grant a subset of requested scopes. The resulting connection has an immutable project/environment target. To switch targets, create a new connection and approve it separately; tool arguments cannot override the target.
+
+Revoke access from **Connected apps** in the Studio sidebar or **Settings → Connected apps**. Members manage their own connections. Project Admins and global Admins/Owners can manage project connections. Token-mode Studio requires session sign-in for this screen. Revocation requires confirmation and ends the connection's grant; the app must reconnect to regain access.
+
+API-key HTTP clients instead send `Authorization: Bearer <api-key>`, `X-MDCMS-Project` and `X-MDCMS-Environment` explicitly. Keep keys in a secret store. Every call remains constrained by credential scopes and the user's current grants.
+
+## Read, edit and publish
+
+1. Call `get_schema` and inspect the content type and returned `schemaHash`.
+2. Read the document with `get_document` before editing.
+3. Pass that exact hash to `create_document`, `update_document`, `duplicate_document` or `create_translation`. For example:
+
+```json
+{
+  "documentId": "example-document-id",
+  "body": "# Updated draft\n\nReview this content before publishing.",
+  "schemaHash": "hash-returned-by-get_schema"
+}
+```
+
+Draft reads require `content:read:draft`. Draft writing requires `content:write`; creation and update also require schema access. Publishing and unpublishing require the separate `content:publish` scope. Writing a draft does not publish it. Restore defaults to draft; restoring to published also requires publish permission.
+
+`create_document` requires an explicit `locale`. Use a configured locale for localized types and `__mdcms_default__` for non-localized types. The server does not infer a locale from the signed-in user.
+
+After server-side changes, run `npx mdcms pull` to refresh local files. For schema changes, edit local config, run `sync_schema` (or `npx mdcms schema sync`), then read and explicitly acknowledge the new hash before writing.
+
+## Remote tools
+
+Discovery returns only tools available to your credential and current permissions. The remote catalog contains these 27 tools:
+
+| Area         | Tools                                                                                                                                                                         |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Documents    | `list_documents`, `get_document`, `create_document`, `update_document`, `duplicate_document`, `delete_document`, `restore_document`, `publish_document`, `unpublish_document` |
+| History      | `list_versions`, `get_version`, `restore_version`                                                                                                                             |
+| Translations | `list_translations`, `create_translation`                                                                                                                                     |
+| Schema       | `get_schema`                                                                                                                                                                  |
+| Media        | `list_media`, `get_media`, `upload_media`, `delete_media`                                                                                                                     |
+| Environments | `list_environments`, `clone_environment`, `promote_documents`                                                                                                                 |
+| Webhooks     | `list_webhooks`, `create_webhook`, `update_webhook`, `delete_webhook`, `list_webhook_deliveries`                                                                              |
+
+`upload_media` accepts `filename`, `mimeType` and canonical `base64`, with a decoded limit of **10 MiB or the configured media limit, whichever is lower**. It cannot fetch a URL or read a local file. Media type and storage validation still apply.
+
+`list_environments` requires an issued `environments:read` scope and current global Admin/Owner privileges. Request that scope when issuing an API key or during OAuth consent; a project Admin role alone is insufficient. It lists visible environment metadata only in the authenticated project. Discovery does not grant access to another environment's content or change the connection target.
+
+Clone and promote check both source and destination permissions. API-key context allowlists must include both project/environment tuples. With OAuth, the destination must equal the connection's fixed target, and the granting user must still have source permissions. Clone with content needs source `content:read` and `schema:read`, plus `content:read:draft` when copying drafts. Settings copy requires source `schema:read` and destination `schema:write`. Promote always requires source `content:read:draft` and `schema:read`, including published-only promotion.
+
+## Attribution and recovery
+
+MDCMS records the authenticated actor and verified MCP channel. App names are reported, unverified metadata, never proof of identity or permission. Remote clients can repeat `{name, version}` in each tool call's `params._meta["ai.mdcms/clientInfo"]`. An initialize name alone does not carry over to later stateless requests. The local bridge forwards its downstream client's reported identity per call.
+
+| Error                                                      | Recovery                                                                                   |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `UNAUTHORIZED` (401)                                       | Reconnect or sign in again; check expired or revoked credentials.                          |
+| `FORBIDDEN` (403)                                          | Check scopes and current user/path grants; request only the additional access needed.      |
+| `MISSING_TARGET_ROUTING` / `TARGET_ROUTING_MISMATCH` (400) | Set API-key routing headers, or reconnect OAuth to the intended target.                    |
+| `SCHEMA_HASH_REQUIRED` (400)                               | Supply the hash you inspected with `get_schema`.                                           |
+| `SCHEMA_NOT_SYNCED` / `SCHEMA_HASH_MISMATCH` (409)         | Sync local schema if needed, inspect the current schema, then revise the write explicitly. |
+| `STALE_DRAFT_REVISION` (409)                               | Read the latest draft and reconcile changes before retrying.                               |
+| `DOCUMENT_COLLABORATION_ACTIVE` (409)                      | Wait for the active editing session to finish before retrying.                             |
+| `MEDIA_UPLOAD_TOO_LARGE` (413)                             | Reduce the decoded file size to the effective limit.                                       |
+| `INVALID_INPUT` / `INVALID_FRONTMATTER` / `INVALID_MDX`    | Correct arguments or content using the tool schema and content type.                       |
+
+A transport failure can leave a mutation's outcome unknown. Inspect server state before retrying. Tool failures return `isError: true` with a code, message and status; do not treat a received protocol response as proof that a write succeeded.
+
+Client configuration varies by host. SDK, browser and packed Node checks do not establish compatibility with a particular ChatGPT or Claude host version; validate read, write and permission-denial behavior in your chosen host before relying on it.

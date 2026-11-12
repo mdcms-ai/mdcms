@@ -1,3 +1,6 @@
+import type { Writable } from "node:stream";
+import { installMcpOutputRouting } from "./mcp-output.js";
+import { withMdcmsClientHeader } from "./client-header.js";
 import { resolve } from "node:path";
 import { stdin as processStdin } from "node:process";
 
@@ -66,6 +69,7 @@ export type CliCommandContext = {
   multiSelect: MultiSelectPrompt;
   stdout: Writer;
   stderr: Writer;
+  protocolOutput?: Writable;
 };
 
 export type CliCommand = {
@@ -524,6 +528,15 @@ export async function runMdcmsCli(
     return 1;
   }
 
+  const outputRouting =
+    command.name === "mcp"
+      ? installMcpOutputRouting({
+          destination: stderr,
+          secrets: [invocation.global.apiKey, env.MDCMS_API_KEY],
+        })
+      : undefined;
+  const diagnostic = outputRouting?.diagnostics ?? stderr;
+
   try {
     const envFiles = await loadCliEnvFiles({
       cwd,
@@ -534,8 +547,9 @@ export async function runMdcmsCli(
         env.MDCMS_DOTENV?.trim().toLowerCase() === "0",
     });
 
+    outputRouting?.addSecret(env.MDCMS_API_KEY);
     for (const warning of envFiles.warnings) {
-      stderr.write(
+      diagnostic.write(
         `Warning: Failed to load env file "${warning.filePath}": ${warning.message}\n`,
       );
     }
@@ -590,10 +604,15 @@ export async function runMdcmsCli(
       global: invocation.global,
       env,
       config,
-      resolveStoredApiKey,
+      resolveStoredApiKey: async (input) => {
+        const key = await resolveStoredApiKey(input);
+        outputRouting?.addSecret(key);
+        return key;
+      },
       requiresTarget: command.requiresTarget !== false,
     });
 
+    outputRouting?.addSecret(resolved.apiKey);
     await runPreflightHooks(runtimeWithModules.preflightHooks, {
       actionId: command.name,
       input: {
@@ -617,16 +636,36 @@ export async function runMdcmsCli(
       environment: resolved.environment,
       apiKey: resolved.apiKey,
       args: commandArgs,
-      fetcher,
+      fetcher: resolved.serverUrl
+        ? withMdcmsClientHeader(
+            fetcher,
+            resolved.serverUrl,
+            `cli/${options.version ?? "0.0.0"}`,
+          )
+        : fetcher,
       confirm,
       multiSelect,
       stdout,
-      stderr,
+      stderr: diagnostic,
+      protocolOutput: outputRouting?.protocolOutput,
     });
 
     return typeof result === "number" ? result : 0;
   } catch (error) {
-    writeCliError(stderr, error);
+    if (outputRouting) {
+      const code =
+        error instanceof RuntimeError &&
+        ["CONFIG_NOT_FOUND", "CONFIG_LOAD_FAILED", "INVALID_CONFIG"].includes(
+          error.code,
+        )
+          ? error.code
+          : "MCP_START_FAILED";
+      diagnostic.write(
+        `${code}: Could not load or start the MCP bridge. Check local configuration, credentials and server availability.\n`,
+      );
+    } else writeCliError(stderr, error);
     return 1;
+  } finally {
+    await outputRouting?.restore();
   }
 }

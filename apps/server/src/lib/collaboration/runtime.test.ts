@@ -1,3 +1,4 @@
+import type { ContentWriteAttribution } from "@mdcms/shared";
 import assert from "node:assert/strict";
 import { test } from "bun:test";
 
@@ -5,7 +6,6 @@ import { RuntimeError, type ContentDocumentResponse } from "@mdcms/shared";
 
 import type { CollaborationSessionContext } from "../collaboration-auth.js";
 import {
-  DEFAULT_ACTOR,
   type ContentDocument,
   type ContentLifecycleEventSink,
   type ContentScope,
@@ -84,14 +84,17 @@ class FakeContentStore implements CollaborationRuntimeContentStore {
       frontmatter?: Record<string, unknown>;
       updatedBy?: string;
     };
-    options?: { expectedDraftRevision?: number };
+    options: {
+      expectedDraftRevision?: number;
+      attribution: ContentWriteAttribution;
+    };
   }> = [];
   readonly publishes: Array<{
     scope: ContentScope;
     documentId: string;
     input: {
       changeSummary?: string;
-      actorId?: string;
+      attribution: ContentWriteAttribution;
     };
   }> = [];
 
@@ -121,7 +124,10 @@ class FakeContentStore implements CollaborationRuntimeContentStore {
       frontmatter?: Record<string, unknown>;
       updatedBy?: string;
     },
-    options?: { expectedDraftRevision?: number },
+    options: {
+      expectedDraftRevision?: number;
+      attribution: ContentWriteAttribution;
+    },
   ): Promise<ContentDocument> {
     this.updates.push({ scope, documentId, payload, options });
 
@@ -150,7 +156,8 @@ class FakeContentStore implements CollaborationRuntimeContentStore {
       body: payload.body ?? this.document.body,
       frontmatter: payload.frontmatter ?? this.document.frontmatter,
       draftRevision: this.document.draftRevision + 1,
-      updatedBy: payload.updatedBy ?? this.document.updatedBy,
+      updatedBy: options.attribution.actorId,
+      updatedOrigin: options.attribution.origin,
       updatedAt: "2026-06-11T10:01:00.000Z",
     };
 
@@ -162,7 +169,7 @@ class FakeContentStore implements CollaborationRuntimeContentStore {
     documentId: string,
     input: {
       changeSummary?: string;
-      actorId?: string;
+      attribution: ContentWriteAttribution;
     },
   ): Promise<ContentDocument> {
     this.publishes.push({ scope, documentId, input });
@@ -178,7 +185,7 @@ class FakeContentStore implements CollaborationRuntimeContentStore {
       version: nextVersion,
       publishedVersion: nextVersion,
       hasUnpublishedChanges: false,
-      updatedBy: input.actorId ?? this.document.updatedBy,
+      updatedBy: input.attribution.actorId ?? this.document.updatedBy,
       updatedAt: "2026-06-11T10:02:00.000Z",
     };
 
@@ -499,7 +506,10 @@ test("server.publishDocument publishes active room draft and keeps active lock",
       scope: { project: "marketing", environment: "draft" },
       documentId: DOCUMENT_ID,
       input: {
-        actorId: "018f0c6d-98da-4f25-89fe-7c7ef5e8597d",
+        attribution: {
+          actorId: "018f0c6d-98da-4f25-89fe-7c7ef5e8597d",
+          origin: { channel: "studio", credential: "session" },
+        },
         changeSummary: "Ready for launch.",
       },
     },
@@ -1182,7 +1192,10 @@ test("onStoreDocument autosaves changed body and frontmatter to PostgreSQL", asy
 
   assert.equal(contentStore.updates.length, 1);
   assert.equal(contentStore.updates[0]?.options?.expectedDraftRevision, 4);
-  assert.equal(contentStore.updates[0]?.payload.updatedBy, DEFAULT_ACTOR);
+  assert.deepEqual(contentStore.updates[0]?.options?.attribution, {
+    actorId: "writer-1",
+    origin: { channel: "studio", credential: "session" },
+  });
   assert.match(contentStore.updates[0]?.payload.body ?? "", /# Changed/);
   assert.deepEqual(contentStore.updates[0]?.payload.frontmatter, {
     title: "Changed",
@@ -1587,7 +1600,10 @@ test("last disconnect changed body saves once with expected revision, last write
 
   assert.equal(contentStore.updates.length, 1);
   assert.equal(contentStore.updates[0]?.options?.expectedDraftRevision, 8);
-  assert.equal(contentStore.updates[0]?.payload.updatedBy, DEFAULT_ACTOR);
+  assert.equal(
+    contentStore.updates[0]?.options.attribution.actorId,
+    "writer-2",
+  );
   assert.match(contentStore.updates[0]?.payload.body ?? "", /# Changed/);
   assert.equal(lifecycleEvents.events.length, 1);
   assert.equal(lifecycleEvents.events[0]?.event, "content.updated");
@@ -1685,7 +1701,10 @@ test("last disconnect attributes a pending debounced edit to its writer", async 
   });
 
   assert.equal(contentStore.updates.length, 1);
-  assert.equal(contentStore.updates[0]?.payload.updatedBy, DEFAULT_ACTOR);
+  assert.equal(
+    contentStore.updates[0]?.options.attribution.actorId,
+    "writer-pending",
+  );
 });
 
 test("last disconnect uses neutral lifecycle email when writer email is unavailable", async () => {

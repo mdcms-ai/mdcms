@@ -1,5 +1,6 @@
 import type {
   ContentDocumentResponse,
+  ContentUserSummary,
   ContentVersionSummaryResponse,
   SchemaRegistryEntry,
   SchemaRegistryFieldSnapshot,
@@ -54,6 +55,7 @@ export type ContentDocumentVersionHistoryState =
   | {
       status: "ready";
       versions: ContentVersionSummaryResponse[];
+      users?: Record<string, ContentUserSummary>;
     };
 
 export type ContentDocumentVersionDiffState =
@@ -871,6 +873,7 @@ function createReadyState(input: {
 
 function createVersionHistoryState(
   versions: ContentVersionSummaryResponse[],
+  users?: Record<string, ContentUserSummary>,
 ): ContentDocumentVersionHistoryState {
   return versions.length === 0
     ? {
@@ -880,6 +883,7 @@ function createVersionHistoryState(
     : {
         status: "ready",
         versions,
+        ...(users ? { users } : {}),
       };
 }
 
@@ -1180,7 +1184,10 @@ export async function publishContentDocumentReadyState(input: {
 
     return {
       ...nextState,
-      versionHistory: createVersionHistoryState(versionHistoryResponse.data),
+      versionHistory: createVersionHistoryState(
+        versionHistoryResponse.data,
+        versionHistoryResponse.users,
+      ),
       selectedComparison: createDefaultVersionComparison(
         versionHistoryResponse.data,
       ),
@@ -1492,7 +1499,7 @@ export async function loadContentDocumentVersionHistoryState(input: {
     });
 
     return {
-      versionHistory: createVersionHistoryState(response.data),
+      versionHistory: createVersionHistoryState(response.data, response.users),
       selectedComparison: createDefaultVersionComparison(response.data),
       versionDiff: resetVersionDiffState(),
     };

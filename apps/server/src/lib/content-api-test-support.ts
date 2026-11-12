@@ -1,8 +1,12 @@
+import { integrationTestDatabaseUrl } from "./integration-test-database.js";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { test } from "bun:test";
 
-import { createConsoleLogger } from "@mdcms/shared";
+import {
+  createConsoleLogger,
+  type ContentWriteAttribution,
+} from "@mdcms/shared";
 import { and, eq } from "drizzle-orm";
 import postgres from "postgres";
 
@@ -41,7 +45,7 @@ export const baseEnv = {
 
 export const dbEnv = {
   ...baseEnv,
-  DATABASE_URL: "postgres://mdcms:mdcms@127.0.0.1:5432/mdcms",
+  DATABASE_URL: integrationTestDatabaseUrl(),
 } as NodeJS.ProcessEnv;
 
 export const logger = createConsoleLogger({
@@ -89,6 +93,7 @@ export function stableFixtureUuid(label: string): string {
 }
 
 async function canConnectToDatabase(): Promise<boolean> {
+  if (!integrationTestDatabaseUrl()) return false;
   const client = postgres(dbEnv.DATABASE_URL ?? "", {
     onnotice: () => undefined,
     connect_timeout: 1,
@@ -99,7 +104,7 @@ async function canConnectToDatabase(): Promise<boolean> {
     await client`select 1`;
     return true;
   } catch {
-    return false;
+    throw new Error("Explicit integration database is unavailable");
   } finally {
     await client.end({ timeout: 1 });
   }
@@ -240,6 +245,7 @@ export { wrapHandlerWithAutoSchemaHash };
 
 export function createHandler(
   options: {
+    resolveUsers?: MountContentApiRoutesOptions["resolveUsers"];
     lookupMediaAsset?: ContentMediaAssetLookup;
     activeCollaboration?: MountContentApiRoutesOptions["activeCollaboration"];
     inactiveCollaborationCache?: MountContentApiRoutesOptions["inactiveCollaborationCache"];
@@ -260,6 +266,7 @@ export function createHandler(
     configureApp: (app) => {
       mountContentApiRoutes(app, {
         store,
+        resolveUsers: options.resolveUsers,
         authorize: authorizeTestRequest,
         requireCsrf: async () => undefined,
         getWriteSchemaSyncState: async () => ({
@@ -943,3 +950,8 @@ export async function deleteContentDocument(
 
   assert.equal(response.status, 200);
 }
+
+export const testAttribution = {
+  actorId: "user-1",
+  origin: { channel: "studio", credential: "session" },
+} satisfies ContentWriteAttribution;

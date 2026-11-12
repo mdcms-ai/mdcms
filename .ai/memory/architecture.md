@@ -64,3 +64,39 @@ Files under `docs/specs/` are **standalone canonical product documentation**. No
 - Preview route mapping belongs on the content type in `mdcms.config.ts` via `resolvePreviewUrl(document)`, not in frontmatter conventions or hardcoded Studio routes.
 - The server mints short-lived preview JWTs from persisted draft state at `POST /api/v1/content/:documentId/preview-token`. Tokens are signed with `MDCMS_PREVIEW_TOKEN_SECRET` and are not API keys.
 - Private host preview routes verify `mdcms_preview_token` with `@mdcms/sdk` before calling draft reads. Public draft preview routes are allowed when intentional, but `?preview=true` alone is only a mode flag.
+
+## Agent tool execution
+
+- Server-owned agent tools dispatch in process through domain HTTP routes with the caller's credentials and a fixed project/environment. External ingress strips internal headers; a private runtime secret binds trusted MCP or Assistant attribution.
+- Assistant reads receive adapted registry definitions through shared dependency contracts. Document lookup summaries omit full bodies; detail reads remain explicit.
+- Assistant mutations resolve server-stored proposals and request-bound route executors. Per-proposal reservations serialize apply and undo; trusted undo records retain the resulting revision and expire after six seconds.
+- Delete and trash restore compare draft revision under the same PostgreSQL row lock as the transition. Published restore appends history and updates search atomically; live-document restore preserves its no-op after checking the precondition.
+
+## Remote MCP and OAuth
+
+- Remote MCP uses a stateless SDK transport per HTTP request, with JSON responses
+  and per-call declared client metadata. The registry owns tool schemas and
+  executors; discovery is filtered by token scopes and dispatch checks current
+  user grants, including path constraints.
+- OAuth credentials are accepted only at MCP ingress or host-verified internal
+  MCP dispatch. Resource and project/environment are immutable grant properties.
+  API-key MCP and Assistant dispatch also intersect the owner's current grants; external REST
+  API-key semantics remain unchanged.
+- PostgreSQL stores hashed consent handles, codes and tokens. Row locks serialize
+  code consumption and refresh rotation. Refresh replay revocation commits before
+  returning an error, and refresh replay evidence survives until family expiry.
+- OAuth endpoint throttling uses bounded shared PostgreSQL counters. Canonical
+  metadata origins come only from typed server configuration, never request headers.
+
+## Agent tools and integration isolation
+
+- All 27 remote tools share the server registry; the CLI adds local schema
+  sync and credential diagnostics. Tool input requiredness follows the underlying domain contract, including
+  explicit create locale. Studio header sessions survive internal dispatch with
+  precedence over ambient cookies.
+- Environment transfers authorize the exact source, destination and reference
+  paths against the transaction snapshot. Promotion guards existing destinations
+  with the collaboration service; a rejection rolls back the entire batch.
+- Full-stack integration uses a unique Compose project, recorded loopback ports,
+  controlled service configuration and ownership-checked cleanup. Mutating MCP
+  integration requires explicit opt-in and validated local test endpoints.

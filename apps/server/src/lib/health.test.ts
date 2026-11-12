@@ -512,6 +512,10 @@ test("OPTIONS Studio preflight returns 204 for allowlisted origin", async () => 
     response.headers.get("access-control-allow-headers") ?? "",
     /X-MDCMS-CSRF-Token/i,
   );
+  assert.match(
+    response.headers.get("access-control-allow-headers") ?? "",
+    /X-MDCMS-Client/i,
+  );
 });
 
 test("GET /api/v1/actions rejects disallowed Studio origins", async () => {

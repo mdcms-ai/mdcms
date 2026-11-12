@@ -273,7 +273,7 @@ Run a [Model Context Protocol](https://modelcontextprotocol.io) server over stdi
 mdcms mcp
 ```
 
-The server uses the same server URL, project, environment, and credentials as every other command, so run `mdcms login` (or set `MDCMS_API_KEY`) first. The key from `mdcms login` or `mdcms init` has the [default scopes](#default-scopes), which cover every tool except `publish_document`. If the server rejects the key (`401`), tools tell the agent to run `mdcms login`; restart the MCP server afterwards, because it reads the key at startup. Register it with your agent client from the project root:
+The server uses the same server URL, project, environment, and credentials as every other command, so run `mdcms login` (or set `MDCMS_API_KEY`) first. The key from `mdcms login` or `mdcms init` has the [default scopes](#default-scopes), which cover common content and schema operations but exclude publishing and additional media, environment, and webhook scopes. If the server rejects the key (`401`), stderr directs the user to run `mdcms login` or set `MDCMS_API_KEY`; restart the MCP server afterwards, because it reads the key at startup. Register it with your agent client from the project root:
 
 <CodeGroup>
 ```bash Claude Code
@@ -290,28 +290,22 @@ claude mcp add mdcms -- npx mdcms mcp
 
 </CodeGroup>
 
-### Tools
+### Tools and connection requirements
 
-| Tool                   | Required scopes                                      | Description                                                            |
-| ---------------------- | ---------------------------------------------------- | ---------------------------------------------------------------------- |
-| `get_credentials_info` | Any valid key                                        | Server, target, the key's scopes, and which tools the key can run      |
-| `get_schema`           | `schema:read`                                        | Content types and fields synced for the target                         |
-| `list_documents`       | `content:read:draft`                                 | Draft documents with frontmatter and status, without bodies            |
-| `get_document`         | `content:read:draft`                                 | One draft document including its body                                  |
-| `create_document`      | `schema:read`, `content:write`                       | Create a draft after validating frontmatter against the schema         |
-| `update_document`      | `schema:read`, `content:read:draft`, `content:write` | Patch frontmatter and/or replace the body of a draft                   |
-| `publish_document`     | `content:publish`                                    | Publish the current draft as a new immutable version                   |
-| `sync_schema`          | `schema:write`                                       | Reload `mdcms.config.ts` and sync its schema, like `mdcms schema sync` |
+Use Node.js 24.11.1 or later and an MDCMS server with `/api/v1/mcp` enabled. The CLI forwards the remote registry, including tool schemas, annotations, results and errors. Tool discovery reflects server capabilities and the credential's permissions.
 
-A tool needs every scope listed for it. `mdcms mcp --help` prints the same table.
+`sync_schema` is a local tool and requires `schema:write`. It reloads the resolved `mdcms.config.ts`, syncs to the original connection, and returns `schemaHash`, `syncedAt` and `affectedTypes`. Restart the bridge to change its server, project, environment or credentials.
+
+`get_credentials_info` is a read-only local diagnostic for the resolved target, capability-derived scopes, and common content/schema tool scope requirements. Its `allowed` flags do not guarantee path access or describe the complete remote inventory. Remote discovery remains authoritative. Login/init keys exclude publishing; supply a Studio-created key with `content:publish` to publish. After replacing a rejected key, restart the bridge.
 
 ### How writes behave
 
-- **Drafts only.** `create_document` and `update_document` never publish. Publishing is a separate tool that needs the `content:publish` scope, which keys created by `mdcms login` do not include. Create a key with that scope in Studio settings and pass it with `MDCMS_API_KEY` if you want an agent to publish.
-- **Schema validation.** Frontmatter is validated against the synced schema before anything is written. A violation fails the tool call with `INVALID_FRONTMATTER` and lists every failing field, so the agent can correct itself.
-- **No silent overwrites.** `update_document` sends the draft revision it read. If someone else changed the document in between, the call fails with `STALE_DRAFT_REVISION`.
-- **Schema hash pinning.** Writes use the schema hash stored by the last schema sync. After editing `mdcms.config.ts`, call `sync_schema` (or run `mdcms schema sync`).
-- **Local files are untouched.** MCP writes go to the server. Run `mdcms pull` to update your working copy.
+- Create and update operate on drafts. Publishing requires a separate tool and the `content:publish` scope.
+- Schema validation, permissions and draft revision conflicts are enforced by the server.
+- Read `get_schema` and pass its `schemaHash` explicitly to write tools that require it. After a schema change, review the schema before acknowledging the new hash. The bridge never substitutes local schema state or refreshes the hash automatically.
+- Remote tool writes affect server content. Run `mdcms pull` to update local files. Only `sync_schema` updates local schema state.
+- A transport failure may leave a mutation's outcome unknown. The bridge does not retry it; inspect server state before retrying.
+- stdout carries JSON-RPC only. Diagnostics use stderr, and closing stdin closes the connection.
 
 ---
 

@@ -1,5 +1,7 @@
 import {
   RuntimeError,
+  parseContentChangeOrigin,
+  type ContentUserSummary,
   type ApiPaginatedEnvelope,
   type ContentDocumentResponse,
   type ContentPreviewTokenResponse,
@@ -127,10 +129,12 @@ export type StudioDocumentRouteListInput = {
   signal?: AbortSignal;
 };
 
+type ContentResponseUsers = { users?: Record<string, ContentUserSummary> };
+
 export type StudioDocumentRouteApi = {
   loadDraft: (
     input: StudioDocumentRouteLoadInput,
-  ) => Promise<ContentDocumentResponse>;
+  ) => Promise<ContentDocumentResponse & ContentResponseUsers>;
   listContent: (
     input: StudioDocumentRouteListInput,
   ) => Promise<ApiPaginatedEnvelope<ContentDocumentResponse>>;
@@ -149,7 +153,9 @@ export type StudioDocumentRouteApi = {
   ) => Promise<ContentDocumentResponse>;
   listVersions: (
     input: StudioDocumentRouteVersionListInput,
-  ) => Promise<ApiPaginatedEnvelope<ContentVersionSummaryResponse>>;
+  ) => Promise<
+    ApiPaginatedEnvelope<ContentVersionSummaryResponse> & ContentResponseUsers
+  >;
   getVersion: (
     input: StudioDocumentRouteVersionDetailInput,
   ) => Promise<ContentVersionDocumentResponse>;
@@ -367,6 +373,30 @@ function toInvalidRouteResponseError(
   });
 }
 
+function readUsersMap(
+  payload: unknown,
+): Record<string, ContentUserSummary> | undefined {
+  if (!isRecord(payload) || !isRecord(payload.users)) return undefined;
+  return Object.fromEntries(
+    Object.entries(payload.users).flatMap(([id, value]) =>
+      isRecord(value) && isString(value.name) && isString(value.email)
+        ? [[id, { name: value.name, email: value.email }]]
+        : [],
+    ),
+  );
+}
+
+function normalizeOrigins(
+  data: Record<string, unknown>,
+  fields: string[],
+): void {
+  for (const field of fields) {
+    const origin = parseContentChangeOrigin(data[field]);
+    if (origin) data[field] = origin;
+    else delete data[field];
+  }
+}
+
 function validateContentDocumentResponseData(
   operation: string,
   payload: unknown,
@@ -409,6 +439,7 @@ function validateContentDocumentResponseData(
     throw toInvalidRouteResponseError(operation, fallbackMessage, payload);
   }
 
+  normalizeOrigins(data, ["createdOrigin", "updatedOrigin"]);
   return data as ContentDocumentResponse;
 }
 
@@ -442,6 +473,7 @@ function validateContentVersionSummaryResponseData(
     throw toInvalidRouteResponseError(operation, fallbackMessage, payload);
   }
 
+  normalizeOrigins(data, ["publishedOrigin"]);
   return data as ContentVersionSummaryResponse;
 }
 
@@ -505,12 +537,14 @@ function toPaginatedVersionSummaryResponse(
   operation: string,
   payload: unknown,
   fallbackMessage: string,
-): ApiPaginatedEnvelope<ContentVersionSummaryResponse> {
+): ApiPaginatedEnvelope<ContentVersionSummaryResponse> & ContentResponseUsers {
   if (!isRecord(payload) || !Array.isArray(payload.data)) {
     throw toInvalidRouteResponseError(operation, fallbackMessage, payload);
   }
 
+  const users = readUsersMap(payload);
   return {
+    ...(users ? { users } : {}),
     data: payload.data.map((item) =>
       validateContentVersionSummaryResponseData(
         operation,
@@ -853,11 +887,13 @@ export function createStudioDocumentRouteApi(
         },
       );
 
-      return toContentDocumentResponse(
+      const document = toContentDocumentResponse(
         "GET /api/v1/content/:documentId?draft=true",
         payload,
         "Failed to load document draft.",
       );
+      const users = readUsersMap(payload);
+      return { ...document, ...(users ? { users } : {}) };
     },
     async listContent(input) {
       const payload = await requestContentRouteJson(

@@ -1,6 +1,6 @@
 import { tool, type Tool } from "ai";
 import { z } from "zod";
-import type { AiProposal } from "@mdcms/shared";
+import type { AiProposal, AgentReadToolDefinition } from "@mdcms/shared";
 
 import {
   buildProposalsFromOutput,
@@ -9,7 +9,7 @@ import {
 } from "./proposal-builder.js";
 
 /**
- * Result returned by the `find_entries` chat tool. Shape kept
+ * Result returned by the `list_documents` chat tool. Shape kept
  * compact — the model uses `documentId` to reference entries and
  * `title`/`summary` to disambiguate candidates.
  */
@@ -28,7 +28,7 @@ export type FindEntriesResult = {
 };
 
 /**
- * Result returned by the `get_entry` chat tool. Full document body
+ * Result returned by the `get_document` chat tool. Full document body
  * + frontmatter, plus enough revision metadata for the model to
  * understand staleness state.
  */
@@ -73,7 +73,7 @@ export type GetComponentReferenceResult = {
  * it can't legitimately call.
  */
 
-export const CHAT_TOOL_PROMPT_TEMPLATE_ID = "chat_tools.v1";
+export const CHAT_TOOL_PROMPT_TEMPLATE_ID = "chat_tools.v2";
 
 export type ChatToolCapabilities = {
   canEditDocument: boolean;
@@ -109,35 +109,18 @@ export type ChatToolDeps = {
 
   /**
    * Registered content type ids for this project. Used as the enum
-   * source for the find_entries tool's `type` parameter so the model
+   * source for the list_documents tool's `type` parameter so the model
    * can't query for types that don't exist.
    */
   registeredTypeIds: string[];
 
   /**
    * Supported locales for this project. Used as the enum source for
-   * find_entries' `locale` parameter.
+   * list_documents' `locale` parameter.
    */
   supportedLocales: string[];
 
-  /**
-   * Backend for the find_entries tool — wraps contentStore.list at
-   * the route layer.
-   */
-  findEntriesBackend?: (input: {
-    type: string;
-    query?: string;
-    locale?: string;
-    limit?: number;
-  }) => Promise<FindEntriesResult>;
-
-  /**
-   * Backend for the get_entry tool — wraps contentStore.getById at
-   * the route layer.
-   */
-  getEntryBackend?: (input: {
-    documentId: string;
-  }) => Promise<GetEntryResult | undefined>;
+  readTools?: readonly AgentReadToolDefinition[];
 
   /**
    * Backend for the get_component_reference tool. The route layer
@@ -539,62 +522,17 @@ export function buildChatTools(deps: ChatToolDeps): Record<string, Tool> {
     });
   }
 
-  if (deps.capabilities.canReadEntries && deps.findEntriesBackend) {
-    const backend = deps.findEntriesBackend;
-    tools.find_entries = tool({
-      description:
-        "Search the project's documents by content type with an optional text query. Use this when:\n" +
-        "1. Filling a reference field on a proposal — e.g. setting `author` on a new post. Call `find_entries({ type: 'author', query: '<name>' })` and pick the right `documentId` from the results.\n" +
-        "2. Checking what already exists before proposing a new draft to avoid duplicates.\n" +
-        "Returns up to `limit` matches (default 10, max 25), most-recently-updated first. The `type` parameter is enum-constrained to the project's registered content types; passing anything else fails the call. Do not use this for editing — combine with the propose_* tools after picking a result.",
-      inputSchema: z.object({
-        type:
-          deps.registeredTypeIds.length > 0
-            ? z.enum(deps.registeredTypeIds as [string, ...string[]])
-            : z.string().min(1),
-        query: z.string().optional(),
-        locale:
-          deps.supportedLocales.length > 0
-            ? z.enum(deps.supportedLocales as [string, ...string[]]).optional()
-            : z.string().optional(),
-        limit: z.number().int().min(1).max(25).optional(),
-      }),
-      execute: async (args) => {
+  for (const definition of deps.readTools ?? []) {
+    if (definition.name !== "get_schema" && !deps.capabilities.canReadEntries)
+      continue;
+    tools[definition.name] = tool({
+      description: definition.description,
+      inputSchema: definition.inputSchema,
+      execute: async (input) => {
         try {
-          return await backend({
-            type: args.type,
-            ...(args.query ? { query: args.query } : {}),
-            ...(args.locale ? { locale: args.locale } : {}),
-            ...(args.limit ? { limit: args.limit } : {}),
-          });
-        } catch (error) {
-          return toolErrorResult(error);
-        }
-      },
-    });
-  }
-
-  if (deps.capabilities.canReadEntries && deps.getEntryBackend) {
-    const backend = deps.getEntryBackend;
-    tools.get_entry = tool({
-      description:
-        "Fetch the full body + frontmatter of a specific document by its `documentId`. Use this when:\n" +
-        "1. You need to read an existing document's content before proposing changes to a different document that references or links to it.\n" +
-        "2. You picked a candidate from `find_entries` and want to read its full content before referencing or duplicating parts of it.\n" +
-        "Returns the document's frontmatter, body, type, locale, path, and revision info. If the document doesn't exist or has been soft-deleted, returns an error. The active document the user is editing is already in your context — don't call this for it.",
-      inputSchema: z.object({
-        documentId: z.string().min(1),
-      }),
-      execute: async (args) => {
-        try {
-          const entry = await backend({ documentId: args.documentId });
-          if (!entry) {
-            return {
-              queued: false as const,
-              error: `Document "${args.documentId}" not found in this project.`,
-            };
-          }
-          return entry;
+          return await definition.execute(
+            z.record(z.string(), z.unknown()).parse(input),
+          );
         } catch (error) {
           return toolErrorResult(error);
         }

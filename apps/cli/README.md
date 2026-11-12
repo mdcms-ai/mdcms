@@ -88,7 +88,7 @@ Shell-exported variables override all file values. Use `--no-env-file` or `MDCMS
 | `mdcms pull`        | Pull content from the server to local Markdown files     |
 | `mdcms push`        | Push local content changes back to the server            |
 | `mdcms schema sync` | Sync your local schema definition to the server registry |
-| `mdcms mcp`         | Run an MCP server over stdio for AI agents (preview)     |
+| `mdcms mcp`         | Run an MCP stdio bridge for AI agents                    |
 
 ### Pull
 
@@ -107,15 +107,23 @@ mdcms push              # Interactive mode: prompts before uploading
 mdcms push --yes        # Include new and deleted files, skip the confirmation prompt (--force is an alias)
 ```
 
-### MCP server (preview)
+### MCP bridge
 
-`mdcms mcp` exposes the configured project and environment to AI agents over the Model Context Protocol. It reuses the credentials from `mdcms login`; that key can do everything except publish, which needs a key with `content:publish`.
+`mdcms mcp` exposes the configured project and environment to AI agents over the Model Context Protocol. It reuses the credentials from `mdcms login`; that key does not include `content:publish`. To publish, create a key with that scope in Studio settings and pass it with `MDCMS_API_KEY` or `--api-key`.
+
+Install the CLI locally in the host project first (`npm install --save-dev @mdcms/cli`), then configure the agent from that directory:
 
 ```bash
 claude mcp add mdcms -- npx mdcms mcp
 ```
 
-Tools: `get_credentials_info` (reports the key's scopes and which tools it can run), `get_schema`, `list_documents`, `get_document`, `create_document`, `update_document`, `publish_document`, `sync_schema`. Writes are draft writes, are validated against the synced schema, and fail instead of overwriting a concurrent change. See the [commands reference](https://docs.mdcms.ai/guide/cli/commands) for details.
+Requires Node.js 24.11.1 or later and a server exposing `/api/v1/mcp`. The CLI relays the server registry, including its schemas, annotations, results and errors. Available tools depend on server capabilities and credential scopes.
+
+The local `sync_schema` tool reloads `mdcms.config.ts` and its imported local modules, then syncs to the connection resolved at startup. TypeScript configs support extensionless local imports and transformed syntax such as enums on both Node and Bun. Config edits do not change that connection. After syncing, read `get_schema` and pass its `schemaHash` explicitly to tools that require it. The bridge never substitutes a local or newly fetched hash. Restart the bridge to change server, project, environment or credentials.
+
+Remote writes affect the server. Run `mdcms pull` to refresh local content. Transport failures can have unknown mutation outcomes; inspect server state before retrying. stdout is reserved for JSON-RPC, diagnostics go to stderr, and closing stdin stops the bridge.
+
+`get_credentials_info` is a read-only local diagnostic for the resolved target, capability-derived scopes, and common content/schema tool scope requirements. Its `allowed` flags do not guarantee path access or describe the complete remote inventory. Remote discovery remains authoritative. Login/init keys exclude publishing; supply a Studio-created key with `content:publish` to publish. After replacing a rejected key, restart the bridge.
 
 ### Global Flags
 
@@ -131,3 +139,5 @@ Tools: `get_credentials_info` (reports the key's scopes and which tools it can r
 ## Documentation
 
 Full CLI reference at [docs.mdcms.ai](https://docs.mdcms.ai/).
+
+Remote OAuth clients connect to `https://cms.example.com/api/v1/mcp`, approve a scope subset and one immutable project/environment target. Revoke grants in Studio Connected apps. See the [MCP guide](https://docs.mdcms.ai/guide/mcp) for all remote tools, permissions, explicit schema hashes and recovery guidance. Client names are unverified; initialize identity alone does not persist across stateless calls.

@@ -108,6 +108,34 @@ Entries are reverse-chronological (newest first).
 **Why:** `bun test --cwd apps/cli ./src` can fail `loopback callback returns styled HTML success page` with `Failed to start server. Is port 0 in use?` under Codex sandboxing, while the same targeted test passes outside the sandbox.
 **How to apply:** When a CLI test that binds `127.0.0.1` fails with a port-bind error, rerun the targeted test with sandbox escalation before attributing the failure to product code.
 
+## 2026-11-11: distinguish store contracts when migrating callers
+
+**Rule:** Identify the owning store contract before updating calls to common methods such as `create`, `update`, and `restore`.
+**Why:** Content, environment, and webhook stores use the same method names but accept different authorization metadata.
+**How to apply:** Scope edits by the concrete store type, preserve existing actor semantics outside that contract, and typecheck all affected callers.
+
+- Validate agent-tool response schemas against mounted domain routes, including database-backed fixtures.
+  Why: Handwritten fixtures can accidentally add fields that the actual response omits, hiding incompatible envelope or nested schema definitions.
+  How to apply: Parse successful registry and adapted Assistant outputs with their advertised schemas and include a real runtime integration case.
+
+## OAuth transactional authorization
+
+**Rule:** Reuse the active PostgreSQL transaction for current-grant checks during token issuance and refresh.
+**Why:** Opening another pooled connection while holding transaction locks can exhaust the pool and deadlock concurrent exchanges.
+**How to apply:** Pass the transaction into authorization reads and verify exchange and refresh with a one-connection pool. Commit replay revocation before returning an OAuth error.
+
+## 2026-11-12: preserve released migration indices across branches
+
+**Rule:** Keep released Drizzle migrations and regenerate unpublished schema deltas against the current released snapshot.
+**Why:** Independent branches can allocate the same migration index with different snapshots; combining those journals can skip or misapply schema changes.
+**How to apply:** Preserve the released migration and snapshot, regenerate the unpublished delta from the merged schema, then verify both a fresh database and legacy-data preservation.
+
+## CLI config reload and protocol output
+
+**Rule:** Reload local config dependencies and reserve MCP stdout before evaluating config modules.
+**Why:** Cache-busting only the entry URL leaves imported schemas stale. Config side effects run before command execution and can corrupt stdio JSON-RPC.
+**How to apply:** Test extensionless TypeScript imports and dependency-only edits in a packed Node process; capture a dedicated protocol writer before routing config console and direct stdout/stderr writes through a shared credential-sanitizing sink, only for MCP. Preserve stream callbacks and backpressure, and restore routing on every exit.
+
 ## 2026-11-12: compare dates with drizzle operators, not raw `sql`
 
 **Rule:** Use drizzle operators (`lt`, `gt`, `eq`) for `Date` values; do not interpolate a `Date` into a raw `sql` template.
@@ -119,6 +147,30 @@ Entries are reverse-chronological (newest first).
 **Rule:** A page the server renders and whose form posts back to itself must be excluded in `isStudioBrowserRoute`, like the CLI login pages.
 **Why:** The origin check allows same-origin requests by comparing `Origin` with `new URL(request.url).origin`. Behind a proxy (Railway), `request.url` is the internal `http://` address while the browser sends the public `https://` origin, so the form post is rejected with `FORBIDDEN_ORIGIN`. Local tests pass because there both origins match.
 **How to apply:** When adding a server-hosted HTML flow under a Studio browser route prefix, add its path to the exclusions and cover it with a test whose request URL differs from the `Origin` header.
+
+## 2026-11-12: preserve authentication across internal dispatch
+
+**Rule:** Forward header-based Studio sessions without ambient cookies.
+**Why:** Dropping the session header can make an internal request authenticate as a different cookie session.
+**How to apply:** Test header-only requests and conflicting header/cookie identities through both reads and writes.
+
+## 2026-11-12: verify advertised tools through real domain routes
+
+**Rule:** Match tool-required fields to the domain contract and exercise a real HTTP mutation.
+**Why:** Discovery and schema-only tests cannot establish that advertised arguments reach a valid domain operation.
+**How to apply:** Assert omission fails before dispatch and cover the explicit valid payload through the SDK, including persisted actor and origin.
+
+## 2026-11-12: authorize references before remap diagnostics
+
+**Rule:** Check reference paths before reporting environment-transfer remap failures.
+**Why:** Remap diagnostics can reveal documents outside the caller’s current grants.
+**How to apply:** Load current grants through the active transaction and reject unauthorized source, destination and reference paths before exposing a plan or writing content.
+
+## 2026-11-12: align fixture clocks across integration boundaries
+
+**Rule:** Anchor fake token clocks to the current time when a real runtime validates the same tokens.
+**Why:** A fixed historical fixture date eventually produces expired credentials at the wall-clock boundary.
+**How to apply:** Start from the current clock, advance explicit relative intervals for expiry assertions and perform real-runtime authentication before those advances.
 
 ## 2026-11-12: CLI command help goes through `CliCommand.renderHelp`
 

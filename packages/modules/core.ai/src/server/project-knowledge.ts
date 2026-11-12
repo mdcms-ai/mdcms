@@ -59,7 +59,7 @@ export function renderProjectKnowledgeBlock(
     if (hasReferenceField) {
       lines.push(
         "### Reference fields require real entry ids",
-        "When a field is `reference → <type>`, fill it with the documentId of an entry that already exists in this project. Use the `find_entries` tool to look up candidates by type, then copy the `documentId` from a result into the reference field. Do not invent ids and do not write a person's name or any other prose — apply will reject anything that isn't a real UUID, and the proposal-time validator emits UNKNOWN_REFERENCE before that.",
+        "When a field is `reference → <type>`, fill it with the documentId of an entry that already exists in this project. Use the `list_documents` tool to look up candidates by type, then copy the `documentId` from a result into the reference field. Do not invent ids and do not write a person's name or any other prose; apply will reject anything that isn't a real UUID, and the proposal-time validator emits UNKNOWN_REFERENCE before that.",
         "",
       );
     }
@@ -190,7 +190,7 @@ function renderKindDescriptor(
     return `array of ${renderKindDescriptor(field.item, depth)}`;
   }
   if (field.kind === "object" && depth > MAX_NESTED_DEPTH) {
-    return "<nested object> — call get_entry on a sibling for the full shape";
+    return "<nested object>: call get_document on a sibling for the full shape";
   }
   return field.kind;
 }

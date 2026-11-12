@@ -1,3 +1,4 @@
+import { integrationTestDatabaseUrl } from "./integration-test-database.js";
 import assert from "node:assert/strict";
 import { test } from "bun:test";
 
@@ -53,7 +54,7 @@ const env = {
   APP_VERSION: "9.9.9",
   PORT: "4000",
   SERVICE_NAME: "mdcms-server",
-  DATABASE_URL: "postgres://mdcms:mdcms@localhost:5432/mdcms",
+  DATABASE_URL: integrationTestDatabaseUrl(),
 } as NodeJS.ProcessEnv;
 
 const logger = createConsoleLogger({
@@ -62,6 +63,7 @@ const logger = createConsoleLogger({
 });
 
 async function canConnectToDatabase(): Promise<boolean> {
+  if (!integrationTestDatabaseUrl()) return false;
   const client = postgres(env.DATABASE_URL ?? "", {
     onnotice: () => undefined,
     connect_timeout: 1,
@@ -72,7 +74,7 @@ async function canConnectToDatabase(): Promise<boolean> {
     await client`select 1`;
     return true;
   } catch {
-    return false;
+    throw new Error("Explicit integration database is unavailable");
   } finally {
     await client.end({ timeout: 1 });
   }
@@ -441,6 +443,7 @@ function isForbiddenError(error: unknown): boolean {
 test("session authorization denies environment clone and promote to viewer and editor roles", () => {
   for (const role of ["viewer", "editor"] as const) {
     for (const requiredScope of [
+      "environments:read",
       "environments:clone",
       "environments:promote",
     ] as const) {
@@ -461,6 +464,7 @@ test("session authorization denies environment clone and promote to viewer and e
 test("session authorization allows environment clone and promote for admin and owner roles", () => {
   for (const role of ["admin", "owner"] as const) {
     for (const requiredScope of [
+      "environments:read",
       "environments:clone",
       "environments:promote",
     ] as const) {
@@ -518,7 +522,7 @@ test("API key issuance allows environment scopes for admin and owner sessions", 
       () =>
         assertGrantsCanIssueApiKeyScopes(
           sessionGrantsByRole[role],
-          ["environments:clone", "environments:promote"],
+          ["environments:read", "environments:clone", "environments:promote"],
           [sessionTarget],
         ),
       role,
@@ -529,6 +533,7 @@ test("API key issuance allows environment scopes for admin and owner sessions", 
 test("API key issuance rejects environment scopes for viewer and editor sessions", () => {
   for (const role of ["viewer", "editor"] as const) {
     for (const scope of [
+      "environments:read",
       "environments:clone",
       "environments:promote",
     ] as const) {
@@ -969,6 +974,61 @@ testWithDatabase(
       assert.ok(location);
       assert.equal(location.startsWith(provider.authorizationEndpoint), true);
       assert.ok(extractSetCookie(response));
+    } finally {
+      await provider.close();
+      await dbConnection.close();
+    }
+  },
+);
+
+testWithDatabase(
+  "auth canonical callback origin ignores Host and forwarded headers",
+  async () => {
+    const provider = await startMockOidcProvider(
+      {
+        sub: "oidc-user-1",
+        email: "oidc-user@example.com",
+        email_verified: true,
+        name: "OIDC User",
+      },
+      {
+        clientId: "okta-client-id",
+      },
+    );
+    const { handler, dbConnection } = createServerRequestHandlerWithModules({
+      env: createOidcEnv(provider, {
+        ...env,
+        MDCMS_SERVER_URL: "https://cms.example.com/",
+      }),
+      logger,
+    });
+
+    try {
+      const response = await handler(
+        new Request("http://localhost/api/v1/auth/sign-in/sso", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            host: "attacker.invalid",
+            forwarded: "host=attacker.invalid;proto=http",
+            "x-forwarded-host": "attacker.invalid",
+            "x-forwarded-proto": "http",
+          },
+          body: JSON.stringify({
+            providerId: "okta",
+            callbackURL: "/studio",
+          }),
+        }),
+      );
+
+      assert.equal(response.status, 302);
+      const location = response.headers.get("location");
+      assert.ok(location);
+      assert.equal(location.startsWith(provider.authorizationEndpoint), true);
+      assert.equal(
+        new URL(location).searchParams.get("redirect_uri"),
+        "https://cms.example.com/api/v1/auth/sso/callback/okta",
+      );
     } finally {
       await provider.close();
       await dbConnection.close();
@@ -5172,3 +5232,20 @@ testWithDatabase(
     }
   },
 );
+
+test("project administrators cannot issue environment metadata scopes", () => {
+  assert.throws(
+    () =>
+      assertGrantsCanIssueApiKeyScopes(
+        [
+          {
+            role: "admin",
+            scope: { kind: "project", project: sessionTarget.project },
+          },
+        ],
+        ["environments:read"],
+        [sessionTarget],
+      ),
+    isForbiddenError,
+  );
+});

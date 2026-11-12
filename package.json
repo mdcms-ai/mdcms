@@ -6,9 +6,9 @@
     "build": "bun nx run-many -t build",
     "typecheck": "bun nx run-many -t typecheck",
     "quality": "bun run format:check && bun run typecheck",
-    "unit": "bun nx run-many -t test && bun run studio:embed:smoke",
+    "unit": "bun test scripts/integration-stack.test.ts && bun nx run-many -t test && bun run studio:embed:smoke",
     "e2e": "bun x playwright test",
-    "integration": "bun run compose:health && bun run migrate:check && bun run integration:content",
+    "integration": "bun run compose:health && bun run migrate:check && bun run integration:content && bun run integration:oauth",
     "integration:content": "bash scripts/content-api-integration-check.sh",
     "ci:required": "bun run quality && bun run unit && bun run integration",
     "check": "bun nx run-many -t build typecheck",
@@ -23,7 +23,8 @@
     "format:check": "bun x prettier --check .",
     "changeset": "changeset",
     "version-packages": "changeset version",
-    "release": "bun run build && changeset publish"
+    "release": "bun run build && changeset publish",
+    "integration:oauth": "bash scripts/oauth-integration-check.sh"
   },
   "private": true,
   "dependencies": {},

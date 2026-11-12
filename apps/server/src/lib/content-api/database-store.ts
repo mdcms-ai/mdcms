@@ -1,3 +1,5 @@
+import type { ContentWriteAttribution } from "@mdcms/shared";
+import { originField } from "./responses.js";
 import { randomUUID } from "node:crypto";
 
 import {
@@ -17,7 +19,6 @@ import {
 import { resolveProjectEnvironmentScope } from "../project-provisioning.js";
 
 import {
-  DEFAULT_ACTOR,
   DEFAULT_LIMIT,
   MAX_LIMIT,
   type ContentDocument,
@@ -32,6 +33,7 @@ import {
 } from "./types.js";
 import {
   assertJsonObject,
+  assertExpectedDraftRevision,
   assertRequiredString,
   parseBoolean,
   parseContentListGroupBy,
@@ -295,8 +297,10 @@ export function createDatabaseContentStore(
       frontmatter: versionRow.frontmatter as Record<string, unknown>,
       body: versionRow.body,
       createdBy: headRow.createdBy,
+      ...originField("createdOrigin", headRow.createdOrigin),
       createdAt: toIsoString(headRow.createdAt),
-      updatedBy: headRow.updatedBy,
+      updatedBy: versionRow.publishedBy,
+      ...originField("updatedOrigin", versionRow.publishedOrigin),
       updatedAt: toIsoString(versionRow.publishedAt),
     };
   }
@@ -419,7 +423,7 @@ export function createDatabaseContentStore(
         body: string;
       };
       version: number;
-      actorId: string;
+      attribution: ContentWriteAttribution;
       changeSummary?: string;
     },
   ): Promise<void> {
@@ -430,12 +434,13 @@ export function createDatabaseContentStore(
       environmentId: input.headRow.environmentId,
       schemaType: input.snapshot.type,
       locale: input.snapshot.locale,
-      contentFormat: input.snapshot.format,
+      contentFormat: inferContentFormat(input.snapshot.body),
       path: input.snapshot.path,
       body: input.snapshot.body,
       frontmatter: input.snapshot.frontmatter,
       version: input.version,
-      publishedBy: input.actorId,
+      publishedBy: input.attribution.actorId,
+      publishedOrigin: input.attribution.origin,
       changeSummary: input.changeSummary ?? null,
     });
     await searchBackend.upsertPublishedDocument(tx, {
@@ -554,7 +559,7 @@ export function createDatabaseContentStore(
       return row?.resolvedSchema as SchemaRegistryTypeSnapshot | undefined;
     },
 
-    async create(scope, payload, options?: ContentWriteOperationOptions) {
+    async create(scope, payload, options: ContentWriteOperationOptions) {
       const path = validateContentPath(
         assertRequiredString(payload.path, "path"),
       );
@@ -731,8 +736,6 @@ export function createDatabaseContentStore(
         });
       }
 
-      const actor = payload.createdBy?.trim() || DEFAULT_ACTOR;
-
       try {
         const created = await db.transaction(async (tx) => {
           await assertExpectedSchemaHash(
@@ -758,8 +761,10 @@ export function createDatabaseContentStore(
               hasUnpublishedChanges: true,
               publishedVersion: null,
               draftRevision: 1,
-              createdBy: actor,
-              updatedBy: actor,
+              createdBy: options.attribution.actorId,
+              createdOrigin: options.attribution.origin,
+              updatedBy: options.attribution.actorId,
+              updatedOrigin: options.attribution.origin,
             })
             .returning();
 
@@ -1082,7 +1087,7 @@ export function createDatabaseContentStore(
       scope,
       documentId,
       payload,
-      options?: ContentWriteOperationOptions,
+      options: ContentWriteOperationOptions,
     ) {
       const normalizedDocumentId = assertRequiredString(
         documentId,
@@ -1244,7 +1249,8 @@ export function createDatabaseContentStore(
                   : existing.body,
               hasUnpublishedChanges: true,
               draftRevision: sql`${documents.draftRevision} + 1`,
-              updatedBy: payload.updatedBy?.trim() || DEFAULT_ACTOR,
+              updatedBy: options.attribution.actorId,
+              updatedOrigin: options.attribution.origin,
               updatedAt: new Date(),
             })
             .where(
@@ -1373,7 +1379,7 @@ export function createDatabaseContentStore(
       }
     },
 
-    async softDelete(scope, documentId) {
+    async softDelete(scope, documentId, options) {
       const normalizedDocumentId = assertRequiredString(
         documentId,
         "documentId",
@@ -1416,6 +1422,19 @@ export function createDatabaseContentStore(
           });
         }
 
+        assertExpectedDraftRevision(
+          normalizedDocumentId,
+          Number(existing.draftRevision),
+          options.expectedDraftRevision,
+        );
+        if (options.requireUnpublished && existing.publishedVersion !== null) {
+          throw new RuntimeError({
+            code: "DOCUMENT_PUBLISHED",
+            message: "Assistant deletion requires an unpublished document.",
+            statusCode: 409,
+            details: { documentId: normalizedDocumentId },
+          });
+        }
         const publishedLocale = await resolvePublishedSearchLocale(
           txDb,
           scopeIds,
@@ -1424,10 +1443,12 @@ export function createDatabaseContentStore(
         const [updated] = await tx
           .update(documents)
           .set({
+            contentFormat: inferContentFormat(existing.body),
             isDeleted: true,
             hasUnpublishedChanges: true,
             draftRevision: sql`${documents.draftRevision} + 1`,
-            updatedBy: DEFAULT_ACTOR,
+            updatedBy: options.attribution.actorId,
+            updatedOrigin: options.attribution.origin,
             updatedAt: new Date(),
           })
           .where(
@@ -1435,6 +1456,7 @@ export function createDatabaseContentStore(
               eq(documents.projectId, scopeIds.projectId),
               eq(documents.environmentId, scopeIds.environmentId),
               eq(documents.documentId, normalizedDocumentId),
+              eq(documents.draftRevision, existing.draftRevision),
             ),
           )
           .returning();
@@ -1463,90 +1485,123 @@ export function createDatabaseContentStore(
       return toContentDocument(scope, updated);
     },
 
-    async restore(scope, documentId) {
+    async restore(scope, documentId, options) {
       const normalizedDocumentId = assertRequiredString(
         documentId,
         "documentId",
       );
       const scopeIds = await resolveScopeIds(scope, false);
-
-      if (!scopeIds) {
-        throw new RuntimeError({
+      const missing = () =>
+        new RuntimeError({
           code: "NOT_FOUND",
           message: "Document not found.",
           statusCode: 404,
-          details: {
-            documentId: normalizedDocumentId,
-          },
+          details: { documentId: normalizedDocumentId },
         });
-      }
-
-      const existing = await resolveHeadRow(scopeIds, normalizedDocumentId);
-
-      if (!existing) {
-        throw new RuntimeError({
-          code: "NOT_FOUND",
-          message: "Document not found.",
-          statusCode: 404,
-          details: {
-            documentId: normalizedDocumentId,
-          },
-        });
-      }
-
-      const conflict = await findPathConflict(scopeIds, {
-        path: existing.path,
-        locale: existing.locale,
-        documentId: normalizedDocumentId,
-      });
-
-      if (conflict) {
-        throw buildContentPathConflict({
-          conflictDocumentId: conflict.documentId,
-          path: existing.path,
-          locale: existing.locale,
-        });
-      }
-
-      if (!existing.isDeleted) {
-        return toContentDocument(scope, existing);
-      }
-
-      const updated = await db.transaction(async (tx) => {
-        const txDb = tx as unknown as DrizzleDatabase;
-        const [restored] = await tx
-          .update(documents)
-          .set({
-            isDeleted: false,
-            updatedBy: DEFAULT_ACTOR,
-            updatedAt: new Date(),
-          })
-          .where(
-            and(
-              eq(documents.projectId, scopeIds.projectId),
-              eq(documents.environmentId, scopeIds.environmentId),
-              eq(documents.documentId, normalizedDocumentId),
-            ),
-          )
-          .returning();
-
-        if (!restored) {
-          throw new RuntimeError({
-            code: "NOT_FOUND",
-            message: "Document not found.",
-            statusCode: 404,
-            details: {
+      if (!scopeIds) throw missing();
+      try {
+        const restored = await db.transaction(async (tx) => {
+          const txDb = tx as unknown as DrizzleDatabase;
+          const predicate = and(
+            eq(documents.projectId, scopeIds.projectId),
+            eq(documents.environmentId, scopeIds.environmentId),
+            eq(documents.documentId, normalizedDocumentId),
+          );
+          const [existing] = await tx
+            .select()
+            .from(documents)
+            .where(predicate)
+            .for("update");
+          if (!existing) throw missing();
+          assertExpectedDraftRevision(
+            normalizedDocumentId,
+            Number(existing.draftRevision),
+            options.expectedDraftRevision,
+          );
+          if (!existing.isDeleted)
+            return { row: existing, transition: "none" as const };
+          let publishedVersion: number | null = null;
+          if (options.targetStatus === "published") {
+            publishedVersion = await getNextVersionNumber(
+              txDb,
+              normalizedDocumentId,
+            );
+            await insertPublishedVersionRow(txDb, {
+              headRow: existing,
+              snapshot: {
+                path: existing.path,
+                type: existing.schemaType,
+                locale: existing.locale,
+                format: inferContentFormat(existing.body),
+                frontmatter: existing.frontmatter as Record<string, unknown>,
+                body: existing.body,
+              },
+              version: publishedVersion,
+              attribution: options.attribution,
+            });
+          }
+          const [updated] = await tx
+            .update(documents)
+            .set({
+              isDeleted: false,
+              contentFormat: inferContentFormat(existing.body),
+              publishedVersion,
+              hasUnpublishedChanges: publishedVersion === null,
+              draftRevision: sql`${documents.draftRevision} + 1`,
+              updatedBy: options.attribution.actorId,
+              updatedOrigin: options.attribution.origin,
+              updatedAt: new Date(),
+            })
+            .where(
+              and(
+                predicate,
+                eq(documents.draftRevision, existing.draftRevision),
+              ),
+            )
+            .returning();
+          if (!updated) throw missing();
+          if (publishedVersion === null) {
+            await searchBackend.removePublishedDocument(txDb, {
+              ...scopeIds,
               documentId: normalizedDocumentId,
-            },
-          });
+              locale: await resolvePublishedSearchLocale(
+                txDb,
+                scopeIds,
+                existing,
+              ),
+            });
+          }
+          return {
+            row: updated,
+            transition:
+              publishedVersion === null
+                ? ("restored_draft" as const)
+                : ("restored_published" as const),
+          };
+        });
+        return {
+          document: toContentDocument(scope, restored.row),
+          transition: restored.transition,
+        };
+      } catch (error) {
+        if (isUniqueViolation(error)) {
+          const existing = await resolveHeadRow(scopeIds, normalizedDocumentId);
+          if (existing) {
+            const conflict = await findPathConflict(scopeIds, {
+              path: existing.path,
+              locale: existing.locale,
+              documentId: normalizedDocumentId,
+            });
+            if (conflict)
+              throw buildContentPathConflict({
+                conflictDocumentId: conflict.documentId,
+                path: existing.path,
+                locale: existing.locale,
+              });
+          }
         }
-
-        await upsertPublishedSearchDocument(txDb, scopeIds, restored);
-
-        return restored;
-      });
-
-      return toContentDocument(scope, updated);
+        throw error;
+      }
     },
 
     async listVersions(scope, documentId, query) {
@@ -1729,19 +1784,19 @@ export function createDatabaseContentStore(
         });
       }
 
-      const actorId = input.actorId?.trim() || DEFAULT_ACTOR;
       const restoredDocument = await db.transaction(async (tx) => {
         const txDb = tx as unknown as DrizzleDatabase;
         const baseUpdate = {
           path: versionRow.path,
           schemaType: versionRow.schemaType,
           locale: versionRow.locale,
-          contentFormat: versionRow.contentFormat as ContentFormat,
+          contentFormat: inferContentFormat(versionRow.body),
           frontmatter: versionRow.frontmatter as Record<string, unknown>,
           body: versionRow.body,
           isDeleted: false,
           draftRevision: existing.draftRevision + 1,
-          updatedBy: actorId,
+          updatedBy: input.attribution.actorId,
+          updatedOrigin: input.attribution.origin,
           updatedAt: new Date(),
         };
 
@@ -1762,7 +1817,7 @@ export function createDatabaseContentStore(
               body: versionRow.body,
             },
             version: nextVersion,
-            actorId,
+            attribution: input.attribution,
             changeSummary: input.changeSummary,
           });
 
@@ -1848,28 +1903,26 @@ export function createDatabaseContentStore(
         });
       }
 
-      const existing = await db.query.documents.findFirst({
-        where: and(
-          eq(documents.projectId, scopeIds.projectId),
-          eq(documents.environmentId, scopeIds.environmentId),
-          eq(documents.documentId, normalizedDocumentId),
-          eq(documents.isDeleted, false),
-        ),
-      });
-
-      if (!existing) {
-        throw new RuntimeError({
-          code: "NOT_FOUND",
-          message: "Document not found.",
-          statusCode: 404,
-          details: {
-            documentId: normalizedDocumentId,
-          },
-        });
-      }
-
-      const actorId = input.actorId?.trim() || DEFAULT_ACTOR;
       const publishedDocument = await db.transaction(async (tx) => {
+        const [existing] = await tx
+          .select()
+          .from(documents)
+          .where(
+            and(
+              eq(documents.projectId, scopeIds.projectId),
+              eq(documents.environmentId, scopeIds.environmentId),
+              eq(documents.documentId, normalizedDocumentId),
+              eq(documents.isDeleted, false),
+            ),
+          )
+          .for("update");
+        if (!existing)
+          throw new RuntimeError({
+            code: "NOT_FOUND",
+            message: "Document not found.",
+            statusCode: 404,
+            details: { documentId: normalizedDocumentId },
+          });
         const nextVersion = await getNextVersionNumber(
           tx as unknown as DrizzleDatabase,
           normalizedDocumentId,
@@ -1886,16 +1939,18 @@ export function createDatabaseContentStore(
             body: existing.body,
           },
           version: nextVersion,
-          actorId,
+          attribution: input.attribution,
           changeSummary: input.changeSummary,
         });
 
         const [updated] = await tx
           .update(documents)
           .set({
+            contentFormat: inferContentFormat(existing.body),
             publishedVersion: nextVersion,
             hasUnpublishedChanges: false,
-            updatedBy: actorId,
+            updatedBy: input.attribution.actorId,
+            updatedOrigin: input.attribution.origin,
             updatedAt: new Date(),
           })
           .where(
@@ -1942,7 +1997,6 @@ export function createDatabaseContentStore(
         });
       }
 
-      const actorId = input.actorId?.trim() || DEFAULT_ACTOR;
       const updated = await db.transaction(async (tx) => {
         const txDb = tx as unknown as DrizzleDatabase;
         const [existing] = await tx
@@ -1977,9 +2031,11 @@ export function createDatabaseContentStore(
         const [updated] = await tx
           .update(documents)
           .set({
+            contentFormat: inferContentFormat(existing.body),
             publishedVersion: null,
             hasUnpublishedChanges: true,
-            updatedBy: actorId,
+            updatedBy: input.attribution.actorId,
+            updatedOrigin: input.attribution.origin,
             updatedAt: new Date(),
           })
           .where(

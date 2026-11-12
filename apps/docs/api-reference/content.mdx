@@ -139,9 +139,10 @@ const posts = await client.list("BlogPost", {
       },
       "body": "Welcome to our blog. This is the first post.",
       "resolveErrors": {},
-      "createdBy": "880e8400-e29b-41d4-a716-446655440002",
+      "createdBy": "user_8f2k1",
       "createdAt": "2026-01-10T12:00:00.000Z",
-      "updatedBy": "880e8400-e29b-41d4-a716-446655440002",
+      "updatedBy": "user_8f2k1",
+      "updatedOrigin": { "channel": "studio", "credential": "session" },
       "updatedAt": "2026-01-15T09:30:00.000Z"
     }
   ],
@@ -242,9 +243,9 @@ const post = await client.get("BlogPost", {
     },
     "body": "Welcome to our blog. This is the first post.",
     "resolveErrors": {},
-    "createdBy": "880e8400-e29b-41d4-a716-446655440002",
+    "createdBy": "user_8f2k1",
     "createdAt": "2026-01-10T12:00:00.000Z",
-    "updatedBy": "880e8400-e29b-41d4-a716-446655440002",
+    "updatedBy": "user_8f2k1",
     "updatedAt": "2026-01-15T09:30:00.000Z"
   }
 }
@@ -410,9 +411,9 @@ curl -X POST "https://cms.example.com/api/v1/content" \
     },
     "body": "This is the content of my new post.",
     "resolveErrors": {},
-    "createdBy": "880e8400-e29b-41d4-a716-446655440002",
+    "createdBy": "user_8f2k1",
     "createdAt": "2026-01-20T10:00:00.000Z",
-    "updatedBy": "880e8400-e29b-41d4-a716-446655440002",
+    "updatedBy": "user_8f2k1",
     "updatedAt": "2026-01-20T10:00:00.000Z"
   }
 }
@@ -519,9 +520,9 @@ curl -X PUT "https://cms.example.com/api/v1/content/550e8400-e29b-41d4-a716-4466
     },
     "body": "Welcome to our blog. This post has been updated.",
     "resolveErrors": {},
-    "createdBy": "880e8400-e29b-41d4-a716-446655440002",
+    "createdBy": "user_8f2k1",
     "createdAt": "2026-01-10T12:00:00.000Z",
-    "updatedBy": "880e8400-e29b-41d4-a716-446655440002",
+    "updatedBy": "user_8f2k1",
     "updatedAt": "2026-01-20T11:00:00.000Z"
   }
 }
@@ -591,7 +592,8 @@ curl -X POST "https://cms.example.com/api/v1/content/550e8400-e29b-41d4-a716-446
     "publishedVersion": 4,
     "hasUnpublishedChanges": false,
     "publishedAt": "2026-01-20T12:00:00.000Z",
-    "publishedBy": "880e8400-e29b-41d4-a716-446655440002",
+    "publishedBy": "user_8f2k1",
+    "publishedOrigin": { "channel": "studio", "credential": "session" },
     "changeSummary": "Updated introduction and fixed typos"
   }
 }
@@ -681,25 +683,25 @@ curl "https://cms.example.com/api/v1/content/550e8400-e29b-41d4-a716-44665544000
     {
       "version": 4,
       "publishedAt": "2026-01-20T12:00:00.000Z",
-      "publishedBy": "880e8400-e29b-41d4-a716-446655440002",
+      "publishedBy": "user_8f2k1",
       "changeSummary": "Updated introduction and fixed typos"
     },
     {
       "version": 3,
       "publishedAt": "2026-01-18T15:00:00.000Z",
-      "publishedBy": "880e8400-e29b-41d4-a716-446655440002",
+      "publishedBy": "user_8f2k1",
       "changeSummary": "Added tags section"
     },
     {
       "version": 2,
       "publishedAt": "2026-01-16T09:00:00.000Z",
-      "publishedBy": "880e8400-e29b-41d4-a716-446655440002",
+      "publishedBy": "user_8f2k1",
       "changeSummary": null
     },
     {
       "version": 1,
       "publishedAt": "2026-01-15T10:00:00.000Z",
-      "publishedBy": "880e8400-e29b-41d4-a716-446655440002",
+      "publishedBy": "user_8f2k1",
       "changeSummary": "Initial publication"
     }
   ],
@@ -749,7 +751,7 @@ curl "https://cms.example.com/api/v1/content/550e8400-e29b-41d4-a716-44665544000
     "documentId": "550e8400-e29b-41d4-a716-446655440000",
     "version": 2,
     "publishedAt": "2026-01-16T09:00:00.000Z",
-    "publishedBy": "880e8400-e29b-41d4-a716-446655440002",
+    "publishedBy": "user_8f2k1",
     "changeSummary": null,
     "frontmatter": {
       "title": "Hello World",
@@ -946,9 +948,9 @@ curl -X POST "https://cms.example.com/api/v1/content/550e8400-e29b-41d4-a716-446
     },
     "body": "Welcome to our blog. This is the first post.",
     "resolveErrors": {},
-    "createdBy": "880e8400-e29b-41d4-a716-446655440002",
+    "createdBy": "user_8f2k1",
     "createdAt": "2026-01-22T09:00:00.000Z",
-    "updatedBy": "880e8400-e29b-41d4-a716-446655440002",
+    "updatedBy": "user_8f2k1",
     "updatedAt": "2026-01-22T09:00:00.000Z"
   }
 }
@@ -1073,3 +1075,21 @@ curl "https://cms.example.com/api/v1/content/550e8400-e29b-41d4-a716-44665544000
   Non-localized types return a single-element array with the `__mdcms_default__`
   locale.
 </Tip>
+
+## Change attribution
+
+Content actors are user IDs derived by the server from authentication. Session
+writes use the signed-in user; API-key writes use the key creator. Legacy
+`createdBy`, `updatedBy`, and `actorId` request body fields are accepted and ignored.
+
+Documents expose optional `createdOrigin` and `updatedOrigin` fields. Versions
+expose optional `publishedOrigin`. Origins identify the channel (`studio`,
+`studio_ai`, `mcp`, `api`, or `system`) and credential (`session`, `api_key`,
+`oauth`, or `system`), with optional credential IDs and a `declared` client name.
+Historical rows without origin metadata remain readable.
+
+Content lists, single-document GET responses, and version lists may include a
+top-level `users` map, keyed by the actor user ID, with `{ name, email }` values.
+User lookup is best-effort. Clients must handle a missing map or unresolved ID.
+The declared client name comes from the optional `X-MDCMS-Client` header and is
+informational, not authenticated identity.

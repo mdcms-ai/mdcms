@@ -5,6 +5,8 @@ import type {
   ContentBulkOperationResponse as SharedContentBulkOperationResponse,
   ContentBulkOperationResult as SharedContentBulkOperationResult,
   ContentDocumentResponse,
+  ContentChangeOrigin,
+  ContentWriteAttribution,
   ContentOverviewCountsResponse,
   ContentVersionDocumentResponse,
   ContentVersionSummaryResponse,
@@ -120,10 +122,27 @@ export type ContentPublishedSnapshot = {
   body: string;
   publishedAt: string;
   publishedBy: string;
+  publishedOrigin?: ContentChangeOrigin;
   changeSummary?: string;
 };
 
-export type ContentWriteOperationOptions = {
+export type ContentAttributionOptions = {
+  attribution: ContentWriteAttribution;
+};
+
+export type ContentTransitionOptions = ContentAttributionOptions & {
+  expectedDraftRevision?: number;
+  /** Host-owned Assistant deletion guard; never taken from public input. */
+  requireUnpublished?: boolean;
+};
+
+/** Describes the transition committed by this restore call, including no-ops. */
+export type ContentRestoreResult = {
+  document: ContentDocument;
+  transition: "none" | "restored_draft" | "restored_published";
+};
+
+export type ContentWriteOperationOptions = ContentAttributionOptions & {
   // Route-owned request metadata for CMS-29. HTTP content writes must pass the
   // header-derived hash once the route gate succeeds; non-HTTP direct store
   // callers may omit it.
@@ -180,8 +199,6 @@ export type ContentWritePayload = {
   // When provided on create, the new document becomes a locale variant
   // in the source document's translation group.
   sourceDocumentId?: string;
-  createdBy?: string;
-  updatedBy?: string;
   draftRevision?: number;
   publishedVersion?: number | null;
 };
@@ -189,7 +206,6 @@ export type ContentWritePayload = {
 export type ContentPublishPayload = {
   changeSummary?: unknown;
   change_summary?: unknown;
-  actorId?: unknown;
 };
 
 export type ContentRestoreVersionPayload = ContentPublishPayload & {
@@ -220,7 +236,7 @@ export type ContentStore = {
   create: (
     scope: ContentScope,
     payload: ContentWritePayload,
-    options?: ContentWriteOperationOptions,
+    options: ContentWriteOperationOptions,
   ) => Promise<ContentDocument>;
   list: (
     scope: ContentScope,
@@ -239,16 +255,18 @@ export type ContentStore = {
     scope: ContentScope,
     documentId: string,
     payload: ContentWritePayload,
-    options?: ContentWriteOperationOptions,
+    options: ContentWriteOperationOptions,
   ) => Promise<ContentDocument>;
   softDelete: (
     scope: ContentScope,
     documentId: string,
+    options: ContentTransitionOptions,
   ) => Promise<ContentDocument>;
   restore: (
     scope: ContentScope,
     documentId: string,
-  ) => Promise<ContentDocument>;
+    options: ContentTransitionOptions & { targetStatus?: RestoreTargetStatus },
+  ) => Promise<ContentRestoreResult>;
   listVersions: (
     scope: ContentScope,
     documentId: string,
@@ -266,7 +284,7 @@ export type ContentStore = {
     input: {
       targetStatus: RestoreTargetStatus;
       changeSummary?: string;
-      actorId?: string;
+      attribution: ContentWriteAttribution;
     },
   ) => Promise<ContentDocument>;
   publish: (
@@ -274,14 +292,14 @@ export type ContentStore = {
     documentId: string,
     input: {
       changeSummary?: string;
-      actorId?: string;
+      attribution: ContentWriteAttribution;
     },
   ) => Promise<ContentDocument>;
   unpublish: (
     scope: ContentScope,
     documentId: string,
     input: {
-      actorId?: string;
+      attribution: ContentWriteAttribution;
     },
   ) => Promise<ContentDocument>;
   listVariants: (

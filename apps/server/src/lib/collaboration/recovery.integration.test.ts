@@ -3,10 +3,7 @@ import assert from "node:assert/strict";
 import { and, eq } from "drizzle-orm";
 
 import { createDatabaseContentStore } from "../content-api.js";
-import {
-  DEFAULT_ACTOR,
-  type ContentLifecycleEventSink,
-} from "../content-api/types.js";
+import { type ContentLifecycleEventSink } from "../content-api/types.js";
 import {
   createContentDocument,
   createDatabaseTestContext,
@@ -289,7 +286,11 @@ testWithDatabase(
       assert.equal(persisted.body, expectedMarkdown);
       assert.deepEqual(persisted.frontmatter, expectedFrontmatter);
       assert.equal(persisted.draftRevision, expectedDraftRevision);
-      assert.equal(persisted.updatedBy, DEFAULT_ACTOR);
+      assert.equal(persisted.updatedBy, userId);
+      assert.deepEqual(persisted.updatedOrigin, {
+        channel: "studio",
+        credential: "session",
+      });
       assert.equal(lifecycleEvents.events.length, 1);
       assert.equal(lifecycleEvents.events[0]?.actor.id, userId);
 

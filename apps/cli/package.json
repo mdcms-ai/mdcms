@@ -65,6 +65,7 @@
     "@modelcontextprotocol/sdk": "^1.32.2",
     "dotenv": "^16.4.7",
     "elysia": "^1.4.25",
+    "jiti": "2.6.1",
     "ora": "^8.0.0",
     "tslib": "^2.3.0",
     "yaml": "^2.8.2",
@@ -73,5 +74,8 @@
   "devDependencies": {
     "@mdcms/modules": "workspace:*"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "engines": {
+    "node": ">=24.11.1"
+  }
 }

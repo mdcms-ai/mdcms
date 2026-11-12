@@ -57,6 +57,7 @@ export type RbacAction =
   | "media:delete"
   | "projects:read"
   | "projects:write"
+  | "environments:read"
   | "environments:clone"
   | "environments:promote"
   | "user:manage"
@@ -99,6 +100,7 @@ const ROLE_ACTIONS: Record<RbacRole, readonly RbacAction[]> = {
     "media:delete",
     "projects:read",
     "projects:write",
+    "environments:read",
     "environments:clone",
     "environments:promote",
     "user:manage",
@@ -119,6 +121,7 @@ const ROLE_ACTIONS: Record<RbacRole, readonly RbacAction[]> = {
     "media:delete",
     "projects:read",
     "projects:write",
+    "environments:read",
     "environments:clone",
     "environments:promote",
     "user:manage",
@@ -128,12 +131,12 @@ const ROLE_ACTIONS: Record<RbacRole, readonly RbacAction[]> = {
 };
 
 /**
- * Actions that concern the whole instance rather than one project. Only a
- * global grant can allow them, so a project-scoped Admin never manages users
- * or clones and promotes environments.
+ * Actions whose roles must be instance-wide. A project-scoped Admin does not
+ * gain user or environment management privileges.
  */
 const INSTANCE_LEVEL_ACTIONS: readonly RbacAction[] = [
   "user:manage",
+  "environments:read",
   "environments:clone",
   "environments:promote",
 ];

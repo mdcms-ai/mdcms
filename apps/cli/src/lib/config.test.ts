@@ -180,3 +180,44 @@ test("loadCliConfig rejects config files whose contentDirectories do not cover t
     await cleanup();
   }
 });
+
+test("loadCliConfig reloads extensionless TypeScript dependencies and enums", async () => {
+  const { cwd, cleanup } = await writeConfigFile(`
+    import { project } from './settings';
+    export default { project, serverUrl: 'http://localhost:4000', contentDirectories: ['content'] };
+  `);
+  try {
+    const dependency = join(cwd, "settings.ts");
+    const source = (value: string) =>
+      `enum Target { Project = '${value}' }; export const project = Target.Project;`;
+    await writeFile(dependency, source("first"));
+    assert.equal((await loadCliConfig({ cwd })).config.project, "first");
+    await writeFile(dependency, source("second"));
+    assert.equal((await loadCliConfig({ cwd })).config.project, "second");
+  } finally {
+    await cleanup();
+  }
+});
+
+test("loadCliConfig preserves missing-file and import-failure error contracts", async () => {
+  const { cwd, configPath, cleanup } = await writeConfigFile(
+    `import './missing-dependency'; export default {};`,
+  );
+  try {
+    await assert.rejects(
+      loadCliConfig({ cwd }),
+      (error: unknown) =>
+        error instanceof RuntimeError &&
+        error.code === "CONFIG_LOAD_FAILED" &&
+        error.message.includes(configPath),
+    );
+    await rm(configPath);
+    await assert.rejects(
+      loadCliConfig({ cwd }),
+      (error: unknown) =>
+        error instanceof RuntimeError && error.code === "CONFIG_NOT_FOUND",
+    );
+  } finally {
+    await cleanup();
+  }
+});

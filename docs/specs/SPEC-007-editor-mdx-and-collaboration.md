@@ -101,7 +101,7 @@ WebSocket connect (`/api/v1/collaboration?project=...&environment=...&documentId
 - Active collaboration autosave is server-owned. Studio clients must not issue normal HTTP `PUT /api/v1/content/:documentId` while the active collaboration lock exists. The server debounces PostgreSQL autosaves for active rooms for approximately 2 seconds after the latest Yjs mutation and must flush at least every 10 seconds under sustained edits.
 - Each active collaboration autosave serializes the current Y.Doc to the ProseMirror JSON shape used by the editor, serializes that document model to Markdown/MDX, combines it with the room's current frontmatter draft state, and updates the `documents` head row only when the body or frontmatter differs from the current PostgreSQL draft head.
 - Active collaboration autosaves are silent draft `UPDATE`s: they increment `draft_revision`, set `has_unpublished_changes = TRUE`, never create `document_versions` rows, and emit the existing `content.updated` lifecycle event when the database changes.
-- Active collaboration autosaves and final saves are attributed to the last actual writer in the room, not merely the last disconnecting user.
+- Active collaboration autosaves and final saves are attributed to the last actual writer in the room, not merely the last disconnecting user. They record that writer's user id as the actor with change origin `{ channel: "studio", credential: "session" }` (SPEC-003 "Change Attribution").
 - Active collaboration autosaves use the expected draft revision from room load/save metadata and refresh that expected revision after each successful database write. A stale revision fails closed instead of overwriting newer PostgreSQL content, closes the room to further writes, and requires clients to reconnect so the next room load rebuilds from the canonical draft head.
 - After the last collaborator disconnects, the server flushes any pending active autosave, serializes the current Y.Doc to markdown/MDX, and performs a final draft save only when the serialized body or frontmatter differs from the current PostgreSQL draft head. A no-op final save must not increment `draft_revision`.
 - After last-disconnect cleanup, the server sets a 30-minute TTL on `mdcms:collaboration:yjs:{documentId}` and `mdcms:collaboration:yjs-meta:{documentId}`, then removes `mdcms:collaboration:active:{documentId}`.
@@ -180,6 +180,8 @@ collaboration lock exists, never through a normal HTTP draft `PUT`.
   `documents` head row into a new immutable row in `document_versions` at the
   moment publish succeeds.
 - Optionally includes a change summary entered by the user.
+- The new version records the publishing user as `published_by` together with
+  the change origin (SPEC-003 "Change Attribution").
 - This is the only action that creates version history.
 - The document room remains active after collaboration publish. Edits that
   arrive after the published draft head remain draft changes and may make the
@@ -1041,6 +1043,10 @@ type CollaborationPublishResult =
   publish the current PostgreSQL draft head without clearing the active
   collaboration lock. The response document uses the same response shape as the
   normal content publish endpoint.
+- A collaboration flush is attributed like an active collaboration autosave. A
+  collaboration publish records the publishing user's id as the actor with
+  change origin `{ channel: "studio", credential: "session" }` (SPEC-003
+  "Change Attribution").
 
 Presence stream contract:
 

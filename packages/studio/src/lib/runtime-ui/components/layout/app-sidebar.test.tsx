@@ -4,6 +4,12 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { StudioNavigationProvider } from "../../navigation.js";
+import { resolveStudioHref } from "../../navigation-paths.js";
+import {
+  matchStudioRoute,
+  stripStudioBasePath,
+  extractStudioRouteParams,
+} from "../../../remote-studio-routing.js";
 import { AppSidebar } from "./app-sidebar.js";
 
 function renderSidebar(input?: {
@@ -172,3 +178,47 @@ test("AppSidebar does not render online presence section", () => {
 
   assert.doesNotMatch(markup, /Online now/i);
 });
+
+test("members can reach Connected apps without other settings", () => {
+  const markup = renderSidebarWithCapabilities({
+    canReadSchema: false,
+    canManageUsers: false,
+    canManageSettings: false,
+  });
+  assert.match(markup, /href="\/settings\/connected-apps"/);
+  assert.doesNotMatch(markup, /href="\/admin\/settings"/);
+});
+
+for (const basePath of ["/admin", "/cms", "/"]) {
+  test(`Connected apps resolves and matches its route at ${basePath}`, () => {
+    const expectedHref = resolveStudioHref(
+      basePath,
+      "/settings/connected-apps",
+    );
+    const markup = renderSidebar({ basePath, pathname: expectedHref });
+    const link = markup
+      .match(/<a\b[^>]*>[^]*?Connected apps[^]*?<\/a>/g)
+      ?.find((candidate) => candidate.includes(`href="${expectedHref}"`));
+    assert.ok(link, "Connected apps link resolves within the mount");
+    const anchor = [...markup.matchAll(/<a\b[^>]*>/g)]
+      .map(([tag]) => tag)
+      .find((tag) => tag.includes(`href="${expectedHref}"`));
+    assert.ok(anchor?.includes('data-active="true"'));
+    const internalPath = stripStudioBasePath(expectedHref, basePath);
+    const route = matchStudioRoute(internalPath, [
+      { id: "settings.section", path: "/settings/:tab" },
+    ]);
+    assert.equal(route?.id, "settings.section");
+    assert.deepEqual(extractStudioRouteParams(internalPath, route), {
+      tab: "connected-apps",
+    });
+    const inactive = renderSidebar({
+      basePath,
+      pathname: resolveStudioHref(basePath, "/settings"),
+    });
+    const inactiveAnchor = [...inactive.matchAll(/<a\b[^>]*>/g)]
+      .map(([tag]) => tag)
+      .find((tag) => tag.includes(`href="${expectedHref}"`));
+    assert.ok(inactiveAnchor && !inactiveAnchor.includes('data-active="true"'));
+  });
+}

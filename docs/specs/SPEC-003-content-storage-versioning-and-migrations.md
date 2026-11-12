@@ -2,7 +2,7 @@
 status: live
 canonical: true
 created: 2026-03-11
-last_updated: 2026-06-16
+last_updated: 2026-11-11
 ---
 
 # SPEC-003 Content Storage, Versioning, and Migrations
@@ -36,9 +36,11 @@ CREATE TABLE documents (
     has_unpublished_changes BOOLEAN NOT NULL DEFAULT TRUE,
     published_version INTEGER,               -- Points to latest published version (NULL if unpublished)
     draft_revision  BIGINT NOT NULL DEFAULT 1, -- Monotonic token for optimistic concurrency on drafts
-    created_by      UUID NOT NULL,           -- User who first created the document
+    created_by      TEXT NOT NULL,           -- User who first created the document
+    created_origin  JSONB,                   -- Change origin of the creating write (see "Change Attribution")
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_by      UUID NOT NULL,           -- User who last modified the draft
+    updated_by      TEXT NOT NULL,           -- User who last modified the draft
+    updated_origin  JSONB,                   -- Change origin of the last write (see "Change Attribution")
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -92,7 +94,8 @@ CREATE TABLE document_versions (
     body            TEXT NOT NULL,            -- Content snapshot at publish
     frontmatter     JSONB NOT NULL,          -- Frontmatter snapshot at publish
     version         INTEGER NOT NULL,        -- Monotonically increasing per document_id
-    published_by    UUID NOT NULL,           -- User who published this version
+    published_by    TEXT NOT NULL,           -- User who published this version
+    published_origin JSONB,                  -- Change origin of the publish (see "Change Attribution")
     published_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     change_summary  TEXT,                    -- Optional description of what changed
 
@@ -231,7 +234,8 @@ Unpublishing sets `published_version = NULL` and `has_unpublished_changes = TRUE
 - `format`
 - `frontmatter`
 - `body`
-- optional actor fields
+- optional actor fields (`createdBy`, `updatedBy`): accepted for compatibility
+  and ignored; see "Change Attribution"
 
 Path validation:
 
@@ -328,6 +332,8 @@ type FileFieldResolveError = {
 };
 
 type ContentDocumentResponse = ContentDocument & {
+  createdOrigin?: ContentChangeOrigin;
+  updatedOrigin?: ContentChangeOrigin;
   resolveErrors?: Record<string, ReferenceResolveError | FileFieldResolveError>;
 };
 
@@ -343,6 +349,7 @@ type ContentVersionDocumentResponse = {
   format: "md" | "mdx";
   publishedAt: string;
   publishedBy: string;
+  publishedOrigin?: ContentChangeOrigin;
   changeSummary?: string;
   frontmatter: Record<string, unknown>;
   body: string;
@@ -382,17 +389,25 @@ Create and update payloads send set schema file fields as raw media asset id str
 
 ### User Summary Sidecar
 
-`GET /api/v1/content` includes an optional `users` map alongside `data` and
-`pagination` when the server can resolve document authors.
+The content list (`GET /api/v1/content`), single document reads
+(`GET /api/v1/content/:documentId`), and version lists
+(`GET /api/v1/content/:documentId/versions`) include an optional `users` map
+alongside `data` (and `pagination` for list responses) when the server can
+resolve document authors.
 
-- The server collects unique `createdBy` and `updatedBy` user IDs from the
-  result rows and batch-resolves them in a single query.
-- The response shape is `{ data: [...], pagination: {...}, users: { [userId]: { name, email } } }`.
+- For document responses, the server collects unique `createdBy` and
+  `updatedBy` user IDs from the returned rows. For version lists, it collects
+  unique `publishedBy` user IDs. It batch-resolves them in a single query.
+- The response shape is `{ data: [...], pagination: {...}, users: { [userId]: { name, email } } }`
+  for list responses and `{ data: {...}, users: { [userId]: { name, email } } }`
+  for single document reads.
 - `users` is a `Record<string, { name: string; email: string }>` keyed by user
   ID. Entries may be absent for IDs that cannot be resolved (e.g. deleted users
   or the system default actor).
 - Studio uses the `users` map to display author initials/names without issuing
   separate per-user lookups.
+- The `users` map is best-effort: when the user lookup fails, the server omits
+  `users` and still returns the requested data.
 - The `users` map is informational only and does not affect authorization or
   document data integrity.
 
@@ -457,7 +472,8 @@ Contract:
   (`409`).
 - The new document gets a fresh `document_id` and `translation_group_id`.
 - `createdBy` and `updatedBy` are set from the current session principal, not
-  copied from the source.
+  copied from the source. `createdOrigin` and `updatedOrigin` are likewise
+  derived from the authenticated request (see "Change Attribution").
 - The response returns the newly created `ContentDocumentResponse`.
 - The returned `ContentDocumentResponse` follows the global `fileFields`
   response-shape contract.
@@ -492,7 +508,7 @@ type ContentBulkOperationInput = {
   action: ContentBulkAction;
   documentIds: string[]; // 1-100 unique document_id values, processed in order
   changeSummary?: string; // publish only
-  actorId?: string; // publish/unpublish only
+  actorId?: string; // publish/unpublish only; accepted and ignored
   move?: {
     targetDirectory: string; // move only; empty string means root
   };
@@ -512,7 +528,7 @@ Validation rules:
   missing target sync record fails with `SCHEMA_NOT_SYNCED` (`409`), and a
   non-matching client/server hash fails with `SCHEMA_HASH_MISMATCH` (`409`).
 - `changeSummary` is accepted only for `publish`; `actorId` is accepted for
-  `publish` and `unpublish`.
+  `publish` and `unpublish` and ignored; see "Change Attribution".
 
 Authorization and execution:
 
@@ -612,6 +628,55 @@ Additional rules:
 - This endpoint does not change the meaning of `GET /api/v1/content?draft=true`;
   mutable draft list and detail reads still require `content:read:draft`.
 
+## Change Attribution
+
+Every content write records an actor and a change origin. The server derives
+both from the authenticated request; request bodies cannot set them.
+
+- Actor: the session user for session requests, and the user who created the
+  API key for API-key requests.
+- Change origin (`ContentChangeOrigin`):
+
+```ts
+type ContentChangeOrigin = {
+  channel: "studio" | "studio_ai" | "mcp" | "api" | "system";
+  credential: "session" | "api_key" | "oauth" | "system";
+  apiKeyId?: string;
+  oauthClientId?: string;
+  declared?: string;
+};
+```
+
+| Field           | Values                                        | Meaning                                                                                    |
+| --------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `channel`       | `studio`, `studio_ai`, `mcp`, `api`, `system` | How the change reached the server. Set by the server.                                      |
+| `credential`    | `session`, `api_key`, `oauth`, `system`       | The credential that authorized the change. Set by the server.                              |
+| `apiKeyId`      | string                                        | Present when `credential` is `api_key`.                                                    |
+| `oauthClientId` | string                                        | Present when `credential` is `oauth`.                                                      |
+| `declared`      | string, 1 to 120 printable ASCII characters   | Client name and version reported by the client. Informational; not verified by the server. |
+
+- `channel` is `studio` for session requests to the content API and for
+  collaboration autosave and publish, `studio_ai` for applying and undoing
+  Studio AI proposals, `mcp` for tool calls through the MCP endpoint, `api` for
+  other API-key requests, and `system` for server-internal writes such as
+  seeding.
+- `declared` comes from the `X-MDCMS-Client` request header (SPEC-005). The
+  server trims surrounding whitespace. A missing, empty, longer than 120
+  characters, or non-printable value is ignored; the request still succeeds.
+- Where it is stored: `documents.created_by` / `created_origin` on create,
+  `documents.updated_by` / `updated_origin` on every write, and
+  `document_versions.published_by` / `published_origin` on publish and on
+  version restore with `targetStatus=published`.
+- Published document reads use the visible published version's `publishedBy`
+  and `publishedOrigin` as `updatedBy` and `updatedOrigin`, regardless of later
+  draft edits; if that version has no origin, `updatedOrigin` is omitted.
+- Actor columns store user IDs as text. Server-internal writes use a fixed
+  system actor ID.
+- Rows written before attribution existed keep their stored actor and have no
+  origin. Clients show them as unknown.
+- Legacy actor fields in request bodies (`createdBy`, `updatedBy`, `actorId`)
+  are accepted for compatibility and ignored.
+
 ## Version History
 
 ### How It Works
@@ -623,7 +688,8 @@ Version history is append-only and publish-driven. Every publish (including rest
 The Studio UI provides a version history panel for each document showing:
 
 - Version number
-- Who made the change (`published_by`)
+- Who made the change (`published_by`) and through which channel
+  (`published_origin`)
 - When the change was made (`published_at`)
 - Change summary (if provided)
 - Diff view between any two versions
@@ -631,18 +697,22 @@ The Studio UI provides a version history panel for each document showing:
 `GET /content/:documentId/versions` uses offset pagination with the same rules
 as `GET /content`: `limit` defaults to `20`, `limit` max is `100`, `offset`
 defaults to `0`, and results are ordered newest-first by version number.
+Each `DocumentVersionSummary` entry carries the version metadata fields of
+`ContentVersionDocumentResponse`, including `publishedBy` and
+`publishedOrigin`, without `frontmatter`, `body`, or `resolveErrors`.
 
 ### Restoring a Version
 
 Restoring a previous version is now explicit via:
 
-- `POST /content/:documentId/restore` — restore a deleted document back to draft editing state.
+- `POST /content/:documentId/restore`: restore a deleted document to draft by default, or published when targetStatus=published.
 - `POST /content/:documentId/versions/:version/restore` — restore a specific historical version.
 
 `POST /content/:documentId/versions/:version/restore` behavior:
 
 - `targetStatus=published`: appends a new published version row at HEAD and updates `published_version`.
 - `targetStatus=draft` (default): updates mutable head content only (`documents.body/frontmatter`, `has_unpublished_changes=TRUE`) and does **not** append a published version row.
+- An optional `actorId` in the request body is accepted for compatibility and ignored; the actor and change origin come from the authenticated request (see "Change Attribution").
 
 ### Snapshots Only (No Branching)
 
@@ -749,18 +819,76 @@ parameter as authorization.
 | Method | Path                                                    | Auth Mode          | Required Scope                                                                                             | Target Routing                  | Request                                                                                                                                                                                                                  | Success                                                                                                                                        | Deterministic Errors                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | ------ | ------------------------------------------------------- | ------------------ | ---------------------------------------------------------------------------------------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | GET    | `/api/v1/content/overview`                              | session_or_api_key | `content:read`                                                                                             | required: `project_environment` | Query supports repeated `type` values plus `project`, `environment`                                                                                                                                                      | `200` `{ data: { type, total, published, drafts }[] }`                                                                                         | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_QUERY_PARAM` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`)                                                                                                                                                                                                                                                                                                                        |
-| GET    | `/api/v1/content`                                       | session_or_api_key | `content:read` (published mode), `content:read:draft` when `draft=true`                                    | required: `project_environment` | Query supports: `type`, `path`, `locale`, `slug`, `published`, `isDeleted`, `hasUnpublishedChanges`, `draft`, `resolve` (type required), `fileFields`, `project`, `environment`, `limit`, `offset`, `sort`, `order`, `q` | `200` `{ data: ContentDocumentResponse[], pagination: { total, limit, offset, hasMore } }`                                                     | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_QUERY_PARAM` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`)                                                                                                                                                                                                                                                                                                                        |
-| GET    | `/api/v1/content/:documentId`                           | session_or_api_key | `content:read` (published mode), `content:read:draft` when `draft=true`                                    | required: `project_environment` | path `documentId`, optional `draft=true`, optional `resolve`, optional `fileFields`                                                                                                                                      | `200` `{ data: ContentDocumentResponse }`                                                                                                      | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_QUERY_PARAM` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`)                                                                                                                                                                                                                                                                                                   |
+| GET    | `/api/v1/content`                                       | session_or_api_key | `content:read` (published mode), `content:read:draft` when `draft=true`                                    | required: `project_environment` | Query supports: `type`, `path`, `locale`, `slug`, `published`, `isDeleted`, `hasUnpublishedChanges`, `draft`, `resolve` (type required), `fileFields`, `project`, `environment`, `limit`, `offset`, `sort`, `order`, `q` | `200` `{ data: ContentDocumentResponse[], pagination: { total, limit, offset, hasMore }, users? }`                                             | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_QUERY_PARAM` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`)                                                                                                                                                                                                                                                                                                                        |
+| GET    | `/api/v1/content/:documentId`                           | session_or_api_key | `content:read` (published mode), `content:read:draft` when `draft=true`                                    | required: `project_environment` | path `documentId`, optional `draft=true`, optional `resolve`, optional `fileFields`                                                                                                                                      | `200` `{ data: ContentDocumentResponse, users? }`                                                                                              | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_QUERY_PARAM` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`)                                                                                                                                                                                                                                                                                                   |
 | POST   | `/api/v1/content/:documentId/preview-token`             | session_or_api_key | `content:read:draft`                                                                                       | required: `project_environment` | path `documentId`, JSON optional `{ previewUrl?: string }`                                                                                                                                                               | `200` `{ data: { token: string, expiresAt: string } }`                                                                                         | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_INPUT` (`400`), `PREVIEW_TOKEN_UNAVAILABLE` (`503`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`)                                                                                                                                                                                                                                                                    |
 | GET    | `/api/v1/content/:documentId/variants`                  | session_or_api_key | `content:read`                                                                                             | required: `project_environment` | path `documentId`                                                                                                                                                                                                        | `200` `{ data: TranslationVariantSummary[] }` where each entry has `documentId`, `locale`, `path`, `publishedVersion`, `hasUnpublishedChanges` | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`)                                                                                                                                                                                                                                                                                                                                  |
-| GET    | `/api/v1/content/:documentId/versions`                  | session_or_api_key | `content:read`                                                                                             | required: `project_environment` | path `documentId`, optional `limit`, optional `offset`                                                                                                                                                                   | `200` `{ data: DocumentVersionSummary[], pagination: { total, limit, offset, hasMore } }`                                                      | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_QUERY_PARAM` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`)                                                                                                                                                                                                                                                                                                   |
+| GET    | `/api/v1/content/:documentId/versions`                  | session_or_api_key | `content:read`                                                                                             | required: `project_environment` | path `documentId`, optional `limit`, optional `offset`                                                                                                                                                                   | `200` `{ data: DocumentVersionSummary[], pagination: { total, limit, offset, hasMore }, users? }`                                              | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_QUERY_PARAM` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`)                                                                                                                                                                                                                                                                                                   |
 | GET    | `/api/v1/content/:documentId/versions/:version`         | session_or_api_key | `content:read`                                                                                             | required: `project_environment` | path `documentId`, `version`, optional `resolve`, optional `fileFields`                                                                                                                                                  | `200` `{ data: ContentVersionDocumentResponse }`                                                                                               | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_QUERY_PARAM` (`400`), `INVALID_INPUT` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`)                                                                                                                                                                                                                                                                          |
-| POST   | `/api/v1/content`                                       | session_or_api_key | `content:write`                                                                                            | required: `project_environment` | JSON create payload (`path`, `type`, `locale`, `format`, `frontmatter`, `body`, optional actor fields, optional `sourceDocumentId`), required `x-mdcms-schema-hash` header, optional query `fileFields`                  | `200` `{ data: ContentDocumentResponse }`                                                                                                      | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_QUERY_PARAM` (`400`), `SCHEMA_HASH_REQUIRED` (`400`), `SCHEMA_NOT_SYNCED` (`409`), `SCHEMA_HASH_MISMATCH` (`409`), `INVALID_INPUT` (`400`), `NOT_FOUND` (`404`) for missing/soft-deleted `sourceDocumentId`, `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `CONTENT_PATH_CONFLICT` (`409`), `TRANSLATION_VARIANT_CONFLICT` (`409`)                                                        |
+| POST   | `/api/v1/content`                                       | session_or_api_key | `content:write`                                                                                            | required: `project_environment` | JSON create payload (`path`, `type`, `locale`, `format`, `frontmatter`, `body`, optional actor fields (ignored), optional `sourceDocumentId`), required `x-mdcms-schema-hash` header, optional query `fileFields`        | `200` `{ data: ContentDocumentResponse }`                                                                                                      | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_QUERY_PARAM` (`400`), `SCHEMA_HASH_REQUIRED` (`400`), `SCHEMA_NOT_SYNCED` (`409`), `SCHEMA_HASH_MISMATCH` (`409`), `INVALID_INPUT` (`400`), `NOT_FOUND` (`404`) for missing/soft-deleted `sourceDocumentId`, `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `CONTENT_PATH_CONFLICT` (`409`), `TRANSLATION_VARIANT_CONFLICT` (`409`)                                                        |
 | POST   | `/api/v1/content/:documentId/duplicate`                 | session_or_api_key | `content:write`                                                                                            | required: `project_environment` | path `documentId`, required `x-mdcms-schema-hash` header, optional query `fileFields`                                                                                                                                    | `200` `{ data: ContentDocumentResponse }`                                                                                                      | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_QUERY_PARAM` (`400`), `SCHEMA_HASH_REQUIRED` (`400`), `SCHEMA_NOT_SYNCED` (`409`), `SCHEMA_HASH_MISMATCH` (`409`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`) for missing/soft-deleted source document, `DUPLICATE_PATH_EXHAUSTED` (`409`)                                                                                                                         |
 | PUT    | `/api/v1/content/:documentId`                           | session_or_api_key | `content:write`                                                                                            | required: `project_environment` | path `documentId`, JSON update payload, required `x-mdcms-schema-hash` header, optional query `fileFields`                                                                                                               | `200` `{ data: ContentDocumentResponse }`                                                                                                      | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_QUERY_PARAM` (`400`), `SCHEMA_HASH_REQUIRED` (`400`), `SCHEMA_NOT_SYNCED` (`409`), `SCHEMA_HASH_MISMATCH` (`409`), `INVALID_INPUT` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`), `DOCUMENT_COLLABORATION_ACTIVE` (`409`), `CONTENT_PATH_CONFLICT` (`409`), `TRANSLATION_VARIANT_CONFLICT` (`409`)                                                           |
-| POST   | `/api/v1/content/:documentId/publish`                   | session_or_api_key | `content:publish`                                                                                          | required: `project_environment` | path `documentId`, JSON optional `{ changeSummary?, actorId? }`, optional query `fileFields`                                                                                                                             | `200` `{ data: ContentDocumentResponse }`                                                                                                      | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_QUERY_PARAM` (`400`), `INVALID_INPUT` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`), `DOCUMENT_COLLABORATION_ACTIVE` (`409`)                                                                                                                                                                                                                                 |
-| POST   | `/api/v1/content/:documentId/unpublish`                 | session_or_api_key | `content:publish`                                                                                          | required: `project_environment` | path `documentId`, JSON optional `{ actorId? }`, optional query `fileFields`                                                                                                                                             | `200` `{ data: ContentDocumentResponse }`                                                                                                      | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_QUERY_PARAM` (`400`), `INVALID_INPUT` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`), `DOCUMENT_COLLABORATION_ACTIVE` (`409`)                                                                                                                                                                                                                                 |
-| DELETE | `/api/v1/content/:documentId`                           | session_or_api_key | `content:delete`                                                                                           | required: `project_environment` | path `documentId`, optional query `fileFields`                                                                                                                                                                           | `200` `{ data: ContentDocumentResponse }` (soft-deleted)                                                                                       | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_QUERY_PARAM` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`), `DOCUMENT_COLLABORATION_ACTIVE` (`409`)                                                                                                                                                                                                                                                          |
+| POST   | `/api/v1/content/:documentId/publish`                   | session_or_api_key | `content:publish`                                                                                          | required: `project_environment` | path `documentId`, JSON optional `{ changeSummary?, actorId? }` (`actorId` ignored), optional query `fileFields`                                                                                                         | `200` `{ data: ContentDocumentResponse }`                                                                                                      | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_QUERY_PARAM` (`400`), `INVALID_INPUT` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`), `DOCUMENT_COLLABORATION_ACTIVE` (`409`)                                                                                                                                                                                                                                 |
+| POST   | `/api/v1/content/:documentId/unpublish`                 | session_or_api_key | `content:publish`                                                                                          | required: `project_environment` | path `documentId`, JSON optional `{ actorId? }` (`actorId` ignored), optional query `fileFields`                                                                                                                         | `200` `{ data: ContentDocumentResponse }`                                                                                                      | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_QUERY_PARAM` (`400`), `INVALID_INPUT` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`), `DOCUMENT_COLLABORATION_ACTIVE` (`409`)                                                                                                                                                                                                                                 |
+| DELETE | `/api/v1/content/:documentId`                           | session_or_api_key | `content:delete`                                                                                           | required: `project_environment` | path `documentId`, optional query `fileFields`, optional query `expectedDraftRevision`                                                                                                                                   | `200` `{ data: ContentDocumentResponse }` (soft-deleted)                                                                                       | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_QUERY_PARAM` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`), `DOCUMENT_COLLABORATION_ACTIVE` (`409`), `INVALID_INPUT` (`400`), `STALE_DRAFT_REVISION` (`409`), `DOCUMENT_PUBLISHED` (`409`, verified Assistant dispatch only)                                                                                                                                 |
 | POST   | `/api/v1/content/bulk`                                  | session_or_api_key | `content:publish` for `publish` and `unpublish`; `content:delete` for `delete`; `content:write` for `move` | required: `project_environment` | JSON: `ContentBulkOperationInput`; `move` requires `x-mdcms-schema-hash`; optional query `fileFields`                                                                                                                    | `200` `{ data: ContentBulkOperationResponse }`                                                                                                 | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_QUERY_PARAM` (`400`), `SCHEMA_HASH_REQUIRED` (`400`) for `move`, `SCHEMA_NOT_SYNCED` (`409`) for `move`, `SCHEMA_HASH_MISMATCH` (`409`) for `move`, `INVALID_INPUT` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`). Per-document `NOT_FOUND`, `FORBIDDEN`, `DOCUMENT_COLLABORATION_ACTIVE`, `CONTENT_PATH_CONFLICT`, and other mutation failures are reported in `data.results[]`. |
-| POST   | `/api/v1/content/:documentId/restore`                   | session_or_api_key | `content:write` for `targetStatus=draft`, `content:publish` for `targetStatus=published`                   | required: `project_environment` | path `documentId`, optional `targetStatus` enum (`draft` or `published`), optional query `fileFields`                                                                                                                    | `200` `{ data: ContentDocumentResponse }`                                                                                                      | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_QUERY_PARAM` (`400`), `INVALID_INPUT` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`), `DOCUMENT_COLLABORATION_ACTIVE` (`409`), `CONTENT_PATH_CONFLICT` (`409`)                                                                                                                                                                                                |
+| POST   | `/api/v1/content/:documentId/restore`                   | session_or_api_key | `content:write` for `targetStatus=draft`, `content:publish` for `targetStatus=published`                   | required: `project_environment` | path `documentId`, optional JSON `{ targetStatus?: "draft" or "published", expectedDraftRevision?: number }`, optional query `fileFields`                                                                                | `200` `{ data: ContentDocumentResponse }`                                                                                                      | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_QUERY_PARAM` (`400`), `INVALID_INPUT` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`), `DOCUMENT_COLLABORATION_ACTIVE` (`409`), `CONTENT_PATH_CONFLICT` (`409`), `STALE_DRAFT_REVISION` (`409`)                                                                                                                                                                |
 | POST   | `/api/v1/content/:documentId/versions/:version/restore` | session_or_api_key | `content:write` for `targetStatus=draft`, `content:publish` for `targetStatus=published`                   | required: `project_environment` | path `documentId`, `version`, optional `targetStatus` enum (`draft` or `published`), optional query `fileFields`                                                                                                         | `200` `{ data: ContentDocumentResponse }`                                                                                                      | `MISSING_TARGET_ROUTING` (`400`), `TARGET_ROUTING_MISMATCH` (`400`), `INVALID_QUERY_PARAM` (`400`), `INVALID_INPUT` (`400`), `UNAUTHORIZED` (`401`), `FORBIDDEN` (`403`), `NOT_FOUND` (`404`), `DOCUMENT_COLLABORATION_ACTIVE` (`409`), `CONTENT_PATH_CONFLICT` (`409`)                                                                                                                                                                                                |
+
+### Atomic Delete and Restore Preconditions
+
+DELETE /api/v1/content/:documentId accepts optional query
+expectedDraftRevision, a nonnegative integer. POST
+/api/v1/content/:documentId/restore accepts optional JSON
+`{ targetStatus?: "draft" | "published", expectedDraftRevision?: number }`.
+Omitting a precondition preserves ordinary callers' unconditional behavior.
+A supplied precondition is never ignored: malformed values return INVALID_INPUT
+(400), a revision mismatch returns STALE_DRAFT_REVISION (409) with expected and
+current revisions, and a missing/inaccessible document retains the existing
+NOT_FOUND/FORBIDDEN contract. Authorization and collaboration locks still apply.
+
+Compare expectedDraftRevision to the live row in the same database transaction
+that performs the transition, using a conditional update or row lock. Every
+successful state-changing delete or restore increments draftRevision exactly
+once. A stale precondition must fail even if the requested state would otherwise
+be an idempotent no-op. Roll back document changes, version insertion, search
+changes and all lifecycle effects on failure. No successful mutation event is
+emitted on a conflict. A read-before-write check alone is insufficient. Store
+interfaces and in-memory stores enforce the same precondition; it is not solely
+an HTTP validation rule.
+
+Restoring an already-live document is an idempotent no-op after checking the
+revision precondition, regardless of targetStatus. Its content, publication,
+revision, attribution, history and search state stay unchanged. No restore or
+publish lifecycle event is emitted for that call. Concurrent restores emit
+events only for the transaction that changes the deleted document to live.
+
+Restore targetStatus defaults to draft. Draft restore requires content:write,
+clears isDeleted, clears publishedVersion, sets hasUnpublishedChanges=true and
+keeps mutable head content. It appends no version and emits content.restored once.
+Published restore requires content:publish, clears isDeleted, publishes the
+restored mutable head as a new immutable version, sets publishedVersion to that
+new version and hasUnpublishedChanges=false, and updates published search state.
+It appends history rather than reusing a historical version number. All these
+changes commit atomically under the same revision precondition and active-path
+uniqueness rule. Emit content.restored and content.published once each after a
+successful published restore. Both use the authenticated actor and origin; the
+new version records that actor/origin. A caller with content:publish alone may
+perform published restore but cannot use that scope for draft restore.
+
+### Assistant unpublished-delete precondition
+
+Verified internal `studio_ai` dispatch adds a server-owned `requireUnpublished`
+precondition to DELETE. It is derived from authenticated internal channel context,
+never request JSON, query parameters or unverified headers. Under the same row
+lock as deletion, after checking any expected draft revision, a non-null
+publishedVersion fails with DOCUMENT_PUBLISHED (409), without changes or events.
+This preserves the Assistant restriction for delete proposals and create undo,
+including when publication happens after the Assistant's draft read. Ordinary
+Studio, API and MCP deletes retain their existing publication semantics.
+
+Publishing locks and re-reads the active document before creating its immutable
+version. A delete committed before that locked transition causes NOT_FOUND (404),
+without history, search changes or publication events. Publish and unpublish do
+not change draftRevision; the unpublished-delete precondition is separate from
+revision equality.

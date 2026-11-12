@@ -1,3 +1,5 @@
+import type { ContentWriteAttribution } from "@mdcms/shared";
+import { attributionFromAuthorizedRequest } from "./attribution.js";
 import { actorFromAuthorizedRequest, type AuthorizedRequest } from "../auth.js";
 
 import type {
@@ -10,8 +12,9 @@ import type {
 export type ContentLifecycleMutationCommitter = (
   event: ContentLifecycleEvent,
   scope: ContentScope,
+  request: Request,
   authorization: AuthorizedRequest,
-  mutate: () => Promise<ContentDocument>,
+  mutate: (attribution: ContentWriteAttribution) => Promise<ContentDocument>,
 ) => Promise<ContentDocument>;
 
 export function emitContentLifecycleEvent(input: {
@@ -42,10 +45,11 @@ export async function commitContentMutationWithLifecycleEvent(input: {
   sink?: ContentLifecycleEventSink;
   event: ContentLifecycleEvent;
   scope: ContentScope;
+  request: Request;
   authorization: AuthorizedRequest;
-  mutate: () => Promise<ContentDocument>;
+  mutate: (attribution: ContentWriteAttribution) => Promise<ContentDocument>;
 }): Promise<ContentDocument> {
-  const document = await input.mutate();
+  const document = await input.mutate(attributionFromAuthorizedRequest(input));
 
   emitContentLifecycleEvent({
     sink: input.sink,
@@ -61,11 +65,12 @@ export async function commitContentMutationWithLifecycleEvent(input: {
 export function createContentLifecycleMutationCommitter(
   sink?: ContentLifecycleEventSink,
 ): ContentLifecycleMutationCommitter {
-  return (event, scope, authorization, mutate) =>
+  return (event, scope, request, authorization, mutate) =>
     commitContentMutationWithLifecycleEvent({
       sink,
       event,
       scope,
+      request,
       authorization,
       mutate,
     });
