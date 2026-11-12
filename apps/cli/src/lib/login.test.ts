@@ -3,11 +3,16 @@ import { test } from "node:test";
 
 import { createInMemoryCredentialStore } from "./credentials.js";
 import { runMdcmsCli } from "./framework.js";
-import { createLoginCommand, createLoopbackCallbackListener } from "./login.js";
+import {
+  createLoginCommand,
+  createLoopbackCallbackListener,
+  resolveBrowserOpenCommand,
+} from "./login.js";
 
 test("login command stores exchanged API key in scoped credential profile", async () => {
   const credentialStore = createInMemoryCredentialStore();
   let openedUrl: string | undefined;
+  let output = "";
   let startCalled = false;
   let exchangeCalled = false;
 
@@ -114,7 +119,12 @@ test("login command stores exchanged API key in scoped credential profile", asyn
       },
       configPath: "/repo/mdcms.config.ts",
     }),
-    stdout: { write: () => undefined },
+    stdout: {
+      write: (chunk: string) => {
+        output += chunk;
+        return true;
+      },
+    },
     stderr: { write: () => undefined },
   });
 
@@ -122,6 +132,8 @@ test("login command stores exchanged API key in scoped credential profile", asyn
   assert.equal(startCalled, true);
   assert.equal(exchangeCalled, true);
   assert.ok(openedUrl);
+  // The URL is printed even when the browser opened, for manual use.
+  assert.equal(output.includes(openedUrl), true);
 
   const stored = await credentialStore.getProfile({
     serverUrl: "http://localhost:4000",
@@ -232,4 +244,26 @@ test("loopback callback returns styled HTML success page", async () => {
   } finally {
     await listener.close();
   }
+});
+
+test("browser open command escapes & for Windows cmd only", () => {
+  const url = "https://cms.example.com/authorize?challenge=c1&state=s1";
+
+  assert.deepEqual(resolveBrowserOpenCommand("win32", url), {
+    command: "cmd",
+    args: [
+      "/c",
+      "start",
+      "",
+      "https://cms.example.com/authorize?challenge=c1^&state=s1",
+    ],
+  });
+  assert.deepEqual(resolveBrowserOpenCommand("darwin", url), {
+    command: "open",
+    args: [url],
+  });
+  assert.deepEqual(resolveBrowserOpenCommand("linux", url), {
+    command: "xdg-open",
+    args: [url],
+  });
 });

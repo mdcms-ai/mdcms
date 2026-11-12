@@ -254,29 +254,33 @@ export function createLoopbackCallbackListener(): Promise<LoopbackCallbackListen
   });
 }
 
+/**
+ * Command that opens `url` in the default browser on `platform`. On Windows
+ * the URL passes through `cmd`, where `&` separates commands, so it is escaped
+ * as `^&`.
+ */
+export function resolveBrowserOpenCommand(
+  platform: NodeJS.Platform,
+  url: string,
+): { command: string; args: string[] } {
+  if (platform === "darwin") {
+    return { command: "open", args: [url] };
+  }
+
+  if (platform === "win32") {
+    return {
+      command: "cmd",
+      args: ["/c", "start", "", url.replace(/&/g, "^&")],
+    };
+  }
+
+  return { command: "xdg-open", args: [url] };
+}
+
 export async function openBrowserUrl(url: string): Promise<boolean> {
-  const platform = process.platform;
-
   try {
-    if (platform === "darwin") {
-      const child = spawn("open", [url], {
-        detached: true,
-        stdio: "ignore",
-      });
-      child.unref();
-      return true;
-    }
-
-    if (platform === "win32") {
-      const child = spawn("cmd", ["/c", "start", "", url], {
-        detached: true,
-        stdio: "ignore",
-      });
-      child.unref();
-      return true;
-    }
-
-    const child = spawn("xdg-open", [url], {
+    const { command, args } = resolveBrowserOpenCommand(process.platform, url);
+    const child = spawn(command, args, {
       detached: true,
       stdio: "ignore",
     });
@@ -361,7 +365,8 @@ export type OAuthFlowParams = {
   project: string;
   environment: string;
   fetcher: typeof fetch;
-  onBrowserOpened?: () => void;
+  /** Receives the sign-in URL so callers can print it for manual use. */
+  onBrowserOpened?: (authorizeUrl: string) => void;
   onBrowserFailed?: (authorizeUrl: string) => void;
   openUrl?: (url: string) => Promise<boolean>;
   createState?: () => string;
@@ -411,7 +416,7 @@ export async function performCliOAuthFlow(
     const browserOpened = await openUrl(start.authorizeUrl);
 
     if (browserOpened) {
-      params.onBrowserOpened?.();
+      params.onBrowserOpened?.(start.authorizeUrl);
     } else {
       params.onBrowserFailed?.(start.authorizeUrl);
     }
@@ -480,9 +485,9 @@ export function createLoginCommand(options: LoginOptions = {}): CliCommand {
         openUrl: options.openBrowserUrl,
         createState: options.createState,
         createListener: options.createCallbackListener,
-        onBrowserOpened: () => {
+        onBrowserOpened: (url) => {
           context.stdout.write(
-            "Browser login started. Complete authentication in your browser...\n",
+            `Browser login started. Complete authentication in your browser.\nIf the browser did not open or shows an error, open this URL:\n${url}\n`,
           );
         },
         onBrowserFailed: (url) => {
