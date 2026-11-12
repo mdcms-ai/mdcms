@@ -869,12 +869,24 @@ Normative behavior:
   - `boolean` fields render as switches
   - enum-like fields render as selects when the resolved schema exposes a
     closed value set
+  - reference fields render as a searchable document picker for the target
+    type. When opened, the picker loads up to 100 documents of that type in
+    the active environment, including unpublished drafts, through
+    `GET /api/v1/content` with `type` and `draft=true`, and filters them by the
+    typed text (case-insensitive match on label or path). When more documents
+    exist than were loaded, it also requests `q=<typed text>` and merges those
+    matches. Each option is labelled
+    by the document's `name`, `title` or `label` frontmatter value, falling
+    back to the file name of its path, and shows the path below it. Choosing
+    an option stores the target `documentId`; optional reference fields can be
+    cleared. When no option is loaded for the stored id, the picker shows the
+    id itself.
   - optional wrappers of supported kinds reuse the same control and allow an
     empty/unset value
 - Unsupported field shapes render deterministically as read-only property rows
   with a type label and a “Not editable in Studio yet” message. Unsupported
-  shapes include reference fields, arrays, objects, tuples, unions, executable
-  custom schemas, and any unrecognized field kind.
+  shapes include arrays, objects, tuples, unions, executable custom schemas,
+  and any unrecognized field kind.
 - Unsupported frontmatter values must be preserved in the local draft state and
   in subsequent draft persistence payloads. In non-collaborative operation that
   includes `PUT /api/v1/content/:documentId` writes. Studio must not drop a

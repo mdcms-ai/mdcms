@@ -259,6 +259,12 @@ export type ContentDocumentPropertyControl =
       preset: "image" | "video" | "file";
       accept: string[];
       canUnset: boolean;
+    }
+  | {
+      kind: "reference";
+      value: string | undefined;
+      targetType: string;
+      canUnset: boolean;
     };
 
 export type ContentDocumentPropertyDescriptor = {
@@ -565,6 +571,28 @@ function resolvePropertyDescriptor(input: {
         kind: "select",
         value: currentValue,
         options: input.field.options,
+        canUnset: isUnsettableField(input.field),
+      },
+    };
+  }
+
+  // Reference fields store the target document's id as a string; they get a
+  // document picker instead of a free-text input.
+  if (input.field.reference && canEditStringField(currentValue)) {
+    return {
+      fieldName: input.fieldName,
+      field: input.field,
+      typeLabel,
+      badgeLabel,
+      error,
+      status: "editable",
+      control: {
+        kind: "reference",
+        value:
+          typeof currentValue === "string" && currentValue.length > 0
+            ? currentValue
+            : undefined,
+        targetType: input.field.reference.targetType,
         canUnset: isUnsettableField(input.field),
       },
     };
