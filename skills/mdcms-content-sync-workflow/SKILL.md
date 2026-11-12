@@ -36,7 +36,7 @@ If the user is not logged in, route based on context:
 - **Non-interactive (CI, container, no TTY)** — `mdcms login` will fail with no browser. Get an API key from Studio → Settings → API Keys (scope it to the target `(project, environment)`), then export `MDCMS_API_KEY` (and `MDCMS_SERVER_URL` / `MDCMS_PROJECT` / `MDCMS_ENVIRONMENT` if not already set) before running the CLI.
 - **Wrong project/environment selected** — credentials are scoped to a tuple. Logging in for `staging` won't authorize a command targeting `production`. Check `mdcms.config.ts` and the `--project` / `--environment` flags or env vars; log in again with the right tuple if needed.
 
-Don't paper over an auth failure with `--force`, `--yes`, or retry loops. Fix credentials first.
+Don't paper over an auth failure with `--force`, `--yes`, or retry loops: `--force` only skips prompts and cannot fix credentials. Fix credentials first.
 
 ## Daily loop
 
@@ -52,11 +52,18 @@ Scope: pull always fetches every document the user's credentials can see. There 
 
 ### Push local edits
 
+Always look at the plan first, then push:
+
 ```bash
+npx mdcms push --dry-run
 npx mdcms push
 ```
 
-Uploads changed, new, and deleted local `.md`/`.mdx` files to the server as draft updates. Untracked files (not yet in the manifest) are presented interactively as new content candidates. Headless: pass all answers via flags (see the CLI's `push --help` for the current surface).
+`--dry-run` prints what would change (changed, new and deleted documents) and writes nothing. Show that plan to the user before the real push.
+
+`mdcms push` uploads changed, new, and deleted local `.md`/`.mdx` files to the server as draft updates. In a terminal it asks which new files to upload and which deletions to apply, then asks for confirmation. Without a terminal (CI, scripts, agents) nobody can answer: changed tracked files are pushed without confirmation, and new and deleted files are skipped.
+
+`--force` does not override conflicts, validation or schema checks. It only skips the prompts, which means it uploads every new file and deletes every tracked file that is missing locally, without asking. Use it only after a dry run shows exactly the intended changes.
 
 Useful add-ons:
 
@@ -143,7 +150,7 @@ jobs:
 
 Notes:
 
-- `--force` is required in non-interactive CI. Without it, `push` skips **new** and **deleted** file candidates (they would otherwise be confirmed via an interactive prompt) and only the changed-in-place documents are uploaded — the CI job would look green while the server drifts silently.
+- `--force` is needed in non-interactive CI for new and deleted files. Without it, `push` skips **new** and **deleted** file candidates (they would otherwise be chosen in an interactive prompt) and only the changed-in-place documents are uploaded; the CI job would look green while the server drifts silently. `--force` only answers those prompts with "all"; it does not resolve conflicts or skip validation.
 - `--sync-schema` lets push apply schema drift in the same run. Without it, a change to `mdcms.config.ts` causes push to fail closed when the local schema differs from the server.
 - `--validate` checks frontmatter against the local schema before any API write, so CI catches shape errors before contacting the server.
 - Scope the MDCMS API key to the single environment this workflow touches (e.g., `staging`). A separate key pushes to `production` via a manual workflow or a protected environment.
@@ -158,7 +165,7 @@ Only needed if the repo treats the filesystem as a mirror (e.g., for static-site
 
 - **Manifest is per-machine** — don't commit `.mdcms/manifests/`. It contains server state that's meaningless to other developers.
 - **Hash drift** — if a local file was edited without a `mdcms push`, then someone edited the same document in Studio, both sides diverge. `mdcms pull` classifies this as "both modified" and requires confirmation to overwrite.
-- **Deletions need an interactive confirm or `--force`** — `mdcms push` has no dedicated deletion flag. When a tracked file is missing on disk, push treats it as a deletion candidate and prompts before removing it on the server. In non-interactive mode (no TTY, or in CI), deletion candidates are **skipped** unless `--force` is passed. The full push flag surface is `--force`, `--dry-run`, `--validate`, `--published`, `--sync-schema`. Use `--dry-run` first if you want to see the plan without writes; use `--force` only when you're sure a local `rm` should cascade.
+- **Deletions need an interactive confirm or `--force`**: `mdcms push` has no dedicated deletion flag. When a tracked file is missing on disk, push treats it as a deletion candidate and prompts before removing it on the server. In non-interactive mode (no TTY, or in CI), deletion candidates are **skipped** unless `--force` is passed. The full push flag surface is `--force`, `--dry-run`, `--validate`, `--published`, `--sync-schema`. Run `--dry-run` first to see the plan without writes; use `--force` only when you're sure a local `rm` should cascade.
 - **Schema drift blocks push** — if `mdcms.config.ts` changes locally but schema sync didn't run, push fails closed. Either run `mdcms schema sync` first, or pass `--sync-schema` so push applies the schema in the same run.
 - **Multi-environment confusion** — the credential store keys by `(server, project, environment)`. Switching between `staging` and `production` with different keys is fine; forgetting which one is active is where accidents happen. Use `--environment` explicitly in CI.
 
