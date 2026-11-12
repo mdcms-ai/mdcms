@@ -1,6 +1,7 @@
 import type { Editor, JSONContent } from "@tiptap/core";
 import type { Node as PmNode } from "@tiptap/pm/model";
-import { Fragment } from "@tiptap/pm/model";
+import { Fragment, Slice } from "@tiptap/pm/model";
+import { dropPoint } from "@tiptap/pm/transform";
 
 import { createMdxComponentInsertContent } from "./mdx-component-catalog.js";
 import {
@@ -155,10 +156,42 @@ export function insertVisualCompositionBlock(
   );
 
   if (typeof normalized.position === "number") {
-    return editor.commands.insertContentAt(normalized.position, content);
+    return editor.commands.insertContentAt(
+      resolveBlockInsertionPosition(editor, normalized.position, content),
+      content,
+    );
   }
 
   return editor.commands.insertContent(content);
+}
+
+/**
+ * Moves a drop position to the nearest place where the block fits, the same
+ * way ProseMirror places dropped block content. A drop over the middle of a
+ * paragraph then lands before or after that paragraph instead of splitting
+ * its text around the new block.
+ */
+function resolveBlockInsertionPosition(
+  editor: Editor,
+  position: number,
+  content: JSONContent | JSONContent[],
+): number {
+  const { doc } = editor.state;
+
+  if (position < 0 || position > doc.content.size) {
+    return position;
+  }
+
+  try {
+    const nodes = (Array.isArray(content) ? content : [content]).map((node) =>
+      editor.schema.nodeFromJSON(node),
+    );
+    const slice = new Slice(Fragment.fromArray(nodes), 0, 0);
+
+    return dropPoint(doc, position, slice) ?? position;
+  } catch {
+    return position;
+  }
 }
 
 function patchSelectedMdxComponentProps(

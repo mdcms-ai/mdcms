@@ -709,6 +709,14 @@ map exact internal DOM slots.
 formatting edits but must not expose structural block drop targets for
 headings, lists, boxes, images, or other block-level content.
 
+Dropping a palette block on the editor canvas inserts that block at the drop
+point: a component becomes an MDX component node and a Markdown block becomes
+the corresponding Markdown node. When the drop point is inside a text block,
+the new block goes at the nearest position where it fits (before or after that
+text block) instead of splitting its text. A palette drop never inserts the
+block's label as text, and one drop inserts at most one block. In a read-only
+editor a palette drop is ignored.
+
 Normal editing flows should avoid creating invalid nodes. Dragging a palette
 block with required props opens an insertion configuration surface before
 committing the node. The node is inserted only after required props are valid.
@@ -823,6 +831,12 @@ All registered MDX components share this single node type, differentiated by the
 3. User selects a component.
 4. The component is inserted into the document as a node view block.
 5. Props form appears (auto-generated or custom editor) for initial configuration.
+
+An insertion applies only to the editor instance it was started in. If that
+editor has been replaced or destroyed before the insertion commits, or the `/`
+query text it would replace is no longer in the document, the insertion is
+dropped and leaves the document unchanged: it never inserts partial text or
+removes unrelated text.
 
 **Inline preview:**
 Since the Studio is embedded in the user's app, the **actual React component** is rendered inside the node view using the current prop values. This resolution happens locally in the host app context, so content editors see exactly what the component will look like on the live site.
