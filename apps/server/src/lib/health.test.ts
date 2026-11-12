@@ -569,6 +569,57 @@ test("GET /api/v1/auth/cli/login/authorize is not governed by Studio origins", a
   assert.equal(response.headers.get("access-control-allow-origin"), null);
 });
 
+test("the Studio sign-in page is not governed by Studio origins, its code exchange is", async () => {
+  const handler = createServerRequestHandler({
+    env: {
+      ...baseEnv,
+      MDCMS_STUDIO_ALLOWED_ORIGINS: "http://localhost:4173",
+    },
+    now: () => new Date("2026-02-20T00:00:10.000Z"),
+    configureApp: (app) => {
+      const serverApp = app as {
+        post?: (path: string, handler: () => Response) => unknown;
+      };
+
+      serverApp.post?.(
+        "/api/v1/auth/studio/sign-in",
+        () => new Response("studio sign-in", { status: 200 }),
+      );
+      serverApp.post?.(
+        "/api/v1/auth/studio/sign-in/exchange",
+        () => new Response("exchange", { status: 200 }),
+      );
+    },
+  });
+
+  // Behind a proxy the server can see an internal URL while the browser sends
+  // the public origin of the sign-in page.
+  const pageResponse = await handler(
+    new Request("http://internal:4000/api/v1/auth/studio/sign-in", {
+      method: "POST",
+      headers: {
+        origin: "https://cms.example.com",
+      },
+    }),
+  );
+
+  assert.equal(pageResponse.status, 200);
+  assert.equal(await pageResponse.text(), "studio sign-in");
+
+  const exchangeResponse = await handler(
+    new Request("http://internal:4000/api/v1/auth/studio/sign-in/exchange", {
+      method: "POST",
+      headers: {
+        origin: "http://localhost:9999",
+      },
+    }),
+  );
+  const body = (await exchangeResponse.json()) as Record<string, unknown>;
+
+  assert.equal(exchangeResponse.status, 403);
+  assert.equal(body.code, "FORBIDDEN_ORIGIN");
+});
+
 test("GET /api/v1/studio/assets/:buildId/* returns runtime asset when present", async () => {
   const encoder = new TextEncoder();
   const handler = createServerRequestHandler({

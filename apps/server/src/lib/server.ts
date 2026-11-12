@@ -99,6 +99,14 @@ function isStudioBrowserRoute(pathname: string): boolean {
     return false;
   }
 
+  // The Studio sign-in page is a top-level page on the server whose form posts
+  // back to itself, so its requests carry the server's own origin, which a
+  // proxy can make differ from the URL the server sees. Its code exchange
+  // endpoint is called by Studio and stays governed by the Studio origins.
+  if (pathname === STUDIO_SIGN_IN_PATH) {
+    return false;
+  }
+
   return STUDIO_BROWSER_ROUTE_PREFIXES.some((prefix) =>
     matchesScopedPathPrefix(pathname, prefix),
   );

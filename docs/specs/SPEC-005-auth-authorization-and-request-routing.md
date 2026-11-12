@@ -97,6 +97,8 @@ Origin validation and CORS behavior apply to browser requests that include an `O
 
 Requests without an `Origin` header are not subject to this browser-origin allowlist.
 
+Server-rendered sign-in pages that the browser opens as top-level pages and that post their forms back to themselves are not subject to this allowlist: `/api/v1/auth/cli/login/*` and `/api/v1/auth/studio/sign-in`. The Studio code exchange (`POST /api/v1/auth/studio/sign-in/exchange`) is called by the Studio runtime and remains subject to it.
+
 For an allowlisted origin, the server must:
 
 - echo the exact origin in `Access-Control-Allow-Origin`
