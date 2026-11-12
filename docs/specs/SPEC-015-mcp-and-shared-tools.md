@@ -107,7 +107,7 @@ mapped endpoint's owning spec are preserved, without rewriting them to success.
 | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | list_documents          | `{type?, locale?, q?, path?, isDeleted?:boolean, published?:boolean, hasUnpublishedChanges?:boolean, limit?:integer, offset?:integer}`  | GET C with draft=true                        | content:read:draft; document list envelope                                                            |
 | get_document            | `{documentId}`                                                                                                                          | GET C/:documentId?draft=true                 | content:read:draft; document envelope                                                                 |
-| create_document         | `{type, path, frontmatter:object, body:string, locale?, format?:"md" or "mdx", schemaHash}`                                             | POST C                                       | schema:read, content:write; document envelope                                                         |
+| create_document         | `{type, path, frontmatter:object, body:string, locale, format?:"md" or "mdx", schemaHash}`                                              | POST C                                       | schema:read, content:write; document envelope                                                         |
 | update_document         | `{documentId, frontmatter?:object, body?:string, path?:string, schemaHash}`                                                             | GET draft then PUT C/:documentId             | schema:read, content:read:draft, content:write; document envelope                                     |
 | duplicate_document      | `{documentId, schemaHash}`                                                                                                              | POST C/:documentId/duplicate                 | content:write; document envelope                                                                      |
 | delete_document         | `{documentId}`                                                                                                                          | DELETE C/:documentId                         | content:delete; soft-deleted document envelope                                                        |
@@ -142,6 +142,8 @@ key), validate the merged document and send the read draftRevision. Concurrent
 changes fail with STALE_DRAFT_REVISION (409), never an automatic retry. Moving a
 path must satisfy grants for both the source and destination. Create locale and
 format follow SPEC-003 and SPEC-009; locale cannot be guessed from a user identity.
+Create requires an explicit locale, including `__mdcms_default__` for a
+non-localized type. Missing locale is rejected before dispatch with INVALID_INPUT.
 
 Media upload requires canonical base64; malformed encoding returns INVALID_INPUT
 (400). Reject encoded bodies above the bounded decoded limit before allocation.

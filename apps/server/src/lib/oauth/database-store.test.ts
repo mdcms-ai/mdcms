@@ -31,7 +31,8 @@ databaseTest(
     });
     const db = connection.db;
     const id = randomUUID();
-    let clock = new Date("2026-11-12T00:00:00Z");
+    // The mounted runtime authenticates these tokens using the system clock.
+    let clock = new Date();
     const store = createOAuthStore(db, () => clock);
     let clientId: string | undefined;
     try {

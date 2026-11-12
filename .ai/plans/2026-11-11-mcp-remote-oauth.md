@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Plan status:** Implementation and focused validation complete; integration review and the full CI gate remain required.
+**Plan status:** Implemented and validated by the combined CI gate. External agent-host acceptance is unavailable because no client connection is configured.
 
 **Goal:** Expose the shared registry through authenticated stateless MCP and resource-bound OAuth.
 
@@ -221,3 +221,20 @@ colocated in `mcp/routes.ts`. The shared registry exposes a validated-call bound
 so transport validation does not parse inputs twice. OAuth integration is included
 in `bun run integration` and can run independently with `bun run integration:oauth`.
 The shared connection contract has a CLI-generated minor changeset.
+
+## Combined validation
+
+- `bun run ci:required` passed with Bun 1.3.11, `NX_PARALLEL=1` and
+  `NX_SKIP_NX_CACHE=true`, including Studio embedding and isolated Compose
+  health, restart persistence, migration and content/MCP/OAuth integration.
+- Unit discovery passed 2,280 package tests and 20 harness tests. Database-only
+  cases are opt-in; mandatory integration passed 349 database tests, the real
+  HTTP MCP lifecycle and 23 OAuth/protocol checks. The external MCP case is
+  skipped in the OAuth-only command because it runs in the full-stack command.
+- Chromium exercised OAuth Allow/Deny callbacks and JavaScript-disabled login.
+  Four mounted Connected apps browser tests covered revoke failure/success,
+  pending protection and identity/target changes using intercepted API responses.
+- Packed CLI smoke passed on Node 24.11.1 and 26.13.1. Published-package
+  changesets were generated through the Changesets CLI; no package was published.
+- `apps/studio-review` is absent. No external agent host is configured, so
+  ChatGPT, Claude and Cursor acceptance remains untested.

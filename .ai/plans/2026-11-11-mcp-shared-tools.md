@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Plan status:** Implemented and verified with focused tests and the serial build/typecheck gate. The destructive Compose integration wrapper remains deferred to integration verification; its PostgreSQL test files ran against the dedicated verification database.
+**Plan status:** Implemented and validated by the combined CI gate. External agent-host acceptance is unavailable because no client connection is configured.
 
 **Goal:** Use one authorized route implementation for MCP and Assistant operations.
 
@@ -160,7 +160,7 @@ those edits with an older signature.
       PostgreSQL integration cases directly with `MDCMS_TEST_DATABASE_URL` set to
       the dedicated verification database. In-memory tests alone do not establish
       atomic database behavior.
-- [ ] Run `scripts/content-api-integration-check.sh` in an isolated Compose
+- [x] Run `scripts/content-api-integration-check.sh` in an isolated Compose
       environment during integration verification. This wrapper unconditionally
       removes Compose volumes before and after execution, so it was not run
       against the existing development stack.
@@ -228,5 +228,22 @@ Modify `packages/modules/core.ai/src/server/{index,routes,chat-tools,apply}.ts`,
   ownership, target, status and `content:write`. Domain service failures preserve
   known public codes/statuses; unexpected failures expose generic internal errors.
 - The shared changeset was generated through the Changesets CLI. Modules are
-  private. Full CI, Compose startup/migration checks and live Studio verification
-  remain integration gates.
+  private. The combined CI gate includes isolated Compose startup/migration checks and
+  PostgreSQL assertions. Mounted Studio interaction tests use intercepted API responses.
+
+## Combined validation
+
+- `bun run ci:required` passed with Bun 1.3.11, `NX_PARALLEL=1` and
+  `NX_SKIP_NX_CACHE=true`, including Studio embedding and isolated Compose
+  health, restart persistence, migration and content/MCP/OAuth integration.
+- Unit discovery passed 2,280 package tests and 20 harness tests. Database-only
+  cases are opt-in; mandatory integration passed 349 database tests, the real
+  HTTP MCP lifecycle and 23 OAuth/protocol checks. The external MCP case is
+  skipped in the OAuth-only command because it runs in the full-stack command.
+- Chromium exercised OAuth Allow/Deny callbacks and JavaScript-disabled login.
+  Four mounted Connected apps browser tests covered revoke failure/success,
+  pending protection and identity/target changes using intercepted API responses.
+- Packed CLI smoke passed on Node 24.11.1 and 26.13.1. Published-package
+  changesets were generated through the Changesets CLI; no package was published.
+- `apps/studio-review` is absent. No external agent host is configured, so
+  ChatGPT, Claude and Cursor acceptance remains untested.

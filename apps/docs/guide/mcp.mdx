@@ -62,6 +62,8 @@ API-key HTTP clients instead send `Authorization: Bearer <api-key>`, `X-MDCMS-Pr
 
 Draft reads require `content:read:draft`. Draft writing requires `content:write`; creation and update also require schema access. Publishing and unpublishing require the separate `content:publish` scope. Writing a draft does not publish it. Restore defaults to draft; restoring to published also requires publish permission.
 
+`create_document` requires an explicit `locale`. Use a configured locale for localized types and `__mdcms_default__` for non-localized types. The server does not infer a locale from the signed-in user.
+
 After server-side changes, run `npx mdcms pull` to refresh local files. For schema changes, edit local config, run `sync_schema` (or `npx mdcms schema sync`), then read and explicitly acknowledge the new hash before writing.
 
 ## Remote tools

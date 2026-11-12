@@ -1,6 +1,6 @@
 # MCP server and shared agent tools
 
-**Status:** active
+**Status:** completed
 
 ## Goal
 
@@ -25,7 +25,7 @@ In:
 - A content service and tool registry shared by HTTP routes, the Assistant
   and MCP.
 - A remote MCP endpoint and an OAuth 2.1 authorization server.
-- The CLI stdio bridge, a Node-compatible CLI entry point, and release.
+- The CLI stdio bridge, a Node-compatible CLI entry point, and release metadata.
 - Tools for every Studio and Assistant operation, docs, skills pack updates,
   CI end-to-end coverage, and verification with real agent clients.
 
@@ -64,7 +64,21 @@ Out:
   explicit downscoping, PKCE code exchange, refresh rotation/replay revocation and
   session-managed connections. Current user/path grants constrain every dispatch.
 - OAuth integration verification uses an isolated ephemeral database; ordinary
-  unit discovery does not connect to storage for these cases. The CLI bridge,
-  remaining tool families and Connected Apps UI remain separate stages.
+  unit discovery does not connect to storage for these cases. The CLI bridge and Connected apps use these server contracts.
 
 - CLI stdio relays the remote registry with downstream client metadata and an immutable connection. Local schema sync reloads config without retargeting credentials. Packed verification covers Node 24.11.1 and 26.13.1, including extensionless TypeScript imports, dependency-only schema reloads, config console output isolation and clean stdin shutdown.
+
+## Completed integration
+
+- The registry exposes 27 remote tools across content, schema, translations,
+  versions, media, environments and webhooks. The CLI adds local `sync_schema`.
+- Clone/promote checks source and destination scopes, tuples and paths inside
+  the transaction, persists authenticated attribution and rejects promotion into
+  an active collaboration room without committing partial changes.
+- Connected apps supports session-owned grants and project-admin visibility,
+  confirmed revocation, target/session cache separation and custom Studio mounts.
+- The combined CI gate passed with invocation-owned test stacks. Packed Node
+  24.11.1/26.13.1 and Chromium regressions passed. Ordinary unit discovery never
+  selects the development database automatically.
+- External agent-host acceptance was unavailable; no ChatGPT, Claude or Cursor
+  connection is claimed. Publication and deployment remain separate operations.

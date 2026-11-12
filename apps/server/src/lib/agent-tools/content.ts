@@ -185,7 +185,7 @@ export const contentTools: AgentTool[] = [
       path: text,
       frontmatter: object,
       body: z.string(),
-      locale: text.optional(),
+      locale: text,
       format: z.enum(["md", "mdx"]).optional(),
       schemaHash: text,
     }),

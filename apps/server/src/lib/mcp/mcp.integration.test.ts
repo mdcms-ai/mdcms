@@ -45,6 +45,7 @@ integrationTest(
     const db = connection.db;
     const project = randomUUID();
     const environmentId = randomUUID();
+    const fixtureCreator = randomUUID();
     const key = `mdcms_key_${randomBytes(32).toString("hex")}`;
     const keyId = randomUUID();
     const scopes = [
@@ -106,7 +107,14 @@ integrationTest(
       input: Record<string, unknown>,
     ) => {
       const result = await client.callTool({ name, arguments: input });
-      assert.equal(result.isError, false, `${name} must succeed`);
+      const failure = result.isError
+        ? JSON.parse((result.content as { text: string }[])[0]!.text)
+        : undefined;
+      assert.equal(
+        result.isError,
+        false,
+        `${name} must succeed${failure ? ` (${failure.code}: ${failure.message})` : ""}`,
+      );
       return result.structuredContent as any;
     };
     try {
@@ -131,13 +139,13 @@ integrationTest(
         id: project,
         slug: project,
         name: "MCP fixture",
-        createdBy: userId!,
+        createdBy: fixtureCreator,
       });
       await db.insert(environments).values({
         id: environmentId,
         projectId: project,
         name: "draft",
-        createdBy: userId!,
+        createdBy: fixtureCreator,
       });
       await db.insert(rbacGrants).values({
         userId: userId!,
@@ -206,6 +214,8 @@ integrationTest(
       const created = await call(client, "create_document", {
         type: "Note",
         path: "allowed/one",
+        locale: "__mdcms_default__",
+        format: "md",
         frontmatter: { title: "One" },
         body: "initial",
         schemaHash: schema.data.schemaHash,
@@ -245,6 +255,8 @@ integrationTest(
         arguments: {
           type: "Note",
           path: "denied/one",
+          locale: "__mdcms_default__",
+          format: "md",
           frontmatter: { title: "Denied" },
           body: "denied",
           schemaHash: schema.data.schemaHash,

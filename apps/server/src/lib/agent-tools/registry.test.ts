@@ -13,6 +13,39 @@ import {
 } from "../content-api.js";
 import { baseEnv, authorizedTestRequest } from "../content-api-test-support.js";
 
+test("create requires an explicit locale before dispatch", async () => {
+  const registry = createAgentToolRegistry();
+  const input = {
+    type: "Note",
+    path: "notes/one",
+    frontmatter: { title: "One" },
+    body: "hello",
+    schemaHash: "hash",
+  };
+  assert.equal(
+    registry.get("create_document")!.inputSchema.safeParse(input).success,
+    false,
+  );
+  assert.equal(
+    registry
+      .get("create_document")!
+      .inputSchema.safeParse({ ...input, locale: "__mdcms_default__" }).success,
+    true,
+  );
+  let calls = 0;
+  const result = await registry.call("create_document", input, {
+    authorization: authorizedTestRequest,
+    target: { project: "p", environment: "e" },
+    dispatch: async () => {
+      calls++;
+      return new Response();
+    },
+  });
+  assert.equal(result.isError, true);
+  assert.equal(JSON.parse(result.content[0]!.text).code, "INVALID_INPUT");
+  assert.equal(calls, 0);
+});
+
 test("registry rejects duplicate names and rechecks scopes during execution", async () => {
   const registry = createAgentToolRegistry();
   assert.throws(

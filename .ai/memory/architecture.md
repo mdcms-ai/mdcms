@@ -87,3 +87,16 @@ Files under `docs/specs/` are **standalone canonical product documentation**. No
   returning an error, and refresh replay evidence survives until family expiry.
 - OAuth endpoint throttling uses bounded shared PostgreSQL counters. Canonical
   metadata origins come only from typed server configuration, never request headers.
+
+## Agent tools and integration isolation
+
+- All 27 remote tools share the server registry; the CLI adds only local schema
+  sync. Tool input requiredness follows the underlying domain contract, including
+  explicit create locale. Studio header sessions survive internal dispatch with
+  precedence over ambient cookies.
+- Environment transfers authorize the exact source, destination and reference
+  paths against the transaction snapshot. Promotion guards existing destinations
+  with the collaboration service; a rejection rolls back the entire batch.
+- Full-stack integration uses a unique Compose project, recorded loopback ports,
+  controlled service configuration and ownership-checked cleanup. Mutating MCP
+  integration requires explicit opt-in and validated local test endpoints.

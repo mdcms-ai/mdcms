@@ -12,6 +12,8 @@ import {
 } from "@mdcms/shared";
 import { and, eq, inArray, sql } from "drizzle-orm";
 
+import type { ContentActiveCollaborationChecker } from "./content-api.js";
+import { createDocumentCollaborationActiveError } from "./collaboration/errors.js";
 import type { ApiKeyOperationScope } from "./auth.js";
 import type { DrizzleDatabase } from "./db.js";
 import {
@@ -496,7 +498,7 @@ export async function cloneEnvironment(
 
         // When `includeDrafts: false` the operator wants the published source
         // state in the target. When `includeDrafts: true` the operator wants
-        // the live (possibly draft) state — which is what the documents row
+        // the live (possibly draft) state, which is what the documents row
         // holds. The published payload is still used for the version-1 row
         // snapshot below, so a published source row produces target content
         // whose draft and published states accurately mirror the source.
@@ -607,7 +609,7 @@ export async function cloneEnvironment(
 
         if (hasPublishedSnapshot && publishedPayload) {
           // Version-1 in the target carries the *published* source state, even
-          // when `includeDrafts: true` and the head row reflects the draft —
+          // when `includeDrafts: true` and the head row reflects the draft,
           // so consumers querying the target as "published" see exactly what
           // was published on the source side. Full version history is
           // intentionally not copied (SPEC-009 #Cloning).
@@ -655,7 +657,7 @@ export async function cloneEnvironment(
                 ? false
                 : // If includeDrafts is true and the head and published payloads
                   // differ, the target row holds draft content distinct from its
-                  // published v1 — so `hasUnpublishedChanges` is true.
+                  // published v1, so `hasUnpublishedChanges` is true.
                   headPayload.body !== publishedPayload.body ||
                   JSON.stringify(headPayload.frontmatter) !==
                     JSON.stringify(publishedPayload.frontmatter) ||
@@ -748,6 +750,7 @@ async function copyEnvironmentSettings(
 }
 
 export type PromoteEnvironmentInput = EnvironmentPromoteInput & {
+  activeCollaboration?: ContentActiveCollaborationChecker;
   project: string;
   targetEnvironmentId: string;
   attribution: ContentWriteAttribution;
@@ -815,7 +818,7 @@ export async function promoteDocuments(
 
       // Pre-populate the target map with "would-be-created" ids for rows that
       // don't yet have a target match. This lets the remap walker resolve
-      // references between docs in the same promoted batch — both during
+      // references between docs in the same promoted batch, both during
       // dry-run (no writes) and during the real run (in-progress creations).
       // The pre-allocated id matches the id used by `createTargetDraft` when
       // the row is actually written.
@@ -951,6 +954,12 @@ export async function promoteDocuments(
           continue;
         }
 
+        if (
+          existingTargetId &&
+          (await input.activeCollaboration?.isDocumentActive(existingTargetId))
+        ) {
+          throw createDocumentCollaborationActiveError(existingTargetId);
+        }
         const targetDocumentId =
           existingTargetId ??
           (await createTargetDraft(txDb, {
