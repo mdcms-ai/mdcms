@@ -589,3 +589,174 @@ test("runMdcmsCli still resolves single-word commands when multi-word commands e
   assert.equal(exitCode, 0);
   assert.equal(ranPush, true);
 });
+
+test("MCP routes config and command console output to stderr and restores other commands", async () => {
+  const original = console.log;
+  const originalInfo = console.info;
+  const originalDebug = console.debug;
+  let stderr = "";
+  const ordinaryLogs: unknown[][] = [];
+  const ordinaryLog = (...args: unknown[]) => {
+    ordinaryLogs.push(args);
+  };
+  console.log = ordinaryLog;
+  try {
+    for (const name of ["mcp", "ordinary"]) {
+      assert.equal(
+        await runMdcmsCli([name], {
+          commands: [
+            {
+              name,
+              description: "test",
+              requiresTarget: false,
+              run: async () => {
+                console.log("command output");
+                return 0;
+              },
+            },
+          ],
+          env: {},
+          loadConfig: async () => {
+            console.log("config output");
+            console.info("config info");
+            console.debug("config debug");
+            return {
+              config: { serverUrl: "", project: "", environment: "" },
+              configPath: "mdcms.config.ts",
+            };
+          },
+          resolveStoredApiKey: async () => undefined,
+          stderr: {
+            write: (chunk) => {
+              stderr += chunk;
+            },
+          },
+        }),
+        0,
+      );
+      assert.equal(console.log, ordinaryLog);
+    }
+    assert.deepEqual(ordinaryLogs, [["config output"], ["command output"]]);
+    assert.match(stderr, /config output/);
+    assert.match(stderr, /config info/);
+    assert.match(stderr, /config debug/);
+    assert.match(stderr, /command output/);
+  } finally {
+    console.log = original;
+    console.info = originalInfo;
+    console.debug = originalDebug;
+  }
+});
+
+test("MCP restores console routing when config loading fails", async () => {
+  const original = {
+    log: console.log,
+    info: console.info,
+    debug: console.debug,
+  };
+  let stderr = "";
+  assert.equal(
+    await runMdcmsCli(["mcp"], {
+      commands: [
+        {
+          name: "mcp",
+          description: "test",
+          run: async () => assert.fail("must not start"),
+        },
+      ],
+      env: {},
+      loadConfig: async () => {
+        console.log("config-failure-marker");
+        throw new Error("invalid config");
+      },
+      stderr: {
+        write: (chunk) => {
+          stderr += chunk;
+        },
+      },
+    }),
+    1,
+  );
+  assert.equal(console.log, original.log);
+  assert.equal(console.info, original.info);
+  assert.equal(console.debug, original.debug);
+  assert.match(stderr, /config-failure-marker/);
+});
+
+test("MCP sanitizes CLI, env and resolved profile credentials on every diagnostic path", async () => {
+  let stderr = "";
+  const originals = {
+    out: process.stdout.write,
+    err: process.stderr.write,
+    log: console.log,
+    error: console.error,
+  };
+  for (const mode of ["cli", "env", "profile", "throw"]) {
+    const result = await runMdcmsCli(
+      mode === "cli" ? ["mcp", "--api-key", "cli-sensitive"] : ["mcp"],
+      {
+        commands: [
+          {
+            name: "mcp",
+            description: "test",
+            run: ({ stderr, apiKey }) => {
+              console.error(apiKey);
+              stderr.write(`${apiKey}\n`);
+              return 0;
+            },
+          },
+        ],
+        env:
+          mode === "env" || mode === "throw"
+            ? { MDCMS_API_KEY: "env-sensitive" }
+            : {},
+        loadConfig: async () => {
+          console.error(
+            mode === "cli"
+              ? "cli-sensitive"
+              : mode === "env" || mode === "throw"
+                ? "env-sensitive"
+                : "Bearer undiscovered-profile",
+          );
+          process.stdout.write(Buffer.from("Bearer split-"));
+          process.stdout.write(new Uint8Array(Buffer.from("token\n")));
+          process.stderr.write("mdcms_key_before_profile\n");
+          if (mode === "throw")
+            throw new Error(
+              "env-sensitive plus arbitrary-private-failure-text",
+            );
+          return {
+            config: {
+              serverUrl: "http://localhost:1234",
+              project: "project",
+              environment: "staging",
+            },
+            configPath: "mdcms.config.ts",
+          };
+        },
+        resolveStoredApiKey: async () => "profile-sensitive",
+        stderr: {
+          write: (chunk) => {
+            stderr += chunk;
+          },
+        },
+      },
+    );
+    assert.equal(result, mode === "throw" ? 1 : 0);
+    assert.equal(process.stdout.write, originals.out);
+    assert.equal(process.stderr.write, originals.err);
+    assert.equal(console.log, originals.log);
+    assert.equal(console.error, originals.error);
+  }
+  for (const secret of [
+    "cli-sensitive",
+    "env-sensitive",
+    "undiscovered-profile",
+    "split-token",
+    "mdcms_key_before_profile",
+    "arbitrary-private-failure-text",
+    "profile-sensitive",
+  ])
+    assert.ok(!stderr.includes(secret), stderr);
+  assert.match(stderr, /\[redacted\]/);
+});

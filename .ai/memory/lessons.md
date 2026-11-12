@@ -129,3 +129,9 @@ Entries are reverse-chronological (newest first).
 **Rule:** Keep released Drizzle migrations and regenerate unpublished schema deltas against the current released snapshot.
 **Why:** Independent branches can allocate the same migration index with different snapshots; combining those journals can skip or misapply schema changes.
 **How to apply:** Preserve the released migration and snapshot, regenerate the unpublished delta from the merged schema, then verify both a fresh database and legacy-data preservation.
+
+## CLI config reload and protocol output
+
+**Rule:** Reload local config dependencies and reserve MCP stdout before evaluating config modules.
+**Why:** Cache-busting only the entry URL leaves imported schemas stale. Config side effects run before command execution and can corrupt stdio JSON-RPC.
+**How to apply:** Test extensionless TypeScript imports and dependency-only edits in a packed Node process; capture a dedicated protocol writer before routing config console and direct stdout/stderr writes through a shared credential-sanitizing sink, only for MCP. Preserve stream callbacks and backpressure, and restore routing on every exit.

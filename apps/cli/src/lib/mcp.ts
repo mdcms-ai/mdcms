@@ -1,29 +1,24 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import {
-  IMPLICIT_DEFAULT_LOCALE,
-  type ParsedMdcmsConfig,
-  type SchemaRegistryTypeSnapshot,
-} from "@mdcms/shared";
-import { z } from "zod";
-
+  CallToolRequestSchema,
+  CallToolResultSchema,
+  ListToolsRequestSchema,
+  ListToolsResultSchema,
+  McpError,
+  ErrorCode,
+} from "@modelcontextprotocol/sdk/types.js";
+import { IMPLICIT_DEFAULT_LOCALE, type ParsedMdcmsConfig } from "@mdcms/shared";
 import { loadCliConfig } from "./config.js";
 import type {
   CliCommand,
   CliCommandContext,
   LoadCliConfig,
 } from "./framework.js";
-import { readSchemaState } from "./schema-state.js";
 import { performSchemaSync } from "./schema-sync.js";
-import { validateFrontmatter } from "./validate.js";
-
-/**
- * `mdcms mcp` exposes one `(project, environment)` target to MCP clients over
- * stdio. Tools call the same content and schema endpoints as the other CLI
- * commands, so scopes, the schema hash write gate, and draft revision checks
- * apply to agents exactly as they do to `push`.
- */
 
 export type McpServerDeps = {
   serverUrl: string;
@@ -32,639 +27,241 @@ export type McpServerDeps = {
   apiKey: string;
   cwd: string;
   configPath: string;
-  /** Default locale for localized types; absent when the config declares none. */
   defaultLocale?: string;
   fetcher: typeof fetch;
   loadConfig?: LoadCliConfig;
   version?: string;
+  onFatalTransportError?: () => void;
 };
 
-type ToolResult = {
-  content: Array<{ type: "text"; text: string }>;
-  isError?: boolean;
+const localTool = {
+  name: "sync_schema",
+  description:
+    "Reload local mdcms.config.ts and sync schema to the originally resolved target.",
+  inputSchema: {
+    type: "object" as const,
+    properties: {},
+    additionalProperties: false,
+  },
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: true,
+    idempotentHint: false,
+  },
 };
 
-type ToolErrorDetails = Record<string, unknown>;
-
-class ToolError extends Error {
-  readonly code: string;
-  readonly details?: ToolErrorDetails;
-
-  constructor(code: string, message: string, details?: ToolErrorDetails) {
-    super(message);
-    this.code = code;
-    this.details = details;
+export function createMdcmsMcpServer(input: McpServerDeps) {
+  const deps = { ...input };
+  const endpoint = new URL(`${deps.serverUrl.replace(/\/+$/, "")}/api/v1/mcp`);
+  if (endpoint.username || endpoint.password)
+    throw new Error("MCP server URL must not contain credentials.");
+  const server = new Server(
+    { name: "mdcms", version: deps.version ?? "0.0.0" },
+    { capabilities: { tools: {} } },
+  );
+  let upstream: Client | undefined;
+  let connecting: Promise<Client> | undefined;
+  let closed = false;
+  const safeFetch = (async (
+    url: string | URL | Request,
+    init?: RequestInit,
+  ) => {
+    const target = new URL(url instanceof Request ? url.url : String(url));
+    if (target.origin !== endpoint.origin)
+      throw new Error("MCP target changed.");
+    return deps.fetcher(url, { ...init, redirect: "error" });
+  }) as typeof fetch;
+  function redact(value: unknown): unknown {
+    if (typeof value === "string")
+      return value.split(deps.apiKey).join("[redacted]");
+    if (Array.isArray(value)) return value.map(redact);
+    if (value && typeof value === "object")
+      return Object.fromEntries(
+        Object.entries(value).map(([k, v]) => [k, redact(v)]),
+      );
+    return value;
   }
-}
-
-type RemoteDocument = Record<string, unknown> & {
-  documentId: string;
-  type: string;
-  path: string;
-  locale: string;
-  format: string;
-  draftRevision: number;
-  frontmatter: Record<string, unknown>;
-  body: string;
-};
-
-type RemoteSchemaType = {
-  type: string;
-  directory: string;
-  localized: boolean;
-  resolvedSchema: SchemaRegistryTypeSnapshot;
-};
-
-type RemoteSchema = {
-  types: RemoteSchemaType[];
-  schemaHash: string | null;
-  syncedAt: string | null;
-};
-
-/**
- * Documents of non-localized types are stored under one fixed locale. This
- * matches the locale `push` assigns, so both write paths address the same
- * document identity.
- */
-const NON_LOCALIZED_DOCUMENT_LOCALE = "en";
-
-const DEFAULT_LIST_LIMIT = 20;
-const MAX_LIST_LIMIT = 100;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function toSuccess(payload: unknown): ToolResult {
-  return {
-    content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
-  };
-}
-
-function toFailure(error: unknown): ToolResult {
-  const payload =
-    error instanceof ToolError
-      ? {
-          code: error.code,
-          message: error.message,
-          ...(error.details ? { details: error.details } : {}),
-        }
-      : {
-          code: "INTERNAL_ERROR",
-          message: error instanceof Error ? error.message : String(error),
+  async function remote() {
+    if (closed) throw new Error("Bridge closed.");
+    if (!connecting) {
+      connecting = (async () => {
+        const identity = server.getClientVersion();
+        if (!identity) throw new Error("Client initialization required.");
+        upstream = new Client(identity);
+        upstream.onclose = () => {
+          if (!closed) deps.onFatalTransportError?.();
         };
-
-  return {
-    content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
-    isError: true,
-  };
-}
-
-async function runTool(handler: () => Promise<unknown>): Promise<ToolResult> {
-  try {
-    return toSuccess(await handler());
-  } catch (error) {
-    return toFailure(error);
+        const transport = new StreamableHTTPClientTransport(endpoint, {
+          fetch: safeFetch,
+          requestInit: {
+            headers: {
+              authorization: `Bearer ${deps.apiKey}`,
+              "x-mdcms-project": deps.project,
+              "x-mdcms-environment": deps.environment,
+            },
+            redirect: "error",
+          },
+        });
+        // Transport errors also cover background HTTP/notification failures.
+        // Application JSON-RPC errors arrive as responses, not this event.
+        transport.onerror = () => {
+          if (!closed) deps.onFatalTransportError?.();
+        };
+        await upstream.connect(transport);
+        if (closed) {
+          await upstream.close();
+          throw new Error("Bridge closed.");
+        }
+        return upstream;
+      })();
+    }
+    return connecting;
   }
-}
-
-function createApiClient(deps: McpServerDeps) {
-  const baseUrl = deps.serverUrl.replace(/\/+$/, "");
-
-  async function request(
-    path: string,
-    init: {
-      method?: string;
-      body?: unknown;
-      schemaHash?: string;
-    } = {},
-  ): Promise<unknown> {
-    const headers: Record<string, string> = {
-      authorization: `Bearer ${deps.apiKey}`,
-      "x-mdcms-project": deps.project,
-      "x-mdcms-environment": deps.environment,
-    };
-
-    if (init.body !== undefined) {
-      headers["content-type"] = "application/json";
-    }
-
-    if (init.schemaHash) {
-      headers["x-mdcms-schema-hash"] = init.schemaHash;
-    }
-
-    let response: Response;
-
+  async function requestRemote<T>(
+    operation: () => Promise<T>,
+    signal: AbortSignal,
+  ): Promise<T> {
     try {
-      response = await deps.fetcher(`${baseUrl}${path}`, {
-        method: init.method ?? "GET",
-        headers,
-        ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
-      });
+      return await operation();
     } catch (error) {
-      throw new ToolError(
-        "SERVER_UNREACHABLE",
-        `Could not reach the MDCMS server at ${baseUrl}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
+      // MCP application errors are valid responses. Aborted calls and local
+      // tool failures do not invalidate the upstream connection.
+      if (!closed && !signal.aborted && !(error instanceof McpError)) {
+        deps.onFatalTransportError?.();
+      }
+      throw error;
+    }
+  }
+  async function guarded<T>(operation: () => Promise<T>): Promise<T> {
+    try {
+      return await operation();
+    } catch (error) {
+      if (error instanceof McpError) {
+        // The SDK adds this prefix when decoding the wire error. The server
+        // serializes Error.message directly, so remove exactly that one prefix.
+        const prefix = `MCP error ${error.code}: `;
+        const message = error.message.startsWith(prefix)
+          ? error.message.slice(prefix.length)
+          : error.message;
+        throw Object.assign(new Error(String(redact(message))), {
+          code: error.code,
+          data: redact(error.data),
+        });
+      }
+      throw new McpError(
+        ErrorCode.InternalError,
+        "MDCMS upstream request failed. Its outcome may be unknown; no retry was attempted.",
       );
     }
-
-    const payload = (await response.json().catch(() => undefined)) as unknown;
-
-    if (!response.ok) {
-      if (isRecord(payload) && typeof payload.code === "string") {
-        throw new ToolError(
-          payload.code,
-          typeof payload.message === "string"
-            ? payload.message
-            : `Server responded with ${response.status}.`,
-          isRecord(payload.details) ? payload.details : undefined,
+  }
+  server.setRequestHandler(ListToolsRequestSchema, (request, extra) =>
+    guarded(async () => {
+      const client = await remote();
+      const result = await requestRemote(
+        () =>
+          client.request(request, ListToolsResultSchema, {
+            signal: extra.signal,
+          }),
+        extra.signal,
+      );
+      if (result.tools.some((tool) => tool.name === localTool.name))
+        throw new McpError(
+          ErrorCode.InternalError,
+          "Remote registry collides with local sync_schema.",
+        );
+      return {
+        ...result,
+        tools: result.nextCursor ? result.tools : [...result.tools, localTool],
+      };
+    }),
+  );
+  server.setRequestHandler(CallToolRequestSchema, (request, extra) =>
+    guarded(async () => {
+      if (request.params.name !== localTool.name) {
+        const client = await remote();
+        return requestRemote(
+          () =>
+            client.request(
+              {
+                ...request,
+                params: {
+                  ...request.params,
+                  _meta: {
+                    ...request.params._meta,
+                    "ai.mdcms/clientInfo": server.getClientVersion(),
+                  },
+                },
+              },
+              CallToolResultSchema,
+              { signal: extra.signal },
+            ),
+          extra.signal,
         );
       }
-
-      throw new ToolError(
-        "REQUEST_FAILED",
-        `Server responded with ${response.status}.`,
-        { status: response.status },
-      );
-    }
-
-    return payload;
-  }
-
-  return { request };
-}
-
-function readData(payload: unknown): unknown {
-  if (!isRecord(payload) || !("data" in payload)) {
-    throw new ToolError(
-      "REQUEST_FAILED",
-      "Unexpected response from the MDCMS server.",
-    );
-  }
-
-  return payload.data;
-}
-
-function readDocument(payload: unknown): RemoteDocument {
-  const data = readData(payload);
-
-  if (
-    !isRecord(data) ||
-    typeof data.documentId !== "string" ||
-    typeof data.type !== "string" ||
-    typeof data.path !== "string" ||
-    typeof data.draftRevision !== "number" ||
-    !isRecord(data.frontmatter)
-  ) {
-    throw new ToolError(
-      "REQUEST_FAILED",
-      "Unexpected document response from the MDCMS server.",
-    );
-  }
-
-  return data as RemoteDocument;
-}
-
-function readSchema(payload: unknown): RemoteSchema {
-  const data = readData(payload);
-
-  if (!isRecord(data) || !Array.isArray(data.types)) {
-    throw new ToolError(
-      "REQUEST_FAILED",
-      "Unexpected schema response from the MDCMS server.",
-    );
-  }
-
-  return {
-    types: data.types as RemoteSchemaType[],
-    schemaHash: typeof data.schemaHash === "string" ? data.schemaHash : null,
-    syncedAt: typeof data.syncedAt === "string" ? data.syncedAt : null,
-  };
-}
-
-function toDocumentStatus(document: Record<string, unknown>) {
-  return {
-    documentId: document.documentId,
-    type: document.type,
-    path: document.path,
-    locale: document.locale,
-    format: document.format,
-    draftRevision: document.draftRevision,
-    publishedVersion: document.publishedVersion ?? null,
-    hasUnpublishedChanges: document.hasUnpublishedChanges,
-    updatedAt: document.updatedAt,
-  };
-}
-
-function toDocumentSummary(document: Record<string, unknown>) {
-  return {
-    ...toDocumentStatus(document),
-    frontmatter: document.frontmatter,
-  };
-}
-
-function toDocumentDetail(document: Record<string, unknown>) {
-  return {
-    ...toDocumentSummary(document),
-    body: document.body,
-  };
-}
-
-function mergeFrontmatter(
-  current: Record<string, unknown>,
-  patch: Record<string, unknown>,
-): Record<string, unknown> {
-  const merged: Record<string, unknown> = { ...current };
-
-  for (const [key, value] of Object.entries(patch)) {
-    if (value === null) {
-      delete merged[key];
-    } else {
-      merged[key] = value;
-    }
-  }
-
-  return merged;
-}
-
-export function createMdcmsMcpServer(deps: McpServerDeps): McpServer {
-  const api = createApiClient(deps);
-  const loadConfig = deps.loadConfig ?? loadCliConfig;
-  const target = `${deps.project}/${deps.environment}`;
-
-  async function fetchSchema(): Promise<RemoteSchema> {
-    return readSchema(await api.request("/api/v1/schema"));
-  }
-
-  async function requireSchemaHash(): Promise<string> {
-    const state = await readSchemaState({
-      cwd: deps.cwd,
-      project: deps.project,
-      environment: deps.environment,
-    });
-
-    if (!state) {
-      throw new ToolError(
-        "SCHEMA_STATE_MISSING",
-        "No local schema state found for this target. Call sync_schema (or run `mdcms schema sync`) before writing content.",
-      );
-    }
-
-    return state.schemaHash;
-  }
-
-  async function requireValidFrontmatter(input: {
-    typeName: string;
-    frontmatter: Record<string, unknown>;
-  }): Promise<{ schemaType: RemoteSchemaType; warnings: string[] }> {
-    const schema = await fetchSchema();
-    const schemaType = schema.types.find(
-      (entry) => entry.type === input.typeName,
-    );
-
-    if (!schemaType) {
-      throw new ToolError(
-        "UNKNOWN_TYPE",
-        `Content type "${input.typeName}" is not in the synced schema for ${target}.`,
-        { knownTypes: schema.types.map((entry) => entry.type) },
-      );
-    }
-
-    const { errors, warnings } = validateFrontmatter(
-      input.frontmatter,
-      schemaType.resolvedSchema,
-    );
-
-    if (errors.length > 0) {
-      throw new ToolError(
-        "INVALID_FRONTMATTER",
-        `Frontmatter does not match the schema for type "${input.typeName}". Nothing was written.`,
-        { errors, warnings },
-      );
-    }
-
-    return { schemaType, warnings };
-  }
-
-  const server = new McpServer({
-    name: "mdcms",
-    version: deps.version ?? "0.0.0",
-  });
-
-  server.registerTool(
-    "get_schema",
-    {
-      title: "Get schema",
-      description: `Return the content types and fields synced for ${target}. Call this before creating or updating documents so frontmatter matches the schema.`,
-      annotations: { readOnlyHint: true },
-    },
-    () =>
-      runTool(async () => {
-        const schema = await fetchSchema();
-
-        return {
-          project: deps.project,
-          environment: deps.environment,
-          schemaHash: schema.schemaHash,
-          syncedAt: schema.syncedAt,
-          types: schema.types.map((entry) => ({
-            type: entry.type,
-            directory: entry.directory,
-            localized: entry.localized,
-            fields: entry.resolvedSchema.fields,
-          })),
-        };
-      }),
-  );
-
-  server.registerTool(
-    "list_documents",
-    {
-      title: "List documents",
-      description: `List draft documents in ${target} with frontmatter and status, without bodies. Page through results with limit and offset.`,
-      inputSchema: {
-        type: z.string().min(1).optional().describe("Content type name"),
-        locale: z.string().min(1).optional(),
-        q: z.string().min(1).optional().describe("Text search"),
-        published: z
-          .boolean()
-          .optional()
-          .describe("Only documents that have (or lack) a published version"),
-        hasUnpublishedChanges: z.boolean().optional(),
-        limit: z.number().int().min(1).max(MAX_LIST_LIMIT).optional(),
-        offset: z.number().int().min(0).optional(),
-      },
-      annotations: { readOnlyHint: true },
-    },
-    (input) =>
-      runTool(async () => {
-        const query = new URLSearchParams({ draft: "true" });
-
-        if (input.type) query.set("type", input.type);
-        if (input.locale) query.set("locale", input.locale);
-        if (input.q) query.set("q", input.q);
-        if (input.published !== undefined) {
-          query.set("published", String(input.published));
-        }
-        if (input.hasUnpublishedChanges !== undefined) {
-          query.set(
-            "hasUnpublishedChanges",
-            String(input.hasUnpublishedChanges),
-          );
-        }
-        query.set("limit", String(input.limit ?? DEFAULT_LIST_LIMIT));
-        query.set("offset", String(input.offset ?? 0));
-
-        const payload = await api.request(`/api/v1/content?${query}`);
-        const data = readData(payload);
-
-        if (!Array.isArray(data)) {
-          throw new ToolError(
-            "REQUEST_FAILED",
-            "Unexpected list response from the MDCMS server.",
-          );
-        }
-
-        return {
-          documents: data.filter(isRecord).map(toDocumentSummary),
-          pagination: isRecord(payload) ? payload.pagination : undefined,
-        };
-      }),
-  );
-
-  server.registerTool(
-    "get_document",
-    {
-      title: "Get document",
-      description: `Return one draft document from ${target}, including its Markdown body.`,
-      inputSchema: {
-        documentId: z.string().min(1),
-      },
-      annotations: { readOnlyHint: true },
-    },
-    (input) =>
-      runTool(async () => {
-        const document = readDocument(
-          await api.request(
-            `/api/v1/content/${encodeURIComponent(input.documentId)}?draft=true`,
-          ),
+      if (Object.keys(request.params.arguments ?? {}).length)
+        throw new McpError(
+          ErrorCode.InvalidParams,
+          "sync_schema accepts no arguments.",
         );
-
-        return toDocumentDetail(document);
-      }),
-  );
-
-  server.registerTool(
-    "create_document",
-    {
-      title: "Create document",
-      description: `Create a draft document in ${target}. Frontmatter is validated against the synced schema first. The path must be "<type directory>/<slug>" without a file extension. The document is not published.`,
-      inputSchema: {
-        type: z.string().min(1).describe("Content type name"),
-        path: z
-          .string()
-          .min(1)
-          .describe('Document path, for example "content/posts/my-post"'),
-        frontmatter: z.record(z.string(), z.unknown()),
-        body: z.string().describe("Markdown or MDX body"),
-        locale: z
-          .string()
-          .min(1)
-          .optional()
-          .describe("Locale for localized types; ignored otherwise"),
-        format: z.enum(["md", "mdx"]).optional(),
-      },
-    },
-    (input) =>
-      runTool(async () => {
-        const schemaHash = await requireSchemaHash();
-        const { schemaType, warnings } = await requireValidFrontmatter({
-          typeName: input.type,
-          frontmatter: input.frontmatter,
+      let loaded: Awaited<ReturnType<LoadCliConfig>>;
+      try {
+        loaded = await (deps.loadConfig ?? loadCliConfig)({
+          cwd: deps.cwd,
+          configPath: deps.configPath,
         });
-        const directory = schemaType.directory.replace(/\/+$/, "");
-
-        if (!input.path.startsWith(`${directory}/`)) {
-          throw new ToolError(
-            "INVALID_INPUT",
-            `Documents of type "${input.type}" must use a path inside "${directory}/".`,
-            { path: input.path, directory },
-          );
-        }
-
-        const locale = schemaType.localized
-          ? (input.locale ?? deps.defaultLocale)
-          : NON_LOCALIZED_DOCUMENT_LOCALE;
-
-        if (!locale) {
-          throw new ToolError(
-            "INVALID_INPUT",
-            `Type "${input.type}" is localized. Provide "locale".`,
-          );
-        }
-
-        const document = readDocument(
-          await api.request("/api/v1/content", {
-            method: "POST",
-            schemaHash,
-            body: {
-              type: input.type,
-              path: input.path,
-              locale,
-              format: input.format ?? "md",
-              frontmatter: input.frontmatter,
-              body: input.body,
-            },
-          }),
-        );
-
+      } catch {
         return {
-          created: toDocumentSummary(document),
-          ...(warnings.length > 0 ? { warnings } : {}),
-        };
-      }),
-  );
-
-  server.registerTool(
-    "update_document",
-    {
-      title: "Update document",
-      description: `Update a draft document in ${target}. "frontmatter" is a patch: listed keys are merged over the stored frontmatter and a null value removes a key. "body" replaces the whole body. The merged frontmatter is validated against the synced schema before anything is written. The document is not published.`,
-      inputSchema: {
-        documentId: z.string().min(1),
-        frontmatter: z.record(z.string(), z.unknown()).optional(),
-        body: z.string().optional(),
-      },
-    },
-    (input) =>
-      runTool(async () => {
-        if (input.frontmatter === undefined && input.body === undefined) {
-          throw new ToolError(
-            "INVALID_INPUT",
-            'Provide "frontmatter", "body", or both.',
-          );
-        }
-
-        const schemaHash = await requireSchemaHash();
-        const documentPath = `/api/v1/content/${encodeURIComponent(input.documentId)}`;
-        const current = readDocument(
-          await api.request(`${documentPath}?draft=true`),
-        );
-        const frontmatter = mergeFrontmatter(
-          current.frontmatter,
-          input.frontmatter ?? {},
-        );
-        const { warnings } = await requireValidFrontmatter({
-          typeName: current.type,
-          frontmatter,
-        });
-
-        const document = readDocument(
-          await api.request(documentPath, {
-            method: "PUT",
-            schemaHash,
-            body: {
-              frontmatter,
-              ...(input.body !== undefined ? { body: input.body } : {}),
-              draftRevision: current.draftRevision,
-            },
-          }),
-        );
-
-        return {
-          updated: toDocumentSummary(document),
-          ...(warnings.length > 0 ? { warnings } : {}),
-        };
-      }),
-  );
-
-  server.registerTool(
-    "publish_document",
-    {
-      title: "Publish document",
-      description: `Publish the current draft of a document in ${target} as a new immutable version. Requires an API key with the content:publish scope.`,
-      inputSchema: {
-        documentId: z.string().min(1),
-        changeSummary: z.string().min(1).optional(),
-      },
-    },
-    (input) =>
-      runTool(async () => {
-        const document = readDocument(
-          await api.request(
-            `/api/v1/content/${encodeURIComponent(input.documentId)}/publish`,
+          content: [
             {
-              method: "POST",
-              body: input.changeSummary
-                ? { changeSummary: input.changeSummary }
-                : {},
+              type: "text" as const,
+              text: JSON.stringify({
+                code: "CONFIG_LOAD_FAILED",
+                message: "Could not reload the local MDCMS config.",
+              }),
             },
-          ),
-        );
-
-        return { published: toDocumentStatus(document) };
-      }),
-  );
-
-  server.registerTool(
-    "sync_schema",
-    {
-      title: "Sync schema",
-      description: `Reload mdcms.config.ts from disk and sync its schema to ${target}, the same as \`mdcms schema sync\`. Call this after editing content types or fields in mdcms.config.ts.`,
-    },
-    () =>
-      runTool(async () => {
-        let config: ParsedMdcmsConfig;
-
-        try {
-          const loaded = await loadConfig({
-            cwd: deps.cwd,
-            configPath: deps.configPath,
-          });
-          config = loaded.config as ParsedMdcmsConfig;
-        } catch (error) {
-          throw new ToolError(
-            "CONFIG_LOAD_FAILED",
-            error instanceof Error ? error.message : String(error),
-          );
-        }
-
-        let result: Awaited<ReturnType<typeof performSchemaSync>>;
-
-        try {
-          result = await performSchemaSync({
-            config,
-            serverUrl: deps.serverUrl,
-            project: deps.project,
-            environment: deps.environment,
-            apiKey: deps.apiKey,
-            cwd: deps.cwd,
-            fetcher: deps.fetcher,
-          });
-        } catch (error) {
-          throw new ToolError(
-            "SERVER_UNREACHABLE",
-            `Could not reach the MDCMS server at ${deps.serverUrl}: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          );
-        }
-
-        if (result.outcome === "failure") {
-          throw new ToolError(result.errorCode, result.message, result.details);
-        }
-
-        return {
-          schemaHash: result.schemaHash,
-          syncedAt: result.syncedAt,
-          affectedTypes: result.affectedTypes,
+          ],
+          isError: true,
         };
-      }),
+      }
+      const result = await performSchemaSync({
+        config: loaded.config as ParsedMdcmsConfig,
+        serverUrl: deps.serverUrl,
+        project: deps.project,
+        environment: deps.environment,
+        apiKey: deps.apiKey,
+        cwd: deps.cwd,
+        fetcher: ((url, init) =>
+          safeFetch(url, { ...init, signal: extra.signal })) as typeof fetch,
+      });
+      const payload =
+        result.outcome === "success"
+          ? {
+              schemaHash: result.schemaHash,
+              syncedAt: result.syncedAt,
+              affectedTypes: result.affectedTypes,
+            }
+          : {
+              code: result.errorCode,
+              message: redact(result.message),
+              details: redact(result.details),
+            };
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(payload) }],
+        isError: result.outcome === "failure",
+      };
+    }),
   );
-
-  return server;
+  return {
+    server,
+    initializeUpstream: remote,
+    connect: (transport: Transport) => server.connect(transport),
+    close: async () => {
+      if (closed) return;
+      closed = true;
+      await upstream?.close();
+      await server.close();
+    },
+  };
 }
 
 function resolveDefaultLocale(configured: string | undefined) {
@@ -677,10 +274,10 @@ function renderMcpHelp(): string {
   return [
     "Usage: mdcms mcp",
     "",
-    "Run a Model Context Protocol server over stdio (preview).",
+    "Run a Model Context Protocol server over stdio through the remote tool registry.",
     "",
-    "Tools: get_schema, list_documents, get_document, create_document,",
-    "       update_document, publish_document, sync_schema",
+    "Tools: server registry plus local sync_schema.",
+    "Write tools require explicit schemaHash inputs from get_schema.",
     "",
     "Register it with an MCP client from your project root, for example:",
     "  claude mcp add mdcms -- npx mdcms mcp",
@@ -691,29 +288,6 @@ function renderMcpHelp(): string {
   ].join("\n");
 }
 
-/**
- * stdout carries protocol messages only, so console output that would
- * normally land there (runtime logger info/debug lines) is sent to stderr for
- * the lifetime of the server.
- */
-function routeConsoleToStderr(): () => void {
-  const original = {
-    log: console.log,
-    info: console.info,
-    debug: console.debug,
-  };
-
-  console.log = console.error;
-  console.info = console.error;
-  console.debug = console.error;
-
-  return () => {
-    console.log = original.log;
-    console.info = original.info;
-    console.debug = original.debug;
-  };
-}
-
 export type McpCommandOptions = {
   createTransport?: () => Transport;
   version?: string;
@@ -722,7 +296,7 @@ export type McpCommandOptions = {
 export function createMcpCommand(options: McpCommandOptions = {}): CliCommand {
   return {
     name: "mcp",
-    description: "Run an MCP server over stdio for AI agents (preview)",
+    description: "Run an MCP server over stdio for AI agents",
     run: async (context: CliCommandContext): Promise<number> => {
       if (context.args.includes("--help") || context.args.includes("-h")) {
         context.stdout.write(renderMcpHelp());
@@ -736,9 +310,24 @@ export function createMcpCommand(options: McpCommandOptions = {}): CliCommand {
         return 1;
       }
 
-      const restoreConsole = routeConsoleToStderr();
+      let removeStdinListeners = () => {};
 
       try {
+        let exitCode = 0;
+        let gracefulShutdown = false;
+        let failed = false;
+        const failTransport = () => {
+          if (gracefulShutdown || failed) return;
+          failed = true;
+          exitCode = 1;
+          context.stderr.write(
+            "MCP_CONNECTION_FAILED: Check server availability, target and credentials. A mutation may have an unknown outcome; inspect server state before retrying.\n",
+          );
+          // Let the SDK send the failing RPC response before closing stdio.
+          setImmediate(() => {
+            void server.close();
+          });
+        };
         const server = createMdcmsMcpServer({
           serverUrl: context.serverUrl,
           project: context.project,
@@ -749,34 +338,52 @@ export function createMcpCommand(options: McpCommandOptions = {}): CliCommand {
           defaultLocale: resolveDefaultLocale(context.config.locales?.default),
           fetcher: context.fetcher,
           version: options.version,
+          onFatalTransportError: failTransport,
         });
+        server.server.oninitialized = () => {
+          void server.initializeUpstream().catch(failTransport);
+        };
         const closed = new Promise<void>((resolve) => {
-          server.server.onclose = () => resolve();
+          server.server.onclose = () => {
+            gracefulShutdown = true;
+            void server.close().finally(resolve);
+          };
         });
         let transport: Transport;
 
         if (options.createTransport) {
           transport = options.createTransport();
         } else {
-          transport = new StdioServerTransport();
+          transport = new StdioServerTransport(
+            process.stdin,
+            context.protocolOutput ?? process.stdout,
+          );
           // The stdio transport does not observe end-of-input, so the client
           // closing stdin is translated into a server close here.
           const closeOnEnd = () => {
+            gracefulShutdown = true;
             void server.close();
           };
           process.stdin.once("end", closeOnEnd);
           process.stdin.once("close", closeOnEnd);
+          removeStdinListeners = () => {
+            process.stdin.off("end", closeOnEnd);
+            process.stdin.off("close", closeOnEnd);
+          };
         }
 
         await server.connect(transport);
-        context.stderr.write(
-          `mdcms mcp: serving ${context.project}/${context.environment} at ${context.serverUrl}\n`,
-        );
+        context.stderr.write("mdcms mcp: bridge ready.\n");
         await closed;
 
-        return 0;
+        return exitCode;
+      } catch {
+        context.stderr.write(
+          "MCP_START_FAILED: Could not start the MCP bridge. Check configuration and transport.\n",
+        );
+        return 1;
       } finally {
-        restoreConsole();
+        removeStdinListeners();
       }
     },
   };

@@ -5,6 +5,7 @@ Runtime, dependencies, and infrastructure. Update when any of them change.
 ## Runtime + tooling
 
 - **Bun** is the package manager AND the test runner (`bun test`).
+- **Jiti 2.6.1** loads CLI TypeScript configs and extensionless local imports on Node and Bun. Module/native-import caching is disabled so schema sync reloads the imported config graph.
 - **Nx 22.5** orchestrates tasks across the monorepo with `@nx/js/typescript` plugin.
 - **TypeScript 5.9**, strict mode, `nodenext` module resolution, `composite` projects (project references).
 
@@ -41,7 +42,7 @@ Runtime, dependencies, and infrastructure. Update when any of them change.
 
 ## Constraints worth knowing
 
-- **Bun-only.** Do not introduce Node-only dependencies that don't run on Bun.
+- **Runtime compatibility.** Backend runtime remains Bun. The published CLI supports Node.js 24.11.1 or later and Bun; CLI dependencies must work on both.
 - **No runtime ORM relationships across modules.** First-party modules in `packages/modules/<id>/` use foreign-key IDs only — never direct relations between modules. (Hard rule from architecture.)
 - **Tenant scoping is mandatory.** Every tenant-scoped row carries `project_id` (or equivalent boundary key); queries against tenant tables must filter on it. Auth tables (sessions, accounts, users) are user-bound and don't carry `project_id`.
 - **Pre-push procedure (manual):** run `bun run ci:required` locally before pushing — typecheck + format check + unit tests + integration must all pass. CI runs the same gate on the PR.

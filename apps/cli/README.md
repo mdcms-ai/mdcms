@@ -107,7 +107,7 @@ mdcms push --force      # Skip confirmation prompt
 mdcms push --dry-run    # Preview changes without uploading
 ```
 
-### MCP server (preview)
+### MCP bridge
 
 `mdcms mcp` exposes the configured project and environment to AI agents over the Model Context Protocol. It reuses the credentials from `mdcms login`.
 
@@ -115,7 +115,11 @@ mdcms push --dry-run    # Preview changes without uploading
 claude mcp add mdcms -- npx mdcms mcp
 ```
 
-Tools: `get_schema`, `list_documents`, `get_document`, `create_document`, `update_document`, `publish_document`, `sync_schema`. Writes are draft writes, are validated against the synced schema, and fail instead of overwriting a concurrent change. See the [commands reference](https://docs.mdcms.ai/guide/cli/commands) for details.
+Requires Node.js 24.11.1 or later and a server exposing `/api/v1/mcp`. The CLI relays the server registry, including its schemas, annotations, results and errors. Available tools depend on server capabilities and credential scopes.
+
+The only local tool is `sync_schema`: it reloads `mdcms.config.ts` and its imported local modules, then syncs to the connection resolved at startup. TypeScript configs support extensionless local imports and transformed syntax such as enums on both Node and Bun. Config edits do not change that connection. After syncing, read `get_schema` and pass its `schemaHash` explicitly to tools that require it. The bridge never substitutes a local or newly fetched hash. Restart the bridge to change server, project, environment or credentials.
+
+Remote writes affect the server. Run `mdcms pull` to refresh local content. Transport failures can have unknown mutation outcomes; inspect server state before retrying. stdout is reserved for JSON-RPC, diagnostics go to stderr, and closing stdin stops the bridge.
 
 ### Global Flags
 

@@ -66,3 +66,5 @@ Out:
 - OAuth integration verification uses an isolated ephemeral database; ordinary
   unit discovery does not connect to storage for these cases. The CLI bridge,
   remaining tool families and Connected Apps UI remain separate stages.
+
+- CLI stdio relays the remote registry with downstream client metadata and an immutable connection. Local schema sync reloads config without retargeting credentials. Packed verification covers Node 24.11.1 and 26.13.1, including extensionless TypeScript imports, dependency-only schema reloads, config console output isolation and clean stdin shutdown.
