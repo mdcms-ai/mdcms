@@ -1,5 +1,18 @@
 # @mdcms/cli
 
+## 0.5.0
+
+### Minor Changes
+
+- f994b19: Bridge stdio MCP to the server tool registry with immutable target routing, explicit schema hashes, local schema sync and verified Node.js 24 support.
+
+### Patch Changes
+
+- Updated dependencies [a224137]
+- Updated dependencies [7b8a4d1]
+- Updated dependencies [ee95308]
+  - @mdcms/shared@0.7.0
+
 ## 0.4.3
 
 ### Patch Changes

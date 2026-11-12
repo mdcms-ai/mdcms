@@ -1,5 +1,19 @@
 # @mdcms/studio
 
+## 0.6.0
+
+### Minor Changes
+
+- 50cd4d4: Show who published each version and through which client in document history, and who last edited the document in document info.
+
+### Patch Changes
+
+- Updated dependencies [a224137]
+- Updated dependencies [7b8a4d1]
+- Updated dependencies [ee95308]
+  - @mdcms/shared@0.7.0
+  - @mdcms/editor-core@0.1.3
+
 ## 0.5.4
 
 ### Patch Changes

@@ -1,5 +1,13 @@
 # @mdcms/shared
 
+## 0.7.0
+
+### Minor Changes
+
+- a224137: Export shared frontmatter validation, MDX syntax parsing, and host-injected agent read-tool contracts.
+- 7b8a4d1: Add the ContentChangeOrigin contract, the X-MDCMS-Client header name, and optional origin fields on document, version and webhook payloads.
+- ee95308: Add the OAuthConnection metadata contract for connected applications.
+
 ## 0.6.1
 
 ### Patch Changes
