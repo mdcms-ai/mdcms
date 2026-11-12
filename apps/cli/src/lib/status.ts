@@ -6,7 +6,7 @@ import type {
   ContentDocumentResponse,
   ParsedMdcmsConfig,
 } from "@mdcms/shared";
-import { RuntimeError } from "@mdcms/shared";
+import { RuntimeError, inferContentFormat } from "@mdcms/shared";
 import { buildSchemaSyncPayload } from "@mdcms/shared/server";
 
 import { readSchemaState } from "./schema-state.js";
@@ -18,6 +18,7 @@ import {
   type ScopedManifest,
 } from "./manifest.js";
 import { hashContent } from "./push.js";
+import { resolveTrackedFilePath } from "./discover.js";
 
 type ContentDocumentPayload = Pick<
   ContentDocumentResponse,
@@ -198,7 +199,8 @@ function resolveLocalPathForDocument(
   }
 
   const basePath = document.path.replace(/^\/+/, "");
-  const extension = document.format;
+  // The local extension follows the body, as the server's format does.
+  const extension = inferContentFormat(document.body);
 
   if (typeConfig.localized) {
     const locale = document.locale.trim();
@@ -273,11 +275,17 @@ async function computeDriftAsync(input: {
       continue;
     }
 
+    // A file renamed between .md and .mdx is still this document.
+    const localPath =
+      (await resolveTrackedFilePath(input.context.cwd, manifestPath)) ??
+      manifestPath;
     const localFileHash = await readLocalFileHash(
-      join(input.context.cwd, manifestPath),
+      join(input.context.cwd, localPath),
     );
+    // An unpushed .md/.mdx rename is a local change even with equal content.
     const localModified =
-      localFileHash !== undefined && localFileHash !== manifestEntry.hash;
+      localPath !== manifestPath ||
+      (localFileHash !== undefined && localFileHash !== manifestEntry.hash);
 
     const serverModified =
       serverDoc.draftRevision !== manifestEntry.draftRevision;
@@ -286,7 +294,7 @@ async function computeDriftAsync(input: {
       entries.push({
         category: "both_modified",
         documentId: serverDoc.documentId,
-        localPath: manifestPath,
+        localPath,
         manifestRevision: manifestEntry.draftRevision,
         serverRevision: serverDoc.draftRevision,
       });
@@ -294,7 +302,7 @@ async function computeDriftAsync(input: {
       entries.push({
         category: "modified_on_server",
         documentId: serverDoc.documentId,
-        localPath: manifestPath,
+        localPath,
         manifestRevision: manifestEntry.draftRevision,
         serverRevision: serverDoc.draftRevision,
       });
@@ -302,14 +310,14 @@ async function computeDriftAsync(input: {
       entries.push({
         category: "modified_locally",
         documentId: serverDoc.documentId,
-        localPath: manifestPath,
+        localPath,
         manifestRevision: manifestEntry.draftRevision,
       });
     } else {
       entries.push({
         category: "unchanged",
         documentId: serverDoc.documentId,
-        localPath: manifestPath,
+        localPath,
       });
     }
   }

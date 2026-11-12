@@ -1,5 +1,10 @@
 import { evaluate } from "@mdx-js/mdx";
-import type { ContentDocumentResponse, MdcmsConfig } from "@mdcms/shared";
+import {
+  inferContentFormat,
+  resolveMdxComponentExport,
+  type ContentDocumentResponse,
+  type MdcmsConfig,
+} from "@mdcms/shared";
 import type { ReactNode } from "react";
 import * as runtime from "react/jsx-runtime";
 
@@ -132,9 +137,24 @@ export function createMdcmsRenderer(
     );
 
     for (const { component, resolved } of resolvedComponents) {
-      if (resolved !== undefined && resolved !== null) {
-        loadedComponents.set(component.name, resolved);
+      if (resolved === undefined || resolved === null) {
+        continue;
       }
+
+      // `load` may return the component or its module (`import("./x")`).
+      const renderable = resolveMdxComponentExport(component.name, resolved);
+
+      if (renderable === undefined) {
+        throw new MdcmsRendererError({
+          code: "MDCMS_RENDERER_COMPONENT_LOAD_FAILED",
+          message: `MDX component "${component.name}" did not load a React component. Return the component from load(), or a module whose default export or "${component.name}" export is the component.`,
+          details: {
+            componentName: component.name,
+          },
+        });
+      }
+
+      loadedComponents.set(component.name, renderable);
     }
 
     return loadedComponents;
@@ -146,11 +166,14 @@ export function createMdcmsRenderer(
       assertNoMdxEsm(document);
 
       const components = toComponentMap(await loadComponents());
+      // Compile with the format the body needs, so a component inserted into
+      // a document that was once plain Markdown still renders.
+      const format = inferContentFormat(document.body);
 
       try {
         const evaluated = await evaluate(
           {
-            path: `document.${document.format}`,
+            path: `document.${format}`,
             value: document.body,
           },
           {
@@ -175,7 +198,7 @@ export function createMdcmsRenderer(
           message: `Failed to render MDCMS document "${document.documentId}".`,
           details: {
             documentId: document.documentId,
-            format: document.format,
+            format,
           },
           cause: error,
         });

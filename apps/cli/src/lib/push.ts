@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { extname, join } from "node:path";
 
-import { discoverUntrackedFiles } from "./discover.js";
+import { discoverUntrackedFiles, resolveTrackedFilePath } from "./discover.js";
 
 import type { ContentDocumentResponse } from "@mdcms/shared";
 import {
@@ -10,6 +10,7 @@ import {
   serializeResolvedEnvironmentSchema,
   validateSchemaRegistryListResponse,
   type ParsedMdcmsConfig,
+  inferContentFormat,
 } from "@mdcms/shared";
 import { buildSchemaSyncPayload } from "@mdcms/shared/server";
 import { parse as parseYaml } from "yaml";
@@ -876,6 +877,7 @@ async function buildPushPlan(
   const deletionCandidates: DeletionCandidate[] = [];
   let trackedCount = 0;
   let unchangedCount = 0;
+  const claimedPaths = new Set<string>();
   const orderedDocumentIds = Object.keys(manifest).sort((left, right) =>
     left.localeCompare(right),
   );
@@ -888,17 +890,20 @@ async function buildPushPlan(
     }
     trackedCount += 1;
 
-    const format = parseFileFormat(manifestEntry.path);
-    const absolutePath = join(context.cwd, manifestEntry.path);
-    const raw = await readFile(absolutePath, "utf8").catch((error) => {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return null;
-      }
+    // Rejects tracked paths that are neither .md nor .mdx.
+    parseFileFormat(manifestEntry.path);
 
-      throw error;
-    });
+    // A file renamed between .md and .mdx is still this document.
+    const localPath = await resolveTrackedFilePath(
+      context.cwd,
+      manifestEntry.path,
+    );
+    const raw =
+      localPath === undefined
+        ? null
+        : await readFile(join(context.cwd, localPath), "utf8");
 
-    if (raw === null) {
+    if (raw === null || localPath === undefined) {
       deletionCandidates.push({
         documentId,
         path: manifestEntry.path,
@@ -909,9 +914,12 @@ async function buildPushPlan(
       continue;
     }
 
+    claimedPaths.add(localPath);
     const currentHash = hashContent(raw);
     const manifestHash = manifestEntry.hash.trim();
-    const isChanged = manifestHash.length === 0 || manifestHash !== currentHash;
+    const renamed = localPath !== manifestEntry.path;
+    const isChanged =
+      renamed || manifestHash.length === 0 || manifestHash !== currentHash;
 
     if (!isChanged) {
       unchangedCount += 1;
@@ -922,8 +930,11 @@ async function buildPushPlan(
 
     changedCandidates.push({
       documentId,
-      manifestEntry,
-      format,
+      manifestEntry: renamed
+        ? { ...manifestEntry, path: localPath }
+        : manifestEntry,
+      // The format follows the body, not the file extension.
+      format: inferContentFormat(parsed.body),
       frontmatter: parsed.frontmatter,
       body: parsed.body,
       hash: currentHash,
@@ -938,16 +949,19 @@ async function buildPushPlan(
       cwd: context.cwd,
       contentDirectories,
       manifest,
+      claimedPaths,
     });
 
     const types = context.config.types ?? [];
 
     for (const file of untrackedFiles) {
-      const format = parseFileFormat(file.path);
+      // Rejects files that are neither .md nor .mdx.
+      parseFileFormat(file.path);
       const absolutePath = join(context.cwd, file.path);
       const raw = await readFile(absolutePath, "utf8");
       const currentHash = hashContent(raw);
       const parsed = parseMarkdownDocument(raw);
+      const format = inferContentFormat(parsed.body);
 
       try {
         const resolved = resolveCreatePayload({

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "bun:test";
 
-import { RuntimeError } from "@mdcms/shared";
+import { RuntimeError, inferContentFormat } from "@mdcms/shared";
 
 import {
   extractMarkdownFromEditor,
@@ -522,4 +522,21 @@ test("markdown pipeline parses fenced code block with language attribute", () =>
     (firstChild?.attrs as { language?: string } | undefined)?.language,
     "ts",
   );
+});
+
+test("markdown pipeline keeps components as components and infers mdx", () => {
+  const source =
+    'Intro\n\n<Cta label="Start" />\n\n<Callout tone="warning">\n\nInside **text**.\n\n</Callout>\n\nOutro';
+  const serialized = serializeDocumentToMarkdown(
+    parseMarkdownToDocument(source),
+  );
+
+  assert.match(serialized, /<Cta label="Start" \/>/);
+  assert.match(
+    serialized,
+    /<Callout tone="warning">\n+Inside \*\*text\*\*\.\n+<\/Callout>/,
+  );
+  assert.equal(serialized.includes("\nCta\n"), false);
+  assert.equal(inferContentFormat(serialized), "mdx");
+  assert.equal(roundTripMarkdown(serialized).markdown, serialized);
 });

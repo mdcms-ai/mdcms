@@ -7,7 +7,7 @@ import type {
   ApiPaginatedEnvelope,
   ContentDocumentResponse,
 } from "@mdcms/shared";
-import { RuntimeError } from "@mdcms/shared";
+import { RuntimeError, inferContentFormat } from "@mdcms/shared";
 import { stringify as stringifyYaml } from "yaml";
 
 import type { CliCommand, CliCommandContext } from "./framework.js";
@@ -17,6 +17,7 @@ import {
   writeScopedManifestAtomic,
   type ScopedManifest,
 } from "./manifest.js";
+import { resolveTrackedFilePath } from "./discover.js";
 
 type ContentDocumentPayload = Pick<
   ContentDocumentResponse,
@@ -259,7 +260,8 @@ function resolveLocalPathForDocument(
   }
 
   const basePath = document.path.replace(/^\/+/, "");
-  const extension = document.format;
+  // The local extension follows the body, as the server's format does.
+  const extension = inferContentFormat(document.body);
 
   if (typeConfig.localized) {
     const locale = document.locale.trim();
@@ -475,6 +477,7 @@ async function computePullChanges(input: {
       body: document.body,
     });
     const nextHash = hashContent(nextContent);
+    const format = inferContentFormat(document.body);
     const manifestEntry = input.manifest[document.documentId];
 
     if (!manifestEntry) {
@@ -482,7 +485,7 @@ async function computePullChanges(input: {
         status: "New",
         documentId: document.documentId,
         nextPath,
-        format: document.format,
+        format,
         draftRevision: document.draftRevision,
         publishedVersion: document.publishedVersion,
         nextContent,
@@ -492,7 +495,15 @@ async function computePullChanges(input: {
     }
 
     const manifestPath = manifestEntry.path;
-    const localHash = await readHash(join(input.context.cwd, manifestPath));
+    // A file renamed locally between .md and .mdx is still this document, so
+    // its local edits are not overwritten silently.
+    const localHash = await readHash(
+      join(
+        input.context.cwd,
+        (await resolveTrackedFilePath(input.context.cwd, manifestPath)) ??
+          manifestPath,
+      ),
+    );
     const localModified =
       localHash !== undefined && localHash !== manifestEntry.hash;
     const remoteChanged =
@@ -500,7 +511,7 @@ async function computePullChanges(input: {
       document.draftRevision !== manifestEntry.draftRevision ||
       document.publishedVersion !== manifestEntry.publishedVersion;
     const pathChanged =
-      manifestPath !== nextPath || manifestEntry.format !== document.format;
+      manifestPath !== nextPath || manifestEntry.format !== format;
 
     // Issue #3: move/rename must also check local modification
     if (pathChanged) {
@@ -511,7 +522,7 @@ async function computePullChanges(input: {
         documentId: document.documentId,
         previousPath: manifestPath,
         nextPath,
-        format: document.format,
+        format,
         draftRevision: document.draftRevision,
         publishedVersion: document.publishedVersion,
         nextContent,
@@ -526,7 +537,7 @@ async function computePullChanges(input: {
         status: "Both modified",
         documentId: document.documentId,
         nextPath,
-        format: document.format,
+        format,
         draftRevision: document.draftRevision,
         publishedVersion: document.publishedVersion,
         nextContent,
@@ -541,7 +552,7 @@ async function computePullChanges(input: {
         status: "Locally modified (server unchanged)",
         documentId: document.documentId,
         nextPath,
-        format: document.format,
+        format,
         draftRevision: document.draftRevision,
         publishedVersion: document.publishedVersion,
         nextContent,
@@ -555,7 +566,7 @@ async function computePullChanges(input: {
         status: "Modified",
         documentId: document.documentId,
         nextPath,
-        format: document.format,
+        format,
         draftRevision: document.draftRevision,
         publishedVersion: document.publishedVersion,
         nextContent,
@@ -568,7 +579,7 @@ async function computePullChanges(input: {
       status: "Unchanged",
       documentId: document.documentId,
       nextPath,
-      format: document.format,
+      format,
       draftRevision: document.draftRevision,
       publishedVersion: document.publishedVersion,
       nextContent,

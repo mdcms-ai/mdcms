@@ -229,6 +229,16 @@ components: [
 extraction workflows. `load` and `loadPropsEditor` are host-local executable
 loader callbacks used by the embedded Studio shell/runtime path. They are not
 serialized into the shared normalized config shape or sent to the backend.
+`load` may resolve to the React component itself or to its module (for example
+`() => import("./components/callout")`); for a module, the default export is
+used, then the export named like the component (`resolveMdxComponentExport` in
+`@mdcms/shared`). The SDK renderer fails with
+`MDCMS_RENDERER_COMPONENT_LOAD_FAILED` when neither is a component; Studio shows
+the component's placeholder instead of a preview. A host component that throws
+while rendering its Studio preview shows a "preview is not available"
+placeholder (wrapper components keep their editable content) and does not
+affect the editor or the document. The SDK renderer compiles each body with the
+format derived from it (SPEC-003 Content Format), not a stored value.
 
 The local MDX component catalog is derived from `config.components` and carried into the embedded Studio runtime by the host app:
 

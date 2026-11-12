@@ -3,13 +3,11 @@ import { z } from "zod";
 
 import {
   ContentListGroupBySchema,
-  ContentFormatSchema,
   JsonObjectSchema,
   RestoreTargetStatusSchema,
   SortFieldSchema,
   SortOrderSchema,
   type ContentListGroupBy,
-  type ContentFormat,
   type ContentScope,
   type RestoreTargetStatus,
   type SortField,
@@ -217,30 +215,6 @@ export function parseContentListGroupBy(
     value,
     "groupBy",
   );
-}
-
-export function parseContentFormat(value: string | undefined): ContentFormat {
-  if (value === undefined) {
-    return "md";
-  }
-
-  const result = z
-    .string()
-    .trim()
-    .toLowerCase()
-    .pipe(ContentFormatSchema)
-    .safeParse(value);
-
-  if (result.success) {
-    return result.data;
-  }
-
-  throw new RuntimeError({
-    code: "INVALID_INPUT",
-    message: `Content format must be "md" or "mdx".`,
-    statusCode: 400,
-    details: { field: "format", value },
-  });
 }
 
 export function assertRequiredString(

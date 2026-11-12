@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 
-import { RuntimeError, type SchemaRegistryTypeSnapshot } from "@mdcms/shared";
+import {
+  RuntimeError,
+  type SchemaRegistryTypeSnapshot,
+  inferContentFormat,
+} from "@mdcms/shared";
 
 import {
   DEFAULT_ACTOR,
@@ -23,7 +27,6 @@ import {
   parseBoolean,
   parseContentListGroupBy,
   parseContentSearchQuery,
-  parseContentFormat,
   parseOptionalString,
   parsePositiveInt,
   parseSortField,
@@ -265,7 +268,8 @@ export function createInMemoryContentStore(
         allowEmpty: true,
       });
       const frontmatter = assertJsonObject(payload.frontmatter, "frontmatter");
-      const format = parseContentFormat(payload.format);
+      // The format follows the body; a client-sent format is ignored.
+      const format = inferContentFormat(body);
       const sourceDocument = sourceDocumentId
         ? store.get(sourceDocumentId)
         : undefined;
@@ -732,20 +736,20 @@ export function createInMemoryContentStore(
       }
 
       const now = new Date().toISOString();
+      const nextBody =
+        payload.body !== undefined
+          ? assertRequiredString(payload.body, "body", { allowEmpty: true })
+          : existing.body;
       const updated: ContentDocument = {
         ...existing,
         path: nextPath,
         type: nextType,
         locale: nextLocale,
-        format:
-          payload.format !== undefined
-            ? parseContentFormat(payload.format)
-            : existing.format,
+        // The format follows the resulting body; a client-sent format is
+        // ignored.
+        format: inferContentFormat(nextBody),
         frontmatter: normalizedFrontmatter,
-        body:
-          payload.body !== undefined
-            ? assertRequiredString(payload.body, "body", { allowEmpty: true })
-            : existing.body,
+        body: nextBody,
         hasUnpublishedChanges: true,
         draftRevision: existing.draftRevision + 1,
         updatedBy: payload.updatedBy?.trim() || DEFAULT_ACTOR,

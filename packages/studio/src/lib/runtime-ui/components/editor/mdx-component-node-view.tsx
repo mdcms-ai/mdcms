@@ -37,6 +37,7 @@ import {
   unwrapSelectedMdxComponent,
   wrapSelectedBlockInBox,
 } from "./visual-composition-commands.js";
+import { MdxPreviewErrorBoundary } from "../../../mdx-preview-error-boundary.js";
 
 const MDX_EDITABLE_SLOT_SELECTOR = "[data-mdcms-mdx-editable-slot]";
 
@@ -368,7 +369,16 @@ function MdxComponentEditableSurface(input: {
       onKeyDownCapture={keepHostPreviewInert}
       onPasteCapture={keepHostPreviewInert}
     >
-      {createElement(Component, input.props, editableSlot)}
+      <MdxPreviewErrorBoundary
+        componentName={input.componentName}
+        fallback={
+          <div data-mdcms-mdx-preview-error={input.componentName}>
+            {input.children}
+          </div>
+        }
+      >
+        {createElement(Component, input.props, editableSlot)}
+      </MdxPreviewErrorBoundary>
     </div>
   );
 }
