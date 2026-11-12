@@ -164,15 +164,30 @@ Use this when you do not register custom MDX components.
 
 <Steps>
   <Step title="Create the server component">
-    The server component imports your config, strips non-serializable values via `createStudioEmbedConfig`, and passes the result to the client component.
+    The server component prepares the config with `prepareStudioConfig`, which computes the schema hash Studio needs before it allows edits, and passes plain values to the client component. Do not use `createStudioEmbedConfig` here: it carries no schema hash, so every document opens read-only.
 
     ```tsx app/admin/[[...path]]/page.tsx
-    import { createStudioEmbedConfig } from "@mdcms/studio/runtime";
+    import { prepareStudioConfig } from "@mdcms/studio/runtime";
+
     import config from "../../../mdcms.config";
     import { AdminStudioClient } from "./admin-studio-client";
 
+    export const dynamic = "force-dynamic";
+
     export default async function AdminPage() {
-      return <AdminStudioClient config={createStudioEmbedConfig(config)} />;
+      // Runs on the server, where the full schema is available. The schema hash
+      // it computes is what lets Studio write to the project.
+      const prepared = await prepareStudioConfig(config, { cwd: process.cwd() });
+
+      return (
+        <AdminStudioClient
+          project={prepared.project}
+          environment={prepared.environment}
+          serverUrl={prepared.serverUrl}
+          schemaHash={prepared._schemaHash}
+          documentRouteMetadata={prepared._documentRouteMetadata}
+        />
+      );
     }
     ```
 
@@ -181,12 +196,30 @@ Use this when you do not register custom MDX components.
   <Step title="Create the client component">
     The client component renders Studio. The `basePath` prop tells Studio which URL prefix it owns.
 
+    The full config holds Zod schemas and functions that cannot cross the server/client boundary, so the client component rebuilds the Studio config from the plain values.
+
     ```tsx app/admin/[[...path]]/admin-studio-client.tsx
     "use client";
 
     import { Studio, type MdcmsConfig } from "@mdcms/studio";
 
-    export function AdminStudioClient({ config }: { config: MdcmsConfig }) {
+    export function AdminStudioClient(props: {
+      project: string;
+      environment: string;
+      serverUrl: string;
+      schemaHash?: string;
+      documentRouteMetadata?: MdcmsConfig["_documentRouteMetadata"];
+    }) {
+      const config = {
+        project: props.project,
+        environment: props.environment,
+        serverUrl: props.serverUrl,
+        ...(props.schemaHash ? { _schemaHash: props.schemaHash } : {}),
+        ...(props.documentRouteMetadata
+          ? { _documentRouteMetadata: props.documentRouteMetadata }
+          : {}),
+      } as MdcmsConfig;
+
       return <Studio config={config} basePath="/admin" />;
     }
     ```
