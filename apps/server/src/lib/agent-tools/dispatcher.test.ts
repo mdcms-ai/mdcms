@@ -104,6 +104,33 @@ test("session dispatch preserves cookie and CSRF without elevating credentials",
   await dispatch({ method: "GET", path: "/api/v1/schema" });
 });
 
+for (const cookie of [undefined, "session=another-user"]) {
+  test(`session-header dispatch preserves identity ${cookie ? "over an ambient cookie" : "without cookies"}`, async () => {
+    const dispatch = createInternalDispatcher(
+      async (request) => {
+        assert.equal(request.headers.get("x-mdcms-session"), "studio-session");
+        assert.equal(request.headers.get("cookie"), null);
+        assert.equal(request.headers.get("authorization"), null);
+        return new Response();
+      },
+      "secret",
+      {
+        request: new Request("https://example.test", {
+          headers: {
+            "x-mdcms-session": "studio-session",
+            ...(cookie ? { cookie } : {}),
+          },
+        }),
+        project: "p",
+        environment: "e",
+        channel: "studio_ai",
+      },
+    );
+    await dispatch({ method: "GET", path: "/api/v1/schema" });
+    await dispatch({ method: "POST", path: "/api/v1/content", body: {} });
+  });
+}
+
 test("dispatch rejects escaped paths and target overrides before invoking handler", async () => {
   let calls = 0;
   const dispatch = createInternalDispatcher(

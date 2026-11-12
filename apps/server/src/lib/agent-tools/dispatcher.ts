@@ -82,7 +82,12 @@ export function createInternalDispatcher(
     const headers = new Headers();
     const authorization = context.request.headers.get("authorization");
     if (authorization) headers.set("authorization", authorization);
-    else {
+    else if (context.request.headers.has("x-mdcms-session")) {
+      headers.set(
+        "x-mdcms-session",
+        context.request.headers.get("x-mdcms-session")!,
+      );
+    } else {
       for (const name of ["cookie", "x-mdcms-csrf-token"]) {
         const value = context.request.headers.get(name);
         if (value) headers.set(name, value);

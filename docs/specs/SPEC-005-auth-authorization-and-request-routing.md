@@ -108,6 +108,8 @@ Origin validation and CORS behavior apply to browser requests that include an `O
 
 Requests without an `Origin` header are not subject to this browser-origin allowlist.
 
+Server-rendered sign-in pages that the browser opens as top-level pages and that post their forms back to themselves are not subject to this allowlist: `/api/v1/auth/cli/login/*` and `/api/v1/auth/studio/sign-in`. The Studio code exchange (`POST /api/v1/auth/studio/sign-in/exchange`) is called by the Studio runtime and remains subject to it.
+
 For an allowlisted origin, the server must:
 
 - echo the exact origin in `Access-Control-Allow-Origin`
@@ -123,10 +125,11 @@ For an allowlisted origin, the server must:
   - `X-MDCMS-Schema-Hash`
   - `X-MDCMS-CSRF-Token`
   - `X-MDCMS-Client`
+  - `X-MDCMS-Session`
 
 Studio browser request modes:
 
-- Session (`cookie`) mode sends browser requests with credentials included and relies on the session cookie plus CSRF token bootstrap.
+- Session (`cookie`) mode sends browser requests with credentials included. When Studio signed in through Studio browser sign-in (see "Studio Browser Sign-In Endpoints"), every request also carries `X-MDCMS-Session: <session token>`; otherwise it relies on the session cookie plus CSRF token bootstrap.
 - Token mode sends `Authorization: Bearer <mdcms_key_...>` and does not rely on browser session cookies.
 
 Successful browser preflight requests (`OPTIONS`) for allowlisted origins return `204` with no body.
@@ -646,6 +649,7 @@ Session authorization is deny-by-default: a session caller is denied any operati
 
 - Session-authenticated `POST`, `PUT`, `PATCH`, and `DELETE` requests in this endpoint family require `mdcms_csrf` cookie plus matching `x-mdcms-csrf-token` header, except for `/api/v1/auth/login`, `/api/v1/auth/sign-up/email`, `/api/v1/auth/sign-in/email`, and `/api/v1/auth/cli/login/*`.
 - API-key authenticated routes in this endpoint family are exempt from CSRF validation.
+- Requests that carry `X-MDCMS-Session` are exempt from CSRF validation. Browsers never attach that header on their own, and the server ignores session cookies on such requests.
 - CSRF validation failures return `FORBIDDEN` (`403`).
 
 | Method | Path                                             | Auth Mode             | Required Scope | Target Routing      | Request                                                                                 | Success                                                  | Deterministic Errors                                                                                                                                                                            |
@@ -821,6 +825,31 @@ active owner are rejected deterministically.
 - `state` is validated against stored hash.
 - Authorization code is single-use.
 - Exchange succeeds only for `authorized` challenge state and then transitions challenge to `exchanged`.
+
+## Studio Browser Sign-In Endpoints
+
+Embedded Studio often runs on a different site than the MDCMS server. Browsers that block third-party cookies (for example Safari, Brave and private windows) never send the server's session cookie from that site, so Studio does not sign in with a password form of its own. It sends the browser to a sign-in page on the server, where the server's cookie is first-party, and receives a session token through a one-time code bound to a PKCE challenge.
+
+| Method | Path                                   | Auth Mode              | Required Scope | Target Routing | Request                                                                                  | Success                                                                                                                                                       | Deterministic Errors                                                                                                   |
+| ------ | -------------------------------------- | ---------------------- | -------------- | -------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/api/v1/auth/studio/sign-in`          | public (session-aware) | none           | none           | query: `redirect_uri`, `state`, `code_challenge`, `code_challenge_method=S256`           | `200` HTML: sign-in form when no server session exists; otherwise a page that names the signed-in account and offers **Continue** and **Use another account** | `INVALID_INPUT` (`400`, HTML page)                                                                                     |
+| POST   | `/api/v1/auth/studio/sign-in`          | public (session-aware) | none           | none           | same query; form fields `email` and `password`, or `action=continue`, or `action=switch` | `302` to `redirect_uri` with `code` and `state` added (may also set the server session cookie); `action=switch` ends the server session and returns the form  | `INVALID_INPUT` (`400`, HTML), `AUTH_INVALID_CREDENTIALS` (`401`, HTML form), `AUTH_BACKOFF_ACTIVE` (`429`, HTML form) |
+| POST   | `/api/v1/auth/studio/sign-in/exchange` | public                 | none           | none           | JSON: `{ code, codeVerifier, redirectUri }`                                              | `200` `{ data: { sessionToken, expiresAt } }`                                                                                                                 | `INVALID_INPUT` (`400`), `INVALID_LOGIN_EXCHANGE` (`400`), `LOGIN_CHALLENGE_EXPIRED` (`410`)                           |
+
+**Rules (normative):**
+
+- `redirect_uri` must be an absolute `http` or `https` URL without a fragment or credentials, and its origin must be allowed to embed Studio (`MDCMS_STUDIO_ALLOWED_ORIGINS`, plus the development loopback origins outside production).
+- `code_challenge` is the base64url SHA-256 of the code verifier; only `S256` is accepted. `codeVerifier` is 43 to 128 characters from `[A-Za-z0-9._~-]`.
+- An existing server session is never used silently: the person confirms the account or switches to another one.
+- The code is valid for 2 minutes and is single-use. The server stores only its hash, together with the user, `redirect_uri` and `code_challenge`.
+- Exchange succeeds only when `redirectUri` equals the sign-in `redirect_uri` and the SHA-256 of `codeVerifier` equals the stored challenge. It creates a new session for the user and returns its token.
+- The sign-in pages are sent with `Cache-Control: no-store` and must not be framed (`X-Frame-Options: DENY`, `frame-ancestors 'none'`).
+
+**Session header (normative):**
+
+- Any endpoint that accepts session authentication also accepts `X-MDCMS-Session: <session token>`.
+- When the header is present, the session is resolved from the header alone and session cookies on the request are ignored. An invalid or expired token yields `UNAUTHORIZED` (`401`).
+- `POST /api/v1/auth/logout` with the header revokes that session and does not change cookies.
 
 ## Current Principal Capabilities Endpoint
 

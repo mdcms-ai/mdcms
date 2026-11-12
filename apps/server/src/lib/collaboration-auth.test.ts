@@ -242,6 +242,15 @@ function createAuthServiceStub(overrides: Partial<AuthService>): AuthService {
         },
       };
     },
+    isAllowedStudioOrigin() {
+      return false;
+    },
+    async authorizeStudioSignIn() {
+      return { outcome: "login_required" };
+    },
+    async exchangeStudioSignIn() {
+      throw new Error("not implemented");
+    },
     async handleAuthRequest() {
       return new Response("not implemented", { status: 501 });
     },

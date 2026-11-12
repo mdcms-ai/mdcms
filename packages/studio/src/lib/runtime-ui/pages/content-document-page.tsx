@@ -41,6 +41,11 @@ import {
   type MdxPropsPanelSelection,
 } from "../components/editor/mdx-props-panel.js";
 import { MediaFieldControl } from "../components/editor/media-field-picker.js";
+import { ReferenceFieldPicker } from "../components/editor/reference-field-picker.js";
+import {
+  createStudioContentListApi,
+  type StudioContentListApi,
+} from "../../content-list-api.js";
 import {
   TipTapEditor,
   type TipTapEditorCursorSelection,
@@ -664,6 +669,7 @@ type ContentDocumentPageViewProps = {
   mediaLibrary?: TipTapEditorMediaLibraryState;
   fileFieldMediaUploadApi?: StudioMediaUploadApi | null;
   fileFieldMediaLibraryApi?: Pick<StudioMediaLibraryApi, "get" | "list"> | null;
+  referenceContentListApi?: StudioContentListApi | null;
   editorPresenceUsers?: CollaborationPresenceUser[];
   remoteCursors?: TipTapEditorRemoteCursor[];
   documentCollaboration?: {
@@ -1130,6 +1136,7 @@ function SidebarPropertiesTab(props: {
   ) => void;
   fileFieldMediaUploadApi?: StudioMediaUploadApi | null;
   fileFieldMediaLibraryApi?: Pick<StudioMediaLibraryApi, "get" | "list"> | null;
+  referenceContentListApi?: StudioContentListApi | null;
 }) {
   const propertyDescriptors = getPropertyDescriptors(props.state);
   const propertiesReadOnly =
@@ -1270,6 +1277,29 @@ function SidebarPropertiesTab(props: {
                               descriptor.control.canUnset
                               ? unsetFieldValue(descriptor.field)
                               : event.currentTarget.value,
+                          )
+                        }
+                      />
+                    ) : null}
+
+                    {descriptor.control.kind === "reference" ? (
+                      <ReferenceFieldPicker
+                        inputId={inputId}
+                        value={descriptor.control.value}
+                        targetType={descriptor.control.targetType}
+                        canUnset={descriptor.control.canUnset}
+                        readOnly={propertiesReadOnly}
+                        contentListApi={props.referenceContentListApi ?? null}
+                        onChange={(documentId) =>
+                          props.onFrontmatterFieldChange?.(
+                            descriptor.fieldName,
+                            documentId,
+                          )
+                        }
+                        onUnset={() =>
+                          props.onFrontmatterFieldChange?.(
+                            descriptor.fieldName,
+                            unsetFieldValue(descriptor.field),
                           )
                         }
                       />
@@ -1541,6 +1571,7 @@ function ContentDocumentPageSidebar(props: {
   ) => void;
   fileFieldMediaUploadApi?: StudioMediaUploadApi | null;
   fileFieldMediaLibraryApi?: Pick<StudioMediaLibraryApi, "get" | "list"> | null;
+  referenceContentListApi?: StudioContentListApi | null;
   onViewVersion?: (version: number) => void;
   onBackToDraft?: () => void;
   onClose?: () => void;
@@ -1614,6 +1645,7 @@ function ContentDocumentPageSidebar(props: {
             onFrontmatterFieldChange={props.onFrontmatterFieldChange}
             fileFieldMediaUploadApi={props.fileFieldMediaUploadApi}
             fileFieldMediaLibraryApi={props.fileFieldMediaLibraryApi}
+            referenceContentListApi={props.referenceContentListApi}
           />
         ) : (
           <SidebarInfoTab state={props.state} lastEdit={props.lastEdit} />
@@ -2263,6 +2295,7 @@ function useContentDocumentPageViewElement({
   mediaLibrary,
   fileFieldMediaUploadApi,
   fileFieldMediaLibraryApi,
+  referenceContentListApi,
   editorPresenceUsers = [],
   remoteCursors = [],
   documentCollaboration,
@@ -2996,6 +3029,7 @@ function useContentDocumentPageViewElement({
                   onFrontmatterFieldChange={onFrontmatterFieldChange}
                   fileFieldMediaUploadApi={fileFieldMediaUploadApi}
                   fileFieldMediaLibraryApi={fileFieldMediaLibraryApi}
+                  referenceContentListApi={referenceContentListApi}
                   onViewVersion={onViewVersion}
                   onBackToDraft={onBackToDraft}
                   onClose={onToggleSidebar}
@@ -3015,6 +3049,7 @@ function useContentDocumentPageViewElement({
                   onFrontmatterFieldChange={onFrontmatterFieldChange}
                   fileFieldMediaUploadApi={fileFieldMediaUploadApi}
                   fileFieldMediaLibraryApi={fileFieldMediaLibraryApi}
+                  referenceContentListApi={referenceContentListApi}
                   onViewVersion={onViewVersion}
                   onBackToDraft={onBackToDraft}
                 />
@@ -3274,6 +3309,13 @@ function useContentDocumentPageController({
       csrfToken,
     });
   }, [apiConfig, csrfToken, isMediaUploadAuthUsable]);
+  const referenceContentListApi = useMemo(
+    () =>
+      apiConfig
+        ? createStudioContentListApi(apiConfig.config, apiConfig.authOptions)
+        : null,
+    [apiConfig],
+  );
   const mediaLibraryApi = useMemo(() => {
     if (!apiConfig) {
       return null;
@@ -4855,6 +4897,7 @@ function useContentDocumentPageController({
     mediaLibrary,
     fileFieldMediaUploadApi: mediaUploadApi,
     fileFieldMediaLibraryApi: mediaLibraryApi,
+    referenceContentListApi,
     editorPresenceUsers: editorPresence.users,
     remoteCursors: editorPresence.remoteCursors,
     documentCollaboration:

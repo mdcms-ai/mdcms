@@ -372,7 +372,7 @@ This will overwrite locally modified files that also changed on server, and dele
 
 - Without `--force`, two separate checkbox prompts are shown (if applicable): one for new files, one for deletions. A final confirmation prompt summarizes the total action ("Push N changed, N new, N to delete?").
 - With `--force`, all new files are auto-selected for upload, all deletions are auto-selected for removal, and all confirmation prompts are skipped. This is the recommended mode for CI/scripted usage.
-- In non-TTY environments without `--force`, checkbox prompts return empty selections (no new files uploaded, no deletions performed). Changed manifest-tracked files are still pushed normally. A hint is printed: "Run with --force to include new/deleted files in non-interactive mode."
+- In non-TTY environments without `--force`, checkbox prompts return empty selections (no new files uploaded, no deletions performed). Changed manifest-tracked files are still pushed normally, without a confirmation prompt, so scripts and agents can push edits as drafts. A hint is printed: "Run with --force to include new/deleted files in non-interactive mode."
 
 #### Update fallback on 404
 

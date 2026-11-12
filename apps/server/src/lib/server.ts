@@ -28,6 +28,10 @@ import {
   type StudioBootstrapRetryContext,
   type StudioRuntimePublicationInput,
 } from "./studio-bootstrap.js";
+import {
+  isAllowedStudioOrigin,
+  STUDIO_SIGN_IN_PATH,
+} from "./studio-sign-in.js";
 
 export type ServerRequestHandler = (request: Request) => Promise<Response>;
 
@@ -65,6 +69,7 @@ const STUDIO_CORS_ALLOW_HEADERS = [
   "X-MDCMS-Schema-Hash",
   "X-MDCMS-CSRF-Token",
   "X-MDCMS-Client",
+  "X-MDCMS-Session",
 ].join(", ");
 const STUDIO_BROWSER_ROUTE_PREFIXES = [
   "/api/v1/mcp",
@@ -99,6 +104,14 @@ function matchesScopedPathPrefix(pathname: string, prefix: string): boolean {
 
 function isStudioBrowserRoute(pathname: string): boolean {
   if (matchesScopedPathPrefix(pathname, CLI_LOGIN_ROUTE_PREFIX)) {
+    return false;
+  }
+
+  // The Studio sign-in page is a top-level page on the server whose form posts
+  // back to itself, so its requests carry the server's own origin, which a
+  // proxy can make differ from the URL the server sees. Its code exchange
+  // endpoint is called by Studio and stays governed by the Studio origins.
+  if (pathname === STUDIO_SIGN_IN_PATH) {
     return false;
   }
 
@@ -186,30 +199,6 @@ function appendResponseHeaders(
   });
 }
 
-/**
- * Loopback origins implicitly trusted for Studio browser routes when
- * running outside production. The dev-time convenience saves operators
- * from listing both `localhost` and `127.0.0.1` variants of the same
- * port in `MDCMS_STUDIO_ALLOWED_ORIGINS`; production deployments rely
- * exclusively on the env-configured allowlist.
- */
-const STUDIO_LOOPBACK_DEV_ORIGINS: readonly string[] = [
-  "http://localhost:4173",
-  "http://127.0.0.1:4173",
-];
-
-function studioLoopbackEnabled(): boolean {
-  // Resolved at request time so test env mutations are honored without
-  // restarting the process.
-  try {
-    return (
-      typeof process !== "undefined" && process.env?.NODE_ENV !== "production"
-    );
-  } catch {
-    return false;
-  }
-}
-
 function resolveStudioCorsContext(
   request: Request,
   allowedOrigins: readonly string[],
@@ -234,10 +223,9 @@ function resolveStudioCorsContext(
   const requestOrigin = isOAuthOrMcp
     ? canonicalOrigin
     : new URL(request.url).origin;
-  const loopbackAllowed =
-    !isOAuthOrMcp &&
-    studioLoopbackEnabled() &&
-    STUDIO_LOOPBACK_DEV_ORIGINS.includes(origin);
+  const allowedStudioOrigin = isOAuthOrMcp
+    ? allowedOrigins.includes(origin)
+    : isAllowedStudioOrigin(origin, allowedOrigins);
 
   if (
     origin !== requestOrigin &&
@@ -245,8 +233,7 @@ function resolveStudioCorsContext(
       (pathname === "/api/v1/auth" || pathname.startsWith("/api/v1/auth/")) &&
       origin === canonicalOrigin
     ) &&
-    !allowedOrigins.includes(origin) &&
-    !loopbackAllowed
+    !allowedStudioOrigin
   ) {
     throw createForbiddenOriginError(origin, pathname);
   }
@@ -295,9 +282,11 @@ function shouldPreserveHtmlErrorResponse(
 ): boolean {
   return (
     contentType?.includes("text/html") === true &&
-    ["/api/v1/auth/cli/login/authorize", "/api/v1/oauth/authorize"].includes(
-      resolvePathname(request),
-    )
+    [
+      "/api/v1/auth/cli/login/authorize",
+      "/api/v1/oauth/authorize",
+      STUDIO_SIGN_IN_PATH,
+    ].includes(resolvePathname(request))
   );
 }
 

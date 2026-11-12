@@ -1,11 +1,11 @@
 ---
 name: mdcms-studio-embed
-description: Use this skill when the user wants to embed the MDCMS Studio UI inside their own React/Next/Remix app, says things like "add the Studio to my app", "mount Studio at /admin", "give my editors a visual editor in the host app", "embed MDCMS editor", or similar. Walks through installing `@mdcms/studio`, adding a catch-all route, wiring the prepared Studio config, setting `MDCMS_STUDIO_ALLOWED_ORIGINS` on the server, and verifying login.
+description: Use this skill when the user wants to embed the MDCMS Studio UI inside their own React/Next/Remix app, says things like "add the Studio to my app", "mount Studio at /admin", "give my editors a visual editor in the host app", "embed MDCMS editor", or similar. Gives the exact tested route files (server component with `prepareStudioConfig`, client component with `<Studio />`), the `MDCMS_STUDIO_ALLOWED_ORIGINS` server setting, and how to verify sign-in and editing.
 ---
 
 # MDCMS Studio Embed
 
-Mount the MDCMS Studio UI inside the user's own host app so editors work alongside product code. The canonical reference is `apps/studio-example` in the MDCMS repo — use it as the copy-from template for route structure, config preparation, and client bootstrap.
+Mount the MDCMS Studio UI inside the user's own host app so editors work alongside product code. The code in this skill is the tested setup; use it as written.
 
 ## When to use this skill
 
@@ -14,79 +14,112 @@ The user wants a Studio UI under their own domain (e.g. `app.example.com/admin/.
 ## Prerequisites
 
 - A reachable MDCMS server and a working `mdcms.config.ts` (run **`mdcms-brownfield-init`** or **`mdcms-greenfield-init`** first).
-- A React app, ideally Next.js App Router. Other frameworks work but the reference implementation is Next.
-- Ability to set server-side env vars on the MDCMS backend (for `MDCMS_STUDIO_ALLOWED_ORIGINS`).
+- A React app, ideally Next.js App Router. Other frameworks work but need their own server/client split (see "Assumptions and limitations").
+
+## Rule: prepare the config on the server with `prepareStudioConfig`
+
+Studio only allows edits when it receives the **schema hash** of the project's schema. `prepareStudioConfig(config, { cwd })` from `@mdcms/studio/runtime` computes it on the server, where the full `mdcms.config.ts` (with its Zod schemas) is available.
+
+Do **not** use `createStudioEmbedConfig` for an editing Studio, even if other docs or an older package README show it. It passes only `project`, `environment` and `serverUrl`, so Studio opens every document read-only with "Studio writes require a resolved schema for environment …".
 
 ## Steps
 
 ### 1. Install the Studio package in the host app
 
+Use the project's package manager (look for `pnpm-lock.yaml`, `bun.lock`, `yarn.lock` or `package-lock.json`):
+
 ```bash
-npm install @mdcms/studio
-# or: bun add @mdcms/studio
+pnpm add @mdcms/studio
+# or: npm install @mdcms/studio / bun add @mdcms/studio / yarn add @mdcms/studio
 ```
 
-### 2. Add a catch-all route
+### 2. Add the catch-all route (Next.js App Router)
 
-Studio is a single page app embedded at a catch-all route. The reference uses `/admin/[[...path]]` so every Studio route is served from one Next page. Copy the pattern from `apps/studio-example/app/admin/[[...path]]` in the MDCMS repo:
+Create exactly these two files. Adjust only the relative import of `mdcms.config` if the config is not at the project root.
 
-```
-app/
-  admin/
-    [[...path]]/
-      page.tsx        # server component that prepares Studio config
-      layout.tsx      # minimal layout (Studio brings its own chrome)
-    admin-studio-client.tsx   # client wrapper that mounts <Studio />
-    studio-config.ts          # prepareStudioConfig + client-serialized subset
-```
-
-The server component calls `prepareStudioConfig` from `@mdcms/studio/runtime` against the full `mdcms.config.ts`, extracts a client-safe subset (component metadata, schema hash, route metadata), and passes it to the client wrapper.
-
-### 3. Wire the prepared config to `<Studio />`
-
-The client wrapper uses the `<Studio />` component and the prepared config:
+`app/admin/[[...path]]/page.tsx` (server component):
 
 ```tsx
-"use client";
-import { Studio } from "@mdcms/studio";
-import type { MdcmsConfig } from "@mdcms/studio";
+import { prepareStudioConfig } from "@mdcms/studio/runtime";
 
-export function AdminStudioClient({ config }: { config: MdcmsConfig }) {
-  return <Studio config={config} />;
+import config from "../../../mdcms.config";
+import { AdminStudioClient } from "./admin-studio-client";
+
+export const dynamic = "force-dynamic";
+
+export default async function AdminPage() {
+  // Runs on the server, where the full schema is available. The schema hash
+  // it computes is what lets Studio write to the project.
+  const prepared = await prepareStudioConfig(config, { cwd: process.cwd() });
+
+  return (
+    <AdminStudioClient
+      project={prepared.project}
+      environment={prepared.environment}
+      serverUrl={prepared.serverUrl}
+      schemaHash={prepared._schemaHash}
+      documentRouteMetadata={prepared._documentRouteMetadata}
+    />
+  );
 }
 ```
 
-Mirror the split the reference uses: the server component reads env + prepared config, the client wrapper renders Studio.
+`app/admin/[[...path]]/admin-studio-client.tsx` (client component):
 
-### 4. Set the host app env
+```tsx
+"use client";
 
-The host app needs to know:
+import { Studio, type MdcmsConfig } from "@mdcms/studio";
 
-- The MDCMS server URL (so Studio's fetch calls resolve).
-- Its own public URL (some flows need it for redirects).
+export function AdminStudioClient(props: {
+  project: string;
+  environment: string;
+  serverUrl: string;
+  schemaHash?: string;
+  documentRouteMetadata?: MdcmsConfig["_documentRouteMetadata"];
+}) {
+  const config = {
+    project: props.project,
+    environment: props.environment,
+    serverUrl: props.serverUrl,
+    ...(props.schemaHash ? { _schemaHash: props.schemaHash } : {}),
+    ...(props.documentRouteMetadata
+      ? { _documentRouteMetadata: props.documentRouteMetadata }
+      : {}),
+  } as MdcmsConfig;
 
-Set these as either server env (Next: `process.env.MDCMS_SERVER_URL`) or `NEXT_PUBLIC_*` vars that are safe to expose to the browser, depending on where they're read. Follow the reference for the exact split — `apps/studio-example/lib/studio-example-studio-config.ts` shows a current, working pattern.
+  return <Studio config={config} basePath="/admin" />;
+}
+```
 
-### 5. Allowlist the host app origin on the server
+Why it is split this way:
 
-On the MDCMS server, update `.env` (or equivalent config) so the host app's origin is in the allowlist:
+- Only plain values cross from the server component to the client component. The full config holds Zod schemas and functions, which cannot be passed to a client component, so do not pass `prepared` itself.
+- `export const dynamic = "force-dynamic"` recomputes the hash on each request, so Studio picks up schema changes without a rebuild.
+- `basePath` must match the route folder (`/admin` for `app/admin/[[...path]]`), and the folder name must be exactly `[[...path]]`.
+- Studio brings its own chrome. Do not wrap the route in the site's navigation layout.
+
+If `mdcms.config.ts` registers MDX `components`, Studio also needs their metadata for prop editors and previews; follow **`mdcms-mdx-components`** after this skill.
+
+### 3. Allow the host app's origin on the MDCMS server
+
+The server must list the host app's origin in `MDCMS_STUDIO_ALLOWED_ORIGINS`, because Studio calls the server from the browser and signs in through a redirect back to the host:
 
 ```env
 MDCMS_STUDIO_ALLOWED_ORIGINS=https://app.example.com,http://localhost:3000
 ```
 
-Without this, Studio's session/CSRF cookies won't be sent on cross-origin XHR requests and login will silently fail. Include every origin that embeds Studio (production, staging, localhost port).
+Include every origin that embeds Studio (production, staging, the local dev port) and restart the server. If you cannot change the server's environment (for example a shared or hosted server), do not try to: tell the user which origin must be allowed and continue.
 
-Restart the server after updating the allowlist.
+### 4. Verify sign-in and editing
 
-### 6. Verify login
+1. Run the host app (`pnpm dev` or the framework equivalent) and open `http://localhost:3000/admin`.
+2. Studio sends the browser to the MDCMS server's sign-in page. Sign in there; the browser returns to Studio's dashboard on the host app. No sign-in form is rendered by the host app itself.
+3. Open a document. The editor must not show "Read-only". Edit some text and check that the top bar shows **Saved**.
 
-1. Run the host app: `npm run dev` (or framework equivalent).
-2. Open `http://localhost:3000/admin` (or whatever path the catch-all covers).
-3. You should be redirected to the MDCMS login flow, and after logging in land on the Studio dashboard under the host app's URL.
-4. Open a document. Edit a field. Save. Confirm the change appears in the MDCMS server when you run `mdcms pull` locally.
+If the editor is read-only, the page did not pass the schema hash: check that `page.tsx` calls `prepareStudioConfig` and that `_schemaHash` reaches `<Studio />`.
 
-### 7. Wire real-app live preview when requested
+### 5. Wire real-app live preview when requested
 
 Live preview route mapping belongs in `mdcms.config.ts` on the content type, not in frontmatter fields or hardcoded Studio routes:
 
@@ -110,10 +143,10 @@ Set `MDCMS_PREVIEW_TOKEN_SECRET` on the MDCMS server and the host app to the sam
 
 ## Common gotchas
 
-- **`127.0.0.1` vs `localhost`**: browser cookies treat them as different sites. Use `localhost` for local dev unless you have a specific reason to use `127.0.0.1` (and then add it to the allowlist).
-- **Stale prepared config**: the prepared config includes a schema hash. After a schema change, redeploy the host app (or revalidate the server component that prepared the config) so the client carries the fresh hash. Otherwise Studio may reject writes.
-- **Next.js layouts that add their own chrome**: Studio expects a minimal layout. The reference uses `apps/studio-example/app/admin/layout.tsx` which is mostly empty. Don't wrap Studio with site navigation — it has its own.
-- **Auth cookie SameSite in dev**: if cookies aren't being sent on XHRs, check the server's cookie SameSite policy. The current contract is `SameSite=None` for Studio cookies, even on HTTP in local dev.
+- **Editor is read-only ("Studio writes require a resolved schema")**: the schema hash is missing. The page used `createStudioEmbedConfig`, built the config in a client component, or dropped `_schemaHash` on the way to `<Studio />`. Use the two files in step 2.
+- **Sign-in page says the link is not valid**: the host app's origin is not in `MDCMS_STUDIO_ALLOWED_ORIGINS` on the server (step 3).
+- **Stale schema hash**: after a schema change Studio may reject writes until the page computes a new hash. `export const dynamic = "force-dynamic"` on the page avoids this; if you cache the prepared config, invalidate it after `mdcms schema sync`.
+- **Next.js layouts that add their own chrome**: Studio expects a minimal layout. Don't wrap Studio with site navigation; it has its own.
 - **Preview route is public by accident**: `?preview=true` is only a mode flag. For private drafts, verify `mdcms_preview_token` or another server-side gate before fetching with `draft: true`.
 
 ## Related skills
@@ -124,7 +157,6 @@ Set `MDCMS_PREVIEW_TOKEN_SECRET` on the MDCMS server and the host app to the sam
 
 ## Assumptions and limitations
 
-- Reference implementation is Next.js App Router. React Router, Remix, or Vite SPAs can embed Studio but need to adapt the server/client split themselves.
-- `prepareStudioConfig` and the client `MdcmsConfig` shape are owned by `@mdcms/studio`; if the package surface changes, trust the source over this skill.
-- Does not cover SSO/OIDC provider configuration for Studio's login — that belongs with the MDCMS auth setup.
-- Copy the patterns from `apps/studio-example/app/admin/*` directly — file names, exports, and props evolve faster than this skill.
+- The code above is for Next.js App Router. React Router, Remix or Vite apps can embed Studio too: call `prepareStudioConfig` wherever server code runs (a loader or build step) and pass the same plain fields to `<Studio />` in the browser.
+- `prepareStudioConfig` and the client `MdcmsConfig` shape are owned by `@mdcms/studio`. If its exports differ from this skill, follow the types in `node_modules/@mdcms/studio`, but keep the rule: the schema hash must come from `prepareStudioConfig` on the server.
+- Does not cover SSO/OIDC provider configuration for Studio's login; that belongs with the MDCMS auth setup.

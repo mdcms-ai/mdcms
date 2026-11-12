@@ -20,6 +20,7 @@ import {
 } from "../lib/collaboration-reconnect.js";
 import { useStudioMountInfo } from "../app/admin/mount-info-context.js";
 import { useStudioSession } from "../app/admin/session-context.js";
+import { hasActiveStudioSessionToken } from "../../studio-session-token.js";
 
 export type CollaborationPresenceConnectionStatus =
   | "idle"
@@ -62,6 +63,9 @@ export function useCollaborationPresence({
   const serverUrl = mountInfo.apiBaseUrl;
   const canConnect =
     mountInfo.auth.mode === "cookie" &&
+    // The collaboration WebSocket authenticates with the session cookie only;
+    // a header-carried session cannot be sent on the handshake.
+    !hasActiveStudioSessionToken() &&
     sessionState.status === "authenticated" &&
     Boolean(project) &&
     Boolean(environment) &&

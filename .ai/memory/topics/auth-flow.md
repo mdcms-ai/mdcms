@@ -14,6 +14,8 @@ All three resolve to the same internal concept downstream: an authenticated prin
 
 ### Session (Studio)
 
+Studio signs in through a redirect to the server (`/api/v1/auth/studio/sign-in`), not with its own password form: a host site that is not the server's site cannot rely on the server's cookie, because browsers that block third-party cookies never send it. The server redirects back with a one-time PKCE-bound code; Studio exchanges it for a session token, keeps it in `localStorage` per server URL, and sends it as `X-MDCMS-Session`. A request with that header resolves its session from the header alone (cookies dropped) and is exempt from CSRF. The collaboration WebSocket still authenticates by cookie only, so Studio turns collaboration off while it uses a header session. Contract: SPEC-005 "Studio Browser Sign-In Endpoints".
+
 Browser sessions are persisted server-side; the `sessions` table in `apps/server/src/lib/db/schema.ts` holds them with a unique-token index. Studio fetches the active principal on mount and caches it in its TanStack Query layer; writes carry CSRF protection.
 Session bootstrap returns the existing readable `mdcms_csrf` cookie when present and only creates a new token when the cookie is missing, so cached Studio clients can replay the token without another bootstrap invalidating it.
 Cookie-authenticated Studio tabs revalidate the session when the tab regains
