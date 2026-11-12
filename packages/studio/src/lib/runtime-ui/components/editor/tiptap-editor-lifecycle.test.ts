@@ -9,8 +9,10 @@ import { createMediaAssetsInsertContent } from "./media-markdown-insertion.js";
 import {
   createTipTapEditorDependencies,
   getSelectionMarkdownForAi,
+  insertMdxComponentFromPicker,
   resolveSlashPickerCoordsForEditor,
 } from "./tiptap-editor-utils.js";
+import { getMdxComponentSlashTrigger } from "./mdx-component-slash.js";
 import { extractMarkdownFromEditor } from "../../../markdown-pipeline.js";
 import {
   attachTipTapRemoteCursorPositionSync,
@@ -756,6 +758,144 @@ test("getSelectionMarkdownForAi keeps list markers for whole-list text selection
         "- sample content documents",
       ].join("\n"),
     });
+  } finally {
+    editor.destroy();
+  }
+});
+
+const pickerComponent = {
+  name: "Cta",
+  importPath: "@/components/Cta",
+};
+
+/**
+ * Headless editors have no view, and TipTap reports a view-less editor as
+ * destroyed. Tests that need a live editor mark it mounted explicitly; tests
+ * that need a destroyed one call `destroy()` without the marker.
+ */
+function markEditorMounted(editor: ReturnType<typeof createDocumentEditor>) {
+  Object.defineProperty(editor, "isDestroyed", {
+    configurable: true,
+    get: () => false,
+  });
+  return editor;
+}
+
+function moveSelectionToDocumentEnd(
+  editor: ReturnType<typeof createDocumentEditor>,
+) {
+  editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+}
+
+test("insertMdxComponentFromPicker replaces the slash query in the live editor", () => {
+  const editor = markEditorMounted(
+    createDocumentEditor({ content: "Try /Ct" }),
+  );
+
+  try {
+    moveSelectionToDocumentEnd(editor);
+    const slashTrigger = getMdxComponentSlashTrigger(editor);
+
+    assert.notEqual(slashTrigger, null);
+    assert.equal(
+      insertMdxComponentFromPicker({
+        editor,
+        liveEditor: editor,
+        slashTrigger,
+        component: pickerComponent,
+      }),
+      true,
+    );
+
+    const markdown = extractMarkdownFromEditor(editor);
+    assert.match(markdown, /<Cta\s*\/>/);
+    assert.doesNotMatch(markdown, /\/Ct/);
+  } finally {
+    editor.destroy();
+  }
+});
+
+test("insertMdxComponentFromPicker returns false for a destroyed editor without throwing", () => {
+  const editor = createDocumentEditor({ content: "Try /Ct" });
+  moveSelectionToDocumentEnd(editor);
+  const slashTrigger = getMdxComponentSlashTrigger(editor);
+  const before = extractMarkdownFromEditor(editor);
+  editor.destroy();
+
+  assert.equal(editor.isDestroyed, true);
+  assert.doesNotThrow(() => {
+    assert.equal(
+      insertMdxComponentFromPicker({
+        editor,
+        liveEditor: editor,
+        slashTrigger,
+        component: pickerComponent,
+      }),
+      false,
+    );
+    assert.equal(
+      insertMdxComponentFromPicker({
+        editor,
+        liveEditor: editor,
+        slashTrigger: null,
+        component: pickerComponent,
+      }),
+      false,
+    );
+  });
+  assert.equal(extractMarkdownFromEditor(editor), before);
+});
+
+test("insertMdxComponentFromPicker leaves both editors untouched when the captured editor was replaced", () => {
+  const staleEditor = markEditorMounted(
+    createDocumentEditor({ content: "Try /Ct" }),
+  );
+  const liveEditor = markEditorMounted(
+    createDocumentEditor({ content: "Try /Ct" }),
+  );
+
+  try {
+    moveSelectionToDocumentEnd(staleEditor);
+    const slashTrigger = getMdxComponentSlashTrigger(staleEditor);
+
+    assert.equal(
+      insertMdxComponentFromPicker({
+        editor: staleEditor,
+        liveEditor,
+        slashTrigger,
+        component: pickerComponent,
+      }),
+      false,
+    );
+    assert.equal(extractMarkdownFromEditor(staleEditor), "Try /Ct");
+    assert.equal(extractMarkdownFromEditor(liveEditor), "Try /Ct");
+  } finally {
+    staleEditor.destroy();
+    liveEditor.destroy();
+  }
+});
+
+test("insertMdxComponentFromPicker refuses a slash trigger that no longer matches the document", () => {
+  const editor = markEditorMounted(
+    createDocumentEditor({ content: "Try /Ct" }),
+  );
+
+  try {
+    moveSelectionToDocumentEnd(editor);
+    const slashTrigger = getMdxComponentSlashTrigger(editor);
+    // Remove "Try " so the captured range no longer covers the query.
+    editor.commands.deleteRange({ from: 1, to: 5 });
+
+    assert.equal(
+      insertMdxComponentFromPicker({
+        editor,
+        liveEditor: editor,
+        slashTrigger,
+        component: pickerComponent,
+      }),
+      false,
+    );
+    assert.equal(extractMarkdownFromEditor(editor), "/Ct");
   } finally {
     editor.destroy();
   }

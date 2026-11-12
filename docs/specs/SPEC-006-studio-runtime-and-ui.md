@@ -139,6 +139,26 @@ and `renderMdxPreview(...)`. The backend bootstrap/runtime publication model
 stays unchanged; it still serves the signed runtime bundle and does not publish
 the component catalog.
 
+The shell reloads the runtime only when the values of `config` or `auth`
+change, not when the host passes a new object with the same values. Hosts may
+therefore build the `config` object during render without remounting Studio or
+discarding an open editor on every host re-render. Values are compared as
+follows:
+
+- Strings, numbers, booleans, arrays, and plain objects (including
+  `_schemaHash`, `_documentRouteMetadata`, component `name`, `importPath`,
+  `description`, `propHints`, `propsEditor`, and `extractedProps`) are compared
+  by value, independent of property order.
+- Function values (component `load` and `loadPropsEditor`, type
+  `resolvePreviewUrl`) are compared by presence only. A new function in the
+  same place does not reload the runtime; the runtime keeps using the functions
+  from the config it loaded with.
+- Other objects, such as field schema instances in `types`, are compared by
+  identity.
+
+Changing `basePath`, `hostBridge`, `fetcher`, or `loadRemoteModule` still
+reloads the runtime; hosts should keep those values stable across renders.
+
 Cookie-authenticated Studio routes must redirect to `/admin/login` when the
 session bootstrap request cannot verify the active browser session, including
 `401` responses and network-level failures. The redirect includes `returnTo`
