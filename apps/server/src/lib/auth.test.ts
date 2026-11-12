@@ -4407,10 +4407,12 @@ testWithDatabase(
       assert.ok(startBody.data.challengeId);
       assert.equal(
         startBody.data.authorizeUrl.includes(
-          "/api/v1/auth/cli/login/authorize",
+          `/api/v1/auth/cli/login/authorize/${startBody.data.challengeId}?state=`,
         ),
         true,
       );
+      // Windows opens the URL through `cmd /c start`, where `&` splits commands.
+      assert.equal(startBody.data.authorizeUrl.includes("&"), false);
 
       const authorizeGetResponse = await handler(
         new Request(startBody.data.authorizeUrl, {
