@@ -1679,9 +1679,10 @@ export async function runPushCommand(
     return 0;
   }
 
-  // Issue #8: in non-interactive mode, auto-confirm changed files (already tracked)
-  // but still require --force for new/deleted. Only block if nothing to do.
-  if (!options.force) {
+  // Without a terminal (CI, scripts, agents) there is nobody to answer the
+  // prompt: changed tracked files are pushed as drafts without confirmation,
+  // while new and deleted files were already left out above unless --force.
+  if (!options.force && process.stdin.isTTY === true) {
     const parts: string[] = [];
     if (pushPlan.changedCandidates.length > 0) {
       parts.push(`${pushPlan.changedCandidates.length} changed`);
