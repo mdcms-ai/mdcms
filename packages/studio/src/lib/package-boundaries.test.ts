@@ -10,6 +10,10 @@ const studioPackageRoot = resolve(
 );
 const studioRootEntry = join(studioPackageRoot, "src/index.ts");
 const studioLoaderEntry = join(studioPackageRoot, "src/lib/studio-loader.ts");
+const studioClientConfigEntry = join(
+  studioPackageRoot,
+  "src/lib/client-config.ts",
+);
 
 type BunBuildResult = {
   success: boolean;
@@ -134,4 +138,21 @@ test("studio package root remains browser-bundle safe for host imports", async (
     true,
     `expected studio root browser bundle to succeed, got:\n${result.logs.join("\n")}`,
   );
+});
+
+test("studio client config helpers stay free of Node.js and React imports", async () => {
+  const result = await buildBrowserEntry(
+    studioClientConfigEntry,
+    "createStudioClientConfig",
+  );
+  const source = await readFile(studioClientConfigEntry, "utf8");
+
+  assert.equal(
+    result.success,
+    true,
+    `expected client config browser bundle to succeed, got:\n${result.logs.join("\n")}`,
+  );
+  assert.doesNotMatch(source, /from "react"/);
+  assert.doesNotMatch(source, /from "node:/);
+  assert.doesNotMatch(source, /built-in-mdx-components\.js/);
 });

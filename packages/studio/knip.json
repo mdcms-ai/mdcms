@@ -7,6 +7,7 @@
     "src/lib/document-shell.ts",
     "src/lib/markdown-pipeline.ts",
     "src/lib/action-catalog-adapter.ts",
+    "src/lib/client-config.ts",
     "src/lib/studio.ts",
     "src/lib/remote-module.ts",
     "src/lib/remote-studio-app.tsx",

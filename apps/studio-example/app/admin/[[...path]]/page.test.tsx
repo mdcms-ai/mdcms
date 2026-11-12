@@ -21,14 +21,19 @@ test("resolveStudioExampleAppRoot does not duplicate the app path", () => {
   );
 });
 
-test("admin catch-all page prepares studio config with local MDX metadata", async () => {
+test("admin catch-all page passes a serializable studio config with local MDX metadata", async () => {
   resetPreparedAdminStudioConfigCacheForTests();
   const element = await AdminCatchAllPage();
 
   assert.equal(element.type, AdminStudioClient);
-  assert.ok(Array.isArray(element.props.preparedComponents));
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(element.props.config)),
+    element.props.config,
+  );
+  assert.ok(Array.isArray(element.props.config.components));
+  assert.equal(typeof element.props.config._schemaHash, "string");
 
-  const components = element.props.preparedComponents as Array<{
+  const components = element.props.config.components as Array<{
     name: string;
     extractedProps?: Record<
       string,
@@ -45,14 +50,9 @@ test("admin catch-all page prepares studio config with local MDX metadata", asyn
     .filter(
       (component) => component.extractedProps?.children?.type === "rich-text",
     )
-    .map((component) => component.name)
-    .filter((name) => !["Box", "Text", "Link"].includes(name));
+    .map((component) => component.name);
 
   assert.deepEqual(names, [
-    "Box",
-    "Text",
-    "Image",
-    "Link",
     "Chart",
     "Callout",
     "PricingTable",
