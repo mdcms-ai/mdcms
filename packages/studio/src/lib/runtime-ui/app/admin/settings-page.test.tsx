@@ -695,3 +695,13 @@ test("SettingsPageView keeps forbidden state capability-gated", () => {
   assert.doesNotMatch(markup, /Create webhook/);
   assert.doesNotMatch(markup, /Delivery history/);
 });
+
+test("members can open Connected apps without admin settings", () => {
+  const markup = renderSettingsPage({
+    initialTab: "connected-apps",
+    basePath: "/cms",
+  });
+  assert.match(markup, /Connected apps/);
+  assert.doesNotMatch(markup, /Access denied/);
+  assert.doesNotMatch(markup, /API keys/);
+});

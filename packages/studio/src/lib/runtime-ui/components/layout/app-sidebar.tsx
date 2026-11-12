@@ -67,6 +67,11 @@ const mainNavItems: ReadonlyArray<NavItem> = [
 const adminNavItems: ReadonlyArray<NavItem> = [
   { icon: Users, label: "Users", href: "/admin/users" },
   { icon: Settings, label: "Settings", href: "/admin/settings" },
+  {
+    icon: Settings,
+    label: "Connected apps",
+    href: "/admin/settings/connected-apps",
+  },
 ];
 
 function filterNav(

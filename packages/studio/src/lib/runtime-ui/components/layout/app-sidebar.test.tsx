@@ -172,3 +172,13 @@ test("AppSidebar does not render online presence section", () => {
 
   assert.doesNotMatch(markup, /Online now/i);
 });
+
+test("members can reach Connected apps without other settings", () => {
+  const markup = renderSidebarWithCapabilities({
+    canReadSchema: false,
+    canManageUsers: false,
+    canManageSettings: false,
+  });
+  assert.match(markup, /href="\/admin\/settings\/connected-apps"/);
+  assert.doesNotMatch(markup, /href="\/admin\/settings"/);
+});
