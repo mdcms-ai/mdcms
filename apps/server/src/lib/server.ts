@@ -250,6 +250,9 @@ function shouldPreserveHtmlErrorResponse(
   return (
     contentType?.includes("text/html") === true &&
     (resolvePathname(request) === "/api/v1/auth/cli/login/authorize" ||
+      resolvePathname(request).startsWith(
+        "/api/v1/auth/cli/login/authorize/",
+      ) ||
       resolvePathname(request) === STUDIO_SIGN_IN_PATH)
   );
 }
