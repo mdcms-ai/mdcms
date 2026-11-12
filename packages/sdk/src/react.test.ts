@@ -275,3 +275,15 @@ test("createMdcmsRenderer reports a load result that is not a component", async 
       error.code === "MDCMS_RENDERER_COMPONENT_LOAD_FAILED",
   );
 });
+
+test("createMdcmsRenderer drops raw HTML such as scripts from Markdown bodies", async () => {
+  const node = await createMdcmsRenderer(createConfig()).render(
+    createDocument({
+      format: "mdx",
+      body: "Text\n\n<script>\nalert(1)\n</script>\n\n<style>.x{}</style>\n",
+    }),
+  );
+  const markup = renderToStaticMarkup(createElement("div", null, node));
+
+  assert.equal(markup, "<div><p>Text</p></div>");
+});
