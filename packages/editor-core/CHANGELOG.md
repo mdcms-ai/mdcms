@@ -1,5 +1,14 @@
 # @mdcms/editor-core
 
+## 0.1.3
+
+### Patch Changes
+
+- Updated dependencies [a224137]
+- Updated dependencies [7b8a4d1]
+- Updated dependencies [ee95308]
+  - @mdcms/shared@0.7.0
+
 ## 0.1.2
 
 ### Patch Changes
