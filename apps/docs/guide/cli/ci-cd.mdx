@@ -69,7 +69,7 @@ jobs:
 
 ## GitHub Actions: Content push
 
-Push content changes to the server on every merge to main. The `--force` flag skips interactive prompts.
+Push content changes to the server on every merge to main. The `--yes` flag includes new and deleted files, which a push without a terminal otherwise skips (`--force` is an alias). It does not override conflicts.
 
 ```yaml .github/workflows/mdcms-content-push.yml
 name: MDCMS Content Push
@@ -104,7 +104,7 @@ jobs:
           MDCMS_SERVER_URL: ${{ vars.MDCMS_SERVER_URL }}
 
       - name: Push content
-        run: bunx mdcms push --force
+        run: bunx mdcms push --yes
         env:
           MDCMS_API_KEY: ${{ secrets.MDCMS_API_KEY }}
           MDCMS_PROJECT: ${{ vars.MDCMS_PROJECT }}

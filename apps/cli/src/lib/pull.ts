@@ -362,7 +362,7 @@ function printPlan(context: CliCommandContext, changes: PullChange[]): void {
   const serverUnchanged = groups.get("Locally modified (server unchanged)");
   if (serverUnchanged && serverUnchanged.length > 0) {
     context.stdout.write(
-      `\nNote: ${serverUnchanged.length} file(s) modified locally but unchanged on server. Use 'cms push' to upload your changes.\n`,
+      `\nNote: ${serverUnchanged.length} file(s) modified locally but unchanged on server. Use 'mdcms push' to upload your changes.\n`,
     );
   }
 
@@ -703,6 +703,7 @@ export function createPullCommand(): CliCommand {
   return {
     name: "pull",
     description: "Pull content from MDCMS into local files.",
+    renderHelp: renderPullHelp,
     run: runPullCommand,
   };
 }

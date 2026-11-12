@@ -152,15 +152,22 @@ The CLI attempts to revoke the API key on the server as a best-effort operation.
 Upload local content changes to the MDCMS server.
 
 ```bash
-mdcms push [--force] [--dry-run] [--validate] [--published]
+mdcms push [--dry-run] [--yes] [--validate] [--sync-schema] [--published]
 ```
 
-| Flag          | Description                                                         |
-| ------------- | ------------------------------------------------------------------- |
-| `--force`     | Skip all interactive prompts; auto-select all new and deleted files |
-| `--dry-run`   | Show the push plan without making any API writes                    |
-| `--validate`  | Validate frontmatter against the local schema before pushing        |
-| `--published` | Reserved for future use                                             |
+Preview a push with `mdcms push --dry-run`: it prints the plan and writes nothing.
+
+| Flag            | Description                                                                               |
+| --------------- | ----------------------------------------------------------------------------------------- |
+| `--dry-run`     | Show the push plan without making any API writes                                          |
+| `-y`, `--yes`   | Include all new and deleted files and skip the confirmation prompt. `--force` is an alias |
+| `--validate`    | Validate frontmatter against the local schema before pushing                              |
+| `--sync-schema` | Without a terminal, sync the schema first when it has drifted instead of failing          |
+| `--published`   | Reserved for future use                                                                   |
+
+`--yes` (or `--force`) does not override conflicts. Stale draft revisions, path conflicts, and schema mismatches fail with or without it.
+
+Without a terminal (CI, scripts, agents), push does not prompt: changed tracked files are pushed as drafts right away, and new and deleted files are skipped unless you pass `--yes`.
 
 ### How push works
 
@@ -169,7 +176,7 @@ mdcms push [--force] [--dry-run] [--validate] [--published]
 3. **New file detection** — Scans content directories for untracked `.md`/`.mdx` files not yet in the manifest. In interactive mode, you select which new files to upload.
 4. **Deletion detection** — Files present in the manifest but missing from disk are flagged as candidates for server-side deletion.
 5. **Plan summary** — The CLI prints a summary of changes, new files, and deletions before writing anything.
-6. **Confirmation** — Destructive changes (deletions, overwrites) require explicit confirmation unless `--force` is passed.
+6. **Confirmation**: in a terminal, push asks for confirmation before writing unless `--yes` is passed. Without a terminal it does not ask.
 7. **Execute** — Changed files are uploaded, new documents are created, and deleted documents are removed on the server.
 8. **Update manifest** — The local manifest is updated with new document IDs, revision numbers, and hashes.
 
@@ -266,7 +273,7 @@ Run a [Model Context Protocol](https://modelcontextprotocol.io) server over stdi
 mdcms mcp
 ```
 
-The server uses the same server URL, project, environment, and credentials as every other command, so run `mdcms login` (or set `MDCMS_API_KEY`) first. Register it with your agent client from the project root:
+The server uses the same server URL, project, environment, and credentials as every other command, so run `mdcms login` (or set `MDCMS_API_KEY`) first. The key from `mdcms login` or `mdcms init` has the [default scopes](#default-scopes), which cover every tool except `publish_document`. If the server rejects the key (`401`), tools tell the agent to run `mdcms login`; restart the MCP server afterwards, because it reads the key at startup. Register it with your agent client from the project root:
 
 <CodeGroup>
 ```bash Claude Code
@@ -285,19 +292,22 @@ claude mcp add mdcms -- npx mdcms mcp
 
 ### Tools
 
-| Tool               | Required scope                        | Description                                                            |
-| ------------------ | ------------------------------------- | ---------------------------------------------------------------------- |
-| `get_schema`       | `schema:read`                         | Content types and fields synced for the target                         |
-| `list_documents`   | `content:read:draft`                  | Draft documents with frontmatter and status, without bodies            |
-| `get_document`     | `content:read:draft`                  | One draft document including its body                                  |
-| `create_document`  | `content:write`                       | Create a draft after validating frontmatter against the schema         |
-| `update_document`  | `content:read:draft`, `content:write` | Patch frontmatter and/or replace the body of a draft                   |
-| `publish_document` | `content:publish`                     | Publish the current draft as a new immutable version                   |
-| `sync_schema`      | `schema:write`                        | Reload `mdcms.config.ts` and sync its schema, like `mdcms schema sync` |
+| Tool                   | Required scopes                                      | Description                                                            |
+| ---------------------- | ---------------------------------------------------- | ---------------------------------------------------------------------- |
+| `get_credentials_info` | Any valid key                                        | Server, target, the key's scopes, and which tools the key can run      |
+| `get_schema`           | `schema:read`                                        | Content types and fields synced for the target                         |
+| `list_documents`       | `content:read:draft`                                 | Draft documents with frontmatter and status, without bodies            |
+| `get_document`         | `content:read:draft`                                 | One draft document including its body                                  |
+| `create_document`      | `schema:read`, `content:write`                       | Create a draft after validating frontmatter against the schema         |
+| `update_document`      | `schema:read`, `content:read:draft`, `content:write` | Patch frontmatter and/or replace the body of a draft                   |
+| `publish_document`     | `content:publish`                                    | Publish the current draft as a new immutable version                   |
+| `sync_schema`          | `schema:write`                                       | Reload `mdcms.config.ts` and sync its schema, like `mdcms schema sync` |
+
+A tool needs every scope listed for it. `mdcms mcp --help` prints the same table.
 
 ### How writes behave
 
-- **Drafts only.** `create_document` and `update_document` never publish. Publishing is a separate tool that needs the `content:publish` scope, which keys created by `mdcms login` do not include. Create a key with that scope in Studio if you want an agent to publish.
+- **Drafts only.** `create_document` and `update_document` never publish. Publishing is a separate tool that needs the `content:publish` scope, which keys created by `mdcms login` do not include. Create a key with that scope in Studio settings and pass it with `MDCMS_API_KEY` if you want an agent to publish.
 - **Schema validation.** Frontmatter is validated against the synced schema before anything is written. A violation fails the tool call with `INVALID_FRONTMATTER` and lists every failing field, so the agent can correct itself.
 - **No silent overwrites.** `update_document` sends the draft revision it read. If someone else changed the document in between, the call fails with `STALE_DRAFT_REVISION`.
 - **Schema hash pinning.** Writes use the schema hash stored by the last schema sync. After editing `mdcms.config.ts`, call `sync_schema` (or run `mdcms schema sync`).
@@ -329,6 +339,10 @@ The status command reports:
 | `deleted_on_server`  | Document is in the manifest but no longer on the server  |
 | `moved_renamed`      | Server path differs from the manifest path               |
 | `unchanged`          | Everything is in sync                                    |
+
+Moves are shown as `<local path> -> <path after mdcms pull>`. When only the extension differs, the server inferred a different format from the body (for example, a `.mdx` file with no MDX syntax is stored as `md`), and `mdcms pull` renames the local file.
+
+Documents whose type is not in your local config are skipped with a warning, as `mdcms pull` skips them.
 
 ### Exit codes
 

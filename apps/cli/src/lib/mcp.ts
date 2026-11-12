@@ -9,6 +9,7 @@ import {
 import { z } from "zod";
 
 import { loadCliConfig } from "./config.js";
+import { DEFAULT_CLI_LOGIN_SCOPES } from "./login.js";
 import type {
   CliCommand,
   CliCommandContext,
@@ -88,6 +89,49 @@ type RemoteSchema = {
  */
 const NON_LOCALIZED_DOCUMENT_LOCALE = "en";
 
+/**
+ * API key scopes each tool needs on the server. Scopes do not imply one
+ * another, so tools that read the synced schema before writing list
+ * `schema:read` as well. `get_credentials_info` only needs a valid key.
+ */
+export const MCP_TOOL_SCOPES = {
+  get_credentials_info: [],
+  get_schema: ["schema:read"],
+  list_documents: ["content:read:draft"],
+  get_document: ["content:read:draft"],
+  create_document: ["schema:read", "content:write"],
+  update_document: ["schema:read", "content:read:draft", "content:write"],
+  publish_document: ["content:publish"],
+  sync_schema: ["schema:write"],
+} as const satisfies Record<string, readonly string[]>;
+
+type McpToolName = keyof typeof MCP_TOOL_SCOPES;
+
+function describeScopes(tool: McpToolName): string {
+  const scopes: readonly string[] = MCP_TOOL_SCOPES[tool];
+
+  return scopes.length === 0
+    ? "Needs any valid API key for this target."
+    : `Needs an API key with ${scopes.join(", ")}.`;
+}
+
+const PUBLISH_KEY_GUIDANCE =
+  "Keys stored by `mdcms login` or `mdcms init` do not include content:publish. To publish, create an API key with content:publish in Studio (Settings) and pass it with MDCMS_API_KEY or --api-key.";
+
+/** Maps an API key scope to the matching flag in `/api/v1/me/capabilities`. */
+const SCOPE_CAPABILITY: Record<
+  string,
+  (capabilities: Record<string, Record<string, boolean>>) => boolean
+> = {
+  "schema:read": (c) => c.schema?.read === true,
+  "schema:write": (c) => c.schema?.write === true,
+  "content:read": (c) => c.content?.read === true,
+  "content:read:draft": (c) => c.content?.readDraft === true,
+  "content:write": (c) => c.content?.write === true,
+  "content:publish": (c) => c.content?.publish === true,
+  "content:delete": (c) => c.content?.delete === true,
+};
+
 const DEFAULT_LIST_LIMIT = 20;
 const MAX_LIST_LIMIT = 100;
 
@@ -126,6 +170,29 @@ async function runTool(handler: () => Promise<unknown>): Promise<ToolResult> {
   } catch (error) {
     return toFailure(error);
   }
+}
+
+/**
+ * The key is read once when the server starts, so a rejected key stays
+ * rejected until the user stores a new one and the client restarts the server.
+ */
+const UNAUTHORIZED_GUIDANCE =
+  "The MDCMS server rejected the API key this MCP server started with (401). Run `mdcms login` to store a new key for this target, or set MDCMS_API_KEY, then restart the MCP server.";
+
+function createUnauthorizedError(payload: unknown): ToolError {
+  const code =
+    isRecord(payload) && typeof payload.code === "string"
+      ? payload.code
+      : "UNAUTHORIZED";
+  const serverMessage =
+    isRecord(payload) && typeof payload.message === "string"
+      ? payload.message
+      : undefined;
+
+  return new ToolError(code, UNAUTHORIZED_GUIDANCE, {
+    status: 401,
+    ...(serverMessage ? { serverMessage } : {}),
+  });
 }
 
 function createApiClient(deps: McpServerDeps) {
@@ -171,6 +238,10 @@ function createApiClient(deps: McpServerDeps) {
     }
 
     const payload = (await response.json().catch(() => undefined)) as unknown;
+
+    if (response.status === 401) {
+      throw createUnauthorizedError(payload);
+    }
 
     if (!response.ok) {
       if (isRecord(payload) && typeof payload.code === "string") {
@@ -354,10 +425,65 @@ export function createMdcmsMcpServer(deps: McpServerDeps): McpServer {
   });
 
   server.registerTool(
+    "get_credentials_info",
+    {
+      title: "Get credentials info",
+      description: `Report the server and target (${target}) this MCP server uses, what its API key is allowed to do there, and which tools that key can run. Call this first when a tool fails with FORBIDDEN or UNAUTHORIZED. ${describeScopes("get_credentials_info")}`,
+      annotations: { readOnlyHint: true },
+    },
+    () =>
+      runTool(async () => {
+        const data = readData(await api.request("/api/v1/me/capabilities"));
+
+        if (!isRecord(data) || !isRecord(data.capabilities)) {
+          throw new ToolError(
+            "REQUEST_FAILED",
+            "Unexpected capabilities response from the MDCMS server.",
+          );
+        }
+
+        const capabilities = data.capabilities as Record<
+          string,
+          Record<string, boolean>
+        >;
+        const grantedScopes = Object.entries(SCOPE_CAPABILITY)
+          .filter(([, granted]) => granted(capabilities))
+          .map(([scope]) => scope);
+        const tools = Object.fromEntries(
+          (Object.keys(MCP_TOOL_SCOPES) as McpToolName[]).map((tool) => {
+            const requiredScopes: readonly string[] = MCP_TOOL_SCOPES[tool];
+
+            return [
+              tool,
+              {
+                requiredScopes,
+                allowed: requiredScopes.every((scope) =>
+                  grantedScopes.includes(scope),
+                ),
+              },
+            ];
+          }),
+        );
+
+        return {
+          serverUrl: deps.serverUrl,
+          project: deps.project,
+          environment: deps.environment,
+          grantedScopes,
+          capabilities,
+          tools,
+          ...(grantedScopes.includes("content:publish")
+            ? {}
+            : { publishing: PUBLISH_KEY_GUIDANCE }),
+        };
+      }),
+  );
+
+  server.registerTool(
     "get_schema",
     {
       title: "Get schema",
-      description: `Return the content types and fields synced for ${target}. Call this before creating or updating documents so frontmatter matches the schema.`,
+      description: `Return the content types and fields synced for ${target}. Call this before creating or updating documents so frontmatter matches the schema. ${describeScopes("get_schema")}`,
       annotations: { readOnlyHint: true },
     },
     () =>
@@ -383,7 +509,7 @@ export function createMdcmsMcpServer(deps: McpServerDeps): McpServer {
     "list_documents",
     {
       title: "List documents",
-      description: `List draft documents in ${target} with frontmatter and status, without bodies. Page through results with limit and offset.`,
+      description: `List draft documents in ${target} with frontmatter and status, without bodies. Page through results with limit and offset. ${describeScopes("list_documents")}`,
       inputSchema: {
         type: z.string().min(1).optional().describe("Content type name"),
         locale: z.string().min(1).optional(),
@@ -438,7 +564,7 @@ export function createMdcmsMcpServer(deps: McpServerDeps): McpServer {
     "get_document",
     {
       title: "Get document",
-      description: `Return one draft document from ${target}, including its Markdown body.`,
+      description: `Return one draft document from ${target}, including its Markdown body. ${describeScopes("get_document")}`,
       inputSchema: {
         documentId: z.string().min(1),
       },
@@ -460,7 +586,7 @@ export function createMdcmsMcpServer(deps: McpServerDeps): McpServer {
     "create_document",
     {
       title: "Create document",
-      description: `Create a draft document in ${target}. Frontmatter is validated against the synced schema first. The path must be "<type directory>/<slug>" without a file extension. The document is not published.`,
+      description: `Create a draft document in ${target}. Frontmatter is validated against the synced schema first. The path must be "<type directory>/<slug>" without a file extension. The document is not published. ${describeScopes("create_document")}`,
       inputSchema: {
         type: z.string().min(1).describe("Content type name"),
         path: z
@@ -531,7 +657,7 @@ export function createMdcmsMcpServer(deps: McpServerDeps): McpServer {
     "update_document",
     {
       title: "Update document",
-      description: `Update a draft document in ${target}. "frontmatter" is a patch: listed keys are merged over the stored frontmatter and a null value removes a key. "body" replaces the whole body. The merged frontmatter is validated against the synced schema before anything is written. The document is not published.`,
+      description: `Update a draft document in ${target}. "frontmatter" is a patch: listed keys are merged over the stored frontmatter and a null value removes a key. "body" replaces the whole body. The merged frontmatter is validated against the synced schema before anything is written. The document is not published. ${describeScopes("update_document")}`,
       inputSchema: {
         documentId: z.string().min(1),
         frontmatter: z.record(z.string(), z.unknown()).optional(),
@@ -584,7 +710,7 @@ export function createMdcmsMcpServer(deps: McpServerDeps): McpServer {
     "publish_document",
     {
       title: "Publish document",
-      description: `Publish the current draft of a document in ${target} as a new immutable version. Requires an API key with the content:publish scope.`,
+      description: `Publish the current draft of a document in ${target} as a new immutable version. ${describeScopes("publish_document")} ${PUBLISH_KEY_GUIDANCE}`,
       inputSchema: {
         documentId: z.string().min(1),
         changeSummary: z.string().min(1).optional(),
@@ -612,7 +738,7 @@ export function createMdcmsMcpServer(deps: McpServerDeps): McpServer {
     "sync_schema",
     {
       title: "Sync schema",
-      description: `Reload mdcms.config.ts from disk and sync its schema to ${target}, the same as \`mdcms schema sync\`. Call this after editing content types or fields in mdcms.config.ts.`,
+      description: `Reload mdcms.config.ts from disk and sync its schema to ${target}, the same as \`mdcms schema sync\`. Call this after editing content types or fields in mdcms.config.ts. ${describeScopes("sync_schema")}`,
     },
     () =>
       runTool(async () => {
@@ -653,6 +779,13 @@ export function createMdcmsMcpServer(deps: McpServerDeps): McpServer {
         }
 
         if (result.outcome === "failure") {
+          if (result.errorCode === "UNAUTHORIZED") {
+            throw createUnauthorizedError({
+              code: result.errorCode,
+              message: result.message,
+            });
+          }
+
           throw new ToolError(result.errorCode, result.message, result.details);
         }
 
@@ -679,14 +812,24 @@ function renderMcpHelp(): string {
     "",
     "Run a Model Context Protocol server over stdio (preview).",
     "",
-    "Tools: get_schema, list_documents, get_document, create_document,",
-    "       update_document, publish_document, sync_schema",
+    "Tools and the API key scopes they need:",
+    ...(Object.keys(MCP_TOOL_SCOPES) as McpToolName[]).map((tool) => {
+      const scopes: readonly string[] = MCP_TOOL_SCOPES[tool];
+      return `  ${tool.padEnd(22)}${scopes.length > 0 ? scopes.join(", ") : "(any valid key)"}`;
+    }),
     "",
     "Register it with an MCP client from your project root, for example:",
     "  claude mcp add mdcms -- npx mdcms mcp",
     "",
     "Credentials resolve like other commands: --api-key, MDCMS_API_KEY,",
-    "or the profile stored by `mdcms login`.",
+    "or the profile stored by `mdcms login` or `mdcms init`. That stored key",
+    "has these scopes:",
+    `  ${DEFAULT_CLI_LOGIN_SCOPES.join(", ")}`,
+    "It does not include content:publish, so publish_document fails with it.",
+    "To publish, create a key with content:publish in Studio (Settings) and",
+    "pass it with MDCMS_API_KEY or --api-key.",
+    "",
+    "Call get_credentials_info to see what the active key can do.",
     "",
   ].join("\n");
 }
@@ -723,6 +866,7 @@ export function createMcpCommand(options: McpCommandOptions = {}): CliCommand {
   return {
     name: "mcp",
     description: "Run an MCP server over stdio for AI agents (preview)",
+    renderHelp: renderMcpHelp,
     run: async (context: CliCommandContext): Promise<number> => {
       if (context.args.includes("--help") || context.args.includes("-h")) {
         context.stdout.write(renderMcpHelp());

@@ -463,6 +463,7 @@ export function createLoginCommand(options: LoginOptions = {}): CliCommand {
   return {
     name: "login",
     description: "Authenticate via browser flow and store scoped credentials",
+    renderHelp: renderLoginHelp,
     requiresTarget: true,
     requiresConfig: true,
     run: async (context: CliCommandContext): Promise<number> => {
@@ -525,7 +526,7 @@ export function createLoginCommand(options: LoginOptions = {}): CliCommand {
             })
             .catch(() => undefined);
           context.stderr.write(
-            `Project "${context.project}" does not exist on ${context.serverUrl}. Run "cms init" to create it.\n`,
+            `Project "${context.project}" does not exist on ${context.serverUrl}. Run "mdcms init" to create it.\n`,
           );
           return 1;
         }
