@@ -2976,6 +2976,54 @@ test("getPropertyDescriptors exposes editable schema file controls for raw media
   );
 });
 
+test("getPropertyDescriptors exposes reference fields as document pickers", () => {
+  const referenceField = {
+    kind: "string",
+    required: false,
+    nullable: true,
+    reference: { targetType: "author" },
+  } as const;
+  const withValue = createReadyState({
+    schemaState: createReadySchemaState({
+      entries: [createSchemaEntry({ author: referenceField })],
+    }),
+    draftFrontmatter: {
+      author: "11111111-1111-4111-8111-111111111111",
+    },
+  });
+  const empty = createReadyState({
+    schemaState: createReadySchemaState({
+      entries: [createSchemaEntry({ author: referenceField })],
+    }),
+    draftFrontmatter: {},
+  });
+
+  const [descriptor] = getPropertyDescriptors(withValue);
+  const [emptyDescriptor] = getPropertyDescriptors(empty);
+
+  assert.equal(descriptor?.typeLabel, "reference:author");
+  assert.deepEqual(
+    descriptor?.status === "editable" ? descriptor.control : undefined,
+    {
+      kind: "reference",
+      value: "11111111-1111-4111-8111-111111111111",
+      targetType: "author",
+      canUnset: true,
+    },
+  );
+  assert.deepEqual(
+    emptyDescriptor?.status === "editable"
+      ? emptyDescriptor.control
+      : undefined,
+    {
+      kind: "reference",
+      value: undefined,
+      targetType: "author",
+      canUnset: true,
+    },
+  );
+});
+
 test("getPropertyDescriptors rejects expanded media objects for schema file controls", () => {
   const state = createReadyState({
     schemaState: createReadySchemaState({
