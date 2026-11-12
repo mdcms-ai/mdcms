@@ -51,12 +51,45 @@ export function getMdxComponentSlashTrigger(
   };
 }
 
+/**
+ * Whether `trigger` still points at its `/query` text in the editor's current
+ * document. A trigger captured before the document changed (or against an
+ * editor that has since been replaced) can point at unrelated text.
+ */
+export function isMdxComponentSlashTriggerCurrent(
+  editor: Editor,
+  trigger: MdxComponentSlashTrigger,
+): boolean {
+  const { doc } = editor.state;
+
+  if (
+    trigger.from < 0 ||
+    trigger.to < trigger.from ||
+    trigger.to > doc.content.size
+  ) {
+    return false;
+  }
+
+  return (
+    doc.textBetween(trigger.from, trigger.to, "\n") === `/${trigger.query}`
+  );
+}
+
+/**
+ * Replaces the `/query` text with the component. Returns `false` and leaves
+ * the document untouched when the trigger no longer matches the document, so
+ * a stale insert never deletes unrelated text.
+ */
 export function replaceSlashTriggerWithMdxComponent(
   editor: Editor,
   trigger: MdxComponentSlashTrigger,
   component: MdxCatalogComponent,
   props: Record<string, unknown> = {},
 ): boolean {
+  if (!isMdxComponentSlashTriggerCurrent(editor, trigger)) {
+    return false;
+  }
+
   return editor.commands.insertContentAt(
     {
       from: trigger.from,

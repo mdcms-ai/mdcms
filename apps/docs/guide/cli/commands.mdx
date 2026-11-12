@@ -152,15 +152,22 @@ The CLI attempts to revoke the API key on the server as a best-effort operation.
 Upload local content changes to the MDCMS server.
 
 ```bash
-mdcms push [--force] [--dry-run] [--validate] [--published]
+mdcms push [--dry-run] [--yes] [--validate] [--sync-schema] [--published]
 ```
 
-| Flag          | Description                                                         |
-| ------------- | ------------------------------------------------------------------- |
-| `--force`     | Skip all interactive prompts; auto-select all new and deleted files |
-| `--dry-run`   | Show the push plan without making any API writes                    |
-| `--validate`  | Validate frontmatter against the local schema before pushing        |
-| `--published` | Reserved for future use                                             |
+Preview a push with `mdcms push --dry-run`: it prints the plan and writes nothing.
+
+| Flag            | Description                                                                               |
+| --------------- | ----------------------------------------------------------------------------------------- |
+| `--dry-run`     | Show the push plan without making any API writes                                          |
+| `-y`, `--yes`   | Include all new and deleted files and skip the confirmation prompt. `--force` is an alias |
+| `--validate`    | Validate frontmatter against the local schema before pushing                              |
+| `--sync-schema` | Without a terminal, sync the schema first when it has drifted instead of failing          |
+| `--published`   | Reserved for future use                                                                   |
+
+`--yes` (or `--force`) does not override conflicts. Stale draft revisions, path conflicts, and schema mismatches fail with or without it.
+
+Without a terminal (CI, scripts, agents), push does not prompt: changed tracked files are pushed as drafts right away, and new and deleted files are skipped unless you pass `--yes`.
 
 ### How push works
 
@@ -169,7 +176,7 @@ mdcms push [--force] [--dry-run] [--validate] [--published]
 3. **New file detection** — Scans content directories for untracked `.md`/`.mdx` files not yet in the manifest. In interactive mode, you select which new files to upload.
 4. **Deletion detection** — Files present in the manifest but missing from disk are flagged as candidates for server-side deletion.
 5. **Plan summary** — The CLI prints a summary of changes, new files, and deletions before writing anything.
-6. **Confirmation** — Destructive changes (deletions, overwrites) require explicit confirmation unless `--force` is passed.
+6. **Confirmation**: in a terminal, push asks for confirmation before writing unless `--yes` is passed. Without a terminal it does not ask.
 7. **Execute** — Changed files are uploaded, new documents are created, and deleted documents are removed on the server.
 8. **Update manifest** — The local manifest is updated with new document IDs, revision numbers, and hashes.
 
@@ -266,7 +273,7 @@ Run a [Model Context Protocol](https://modelcontextprotocol.io) server over stdi
 mdcms mcp
 ```
 
-The server uses the same server URL, project, environment, and credentials as every other command, so run `mdcms login` (or set `MDCMS_API_KEY`) first. Register it with your agent client from the project root:
+The server uses the same server URL, project, environment, and credentials as every other command, so run `mdcms login` (or set `MDCMS_API_KEY`) first. The key from `mdcms login` or `mdcms init` has the [default scopes](#default-scopes), which cover common content and schema operations but exclude publishing and additional media, environment, and webhook scopes. If the server rejects the key (`401`), stderr directs the user to run `mdcms login` or set `MDCMS_API_KEY`; restart the MCP server afterwards, because it reads the key at startup. Register it with your agent client from the project root:
 
 <CodeGroup>
 ```bash Claude Code
@@ -287,7 +294,9 @@ claude mcp add mdcms -- npx mdcms mcp
 
 Use Node.js 24.11.1 or later and an MDCMS server with `/api/v1/mcp` enabled. The CLI forwards the remote registry, including tool schemas, annotations, results and errors. Tool discovery reflects server capabilities and the credential's permissions.
 
-`sync_schema` is the sole local tool and requires `schema:write`. It reloads the resolved `mdcms.config.ts`, syncs to the original connection, and returns `schemaHash`, `syncedAt` and `affectedTypes`. Restart the bridge to change its server, project, environment or credentials.
+`sync_schema` is a local tool and requires `schema:write`. It reloads the resolved `mdcms.config.ts`, syncs to the original connection, and returns `schemaHash`, `syncedAt` and `affectedTypes`. Restart the bridge to change its server, project, environment or credentials.
+
+`get_credentials_info` is a read-only local diagnostic for the resolved target, capability-derived scopes, and common content/schema tool scope requirements. Its `allowed` flags do not guarantee path access or describe the complete remote inventory. Remote discovery remains authoritative. Login/init keys exclude publishing; supply a Studio-created key with `content:publish` to publish. After replacing a rejected key, restart the bridge.
 
 ### How writes behave
 
@@ -324,6 +333,10 @@ The status command reports:
 | `deleted_on_server`  | Document is in the manifest but no longer on the server  |
 | `moved_renamed`      | Server path differs from the manifest path               |
 | `unchanged`          | Everything is in sync                                    |
+
+Moves are shown as `<local path> -> <path after mdcms pull>`. When only the extension differs, the server inferred a different format from the body (for example, a `.mdx` file with no MDX syntax is stored as `md`), and `mdcms pull` renames the local file.
+
+Documents whose type is not in your local config are skipped with a warning, as `mdcms pull` skips them.
 
 ### Exit codes
 

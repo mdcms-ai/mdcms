@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import {
   RuntimeError,
+  inferContentFormat,
   type DocumentPromotionResult,
   type ContentWriteAttribution,
   type EnvironmentCloneInput,
@@ -509,7 +510,7 @@ export async function cloneEnvironment(
                 body: row.body,
                 frontmatter: row.frontmatter as Record<string, unknown>,
                 path: row.path,
-                contentFormat: row.contentFormat,
+                contentFormat: inferContentFormat(row.body),
                 schemaType: row.schemaType,
                 locale: row.locale,
               };
@@ -579,7 +580,7 @@ export async function cloneEnvironment(
             path: targetPath,
             schemaType: headPayload.schemaType,
             locale: headPayload.locale,
-            contentFormat: headPayload.contentFormat,
+            contentFormat: inferContentFormat(headPayload.body),
             body: headPayload.body,
             frontmatter: headRemap.frontmatter,
             isDeleted: false,
@@ -640,7 +641,7 @@ export async function cloneEnvironment(
             environmentId: scope.targetEnvId,
             schemaType: publishedPayload.schemaType,
             locale: publishedPayload.locale,
-            contentFormat: publishedPayload.contentFormat,
+            contentFormat: inferContentFormat(publishedPayload.body),
             path: publishedPath,
             body: publishedPayload.body,
             frontmatter: publishedRemap.frontmatter,
@@ -1034,7 +1035,7 @@ async function createTargetDraft(
       path: input.source.path,
       schemaType: input.source.schemaType,
       locale: input.source.locale,
-      contentFormat: input.source.contentFormat,
+      contentFormat: inferContentFormat(input.source.body),
       body: input.source.body,
       frontmatter: input.remappedFrontmatter,
       isDeleted: false,
@@ -1083,7 +1084,7 @@ async function overwriteTargetDraft(
       .update(documents)
       .set({
         schemaType: input.source.schemaType,
-        contentFormat: input.source.contentFormat,
+        contentFormat: inferContentFormat(input.source.body),
         body: input.source.body,
         frontmatter: input.remappedFrontmatter,
         path: input.source.path,
@@ -1144,7 +1145,7 @@ async function publishTargetDocument(
     environmentId: input.scope.targetEnvId,
     schemaType: input.source.schemaType,
     locale: input.source.locale,
-    contentFormat: input.source.contentFormat,
+    contentFormat: inferContentFormat(input.source.body),
     path: input.source.path,
     body: input.source.body,
     frontmatter: input.remappedFrontmatter,

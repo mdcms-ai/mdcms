@@ -7,7 +7,7 @@ import type {
   ApiPaginatedEnvelope,
   ContentDocumentResponse,
 } from "@mdcms/shared";
-import { RuntimeError } from "@mdcms/shared";
+import { RuntimeError, inferContentFormat } from "@mdcms/shared";
 import { stringify as stringifyYaml } from "yaml";
 
 import type { CliCommand, CliCommandContext } from "./framework.js";
@@ -17,6 +17,7 @@ import {
   writeScopedManifestAtomic,
   type ScopedManifest,
 } from "./manifest.js";
+import { resolveTrackedFilePath } from "./discover.js";
 
 type ContentDocumentPayload = Pick<
   ContentDocumentResponse,
@@ -259,7 +260,8 @@ function resolveLocalPathForDocument(
   }
 
   const basePath = document.path.replace(/^\/+/, "");
-  const extension = document.format;
+  // The local extension follows the body, as the server's format does.
+  const extension = inferContentFormat(document.body);
 
   if (typeConfig.localized) {
     const locale = document.locale.trim();
@@ -360,7 +362,7 @@ function printPlan(context: CliCommandContext, changes: PullChange[]): void {
   const serverUnchanged = groups.get("Locally modified (server unchanged)");
   if (serverUnchanged && serverUnchanged.length > 0) {
     context.stdout.write(
-      `\nNote: ${serverUnchanged.length} file(s) modified locally but unchanged on server. Use 'cms push' to upload your changes.\n`,
+      `\nNote: ${serverUnchanged.length} file(s) modified locally but unchanged on server. Use 'mdcms push' to upload your changes.\n`,
     );
   }
 
@@ -421,10 +423,12 @@ async function applyPullChanges(input: {
       change.nextContent,
     );
 
+    // The source of a move is removed unless it is the file just written.
     if (
       (change.status === "Moved/Renamed" ||
         change.status === "Moved/Renamed (locally modified)") &&
-      change.previousPath
+      change.previousPath &&
+      change.previousPath !== change.nextPath
     ) {
       await rm(join(input.context.cwd, change.previousPath), { force: true });
     }
@@ -475,6 +479,7 @@ async function computePullChanges(input: {
       body: document.body,
     });
     const nextHash = hashContent(nextContent);
+    const format = inferContentFormat(document.body);
     const manifestEntry = input.manifest[document.documentId];
 
     if (!manifestEntry) {
@@ -482,7 +487,7 @@ async function computePullChanges(input: {
         status: "New",
         documentId: document.documentId,
         nextPath,
-        format: document.format,
+        format,
         draftRevision: document.draftRevision,
         publishedVersion: document.publishedVersion,
         nextContent,
@@ -492,7 +497,12 @@ async function computePullChanges(input: {
     }
 
     const manifestPath = manifestEntry.path;
-    const localHash = await readHash(join(input.context.cwd, manifestPath));
+    // A file renamed locally between .md and .mdx is still this document: its
+    // local edits are not overwritten silently, and a move starts from it.
+    const localPath =
+      (await resolveTrackedFilePath(input.context.cwd, manifestPath)) ??
+      manifestPath;
+    const localHash = await readHash(join(input.context.cwd, localPath));
     const localModified =
       localHash !== undefined && localHash !== manifestEntry.hash;
     const remoteChanged =
@@ -500,7 +510,9 @@ async function computePullChanges(input: {
       document.draftRevision !== manifestEntry.draftRevision ||
       document.publishedVersion !== manifestEntry.publishedVersion;
     const pathChanged =
-      manifestPath !== nextPath || manifestEntry.format !== document.format;
+      manifestPath !== nextPath ||
+      localPath !== nextPath ||
+      manifestEntry.format !== format;
 
     // Issue #3: move/rename must also check local modification
     if (pathChanged) {
@@ -509,9 +521,9 @@ async function computePullChanges(input: {
           ? "Moved/Renamed (locally modified)"
           : "Moved/Renamed",
         documentId: document.documentId,
-        previousPath: manifestPath,
+        previousPath: localPath,
         nextPath,
-        format: document.format,
+        format,
         draftRevision: document.draftRevision,
         publishedVersion: document.publishedVersion,
         nextContent,
@@ -526,7 +538,7 @@ async function computePullChanges(input: {
         status: "Both modified",
         documentId: document.documentId,
         nextPath,
-        format: document.format,
+        format,
         draftRevision: document.draftRevision,
         publishedVersion: document.publishedVersion,
         nextContent,
@@ -541,7 +553,7 @@ async function computePullChanges(input: {
         status: "Locally modified (server unchanged)",
         documentId: document.documentId,
         nextPath,
-        format: document.format,
+        format,
         draftRevision: document.draftRevision,
         publishedVersion: document.publishedVersion,
         nextContent,
@@ -555,7 +567,7 @@ async function computePullChanges(input: {
         status: "Modified",
         documentId: document.documentId,
         nextPath,
-        format: document.format,
+        format,
         draftRevision: document.draftRevision,
         publishedVersion: document.publishedVersion,
         nextContent,
@@ -568,7 +580,7 @@ async function computePullChanges(input: {
       status: "Unchanged",
       documentId: document.documentId,
       nextPath,
-      format: document.format,
+      format,
       draftRevision: document.draftRevision,
       publishedVersion: document.publishedVersion,
       nextContent,
@@ -584,7 +596,9 @@ async function computePullChanges(input: {
     changes.push({
       status: "Deleted on server",
       documentId,
-      previousPath: manifestEntry.path,
+      previousPath:
+        (await resolveTrackedFilePath(input.context.cwd, manifestEntry.path)) ??
+        manifestEntry.path,
       format: manifestEntry.format,
       draftRevision: manifestEntry.draftRevision,
       publishedVersion: manifestEntry.publishedVersion,
@@ -689,6 +703,7 @@ export function createPullCommand(): CliCommand {
   return {
     name: "pull",
     description: "Pull content from MDCMS into local files.",
+    renderHelp: renderPullHelp,
     run: runPullCommand,
   };
 }

@@ -210,3 +210,80 @@ test("renderMdcmsContent rejects MDX import and export syntax", async () => {
     },
   );
 });
+
+function Cta(props: { label?: string }) {
+  return createElement("a", { "data-cta": "" }, props.label ?? "Go");
+}
+
+test("createMdcmsRenderer renders a component in a document stored as md", async () => {
+  const node = await createMdcmsRenderer(
+    createConfig({
+      components: [
+        {
+          name: "Cta",
+          importPath: "./components/cta",
+          load: async () => Cta,
+        },
+      ],
+    }),
+  ).render(
+    createDocument({
+      format: "md",
+      body: 'Intro\n\n<Cta label="Start" />\n',
+    }),
+  );
+
+  assert.equal(
+    renderToStaticMarkup(createElement("div", null, node)),
+    '<div><p>Intro</p>\n<a data-cta="">Start</a></div>',
+  );
+});
+
+test("createMdcmsRenderer accepts a loaded module with a default or named export", async () => {
+  for (const load of [
+    async () => ({ default: Cta }),
+    async () => ({ Cta, helper: () => 1 }),
+  ]) {
+    const node = await createMdcmsRenderer(
+      createConfig({
+        components: [{ name: "Cta", importPath: "./components/cta", load }],
+      }),
+    ).render(createDocument({ body: "<Cta />" }));
+
+    assert.equal(
+      renderToStaticMarkup(createElement("div", null, node)),
+      '<div><a data-cta="">Go</a></div>',
+    );
+  }
+});
+
+test("createMdcmsRenderer reports a load result that is not a component", async () => {
+  await assert.rejects(
+    createMdcmsRenderer(
+      createConfig({
+        components: [
+          {
+            name: "Cta",
+            importPath: "./components/cta",
+            load: async () => ({ notAComponent: true }),
+          },
+        ],
+      }),
+    ).render(createDocument({ body: "<Cta />" })),
+    (error: unknown) =>
+      error instanceof MdcmsRendererError &&
+      error.code === "MDCMS_RENDERER_COMPONENT_LOAD_FAILED",
+  );
+});
+
+test("createMdcmsRenderer drops raw HTML such as scripts from Markdown bodies", async () => {
+  const node = await createMdcmsRenderer(createConfig()).render(
+    createDocument({
+      format: "mdx",
+      body: "Text\n\n<script>\nalert(1)\n</script>\n\n<style>.x{}</style>\n",
+    }),
+  );
+  const markup = renderToStaticMarkup(createElement("div", null, node));
+
+  assert.equal(markup, "<div><p>Text</p></div>");
+});

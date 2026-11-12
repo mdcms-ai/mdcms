@@ -171,3 +171,9 @@ Entries are reverse-chronological (newest first).
 **Rule:** Anchor fake token clocks to the current time when a real runtime validates the same tokens.
 **Why:** A fixed historical fixture date eventually produces expired credentials at the wall-clock boundary.
 **How to apply:** Start from the current clock, advance explicit relative intervals for expiry assertions and perform real-runtime authentication before those advances.
+
+## 2026-11-12: CLI command help goes through `CliCommand.renderHelp`
+
+**Rule:** Give a CLI command its help through the `renderHelp` field on `CliCommand`; do not rely on checking `context.args` for `--help`.
+**Why:** `parseCliInvocation` consumes `-h`/`--help` as a global flag before the command runs, so a command's own `--help` branch never sees the flag and `mdcms <command> --help` printed only the global help.
+**How to apply:** When adding or changing a command's help text, set `renderHelp` on the command object and cover it with a `runMdcmsCli(["<command>", "--help"])` test.

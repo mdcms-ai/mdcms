@@ -102,14 +102,14 @@ mdcms pull --published  # Fetch published snapshots instead of drafts
 ### Push
 
 ```bash
-mdcms push              # Interactive mode — prompts before uploading
-mdcms push --force      # Skip confirmation prompt
-mdcms push --dry-run    # Preview changes without uploading
+mdcms push --dry-run    # Preview the push plan without uploading
+mdcms push              # Interactive mode: prompts before uploading
+mdcms push --yes        # Include new and deleted files, skip the confirmation prompt (--force is an alias)
 ```
 
 ### MCP bridge
 
-`mdcms mcp` exposes the configured project and environment to AI agents over the Model Context Protocol. It reuses the credentials from `mdcms login`.
+`mdcms mcp` exposes the configured project and environment to AI agents over the Model Context Protocol. It reuses the credentials from `mdcms login`; that key does not include `content:publish`. To publish, create a key with that scope in Studio settings and pass it with `MDCMS_API_KEY` or `--api-key`.
 
 Install the CLI locally in the host project first (`npm install --save-dev @mdcms/cli`), then configure the agent from that directory:
 
@@ -119,9 +119,11 @@ claude mcp add mdcms -- npx mdcms mcp
 
 Requires Node.js 24.11.1 or later and a server exposing `/api/v1/mcp`. The CLI relays the server registry, including its schemas, annotations, results and errors. Available tools depend on server capabilities and credential scopes.
 
-The only local tool is `sync_schema`: it reloads `mdcms.config.ts` and its imported local modules, then syncs to the connection resolved at startup. TypeScript configs support extensionless local imports and transformed syntax such as enums on both Node and Bun. Config edits do not change that connection. After syncing, read `get_schema` and pass its `schemaHash` explicitly to tools that require it. The bridge never substitutes a local or newly fetched hash. Restart the bridge to change server, project, environment or credentials.
+The local `sync_schema` tool reloads `mdcms.config.ts` and its imported local modules, then syncs to the connection resolved at startup. TypeScript configs support extensionless local imports and transformed syntax such as enums on both Node and Bun. Config edits do not change that connection. After syncing, read `get_schema` and pass its `schemaHash` explicitly to tools that require it. The bridge never substitutes a local or newly fetched hash. Restart the bridge to change server, project, environment or credentials.
 
 Remote writes affect the server. Run `mdcms pull` to refresh local content. Transport failures can have unknown mutation outcomes; inspect server state before retrying. stdout is reserved for JSON-RPC, diagnostics go to stderr, and closing stdin stops the bridge.
+
+`get_credentials_info` is a read-only local diagnostic for the resolved target, capability-derived scopes, and common content/schema tool scope requirements. Its `allowed` flags do not guarantee path access or describe the complete remote inventory. Remote discovery remains authoritative. Login/init keys exclude publishing; supply a Studio-created key with `content:publish` to publish. After replacing a rejected key, restart the bridge.
 
 ### Global Flags
 

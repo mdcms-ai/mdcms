@@ -3,6 +3,7 @@
 import {
   useEffect,
   useLayoutEffect,
+  useMemo,
   useReducer,
   useRef,
   useState,
@@ -27,6 +28,10 @@ import {
   resolveShellAppliedTheme,
   type ShellAppliedTheme,
 } from "./studio-shell-state.js";
+import {
+  createStudioAuthReloadKey,
+  createStudioConfigReloadKey,
+} from "./studio-reload-key.js";
 
 const useIsomorphicLayoutEffect =
   typeof window === "undefined" ? useEffect : useLayoutEffect;
@@ -342,6 +347,14 @@ export function Studio({
     status: "loading",
   });
   const shellTheme = useResolvedShellTheme();
+  // Hosts often pass a new `config` or `auth` object on every render. The
+  // runtime reloads only when their values change (see studio-reload-key),
+  // so an unrelated host re-render never unmounts an open editor. The memos
+  // depend on the keys, not the objects, by design.
+  const configReloadKey = createStudioConfigReloadKey(config);
+  const authReloadKey = createStudioAuthReloadKey(auth);
+  const stableConfig = useMemo(() => config, [configReloadKey]);
+  const stableAuth = useMemo(() => auth, [authReloadKey]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -356,10 +369,10 @@ export function Studio({
     dispatchStartup({ type: "loading" });
 
     void loadStudioRuntime({
-      config,
+      config: stableConfig,
       basePath,
       container,
-      auth,
+      auth: stableAuth,
       hostBridge,
       fetcher,
       loadRemoteModule,
@@ -385,7 +398,14 @@ export function Studio({
       isDisposed = true;
       unmountRuntime?.();
     };
-  }, [auth, basePath, config, fetcher, hostBridge, loadRemoteModule]);
+  }, [
+    stableAuth,
+    basePath,
+    stableConfig,
+    fetcher,
+    hostBridge,
+    loadRemoteModule,
+  ]);
 
   return (
     <StudioShellFrame

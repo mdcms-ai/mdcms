@@ -12,6 +12,7 @@ import {
   ErrorCode,
 } from "@modelcontextprotocol/sdk/types.js";
 import { IMPLICIT_DEFAULT_LOCALE, type ParsedMdcmsConfig } from "@mdcms/shared";
+import { DEFAULT_CLI_LOGIN_SCOPES } from "./login.js";
 import { loadCliConfig } from "./config.js";
 import type {
   CliCommand,
@@ -19,6 +20,54 @@ import type {
   LoadCliConfig,
 } from "./framework.js";
 import { performSchemaSync } from "./schema-sync.js";
+
+export const MCP_TOOL_SCOPES = {
+  get_credentials_info: [],
+  get_schema: ["schema:read"],
+  list_documents: ["content:read:draft"],
+  get_document: ["content:read:draft"],
+  create_document: ["schema:read", "content:write"],
+  update_document: ["schema:read", "content:read:draft", "content:write"],
+  publish_document: ["content:publish"],
+  sync_schema: ["schema:write"],
+} as const satisfies Record<string, readonly string[]>;
+
+const PUBLISH_KEY_GUIDANCE =
+  "Keys stored by `mdcms login` or `mdcms init` do not include content:publish. To publish, create an API key with content:publish in Studio (Settings) and pass it with MDCMS_API_KEY or --api-key.";
+
+/** Maps an API key scope to the matching flag in `/api/v1/me/capabilities`. */
+const SCOPE_CAPABILITY: Record<
+  string,
+  (capabilities: Record<string, Record<string, boolean>>) => boolean
+> = {
+  "schema:read": (c) => c.schema?.read === true,
+  "schema:write": (c) => c.schema?.write === true,
+  "content:read": (c) => c.content?.read === true,
+  "content:read:draft": (c) => c.content?.readDraft === true,
+  "content:write": (c) => c.content?.write === true,
+  "content:publish": (c) => c.content?.publish === true,
+  "content:delete": (c) => c.content?.delete === true,
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isCapabilities(
+  value: unknown,
+): value is Record<string, Record<string, boolean>> {
+  return (
+    isRecord(value) &&
+    Object.values(value).every(
+      (group) =>
+        isRecord(group) &&
+        Object.values(group).every((flag) => typeof flag === "boolean"),
+    )
+  );
+}
+
+const UNAUTHORIZED_GUIDANCE =
+  "The MDCMS server rejected the API key this MCP server started with (401). Run `mdcms login` to store a new key for this target, or set MDCMS_API_KEY, then restart the MCP server.";
 
 export type McpServerDeps = {
   serverUrl: string;
@@ -31,13 +80,14 @@ export type McpServerDeps = {
   fetcher: typeof fetch;
   loadConfig?: LoadCliConfig;
   version?: string;
+  onUnauthorized?: () => void;
   onFatalTransportError?: () => void;
 };
 
 const localTool = {
   name: "sync_schema",
   description:
-    "Reload local mdcms.config.ts and sync schema to the originally resolved target.",
+    "Reload local mdcms.config.ts and sync schema to the originally resolved target. Needs schema:write.",
   inputSchema: {
     type: "object" as const,
     properties: {},
@@ -49,6 +99,23 @@ const localTool = {
     idempotentHint: false,
   },
 };
+
+const credentialsTool = {
+  name: "get_credentials_info",
+  description:
+    "Read target capabilities and common content/schema tool scope requirements. Any valid key; allowed flags do not guarantee path access. Remote discovery is authoritative.",
+  inputSchema: {
+    type: "object" as const,
+    properties: {},
+    additionalProperties: false,
+  },
+  annotations: {
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+  },
+};
+const localTools = [localTool, credentialsTool];
 
 export function createMdcmsMcpServer(input: McpServerDeps) {
   const deps = { ...input };
@@ -69,11 +136,15 @@ export function createMdcmsMcpServer(input: McpServerDeps) {
     const target = new URL(url instanceof Request ? url.url : String(url));
     if (target.origin !== endpoint.origin)
       throw new Error("MCP target changed.");
-    return deps.fetcher(url, { ...init, redirect: "error" });
+    const response = await deps.fetcher(url, { ...init, redirect: "error" });
+    if (response.status === 401) deps.onUnauthorized?.();
+    return response;
   }) as typeof fetch;
   function redact(value: unknown): unknown {
     if (typeof value === "string")
-      return value.split(deps.apiKey).join("[redacted]");
+      return (
+        deps.apiKey ? value.split(deps.apiKey).join("[redacted]") : value
+      ).replace(/Bearer\s+[^\s"\\]+/gi, "Bearer [redacted]");
     if (Array.isArray(value)) return value.map(redact);
     if (value && typeof value === "object")
       return Object.fromEntries(
@@ -164,19 +235,127 @@ export function createMdcmsMcpServer(input: McpServerDeps) {
           }),
         extra.signal,
       );
-      if (result.tools.some((tool) => tool.name === localTool.name))
+      if (
+        result.tools.some((tool) =>
+          localTools.some((local) => tool.name === local.name),
+        )
+      )
         throw new McpError(
           ErrorCode.InternalError,
-          "Remote registry collides with local sync_schema.",
+          "Remote registry collides with a local tool.",
         );
       return {
         ...result,
-        tools: result.nextCursor ? result.tools : [...result.tools, localTool],
+        tools: result.nextCursor
+          ? result.tools
+          : [...result.tools, ...localTools],
       };
     }),
   );
   server.setRequestHandler(CallToolRequestSchema, (request, extra) =>
     guarded(async () => {
+      if (request.params.name === credentialsTool.name) {
+        if (Object.keys(request.params.arguments ?? {}).length)
+          throw new McpError(
+            ErrorCode.InvalidParams,
+            "get_credentials_info accepts no arguments.",
+          );
+        const failure = (code: string, message: string, details?: unknown) => ({
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify(redact({ code, message, details })),
+            },
+          ],
+          isError: true,
+        });
+        let response: Response;
+        try {
+          response = await safeFetch(
+            new URL(
+              "api/v1/me/capabilities",
+              `${deps.serverUrl.replace(/\/+$/, "")}/`,
+            ),
+            {
+              headers: {
+                authorization: `Bearer ${deps.apiKey}`,
+                "x-mdcms-project": deps.project,
+                "x-mdcms-environment": deps.environment,
+              },
+              signal: extra.signal,
+            },
+          );
+        } catch {
+          return failure(
+            "SERVER_UNREACHABLE",
+            "Could not reach the MDCMS server.",
+          );
+        }
+        const raw: unknown = await response.json().catch(() => undefined);
+        const payload = isRecord(raw) ? raw : undefined;
+        if (response.status === 401)
+          return failure(
+            typeof payload?.code === "string" ? payload.code : "UNAUTHORIZED",
+            UNAUTHORIZED_GUIDANCE,
+            {
+              status: 401,
+              ...(typeof payload?.message === "string"
+                ? { serverMessage: payload.message }
+                : {}),
+            },
+          );
+        if (!response.ok)
+          return failure(
+            typeof payload?.code === "string" ? payload.code : "REQUEST_FAILED",
+            typeof payload?.message === "string"
+              ? payload.message
+              : "Capabilities request failed.",
+            payload?.details ?? { status: response.status },
+          );
+        const capabilities = isRecord(payload?.data)
+          ? payload.data.capabilities
+          : undefined;
+        if (!isCapabilities(capabilities))
+          return failure(
+            "REQUEST_FAILED",
+            "Unexpected capabilities response from the MDCMS server.",
+          );
+        const grantedScopes = Object.entries(SCOPE_CAPABILITY)
+          .filter(([, granted]) => granted(capabilities))
+          .map(([scope]) => scope);
+        const tools = Object.fromEntries(
+          Object.entries(MCP_TOOL_SCOPES).map(([name, requiredScopes]) => [
+            name,
+            {
+              requiredScopes,
+              allowed: requiredScopes.every((scope) =>
+                grantedScopes.includes(scope),
+              ),
+            },
+          ]),
+        );
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify(
+                redact({
+                  serverUrl: deps.serverUrl,
+                  project: deps.project,
+                  environment: deps.environment,
+                  grantedScopes,
+                  capabilities,
+                  tools,
+                  ...(grantedScopes.includes("content:publish")
+                    ? {}
+                    : { publishing: PUBLISH_KEY_GUIDANCE }),
+                }),
+              ),
+            },
+          ],
+          isError: false,
+        };
+      }
       if (request.params.name !== localTool.name) {
         const client = await remote();
         return requestRemote(
@@ -242,8 +421,14 @@ export function createMdcmsMcpServer(input: McpServerDeps) {
             }
           : {
               code: result.errorCode,
-              message: redact(result.message),
-              details: redact(result.details),
+              message:
+                result.errorCode === "UNAUTHORIZED"
+                  ? UNAUTHORIZED_GUIDANCE
+                  : redact(result.message),
+              details:
+                result.errorCode === "UNAUTHORIZED"
+                  ? { status: 401, serverMessage: redact(result.message) }
+                  : redact(result.details),
             };
       return {
         content: [{ type: "text" as const, text: JSON.stringify(payload) }],
@@ -276,7 +461,16 @@ function renderMcpHelp(): string {
     "",
     "Run a Model Context Protocol server over stdio through the remote tool registry.",
     "",
-    "Tools: server registry plus local sync_schema.",
+    "Tools: server registry plus local sync_schema and get_credentials_info.",
+    "Common content/schema tool scope requirements (not the complete remote inventory):",
+    ...Object.entries(MCP_TOOL_SCOPES).map(
+      ([name, scopes]) =>
+        `  ${name}: ${scopes.length ? scopes.join(", ") : "(any valid key)"}`,
+    ),
+    "Remote discovery and execution enforce current permissions and path grants.",
+    `Login/init key scopes: ${DEFAULT_CLI_LOGIN_SCOPES.join(", ")}`,
+    PUBLISH_KEY_GUIDANCE,
+    "Call get_credentials_info to inspect the active key's capabilities.",
     "Write tools require explicit schemaHash inputs from get_schema.",
     "",
     "Register it with an MCP client from your project root, for example:",
@@ -297,6 +491,7 @@ export function createMcpCommand(options: McpCommandOptions = {}): CliCommand {
   return {
     name: "mcp",
     description: "Run an MCP server over stdio for AI agents",
+    renderHelp: renderMcpHelp,
     run: async (context: CliCommandContext): Promise<number> => {
       if (context.args.includes("--help") || context.args.includes("-h")) {
         context.stdout.write(renderMcpHelp());
@@ -339,6 +534,8 @@ export function createMcpCommand(options: McpCommandOptions = {}): CliCommand {
           fetcher: context.fetcher,
           version: options.version,
           onFatalTransportError: failTransport,
+          onUnauthorized: () =>
+            context.stderr.write(`UNAUTHORIZED: ${UNAUTHORIZED_GUIDANCE}\n`),
         });
         server.server.oninitialized = () => {
           void server.initializeUpstream().catch(failTransport);

@@ -54,6 +54,10 @@ Creates an SDK client instance.
 
 Fetch a single document. Accepts either `{ id }` or `{ slug }` to identify the document, plus optional `locale`, `resolve`, `draft`, `project`, and `environment`.
 
+- `{ id }` fetches that document. The `type` argument is not checked against it.
+- `{ slug }` matches documents of `type` whose `frontmatter.slug` equals the value (not the document path). No match throws `MdcmsClientError` with code `NOT_FOUND`; several matches throw code `AMBIGUOUS_RESULT`.
+- `locale` filters on the stored locale. Documents of non-localized types are stored under `__mdcms_default__`, so omit `locale` for them; pass it for localized types. `get` by `id` ignores it.
+
 ### `client.list(type, options)`
 
 List documents with filtering, pagination, and sorting. Supports `locale`, `resolve`, `draft`, `published`, `limit`, `offset`, `sort`, and `order`.
@@ -62,10 +66,25 @@ Per-call `project` and `environment` override the client defaults for that reque
 
 Schema file fields are expanded to `MediaAsset` objects by default. Pass `fileFields: "raw"` to SDK read calls when an authoring workflow needs persisted raw media asset ids.
 
+### Types
+
+The package root exports the document types used by the client, so an app does not need `@mdcms/shared` to type its data:
+
+```ts
+import type { ContentDocumentResponse } from "@mdcms/sdk";
+
+function readTitle(document: ContentDocumentResponse): string | undefined {
+  const title = document.frontmatter.title;
+  return typeof title === "string" ? title : undefined;
+}
+```
+
+A document has `documentId`, `type`, `path`, `locale`, `format`, `body` and the schema fields under `frontmatter` (typed `Record<string, unknown>`). Also exported: `ApiDataEnvelope`, `ApiPaginatedEnvelope`, `PaginationMetadata`, `ResolveErrorsMap`, `ContentResolveError`, `ContentReferenceResolveError`, `ContentMediaResolveError`, `MdcmsPreviewTokenClaims`, `MdcmsPreviewTokenExpectedClaims` and `MdcmsPreviewVerificationResult`.
+
 ### React rendering
 
 `@mdcms/sdk/react` renders fetched document bodies to React nodes on the server.
-It loads custom MDX components from `mdcms.config.ts`.
+It loads custom MDX components from `mdcms.config.ts`. A component's `load` may return the component or its module (default export, then the export named like the component). Each body is compiled as MDX when it contains a component or an `import`/`export` line, and as Markdown otherwise, whatever format the document was created with.
 
 ```tsx
 import { createClient } from "@mdcms/sdk";

@@ -132,7 +132,12 @@ test("published memory reads keep publication attribution after a different user
   assert.deepEqual(draft.updatedOrigin, editor.origin);
   // Legacy snapshots predate origins, while their current draft can have one.
   const { publishedOrigin: _origin, ...legacyVersion } = version;
-  const legacyVisible = toPublishedReadDocument(draft, legacyVersion);
+  const legacyVisible = toPublishedReadDocument(draft, {
+    ...legacyVersion,
+    body: "<Callout />",
+    format: "md",
+  });
+  assert.equal(legacyVisible.format, "mdx");
   assert.equal(legacyVisible.updatedBy, publisher.actorId);
   assert.equal("updatedOrigin" in legacyVisible, false);
 });

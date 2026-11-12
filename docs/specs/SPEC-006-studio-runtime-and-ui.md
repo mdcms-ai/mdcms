@@ -139,6 +139,58 @@ and `renderMdxPreview(...)`. The backend bootstrap/runtime publication model
 stays unchanged; it still serves the signed runtime bundle and does not publish
 the component catalog.
 
+The shell reloads the runtime only when the values of `config` or `auth`
+change, not when the host passes a new object with the same values. Hosts may
+therefore build the `config` object during render without remounting Studio or
+discarding an open editor on every host re-render. Values are compared as
+follows:
+
+- Strings, numbers, booleans, arrays, and plain objects (including
+  `_schemaHash`, `_documentRouteMetadata`, component `name`, `importPath`,
+  `description`, `propHints`, `propsEditor`, and `extractedProps`) are compared
+  by value, independent of property order.
+- Function values (component `load` and `loadPropsEditor`, type
+  `resolvePreviewUrl`) are compared by presence only. A new function in the
+  same place does not reload the runtime; the runtime keeps using the functions
+  from the config it loaded with.
+- Other objects, such as field schema instances in `types`, are compared by
+  identity.
+
+Changing `basePath`, `hostBridge`, `fetcher`, or `loadRemoteModule` still
+reloads the runtime; hosts should keep those values stable across renders.
+
+#### Server-prepared client config
+
+Frameworks that render the embedding route on the server (for example Next.js
+App Router server components) prepare the config on the server and build the
+`<Studio />` config in the browser. `@mdcms/studio/client-config` provides both
+halves. The module has no Node.js or React dependencies, so server and client
+code can import it.
+
+- `prepareStudioConfig(config, { cwd })` from `@mdcms/studio/runtime` runs on
+  the server. It computes the schema hash for the config's environment and
+  extracts the props of registered MDX components.
+- `toSerializableStudioConfig(prepared)` returns `SerializableStudioConfig`,
+  a JSON-serializable object with `project`, `environment`, `serverUrl`,
+  optional `contentDirectories`, `locales`, `types` (each with `name` and
+  optional `directory` and `localized`), `components` (each with `name`,
+  `importPath` and optional `description`, `propHints`, `propsEditor`,
+  `extractedProps`), and the optional prepared `_schemaHash` and
+  `_documentRouteMetadata`. It contains no functions and no field schemas.
+  Built-in MDX components are omitted because the shell always injects them.
+- `createStudioClientConfig(serializable, options)` returns the `MdcmsConfig`
+  passed to `<Studio />`. `options.loaders` maps a component name to its `load`
+  function or to `{ load, loadPropsEditor }`. `options.previewUrlResolvers`
+  maps a content type name to its live preview URL resolver. Registered
+  components without a loader stay in the catalog and render the editor's
+  placeholder instead of a preview. Loader names that match no registered
+  component, and names reserved for built-ins, are ignored. Types are rebuilt
+  with empty `fields`; the browser does not need field schemas because the
+  prepared schema hash carries the write capability.
+- `createStudioClientConfig` returns a new object on every call. Hosts build it
+  once per distinct serializable value (module scope, or memoized by value), so
+  the shell does not receive a new `config` object on every render.
+
 Cookie-authenticated Studio routes must redirect to `/admin/login` when the
 session bootstrap request cannot verify the active browser session, including
 `401` responses and network-level failures. The redirect includes `returnTo`

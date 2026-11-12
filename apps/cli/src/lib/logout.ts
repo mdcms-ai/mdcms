@@ -40,6 +40,7 @@ export function createLogoutCommand(options: LogoutOptions = {}): CliCommand {
   return {
     name: "logout",
     description: "Revoke current stored credential profile",
+    renderHelp: renderLogoutHelp,
     requiresTarget: true,
     requiresConfig: false,
     run: async (context: CliCommandContext): Promise<number> => {

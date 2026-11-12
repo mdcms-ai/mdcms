@@ -6188,3 +6188,107 @@ test("single document and version responses include a users map", async () => {
     "user-1": { name: "Ada Lovelace", email: "ada@example.com" },
   });
 });
+
+test("content format follows the body and ignores a client-sent format", async () => {
+  const scope = { project: "format-inference", environment: "production" };
+  const store = createInMemoryContentStore({
+    schemaScopes: [
+      {
+        project: scope.project,
+        environment: scope.environment,
+        schemas: createCms26ResolvedSchemas(),
+      },
+    ],
+  });
+  const slug = `format-${Math.random().toString(36).slice(2, 8)}`;
+
+  const created = await store.create(
+    scope,
+    {
+      path: `pages/${slug}`,
+      type: "Page",
+      locale: "en",
+      format: "md",
+      frontmatter: { slug },
+      body: "Intro\n\n<Cta />\n",
+    },
+    { attribution: testAttribution },
+  );
+  assert.equal(created.format, "mdx");
+
+  const plain = await store.update(
+    scope,
+    created.documentId,
+    {
+      format: "mdx",
+      body: "Only Markdown now.",
+    },
+    { attribution: testAttribution },
+  );
+  assert.equal(plain.format, "md");
+
+  const frontmatterOnly = await store.update(
+    scope,
+    created.documentId,
+    {
+      frontmatter: { slug: `${slug}-renamed` },
+    },
+    { attribution: testAttribution },
+  );
+  assert.equal(frontmatterOnly.format, "md");
+
+  const withComponent = await store.update(
+    scope,
+    created.documentId,
+    {
+      body: "Text\n\n<Callout>\n\nInside\n\n</Callout>\n",
+    },
+    { attribution: testAttribution },
+  );
+  assert.equal(withComponent.format, "mdx");
+});
+
+test("publish and restore retain body-derived format across draft changes", async () => {
+  const scope = { project: "format-history", environment: "production" };
+  const store = createInMemoryContentStore({
+    schemaScopes: [{ ...scope, schemas: createCms26ResolvedSchemas() }],
+  });
+  const attribution = testAttribution;
+  const created = await store.create(
+    scope,
+    {
+      path: "pages/format-history",
+      type: "Page",
+      locale: "en",
+      format: "md",
+      frontmatter: { slug: "format-history" },
+      body: "<Callout />",
+    },
+    { attribution },
+  );
+  await store.publish(scope, created.documentId, { attribution });
+  await store.update(
+    scope,
+    created.documentId,
+    { body: "Plain text" },
+    { attribution },
+  );
+  const restored = await store.restoreVersion(scope, created.documentId, 1, {
+    targetStatus: "published",
+    attribution,
+  });
+  assert.equal(restored.format, "mdx");
+  assert.equal(restored.body, "<Callout />");
+  assert.equal(restored.updatedBy, attribution.actorId);
+  const versions = await store.listVersions(scope, created.documentId, {});
+  assert.deepEqual(
+    versions.rows.map((version) => version.format),
+    ["mdx", "mdx"],
+  );
+  await store.softDelete(scope, created.documentId, { attribution });
+  const fromTrash = await store.restore(scope, created.documentId, {
+    targetStatus: "published",
+    attribution,
+  });
+  assert.equal(fromTrash.document.format, "mdx");
+});

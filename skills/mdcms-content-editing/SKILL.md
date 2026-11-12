@@ -67,31 +67,33 @@ For localized types, files for each locale either share a translation group via 
 - Date fields written as ISO 8601 strings (e.g. `publishedAt: 2026-04-01T10:00:00Z`).
 - Reference fields (declared via `fieldTypes.reference("<type>")`) take a document id, not a file path.
 
-**Body** is everything after the closing `---`. Markdown is parsed normally; `.mdx` files can use registered React components — see **`mdcms-mdx-components`** for the registry contract.
+**Body** is everything after the closing `---`. Markdown is parsed normally. Any body can use registered React components (see **`mdcms-mdx-components`** for the registry contract); a document whose body contains a component becomes MDX automatically, whatever its file extension.
 
 **Adding a new document** — create a new file in the type's directory. Either author the frontmatter by hand (read a sibling for the field shape) or let `mdcms push` walk you through the new-document prompt interactively. Either path requires the frontmatter to validate against the schema.
 
 **Renaming a document** — `git mv` (or `mv`) the file. On `mdcms push`, the CLI detects the move via content hash and updates the server's path mapping rather than treating it as a delete+create.
 
-### 3. Validate before pushing
-
-Catch shape errors locally — they surface with file paths and field names:
+### 3. Check the plan before pushing
 
 ```bash
-npx mdcms push --validate --dry-run
+npx mdcms push --dry-run
 ```
 
-`--validate` runs frontmatter against the synced schema. `--dry-run` plans the push without writing anything. If validation fails, fix the listed paths and re-run.
+`--dry-run` prints which documents would be changed, created and deleted, and writes nothing. Show the plan to the user and confirm it matches the edit. It stops before validation, so it does not check frontmatter.
 
-### 4. Push the change
+### 4. Push the change with validation
 
 ```bash
-npx mdcms push
+npx mdcms push --validate
 ```
+
+`--validate` checks frontmatter against the local schema before any write and stops with file paths and field names when something is wrong. Fix the listed files and run it again.
 
 This uploads changed, new, deleted, and renamed local docs as **draft** updates on the server. Drafts are visible in Studio and to SDK/API reads that explicitly request `draft: true` with the right server-side credentials. They are not visible to normal published-content readers until published; a host app may still choose to expose a draft preview route publicly, but that should be an explicit integration decision.
 
-For headless / CI runs, see **`mdcms-content-sync-workflow`** for the full flag surface (`--force`, `--sync-schema`).
+Without a terminal (CI, scripts, agents), changed files are pushed without confirmation and new or deleted files are skipped. `--force` includes them by skipping the prompts; it does not resolve conflicts or skip validation. Use it only after a dry run shows exactly the intended changes. See **`mdcms-content-sync-workflow`** for the full flag surface (`--force`, `--sync-schema`).
+
+If the edit adds a custom component to a body, the document becomes MDX automatically; the component must be registered first (**`mdcms-mdx-components`**).
 
 ### 5. Publish (Studio only)
 
@@ -126,8 +128,8 @@ grep -rl 'old-link' content/ | xargs sed -i '' 's/old-link/new-link/g'
 After a bulk edit:
 
 1. `git diff` — sanity-check the change is what you intended.
-2. `npx mdcms push --validate --dry-run` — confirm everything still validates.
-3. `npx mdcms push` — apply.
+2. `npx mdcms push --dry-run`: confirm the plan lists only the documents you meant to change.
+3. `npx mdcms push --validate`: validate and apply.
 
 For programmatic bulk authoring (e.g. an AI agent rewriting 500 posts), the same path works: edit files, validate, push. Don't hit the API directly — `push` keeps the manifest, hashes, and rename detection coherent.
 
@@ -145,7 +147,7 @@ If unsure about the project's locale-file convention (subdirectory vs filename s
 
 - **Schema drift mid-edit** — if `mdcms.config.ts` was changed but not synced, `push --validate` validates against stale rules. Run `mdcms status` to see drift; pass `--sync-schema` to push, or run `mdcms schema sync` first (see **`mdcms-schema-refine`**).
 - **Editing in Studio while a local copy is dirty** — round-trips collide. The fix is to `pull` first, edit, then `push`. If both sides changed, the pull's "both modified" prompt is the resolution moment.
-- **Untracked new files** — `mdcms push` treats files not in the manifest as candidates for new documents. In a TTY it prompts; in CI you need `--force` to upload them. Don't add `--force` blindly — it also confirms deletions.
+- **Untracked new files**: `mdcms push` treats files not in the manifest as candidates for new documents. In a TTY it prompts; without one you need `--force` to upload them. Don't add `--force` blindly: it skips every prompt, so it also applies all deletions.
 - **Frontmatter linter doesn't run from your editor** — some IDEs don't parse the project's Zod schema. Trust `mdcms push --validate` over the IDE's hint.
 - **MDX with raw JSX that isn't registered** — Studio shows it as a raw tag. Either register the component (**`mdcms-mdx-components`**) or convert to plain Markdown.
 - **Deletions** — `rm content/posts/old.md` then `mdcms push` removes the doc on the server. In non-interactive runs, deletion candidates are skipped without `--force`. Use `--dry-run` first.

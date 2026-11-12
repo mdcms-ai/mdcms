@@ -96,10 +96,7 @@ import { createEditorToolbarLayout } from "./editor-toolbar.js";
 import { MdxComponentNodeView } from "./mdx-component-node-view.js";
 import { MdxIntrinsicElementNodeView } from "./mdx-intrinsic-element-node-view.js";
 import { MdxRawJsxNodeView } from "./mdx-raw-jsx-node-view.js";
-import {
-  createMdxComponentInsertContent,
-  isMdxComponentVisibleInInsertUi,
-} from "./mdx-component-catalog.js";
+import { isMdxComponentVisibleInInsertUi } from "./mdx-component-catalog.js";
 import { createMediaAssetsInsertContent } from "./media-markdown-insertion.js";
 import { ImageNodeView } from "./image-node-view.js";
 import { MdxComponentPicker } from "./mdx-component-picker.js";
@@ -111,8 +108,8 @@ import {
 } from "./visual-composition-commands.js";
 import { VisualCompositionInsertionDialog } from "./visual-composition-insertion-dialog.js";
 import {
+  handleVisualCompositionDrop,
   hasVisualCompositionDragPayload,
-  readVisualCompositionDragPayload,
 } from "./visual-composition-palette-dnd.js";
 import { VisualCompositionPalette } from "./visual-composition-palette.js";
 import type {
@@ -132,13 +129,14 @@ import {
 import {
   createSlashPickerVirtualReference,
   getMdxComponentSlashTrigger,
-  replaceSlashTriggerWithMdxComponent,
   type MdxComponentSlashTrigger,
   type SlashTriggerCoords,
 } from "./mdx-component-slash.js";
 import {
   createTipTapEditorDependencies,
   getSelectionMarkdownForAi,
+  insertMdxComponentFromPicker,
+  isLiveTipTapEditor,
   resolveSlashPickerCoordsForEditor,
   resolveVisualDropPosition,
   stripBlockMarkers,
@@ -1429,6 +1427,9 @@ function useTipTapEditorElement({
   const mediaDropHandlerRef = useRef<((event: DragEvent) => boolean) | null>(
     null,
   );
+  const visualDropHandlerRef = useRef<((event: DragEvent) => boolean) | null>(
+    null,
+  );
   const mediaDragOverHandlerRef = useRef<
     ((event: DragEvent) => boolean) | null
   >(null);
@@ -1854,8 +1855,12 @@ function useTipTapEditorElement({
         },
         handlePaste: (_view, event) =>
           mediaPasteHandlerRef.current?.(event) ?? false,
+        // Palette drops must be claimed here: ProseMirror otherwise pastes
+        // the payload's text/plain label at the drop point before the
+        // canvas onDrop handler sees the event.
         handleDrop: (_view, event) =>
-          mediaDropHandlerRef.current?.(event) ?? false,
+          (visualDropHandlerRef.current?.(event) ?? false) ||
+          (mediaDropHandlerRef.current?.(event) ?? false),
         handleDOMEvents: {
           dragover: (_view, event) =>
             mediaDragOverHandlerRef.current?.(event) ?? false,
@@ -2815,7 +2820,10 @@ function useTipTapEditorElement({
     insertion: VisualCompositionInsertion,
     props: Record<string, unknown> = {},
   ) => {
-    if (!editor || isEditorReadOnly) {
+    if (
+      !isLiveTipTapEditor(editor, activeEditorRef.current) ||
+      isEditorReadOnly
+    ) {
       return false;
     }
 
@@ -3081,30 +3089,25 @@ function useTipTapEditorElement({
     event.dataTransfer.dropEffect = fileEvent.shouldUpload ? "copy" : "none";
   };
 
-  const handleVisualDrop = (event: ReactDragEvent<HTMLDivElement>) => {
-    if (isEditorReadOnly) {
-      return;
-    }
-
-    const block = readVisualCompositionDragPayload(event);
-
-    if (!block || !editor) {
-      return;
-    }
-
-    event.preventDefault();
-    const position = resolveVisualDropPosition(editor, event);
-    requestVisualInsertion(block, position);
-    return;
-  };
+  // Shared by the ProseMirror drop handler (drops on the document) and the
+  // canvas onDrop (drops on the surrounding padding). Whichever runs first
+  // prevents the default, and the canvas handler skips prevented events, so
+  // one drop inserts at most one block.
+  const handleVisualDrop = (event: DragEvent): boolean =>
+    handleVisualCompositionDrop(event, {
+      readOnly: isEditorReadOnly || !editor || editor.isDestroyed,
+      resolvePosition: (dropEvent) =>
+        editor ? resolveVisualDropPosition(editor, dropEvent) : undefined,
+      requestInsertion: requestVisualInsertion,
+    });
+  visualDropHandlerRef.current = handleVisualDrop;
 
   const handleCanvasDrop = (event: ReactDragEvent<HTMLDivElement>) => {
     if (event.defaultPrevented) {
       return;
     }
 
-    if (readVisualCompositionDragPayload(event)) {
-      handleVisualDrop(event);
+    if (handleVisualDrop(event.nativeEvent)) {
       return;
     }
 
@@ -3114,18 +3117,14 @@ function useTipTapEditorElement({
   const insertSelectedComponent = (
     component: (typeof catalogComponents)[number],
   ) => {
-    if (!editor) {
-      return;
-    }
+    const didInsert = insertMdxComponentFromPicker({
+      editor,
+      liveEditor: activeEditorRef.current,
+      slashTrigger: pickerSource === "slash" ? slashTrigger : null,
+      component,
+    });
 
-    const didInsert =
-      pickerSource === "slash" && slashTrigger
-        ? replaceSlashTriggerWithMdxComponent(editor, slashTrigger, component)
-        : editor.commands.insertContent(
-            createMdxComponentInsertContent(component),
-          );
-
-    if (!didInsert) {
+    if (!editor || !didInsert) {
       return;
     }
 

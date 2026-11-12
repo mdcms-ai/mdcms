@@ -2,7 +2,7 @@
 status: live
 canonical: true
 created: 2026-03-11
-last_updated: 2026-11-10
+last_updated: 2026-11-12
 ---
 
 # SPEC-008 CLI and SDK
@@ -61,7 +61,11 @@ The SDK follows the same reference-resolution contract documented in SPEC-003. R
 - `createClient` stores the server URL, API key, and default target routing (`project`, `environment`) for subsequent requests.
 - The SDK is read-focused in v1 and exposes `get` and `list`. Reference expansion is configured through the `resolve` option on those methods; it is not a separate SDK method.
 - `get(type, input)` accepts either `id` or `slug`. `id` is preferred; `slug` remains available for legacy-compatible lookups.
+- `get` with `id` reads `GET /api/v1/content/:documentId`; the `type` argument is not checked against the returned document.
+- `get` with `slug` lists documents of `type` with the `slug` filter, which matches the document's `frontmatter.slug` string value after trimming (not its `path`). Zero matches fail with client error code `NOT_FOUND`; more than one match fails with `AMBIGUOUS_RESULT`.
 - `get` and `list` both accept an explicit `locale` parameter, plus optional `project` and `environment` overrides that take precedence over the client defaults for that call only.
+- `locale` is an exact filter on the stored document locale for `list` and for `get` by `slug`; `get` by `id` passes it to `GET /api/v1/content/:documentId`, which does not filter by locale because a document id already names one locale variant. Documents of non-localized types are stored under the reserved locale `__mdcms_default__` (SPEC-009), so callers omit `locale` for those types. Without `locale`, `list` returns every locale variant.
+- The package root re-exports the shared response types used in its public signatures, so applications can type documents without depending on `@mdcms/shared`: `ContentDocumentResponse`, `ApiDataEnvelope`, `ApiPaginatedEnvelope`, `PaginationMetadata`, `ResolveErrorsMap`, `ContentResolveError`, `ContentReferenceResolveError`, `ContentMediaResolveError`, `MdcmsPreviewTokenClaims`, `MdcmsPreviewTokenExpectedClaims` and `MdcmsPreviewVerificationResult`.
 - The SDK sends explicit target routing with `X-MDCMS-Project` and `X-MDCMS-Environment` on every request rather than relying on ambient runtime state.
 - `list(type, input)` maps to the content list query contract owned by SPEC-003, including pagination (`limit`, `offset`), sorting (`sort`, `order`), full-text search (`q`), draft reads, and the supported filter fields.
 - SDK content reads use the Content API default expanded schema file-field response shape defined in SPEC-003 unless the caller sets `fileFields: "raw"` on the SDK read input. In expanded mode, schema file field IDs are replaced in frontmatter with media asset metadata, including `id`, `url`, `mimeType`, `sizeBytes`, and thumbnails when the media record has them. The `fileFields: "raw"` SDK read input sends `fileFields=raw` to the Content API for `get` and `list` reads so responses preserve the original media asset IDs. CLI pull/push authoring flows request `fileFields=raw` for local file serialization.
@@ -121,6 +125,7 @@ The CLI runs on Node.js 22.18 or newer and on Bun. Its published entry point use
 | `cms logout`                 | Clear stored credentials                                                     |
 | `cms pull`                   | Download all content from CMS to local `.md`/`.mdx` files                    |
 | `cms push`                   | Upload local `.md`/`.mdx` files to CMS                                       |
+| `cms push --dry-run`         | Print the push plan without writing anything                                 |
 | `cms push --validate`        | Validate content against schema before pushing                               |
 | `cms push --sync-schema`     | Allow push to sync schema in non-interactive mode on drift (ignored in TTY)  |
 | `cms schema sync`            | Sync `mdcms.config.ts` schema to the server registry                         |
@@ -145,6 +150,8 @@ All commands that interact with server content resolve a target `(project, envir
 | `--no-env-file`        | Disable automatic `.env*` file loading for this run      | No                   |
 | `-V`, `--version`      | Print installed CLI version (`mdcms/<version>`) and exit | No                   |
 | `-h`, `--help`         | Show help and exit                                       | No                   |
+
+`--help` after a command name (for example `mdcms push --help`) prints that command's help when it defines one, and the global help otherwise. Help output does not require a config file, authentication, or server connectivity.
 
 `--version` exits immediately with code 0 and does not require a config file, authentication, or server connectivity. Output format is `mdcms/<semver>` (e.g. `mdcms/0.1.4`), suitable for scripting and troubleshooting.
 
@@ -262,7 +269,7 @@ For each candidate file discovered during `cms init`:
 ### `cms pull`
 
 - Downloads the latest **draft state** from the CMS as `.md`/`.mdx` files into the filesystem (draft-first default).
-- Pull preserves extension from server `content_format` (`md` or `mdx`).
+- Pull names each local file with the extension of the body's content format (SPEC-003 Content Format), applying `inferContentFormat` to the pulled body.
 - Always syncs the full content tree (no selective path filtering).
 - **Plan-first:** Before writing anything, the CLI compares local files against the server state and prints a summary of all changes that will be applied. `cms pull --dry-run` prints the plan and exits without writing.
 
@@ -329,7 +336,7 @@ This will overwrite locally modified files that also changed on server, and dele
 
 - **Locally modified detection:** The CLI hashes each local file and compares it against the `hash` recorded in the manifest. If the local file has been edited since the last pull/push, it is flagged as locally modified.
 - **Remote change detection:** Compares the server's `draftRevision` and `publishedVersion` against the manifest, plus a content hash comparison.
-- **Detects moves/renames:** Compares the manifest's `document_id` → `{ path, format }` mapping against the server. If a document's path and/or format changed (renamed slug, moved folder, or `.md`/`.mdx` extension change), the old local file is deleted and the new file is written at the new deterministic path. If the old file was locally modified, the change is flagged as **Moved/Renamed (locally modified)**.
+- **Detects moves/renames:** Compares the manifest's `document_id` → `{ path, format }` mapping against the server. If a document's path and/or format changed (renamed slug, moved folder, or a body that now needs the other extension), the old local file is deleted and the new file is written at the new deterministic path. If the old file was locally modified, the change is flagged as **Moved/Renamed (locally modified)**.
 - **Detects deletions:** If a document in the manifest is absent from the server response, the corresponding local file is removed.
 - **Unknown types:** Documents whose type is not defined in the local config are skipped with a warning to stderr summarizing the count per type.
 - Records draft revision, published version, content format, and content hash for each document in a scoped manifest (`.mdcms/manifests/<project>.<environment>.json`).
@@ -340,7 +347,7 @@ This will overwrite locally modified files that also changed on server, and dele
 
 - Localized types use deterministic paths: `<document.path>.<locale>.<ext>` (for example: `blog/hello-world.fr.mdx`).
 - Non-localized types use deterministic paths: `<document.path>.<ext>` (for example: `pages/about.md`).
-- `<ext>` is always `md` or `mdx` and is sourced from `documents.content_format`.
+- `<ext>` is always `md` or `mdx`: the content format of the body (SPEC-003 Content Format).
 - The file body stores the mutable head markdown/MDX content from `documents.body`.
 - Frontmatter stores schema fields only (no transport metadata such as revision/version tokens).
 - Transport metadata (`document_id`, `format`, `draftRevision`, `publishedVersion`, content hash) lives only in `.mdcms/manifests/<project>.<environment>.json`.
@@ -349,7 +356,8 @@ This will overwrite locally modified files that also changed on server, and dele
 ### `cms push`
 
 - Uploads changed, new, and deleted local `.md`/`.mdx` files to the CMS server as draft updates (publish is explicit and separate).
-- `cms push` derives `content_format` from file extension (`.md` => `md`, `.mdx` => `mdx`) and rejects unsupported extensions with a deterministic error.
+- `cms push` accepts `.md` and `.mdx` files and rejects other extensions with a deterministic error. The extension does not set the format: the format sent is `inferContentFormat(body)`, and the server derives it from the body regardless.
+- A tracked file renamed locally between `.md` and `.mdx` (same path otherwise) is the same document. `cms push` updates it under its `document_id` and records the new path in the manifest; `cms status` reports it as modified locally; neither treats it as a deletion plus a new file.
 - For known documents, identity is resolved from manifest `document_id`; file path is treated as mutable state that can rename/move without changing document identity.
 - Sends the base draft revision token and latest published version (from the manifest) with each document.
 - Change detection is hash-based against `.mdcms/manifests/<project>.<environment>.json`; unchanged documents are skipped and not sent.
@@ -368,11 +376,13 @@ This will overwrite locally modified files that also changed on server, and dele
 - In interactive mode, deletion candidates are presented as a checkbox selection ("Select files to delete from server:"). Only selected files are soft-deleted on the server via `DELETE /api/v1/content/:documentId`.
 - On successful deletion (or if the server returns 404, meaning it was already deleted), the manifest entry is removed.
 
-#### Interactive selection and `--force`
+#### Preview, interactive selection, and `--yes`
 
-- Without `--force`, two separate checkbox prompts are shown (if applicable): one for new files, one for deletions. A final confirmation prompt summarizes the total action ("Push N changed, N new, N to delete?").
-- With `--force`, all new files are auto-selected for upload, all deletions are auto-selected for removal, and all confirmation prompts are skipped. This is the recommended mode for CI/scripted usage.
-- In non-TTY environments without `--force`, checkbox prompts return empty selections (no new files uploaded, no deletions performed). Changed manifest-tracked files are still pushed normally, without a confirmation prompt, so scripts and agents can push edits as drafts. A hint is printed: "Run with --force to include new/deleted files in non-interactive mode."
+- `cms push --dry-run` prints the push plan (changed, new, and deleted files) and exits `0` without any content or schema writes. It is the way to preview a push and is listed first in `cms push --help`.
+- Without `--yes`, two separate checkbox prompts are shown (if applicable): one for new files, one for deletions. A final confirmation prompt summarizes the total action ("Push <summary>?", where `<summary>` reads "N changed, N new, N to delete document(s) to <project>/<environment>" and omits zero counts).
+- With `-y` or `--yes`, all new files are auto-selected for upload, all deletions are auto-selected for removal, and the confirmation prompt is skipped. Push prints "Pushing <summary> without confirmation (--yes)." before writing. This is the recommended mode for CI/scripted usage that should include new and deleted files.
+- `--force` is accepted as an alias of `--yes` for compatibility and behaves identically. Neither flag overrides any server or preflight check: stale draft revisions, path conflicts, schema hash mismatches, active collaboration locks, and schema drift fail exactly as they do without the flag.
+- In non-TTY environments without `--yes`, checkbox prompts return empty selections (no new files uploaded, no deletions performed). Changed manifest-tracked files are still pushed normally, without a confirmation prompt, so scripts and agents can push edits as drafts. Push prints "Pushing <summary> without confirmation (no terminal). Preview with --dry-run." before writing. When new or deleted files were left out, a hint is printed: "Hint: N new file(s) skipped. Use --yes to include them in non-interactive mode." (or the same hint for deletions).
 
 #### Update fallback on 404
 
@@ -423,6 +433,15 @@ Fetches all draft documents from the server and compares against the local manif
 | **Deleted on server**  | Manifest entry exists but document is absent from server.          |
 | **Moved/Renamed**      | Server path differs from manifest path for the same `documentId`.  |
 | **Unchanged**          | Hash, draft revision, and published version all match.             |
+
+The server path is the local path `cms pull` would write: the server `path` plus the locale segment for localized types and the extension inferred from the body. A tracked file the user renamed between `.md` and `.mdx` is located with the same rule as `cms push`; when that renamed file already sits at the server path, the document is not a move and is classified by hash and revision as above.
+
+Moved/Renamed rows read from the current local path to the path after `cms pull`, under the heading "Moved/Renamed (N): local path -> path after mdcms pull":
+
+- `<local path> -> <server path>       (mdcms pull will move the local file)`
+- When only the extension differs (the server inferred a different format from the body): `<local path> -> <server path>       (the server stores this body as <md|mdx>; mdcms pull will rename the local file)`
+
+Remote documents whose `type` is not defined in the local config are skipped, as `cms pull` skips them: they are not classified, do not count as drift, and their manifest entries are not reported as deleted on server. For each skipped type, a warning is printed to stderr: `Warning: Skipping N document(s) of type "<type>" (not defined in local config).`
 
 #### Schema Drift
 
@@ -482,7 +501,7 @@ the downstream client's clientInfo and repeats that reported identity per call
 using SPEC-015's metadata extension. Multiple local clients have separate bridge
 instances; client identity never comes from a shared credential cache.
 
-The sole CLI-local addition is `sync_schema`, input `{}`, scope schema:write. It
+The CLI-local schema tool is `sync_schema`, input `{}`, scope schema:write. It
 reloads the resolved `mdcms.config.ts` and calls the same performSchemaSync path as
 `mdcms schema sync`, returning its schemaHash/syncedAt/affectedTypes result. Its
 errors include config/load failures and the existing schema sync route errors.
@@ -512,10 +531,35 @@ graph, including config loading and schema sync. Preserve conditional package
 exports and verify a packed artifact with Bun absent from PATH, not merely source
 execution under Bun. The package manifest must declare the tested Node baseline.
 
+#### Local credential diagnostics
+
+The bridge adds `get_credentials_info`, input `{}`, alongside `sync_schema`.
+This read-only diagnostic calls `GET /api/v1/me/capabilities` with the startup
+API key and explicit project/environment. It returns `serverUrl`, `project`,
+`environment`, `capabilities`, capability-derived `grantedScopes`, and `tools`.
+The `tools` map covers the common content/schema tools from the CLI preview:
+get_credentials_info, get_schema, list_documents, get_document, create_document,
+update_document, publish_document and sync_schema. Each entry has requiredScopes
+and allowed, indicating only whether those scopes are granted, not path access
+or the complete remote inventory. Remote discovery and execution remain authoritative.
+If content:publish is absent, `publishing` explains how to supply a publishing key.
+Login/init keys include projects:read, projects:write, schema:read, schema:write,
+content:read, content:read:draft, content:write and content:delete. CLI help lists
+these scopes and the common-tool requirements without contacting the server.
+A rejected key (HTTP 401) produces sanitized login/API-key and restart guidance
+on stderr. Local tool errors preserve the server code, with UNAUTHORIZED as the
+401 fallback, guidance as the message, and status/serverMessage in details.
+Remote MCP results and errors remain unchanged. Diagnostic network failures use
+SERVER_UNREACHABLE; malformed responses use REQUEST_FAILED. Local tool names
+must not collide with the remote registry. Both local tools appear on its final page.
+Content format is inferred by the server from the body as specified in SPEC-003;
+the bridge does not infer or override it.
+
 ### Authentication
 
 - `cms login` starts a browser-based authorization code flow via `/api/v1/auth/cli/login/*`. It requires a config file (`mdcms.config.ts`) so that `project` and `environment` are known.
 - CLI starts a local loopback callback listener (`127.0.0.1`) and exchanges a one-time code for an API key scoped to `(serverUrl, project, environment)`. Both `project` and `environment` are required in the login challenge.
+- Whenever `cms login` or `cms init` starts the browser flow, it prints the sign-in URL in the terminal, also when the browser opened, so the URL can be opened manually. On Windows the URL is passed to `cmd /c start` with `&` escaped as `^&`.
 - After obtaining the key, `cms login` verifies the project exists on the server (`GET /api/v1/projects`). If the project does not exist, the key is revoked (`POST /api/v1/auth/api-keys/self/revoke`) and the command exits with an error directing the user to run `cms init`.
 - The credential store is keyed by server URL, project, and environment and supports one active profile per tuple.
 - In interactive mode, credentials are stored in the OS credential store when available (fallback to `~/.mdcms/credentials.json` with `0600` permissions).

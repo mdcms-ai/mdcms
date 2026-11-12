@@ -5,17 +5,15 @@ import type {
 } from "@mdcms/shared";
 import { createElement, type CSSProperties, type ReactNode } from "react";
 
+import { isBuiltInMdxComponentName } from "./built-in-mdx-component-names.js";
+
+export {
+  BUILT_IN_MDX_COMPONENT_NAMES,
+  isBuiltInMdxComponentName,
+  type BuiltInMdxComponentName,
+} from "./built-in-mdx-component-names.js";
+
 const BUILT_IN_IMPORT_PATH = "@mdcms/sdk/react-primitives";
-
-export const BUILT_IN_MDX_COMPONENT_NAMES = [
-  "Box",
-  "Text",
-  "Image",
-  "Link",
-] as const;
-
-export type BuiltInMdxComponentName =
-  (typeof BUILT_IN_MDX_COMPONENT_NAMES)[number];
 
 export type StudioMdxComponentRegistration = {
   name: string;
@@ -28,14 +26,6 @@ export type StudioMdxComponentRegistration = {
   extractedProps?: MdxExtractedProps;
   builtIn?: true;
 };
-
-const builtInMdxComponentNameSet = new Set<string>(
-  BUILT_IN_MDX_COMPONENT_NAMES,
-);
-
-export function isBuiltInMdxComponentName(name: string): boolean {
-  return builtInMdxComponentNameSet.has(name);
-}
 
 export function assertNoBuiltInMdxComponentNames(
   components: readonly { name: string }[] = [],

@@ -37,6 +37,7 @@ import {
   unwrapSelectedMdxComponent,
   wrapSelectedBlockInBox,
 } from "./visual-composition-commands.js";
+import { MdxPreviewErrorBoundary } from "../../../mdx-preview-error-boundary.js";
 
 const MDX_EDITABLE_SLOT_SELECTOR = "[data-mdcms-mdx-editable-slot]";
 
@@ -326,6 +327,21 @@ function isInsideEditableSlot(
   return editableSlot !== null && currentTarget.contains(editableSlot);
 }
 
+/**
+ * A string that changes whenever a wrapper's props change, used to retry a
+ * failed preview. Props that cannot be serialized fall back to their key
+ * names.
+ */
+export function serializePreviewResetKey(
+  props: Record<string, unknown>,
+): string {
+  try {
+    return JSON.stringify(props) ?? "";
+  } catch {
+    return Object.keys(props).sort().join(",");
+  }
+}
+
 function MdxComponentEditableSurface(input: {
   component: unknown;
   componentName: string;
@@ -368,7 +384,19 @@ function MdxComponentEditableSurface(input: {
       onKeyDownCapture={keepHostPreviewInert}
       onPasteCapture={keepHostPreviewInert}
     >
-      {createElement(Component, input.props, editableSlot)}
+      <MdxPreviewErrorBoundary
+        componentName={input.componentName}
+        resetKey={serializePreviewResetKey(input.props)}
+        fallback={
+          // The editable slot keeps the nested content editable: events
+          // outside it are blocked by keepHostPreviewInert.
+          <div data-mdcms-mdx-preview-error={input.componentName}>
+            {editableSlot}
+          </div>
+        }
+      >
+        {createElement(Component, input.props, editableSlot)}
+      </MdxPreviewErrorBoundary>
     </div>
   );
 }

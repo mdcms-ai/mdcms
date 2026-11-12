@@ -71,7 +71,7 @@ Out:
 ## Completed integration
 
 - The registry exposes 27 remote tools across content, schema, translations,
-  versions, media, environments and webhooks. The CLI adds local `sync_schema`.
+  versions, media, environments and webhooks. The CLI adds local `sync_schema` and `get_credentials_info`.
 - Clone/promote checks source and destination scopes, tuples and paths inside
   the transaction, persists authenticated attribution and rejects promotion into
   an active collaboration room without committing partial changes.

@@ -84,7 +84,7 @@ test("bridges discovery, identity, target and results without retries", async ()
     const last = await client.listTools({ cursor: first.nextCursor });
     assert.deepEqual(
       last.tools.map((t) => t.name),
-      ["remote_write", "sync_schema"],
+      ["remote_write", "sync_schema", "get_credentials_info"],
     );
     assert.deepEqual(
       await client.callTool({
@@ -337,3 +337,133 @@ for (const failedMethod of ["tools/list", "tools/call"]) {
     }
   });
 }
+
+test("local credentials diagnostic preserves scope guidance and sanitizes failures", async () => {
+  let status = 200;
+  let malformed = false;
+  let networkFailure = false;
+  let unauthorized = 0;
+  let requests = 0;
+  const fetcher = (async (url: unknown, init?: RequestInit) => {
+    requests++;
+    assert.equal(String(url), "http://localhost:1234/api/v1/me/capabilities");
+    assert.equal(init?.redirect, "error");
+    const headers = new Headers(init?.headers);
+    assert.equal(headers.get("authorization"), "Bearer test-secret");
+    assert.equal(headers.get("x-mdcms-project"), "project");
+    assert.equal(headers.get("x-mdcms-environment"), "staging");
+    if (networkFailure) throw new Error("test-secret");
+    return new Response(
+      JSON.stringify(
+        malformed
+          ? {}
+          : status === 200
+            ? {
+                data: {
+                  capabilities: {
+                    schema: { read: true, write: true },
+                    content: { readDraft: true, write: true, publish: false },
+                  },
+                },
+              }
+            : {
+                code: status === 401 ? "UNAUTHORIZED" : "FORBIDDEN",
+                message: "Rejected test-secret Bearer another-secret",
+              },
+      ),
+      {
+        status,
+        headers: { "content-type": "application/json" },
+      },
+    );
+  }) as typeof fetch;
+  const server = createMdcmsMcpServer({
+    serverUrl: "http://localhost:1234",
+    project: "project",
+    environment: "staging",
+    apiKey: "test-secret",
+    cwd: ".",
+    configPath: "mdcms.config.ts",
+    fetcher,
+    onUnauthorized: () => unauthorized++,
+  });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: "diagnostics-test", version: "1" });
+  await server.connect(a);
+  await client.connect(b);
+  const call = async () => {
+    const result = await client.callTool({
+      name: "get_credentials_info",
+      arguments: {},
+    });
+    const text = (result.content as Array<{ text: string }>)[0]!.text;
+    assert.ok(!text.includes("test-secret"));
+    assert.ok(!text.includes("another-secret"));
+    return { result, payload: JSON.parse(text) };
+  };
+  try {
+    const { result, payload } = await call();
+    assert.equal(result.isError, false);
+    assert.equal(payload.project, "project");
+    assert.equal(payload.environment, "staging");
+    assert.equal(payload.tools.update_document.allowed, true);
+    assert.equal(payload.tools.publish_document.allowed, false);
+    assert.deepEqual(payload.tools.publish_document.requiredScopes, [
+      "content:publish",
+    ]);
+    assert.match(payload.publishing, /Studio/);
+    assert.ok(payload.grantedScopes.includes("schema:write"));
+    const before = requests;
+    await assert.rejects(
+      client.callTool({
+        name: "get_credentials_info",
+        arguments: { project: "other" },
+      }),
+      /accepts no arguments/,
+    );
+    assert.equal(requests, before);
+    status = 401;
+    const denied = await call();
+    assert.equal(denied.result.isError, true);
+    assert.equal(denied.payload.code, "UNAUTHORIZED");
+    assert.equal(denied.payload.details.status, 401);
+    assert.match(denied.payload.message, /mdcms login/);
+    assert.match(denied.payload.message, /restart/);
+    assert.equal(unauthorized, 1);
+    status = 403;
+    assert.equal((await call()).payload.code, "FORBIDDEN");
+    status = 200;
+    malformed = true;
+    assert.equal((await call()).payload.code, "REQUEST_FAILED");
+    networkFailure = true;
+    assert.equal((await call()).payload.code, "SERVER_UNREACHABLE");
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
+test("MCP help exposes scope and publish guidance without config or credentials", async () => {
+  let stdout = "";
+  const code = await runMdcmsCli(["mcp", "--help"], {
+    commands: [createMcpCommand()],
+    env: {},
+    loadConfig: async () => {
+      throw new Error("Help must not load config");
+    },
+    resolveStoredApiKey: async () => {
+      throw new Error("Help must not load credentials");
+    },
+    stdout: {
+      write: (chunk) => {
+        stdout += chunk;
+      },
+    },
+  });
+  assert.equal(code, 0);
+  assert.match(stdout, /get_credentials_info/);
+  assert.match(stdout, /content:publish/);
+  assert.match(stdout, /schema:read, content:read:draft, content:write/);
+  assert.match(stdout, /projects:write/);
+  assert.match(stdout, /Studio/);
+});

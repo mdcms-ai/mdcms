@@ -1,37 +1,26 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import type { MdcmsConfig } from "@mdcms/studio";
+import type { SerializableStudioConfig } from "@mdcms/studio/client-config";
 
-import {
-  createClientStudioConfig,
-  extractPreparedStudioComponentMetadata,
-} from "./studio-config";
+import { createAdminStudioClientConfig } from "./studio-config";
 
-test("extractPreparedStudioComponentMetadata strips non-serializable fields", () => {
-  const metadata = extractPreparedStudioComponentMetadata({
-    project: "marketing-site",
-    environment: "staging",
-    serverUrl: "http://localhost:4000",
-    components: [
-      {
-        name: "Chart",
-        importPath: "./components/mdx/Chart",
-        load: async () => null,
-        extractedProps: {
-          data: {
-            type: "array",
-            items: "number",
-            required: true,
-          },
-        },
-      },
-    ],
-  } satisfies MdcmsConfig);
-
-  assert.deepEqual(metadata, [
+const serializableConfig: SerializableStudioConfig = {
+  project: "marketing-site",
+  environment: "staging",
+  serverUrl: "http://localhost:4000",
+  contentDirectories: ["content"],
+  locales: { default: "en", supported: ["en", "fr"] },
+  types: [
+    { name: "post", directory: "content/posts" },
+    { name: "author", directory: "content/authors" },
+    { name: "page", directory: "content/pages" },
+    { name: "campaign", directory: "content/campaigns", localized: true },
+  ],
+  components: [
     {
       name: "Chart",
+      importPath: "./components/mdx/Chart",
       extractedProps: {
         data: {
           type: "array",
@@ -40,25 +29,22 @@ test("extractPreparedStudioComponentMetadata strips non-serializable fields", ()
         },
       },
     },
-  ]);
-});
-
-test("createClientStudioConfig merges prepared extracted props onto authored components", () => {
-  const config = createClientStudioConfig([
     {
-      name: "Chart",
-      extractedProps: {
-        data: {
-          type: "array",
-          items: "number",
-          required: true,
-        },
-      },
+      name: "PricingTable",
+      importPath: "./components/mdx/PricingTable",
+      propsEditor: "./components/mdx/PricingTable.editor",
     },
-  ]);
+  ],
+  _schemaHash: "schema-hash",
+};
 
+test("createAdminStudioClientConfig attaches the example component loaders", () => {
+  const config = createAdminStudioClientConfig(serializableConfig);
   const chart = config.components?.find(
     (component) => component.name === "Chart",
+  );
+  const pricingTable = config.components?.find(
+    (component) => component.name === "PricingTable",
   );
 
   assert.equal(typeof chart?.load, "function");
@@ -69,10 +55,13 @@ test("createClientStudioConfig merges prepared extracted props onto authored com
       required: true,
     },
   });
+  assert.equal(typeof pricingTable?.load, "function");
+  assert.equal(typeof pricingTable?.loadPropsEditor, "function");
+  assert.equal(config._schemaHash, "schema-hash");
 });
 
-test("createClientStudioConfig preserves explicit locale metadata", () => {
-  const config = createClientStudioConfig([]);
+test("createAdminStudioClientConfig preserves explicit locale metadata", () => {
+  const config = createAdminStudioClientConfig(serializableConfig);
 
   assert.deepEqual(config.locales, {
     default: "en",
@@ -80,8 +69,8 @@ test("createClientStudioConfig preserves explicit locale metadata", () => {
   });
 });
 
-test("createClientStudioConfig includes content type preview URL resolvers", () => {
-  const config = createClientStudioConfig([]);
+test("createAdminStudioClientConfig includes content type preview URL resolvers", () => {
+  const config = createAdminStudioClientConfig(serializableConfig);
   const post = config.types?.find((type) => type.name === "post");
   const page = config.types?.find((type) => type.name === "page");
   const author = config.types?.find((type) => type.name === "author");

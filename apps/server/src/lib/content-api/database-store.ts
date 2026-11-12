@@ -2,7 +2,11 @@ import type { ContentWriteAttribution } from "@mdcms/shared";
 import { originField } from "./responses.js";
 import { randomUUID } from "node:crypto";
 
-import { RuntimeError, type SchemaRegistryTypeSnapshot } from "@mdcms/shared";
+import {
+  RuntimeError,
+  type SchemaRegistryTypeSnapshot,
+  inferContentFormat,
+} from "@mdcms/shared";
 import { and, eq, inArray, ne, sql, type SQL } from "drizzle-orm";
 
 import type { DrizzleDatabase } from "../db.js";
@@ -34,7 +38,6 @@ import {
   parseBoolean,
   parseContentListGroupBy,
   parseContentSearchQuery,
-  parseContentFormat,
   parseOptionalString,
   parsePositiveInt,
   parseSortField,
@@ -285,7 +288,7 @@ export function createDatabaseContentStore(
       path: versionRow.path,
       type: versionRow.schemaType,
       locale: versionRow.locale,
-      format: versionRow.contentFormat as ContentFormat,
+      format: inferContentFormat(versionRow.body),
       isDeleted: headRow.isDeleted,
       hasUnpublishedChanges: headRow.hasUnpublishedChanges,
       version: versionRow.version,
@@ -431,7 +434,7 @@ export function createDatabaseContentStore(
       environmentId: input.headRow.environmentId,
       schemaType: input.snapshot.type,
       locale: input.snapshot.locale,
-      contentFormat: input.snapshot.format,
+      contentFormat: inferContentFormat(input.snapshot.body),
       path: input.snapshot.path,
       body: input.snapshot.body,
       frontmatter: input.snapshot.frontmatter,
@@ -570,7 +573,8 @@ export function createDatabaseContentStore(
         allowEmpty: true,
       });
       const frontmatter = assertJsonObject(payload.frontmatter, "frontmatter");
-      const format = parseContentFormat(payload.format);
+      // The format follows the body; a client-sent format is ignored.
+      const format = inferContentFormat(body);
       const scopeIds = await resolveScopeIds(scope, true);
 
       if (!scopeIds) {
@@ -1227,10 +1231,15 @@ export function createDatabaseContentStore(
               path: nextPath,
               schemaType: nextType,
               locale: nextLocale,
-              contentFormat:
-                payload.format !== undefined
-                  ? parseContentFormat(payload.format)
-                  : existing.contentFormat,
+              // The format follows the resulting body; a client-sent format
+              // is ignored.
+              contentFormat: inferContentFormat(
+                payload.body !== undefined
+                  ? assertRequiredString(payload.body, "body", {
+                      allowEmpty: true,
+                    })
+                  : existing.body,
+              ),
               frontmatter: normalizedFrontmatter,
               body:
                 payload.body !== undefined
@@ -1434,6 +1443,7 @@ export function createDatabaseContentStore(
         const [updated] = await tx
           .update(documents)
           .set({
+            contentFormat: inferContentFormat(existing.body),
             isDeleted: true,
             hasUnpublishedChanges: true,
             draftRevision: sql`${documents.draftRevision} + 1`,
@@ -1522,7 +1532,7 @@ export function createDatabaseContentStore(
                 path: existing.path,
                 type: existing.schemaType,
                 locale: existing.locale,
-                format: existing.contentFormat as ContentFormat,
+                format: inferContentFormat(existing.body),
                 frontmatter: existing.frontmatter as Record<string, unknown>,
                 body: existing.body,
               },
@@ -1534,6 +1544,7 @@ export function createDatabaseContentStore(
             .update(documents)
             .set({
               isDeleted: false,
+              contentFormat: inferContentFormat(existing.body),
               publishedVersion,
               hasUnpublishedChanges: publishedVersion === null,
               draftRevision: sql`${documents.draftRevision} + 1`,
@@ -1779,7 +1790,7 @@ export function createDatabaseContentStore(
           path: versionRow.path,
           schemaType: versionRow.schemaType,
           locale: versionRow.locale,
-          contentFormat: versionRow.contentFormat as ContentFormat,
+          contentFormat: inferContentFormat(versionRow.body),
           frontmatter: versionRow.frontmatter as Record<string, unknown>,
           body: versionRow.body,
           isDeleted: false,
@@ -1801,7 +1812,7 @@ export function createDatabaseContentStore(
               path: versionRow.path,
               type: versionRow.schemaType,
               locale: versionRow.locale,
-              format: versionRow.contentFormat as ContentFormat,
+              format: inferContentFormat(versionRow.body),
               frontmatter: versionRow.frontmatter as Record<string, unknown>,
               body: versionRow.body,
             },
@@ -1923,7 +1934,7 @@ export function createDatabaseContentStore(
             path: existing.path,
             type: existing.schemaType,
             locale: existing.locale,
-            format: existing.contentFormat as ContentFormat,
+            format: inferContentFormat(existing.body),
             frontmatter: existing.frontmatter as Record<string, unknown>,
             body: existing.body,
           },
@@ -1935,6 +1946,7 @@ export function createDatabaseContentStore(
         const [updated] = await tx
           .update(documents)
           .set({
+            contentFormat: inferContentFormat(existing.body),
             publishedVersion: nextVersion,
             hasUnpublishedChanges: false,
             updatedBy: input.attribution.actorId,
@@ -2019,6 +2031,7 @@ export function createDatabaseContentStore(
         const [updated] = await tx
           .update(documents)
           .set({
+            contentFormat: inferContentFormat(existing.body),
             publishedVersion: null,
             hasUnpublishedChanges: true,
             updatedBy: input.attribution.actorId,

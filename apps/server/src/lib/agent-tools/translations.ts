@@ -51,16 +51,12 @@ export const translationTools = [
       locale: text,
       frontmatter: z.record(z.string(), z.unknown()),
       body: z.string(),
-      format: z.enum(["md", "mdx"]).optional(),
+      format: z.unknown().optional(),
       schemaHash: text,
     }),
     outputSchema: documentEnvelopeSchema,
     execute: async ({ schemaHash, ...body }, { dispatch }) => {
-      await validateAgentDocument(
-        dispatch,
-        { ...body, format: body.format ?? "md" },
-        schemaHash,
-      );
+      await validateAgentDocument(dispatch, body, schemaHash);
       return dispatchJson(dispatch, {
         method: "POST",
         path: "/api/v1/content",

@@ -24,6 +24,7 @@ Not for importing content, embedding Studio, or editing individual documents —
 ## Core concepts
 
 - **Type** — a content kind (e.g. `post`, `page`, `author`). Declared via `defineType(name, { directory, fields, ... })`.
+- **Imports**: `defineConfig`, `defineType`, `fieldTypes` and `z` all come from `@mdcms/cli`, as in the config `mdcms init` writes. `@mdcms/cli` re-exports `defineConfig`, `defineType` and `fieldTypes` from `@mdcms/shared` (so they do not appear by name in the CLI's own source) and `z` from `zod`, which keeps the config on the CLI's Zod instance.
 - **Field** — a Zod validator attached to a frontmatter key. Typical shapes: `z.string().min(1)`, `z.number().optional()`, `z.boolean().default(false)`, `z.array(z.string())`, `z.enum([...])`.
 - **Reference** — `fieldTypes.reference("<target-type>")` makes a field point to a document of another type. References are resolved by the SDK and surfaced in Studio as pickers.
 - **Localized type** — `localized: true` on `defineType` makes every document live in multiple locale variants grouped by a shared translation group id.
@@ -50,8 +51,7 @@ Edit `mdcms.config.ts`. Common patterns:
 **Add a new type**
 
 ```ts
-import { defineType, fieldTypes } from "@mdcms/cli";
-import { z } from "zod";
+import { defineConfig, defineType, fieldTypes, z } from "@mdcms/cli";
 
 const author = defineType("author", {
   directory: "content/authors",
@@ -113,7 +113,14 @@ Localized types require the `locales` config at the root of `defineConfig(...)` 
 npx mdcms status
 ```
 
-This shows local content vs server state and whether the schema is in sync. After a config edit it will say the schema is drifted.
+This compares local content with the server and the config's schema with the last sync. After a config edit, the `Schema:` section reads:
+
+```text
+Schema:
+  Local schema differs from last sync. Run `mdcms schema sync`.
+```
+
+Older CLI versions print `cms schema sync` here; the command is `mdcms schema sync` either way. `mdcms status` exits with code 1 while content or schema differs.
 
 ### 4. Sync the schema to the server
 
@@ -135,7 +142,14 @@ If the change is rejected:
 npx mdcms status
 ```
 
-Expected: `schema: in sync`. Existing documents are unchanged on disk; they just now validate against the new schema.
+Expected `Schema:` section:
+
+```text
+Schema:
+  In sync (synced 2026-05-04T10:12:33.000Z)
+```
+
+The timestamp is the time of the last `mdcms schema sync`. Existing documents are unchanged on disk; they now validate against the new schema.
 
 Open Studio and confirm the new type/field appears in the document editor.
 
@@ -143,10 +157,10 @@ Open Studio and confirm the new type/field appears in the document editor.
 
 If the refinement added a new type, author the first document by either:
 
-- Creating the file on disk and running `mdcms push`, or
+- Creating the file on disk, checking the plan with `mdcms push --dry-run`, then running `mdcms push` (without a terminal, a new file is uploaded only with `--force`; see **`mdcms-content-sync-workflow`**), or
 - Adding it via Studio directly.
 
-If the refinement added a new field to an existing type, go update the affected documents (locally via editor + `mdcms push`, or in Studio).
+If the refinement added a new field to an existing type, go update the affected documents (locally via editor + `mdcms push --dry-run` then `mdcms push`, or in Studio).
 
 ## Gotchas
 
@@ -164,6 +178,6 @@ If the refinement added a new field to an existing type, go update the affected 
 
 ## Assumptions and limitations
 
-- Schema validators are Zod. The MDCMS CLI currently ships `defineType`, `defineConfig`, and `fieldTypes` from `@mdcms/cli` — verify that import path if the repo's packaging has changed.
+- Schema validators are Zod. `@mdcms/cli` exports `defineConfig`, `defineType`, `fieldTypes` (re-exported from `@mdcms/shared`) and `z`; import them from `@mdcms/cli`.
 - This skill does not write content migrations. For shape-breaking changes (required field, rename), hand off to the user or an MDCMS migration skill when it exists.
 - Every schema change is pushed server-side; make one coherent edit per sync rather than batching many unrelated changes.

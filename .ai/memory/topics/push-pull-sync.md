@@ -41,6 +41,8 @@ The full CLI command set is `init`, `login`, `logout`, `pull`, `push`, `schema s
 - **Schema-checked at push.** The `x-mdcms-schema-hash` header pins the request against the schema the file was authored under (see ADR-006). Server rejects pushes against stale schemas before any partial write.
 - **Environment + locale isolation.** Pull/push are scoped — pulling `prod` never overwrites `draft` and vice versa.
 
+- **Format follows the body.** `md` vs `mdx` is not chosen by the file extension or stored by users: `inferContentFormat(body)` in `@mdcms/shared` decides it (a capitalized JSX element or an `import`/`export` line outside code makes it `mdx`). Push sends that format, the server recomputes it on every write and in responses, and pull names files after it. A tracked file renamed between `.md` and `.mdx` is matched to its document by `resolveTrackedFilePath` in `apps/cli/src/lib/discover.ts`, so it is never a delete plus a create.
+
 ## Cross-refs
 
 - Spec: `docs/specs/SPEC-008-cli-and-sdk.md`, `docs/specs/SPEC-003-content-storage-versioning-and-migrations.md`

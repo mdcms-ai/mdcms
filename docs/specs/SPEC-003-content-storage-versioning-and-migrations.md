@@ -128,6 +128,16 @@ ALTER TABLE documents
   ON DELETE RESTRICT;
 ```
 
+### Content Format
+
+A document's format (`md` or `mdx`) is not user-managed. It is derived from the body by one rule, `inferContentFormat(body)` in `@mdcms/shared`, which the server, Studio, the SDK renderer and the CLI all use:
+
+- Code is ignored: fenced code blocks (backtick or tilde fences; the opening and closing fences may each be indented zero to three spaces; an unclosed fence runs to the end of the body), indented code blocks (lines indented by four spaces or a tab that start after a blank line, outside lists), and inline code spans.
+- Outside code, the body is `mdx` when it contains a JSX element whose name starts with a capital letter (`<Cta />`, `<Callout>`, `<Docs.Note>`) that does not directly follow a letter or digit, so inline Markdown markers and punctuation may precede it (`**<Cta />**`, `Hello,<Cta />`) while `Array<T>` does not count, or a line that starts with `import ` or `export `.
+- Otherwise the body is `md`. Lowercase HTML tags (`<div>`) and `{braces}` alone keep a body `md`.
+
+The server computes the format on every write from the resulting body and stores it in `content_format`. Write payloads may still include `format` for compatibility with older clients; the value is ignored and never rejected. Document, list and version-document responses return the format derived from the returned body, so documents written before this rule report the format their body needs. Version summaries without a body return the format stored with that version.
+
 ### Document Lifecycle
 
 ```mermaid

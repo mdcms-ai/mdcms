@@ -98,7 +98,7 @@ npx mdcms status
 
 You should see:
 
-- `schema: in sync`
+- a `Schema:` section that reads `In sync (synced <timestamp>)`
 - content documents equal to the import count reported by `init`
 
 Open Studio (`<server-url>/admin/studio`) and navigate to the imported type — the content should appear there.

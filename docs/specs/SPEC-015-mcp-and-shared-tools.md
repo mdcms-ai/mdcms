@@ -107,7 +107,7 @@ mapped endpoint's owning spec are preserved, without rewriting them to success.
 | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | list_documents          | `{type?, locale?, q?, path?, isDeleted?:boolean, published?:boolean, hasUnpublishedChanges?:boolean, limit?:integer, offset?:integer}`  | GET C with draft=true                        | content:read:draft; document list envelope                                                            |
 | get_document            | `{documentId}`                                                                                                                          | GET C/:documentId?draft=true                 | content:read:draft; document envelope                                                                 |
-| create_document         | `{type, path, frontmatter:object, body:string, locale, format?:"md" or "mdx", schemaHash}`                                              | POST C                                       | schema:read, content:write; document envelope                                                         |
+| create_document         | `{type, path, frontmatter:object, body:string, locale, format?:unknown, schemaHash}`                                                    | POST C                                       | schema:read, content:write; document envelope                                                         |
 | update_document         | `{documentId, frontmatter?:object, body?:string, path?:string, schemaHash}`                                                             | GET draft then PUT C/:documentId             | schema:read, content:read:draft, content:write; document envelope                                     |
 | duplicate_document      | `{documentId, schemaHash}`                                                                                                              | POST C/:documentId/duplicate                 | content:write; document envelope                                                                      |
 | delete_document         | `{documentId}`                                                                                                                          | DELETE C/:documentId                         | content:delete; soft-deleted document envelope                                                        |
@@ -118,7 +118,7 @@ mapped endpoint's owning spec are preserved, without rewriting them to success.
 | get_version             | `{documentId, version:integer}`                                                                                                         | GET C/:documentId/versions/:version          | content:read; version document envelope                                                               |
 | restore_version         | `{documentId, version:integer, targetStatus?:"draft" or "published"}`                                                                   | POST C/:documentId/versions/:version/restore | content:write for draft, content:publish for published; document envelope                             |
 | list_translations       | `{documentId}`                                                                                                                          | GET C/:documentId/variants                   | content:read; translation variant envelope                                                            |
-| create_translation      | `{sourceDocumentId, type, path, locale, frontmatter:object, body:string, format?:"md" or "mdx", schemaHash}`                            | POST C                                       | schema:read, content:write; document envelope                                                         |
+| create_translation      | `{sourceDocumentId, type, path, locale, frontmatter:object, body:string, format?:unknown, schemaHash}`                                  | POST C                                       | schema:read, content:write; document envelope                                                         |
 | get_schema              | `{}`                                                                                                                                    | GET /api/v1/schema                           | schema:read; types, schemaHash and syncedAt envelope                                                  |
 | list_media              | `{q?, category?, uploadedBy?, uploadedFrom?, uploadedTo?, sort?, order?, limit?:integer, offset?:integer}`                              | GET /api/v1/media                            | media:read; assets, pagination and storage envelope                                                   |
 | get_media               | `{id}`                                                                                                                                  | GET /api/v1/media/:id                        | media:read; asset envelope                                                                            |
@@ -142,6 +142,9 @@ key), validate the merged document and send the read draftRevision. Concurrent
 changes fail with STALE_DRAFT_REVISION (409), never an automatic retry. Moving a
 path must satisfy grants for both the source and destination. Create locale and
 format follow SPEC-003 and SPEC-009; locale cannot be guessed from a user identity.
+Compatibility `format` inputs are accepted and ignored. Validation infers the
+format from the resulting body before checking MDX syntax, including updates
+and Assistant writes through the shared tools.
 Create requires an explicit locale, including `__mdcms_default__` for a
 non-localized type. Missing locale is rejected before dispatch with INVALID_INPUT.
 
@@ -200,8 +203,11 @@ side effects. Dry run does not make a generally mutating tool read-only.
 ## Verification and operator workflow
 
 Remote clients connect to `<server>/api/v1/mcp` using OAuth consent or an API key
-with explicit target headers. Local clients use SPEC-008's stdio bridge and local
-sync_schema tool. Schema-changing work first syncs schema, reads the resulting
+with explicit target headers. Local clients use SPEC-008's stdio bridge with two local tools:
+sync_schema and the read-only get_credentials_info capabilities diagnostic.
+The diagnostic is an explicit exception to remote registry ownership, performs
+only a target-bound capabilities read, and does not implement remote content
+operations. The remote inventory remains 27 tools; the bridge adds these two. Schema-changing work first syncs schema, reads the resulting
 hash, then passes that hash to write tools. Reads do not silently acknowledge a
 schema change on behalf of a caller.
 

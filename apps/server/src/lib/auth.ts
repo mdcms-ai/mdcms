@@ -4473,10 +4473,12 @@ export function createAuthService(
         });
       }
 
+      // The challenge goes in the path so the URL has a single query
+      // parameter: Windows opens it through `cmd /c start`, which treats `&`
+      // as a command separator and would drop everything after it.
       const authorizeUrl = appendQueryParams(
-        `${baseUrl}/api/v1/auth/cli/login/authorize`,
+        `${baseUrl}${CLI_LOGIN_AUTHORIZE_PATH}/${encodeURIComponent(challenge.id)}`,
         {
-          challenge: challenge.id,
           state,
         },
       );
@@ -5686,13 +5688,21 @@ function requireSessionPayload(
   return session;
 }
 
+const CLI_LOGIN_AUTHORIZE_PATH = "/api/v1/auth/cli/login/authorize";
+
 function parseCliLoginAuthorizeQuery(request: Request): {
   challengeId: string;
   state: string;
 } {
   const url = new URL(request.url);
+  // `/authorize/:challenge?state=` (current) or `/authorize?challenge=&state=`.
+  const pathChallenge = url.pathname.startsWith(`${CLI_LOGIN_AUTHORIZE_PATH}/`)
+    ? decodeURIComponent(
+        url.pathname.slice(CLI_LOGIN_AUTHORIZE_PATH.length + 1),
+      )
+    : undefined;
   const challengeId = assertNonEmptyString(
-    url.searchParams.get("challenge"),
+    url.searchParams.get("challenge") ?? pathChallenge,
     "challenge",
   );
   const state = assertNonEmptyString(url.searchParams.get("state"), "state");
@@ -5952,7 +5962,7 @@ export function mountAuthRoutes(
     }),
   );
 
-  authApp.get?.("/api/v1/auth/cli/login/authorize", ({ request }: any) =>
+  const handleCliLoginAuthorizeGet = ({ request }: any) =>
     executeWithRuntimeErrorsHandled(request, async () => {
       const query = parseCliLoginAuthorizeQuery(request);
 
@@ -6017,10 +6027,15 @@ export function mountAuthRoutes(
             : {}),
         },
       );
-    }),
+    });
+
+  authApp.get?.(CLI_LOGIN_AUTHORIZE_PATH, handleCliLoginAuthorizeGet);
+  authApp.get?.(
+    `${CLI_LOGIN_AUTHORIZE_PATH}/:challenge`,
+    handleCliLoginAuthorizeGet,
   );
 
-  authApp.post?.("/api/v1/auth/cli/login/authorize", ({ request, body }: any) =>
+  const handleCliLoginAuthorizePost = ({ request, body }: any) =>
     executeWithRuntimeErrorsHandled(request, async () => {
       const query = parseCliLoginAuthorizeQuery(request);
       let email: string | undefined;
@@ -6137,7 +6152,12 @@ export function mountAuthRoutes(
             : {}),
         },
       );
-    }),
+    });
+
+  authApp.post?.(CLI_LOGIN_AUTHORIZE_PATH, handleCliLoginAuthorizePost);
+  authApp.post?.(
+    `${CLI_LOGIN_AUTHORIZE_PATH}/:challenge`,
+    handleCliLoginAuthorizePost,
   );
 
   authApp.post?.("/api/v1/auth/cli/login/exchange", ({ request, body }: any) =>

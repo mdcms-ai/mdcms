@@ -42,11 +42,21 @@ If the user prefers a different starter directory, pass `--directory <path>` —
 
 ### 2. Push the example to the server
 
+`init` writes the file locally but does not import it, so `push` sees it as a new file. Check the plan first:
+
 ```bash
-npx mdcms push
+npx mdcms push --dry-run
 ```
 
-`init` writes the file locally but does not import it. Running `push` uploads it so the user can immediately open Studio and see a real draft document.
+The plan should list `content/posts/example.md` as the only new file. Then push it:
+
+```bash
+npx mdcms push --force
+```
+
+Without a terminal (as when an agent runs the command), `push` skips new files unless `--force` is passed. `--force` only skips the prompts that choose new and deleted files; it uploads every new file and applies every deletion in the plan, which is why the dry run comes first. In an interactive terminal, plain `npx mdcms push` asks which new files to upload instead.
+
+After the push, the user can open Studio and see a real draft document.
 
 ### 3. Decide on the content model
 
@@ -65,14 +75,14 @@ npx mdcms status
 
 Expected:
 
-- `schema: in sync`
+- a `Schema:` section that reads `In sync (synced <timestamp>)`
 - at least one document (the example post) if `push` ran
 
 Open Studio at `<server-url>/admin/studio` and confirm the example post appears under the `Post` type.
 
 ### 5. Commit the starter
 
-Commit `mdcms.config.ts` and the `content/posts/example.md` scaffold if the user wants it as a starting point. If the user intends to delete the example and author real content immediately, the file can be dropped — but push again after removal so the server reflects it.
+Commit `mdcms.config.ts` and the `content/posts/example.md` scaffold if the user wants it as a starting point. If the user intends to delete the example and author real content immediately, the file can be dropped, but push again after removal so the server reflects it (`npx mdcms push --dry-run` first: the deletion only applies when confirmed in a terminal or with `--force`).
 
 ## Common follow-ups
 

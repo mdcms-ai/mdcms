@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { extname, join } from "node:path";
 
-import { discoverUntrackedFiles } from "./discover.js";
+import { discoverUntrackedFiles, resolveTrackedFilePath } from "./discover.js";
 
 import type { ContentDocumentResponse } from "@mdcms/shared";
 import {
@@ -10,6 +10,7 @@ import {
   serializeResolvedEnvironmentSchema,
   validateSchemaRegistryListResponse,
   type ParsedMdcmsConfig,
+  inferContentFormat,
 } from "@mdcms/shared";
 import { buildSchemaSyncPayload } from "@mdcms/shared/server";
 import { parse as parseYaml } from "yaml";
@@ -36,6 +37,10 @@ import {
 } from "./manifest.js";
 
 type PushOptions = {
+  /**
+   * Set by `--yes`, `-y`, or `--force`: include every new and deleted file and
+   * skip the confirmation prompt. It does not override conflicts or checks.
+   */
   force: boolean;
   published: boolean;
   validate: boolean;
@@ -104,6 +109,8 @@ export function parsePushOptions(args: string[]): PushOptions {
     if (
       token === "--published" ||
       token === "--force" ||
+      token === "--yes" ||
+      token === "-y" ||
       token === "--validate" ||
       token === "--dry-run" ||
       token === "--sync-schema"
@@ -123,7 +130,8 @@ export function parsePushOptions(args: string[]): PushOptions {
   }
 
   return {
-    force: args.includes("--force"),
+    force:
+      args.includes("--force") || args.includes("--yes") || args.includes("-y"),
     published: args.includes("--published"),
     validate: args.includes("--validate"),
     dryRun: args.includes("--dry-run"),
@@ -133,9 +141,11 @@ export function parsePushOptions(args: string[]): PushOptions {
 
 export function renderPushHelp(): string {
   return [
-    "Usage: mdcms push [--force] [--dry-run] [--validate] [--published] [--sync-schema]",
+    "Usage: mdcms push [--dry-run] [--yes] [--validate] [--sync-schema] [--published]",
     "",
     "Upload local markdown files to CMS as draft content.",
+    "",
+    "Preview first: `mdcms push --dry-run` prints the push plan and writes nothing.",
     "",
     "Behavior:",
     "  - Changed manifest-tracked files are updated on the server.",
@@ -147,10 +157,16 @@ export function renderPushHelp(): string {
     "    the local config's schema hash against the server. On drift in",
     "    interactive mode, push prompts once to sync. In non-interactive mode,",
     "    push fails closed unless --sync-schema is supplied.",
+    "  - Without a terminal (CI, scripts, agents), changed tracked files are",
+    "    pushed without a confirmation prompt; new and deleted files are",
+    "    skipped unless --yes is supplied.",
+    "  - Rejections are never overridden: stale draft revisions, path",
+    "    conflicts, and schema hash mismatches fail with or without --yes.",
     "",
     "Options:",
-    "  --force         Skip all prompts; auto-select all new/deleted files",
-    "  --dry-run       Show push plan only (no API writes)",
+    "  --dry-run       Show the push plan only; no API writes",
+    "  -y, --yes       Include all new and deleted files and skip the",
+    "                  confirmation prompt. --force is an alias.",
     "  --validate      Validate frontmatter against local schema before pushing",
     "  --sync-schema   In non-interactive mode, allow push to sync schema before",
     "                  content writes if drift is detected. In interactive mode,",
@@ -513,7 +529,7 @@ async function updateExistingDocument(
     return {
       kind: "path_conflict",
       code: remoteError.code,
-      message: `Path conflict for "${candidate.manifestEntry.path}". The manifest references a stale document ID. Run 'cms pull' to re-sync.`,
+      message: `Path conflict for "${candidate.manifestEntry.path}". The manifest references a stale document ID. Run 'mdcms pull' to re-sync.`,
     };
   }
 
@@ -600,7 +616,7 @@ async function createDocumentFromLocalFile(
       return {
         kind: "path_conflict",
         code: remoteError.code,
-        message: `Path "${createTarget.path}" already exists on server under a different document ID. Run 'cms pull' to re-sync your manifest.`,
+        message: `Path "${createTarget.path}" already exists on server under a different document ID. Run 'mdcms pull' to re-sync your manifest.`,
       };
     }
 
@@ -663,7 +679,7 @@ async function createNewDocument(
       return {
         kind: "path_conflict",
         code: remoteError.code,
-        message: `Path "${candidate.resolvedPath}" already exists on server. Run 'cms pull' to sync, then resolve the duplicate.`,
+        message: `Path "${candidate.resolvedPath}" already exists on server. Run 'mdcms pull' to sync, then resolve the duplicate.`,
       };
     }
 
@@ -833,7 +849,7 @@ function printPushResults(
 
   if (staleCount > 0) {
     context.stdout.write(
-      `\nSome documents were rejected as stale. Run 'cms pull' to get the latest drafts, then re-apply your local changes.\n`,
+      `\nSome documents were rejected as stale. Run 'mdcms pull' to get the latest drafts, then re-apply your local changes.\n`,
     );
   }
 
@@ -843,7 +859,7 @@ function printPushResults(
 
   if (schemaMismatchCount > 0) {
     context.stdout.write(
-      `\nSome documents were rejected: schema changed during push (server schema hash now differs from preflight check). Another sync may have happened concurrently.\nRe-run: cms push\n`,
+      `\nSome documents were rejected: schema changed during push (server schema hash now differs from preflight check). Another sync may have happened concurrently.\nRe-run: mdcms push\n`,
     );
   }
 
@@ -853,7 +869,7 @@ function printPushResults(
 
   if (pathConflictCount > 0) {
     context.stdout.write(
-      `\nSome documents were rejected due to path conflicts. Run 'cms pull' to sync with server, then resolve duplicates.\n`,
+      `\nSome documents were rejected due to path conflicts. Run 'mdcms pull' to sync with server, then resolve duplicates.\n`,
     );
   }
 
@@ -876,6 +892,7 @@ async function buildPushPlan(
   const deletionCandidates: DeletionCandidate[] = [];
   let trackedCount = 0;
   let unchangedCount = 0;
+  const claimedPaths = new Set<string>();
   const orderedDocumentIds = Object.keys(manifest).sort((left, right) =>
     left.localeCompare(right),
   );
@@ -888,17 +905,20 @@ async function buildPushPlan(
     }
     trackedCount += 1;
 
-    const format = parseFileFormat(manifestEntry.path);
-    const absolutePath = join(context.cwd, manifestEntry.path);
-    const raw = await readFile(absolutePath, "utf8").catch((error) => {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return null;
-      }
+    // Rejects tracked paths that are neither .md nor .mdx.
+    parseFileFormat(manifestEntry.path);
 
-      throw error;
-    });
+    // A file renamed between .md and .mdx is still this document.
+    const localPath = await resolveTrackedFilePath(
+      context.cwd,
+      manifestEntry.path,
+    );
+    const raw =
+      localPath === undefined
+        ? null
+        : await readFile(join(context.cwd, localPath), "utf8");
 
-    if (raw === null) {
+    if (raw === null || localPath === undefined) {
       deletionCandidates.push({
         documentId,
         path: manifestEntry.path,
@@ -909,9 +929,12 @@ async function buildPushPlan(
       continue;
     }
 
+    claimedPaths.add(localPath);
     const currentHash = hashContent(raw);
     const manifestHash = manifestEntry.hash.trim();
-    const isChanged = manifestHash.length === 0 || manifestHash !== currentHash;
+    const renamed = localPath !== manifestEntry.path;
+    const isChanged =
+      renamed || manifestHash.length === 0 || manifestHash !== currentHash;
 
     if (!isChanged) {
       unchangedCount += 1;
@@ -922,8 +945,11 @@ async function buildPushPlan(
 
     changedCandidates.push({
       documentId,
-      manifestEntry,
-      format,
+      manifestEntry: renamed
+        ? { ...manifestEntry, path: localPath }
+        : manifestEntry,
+      // The format follows the body, not the file extension.
+      format: inferContentFormat(parsed.body),
       frontmatter: parsed.frontmatter,
       body: parsed.body,
       hash: currentHash,
@@ -938,16 +964,19 @@ async function buildPushPlan(
       cwd: context.cwd,
       contentDirectories,
       manifest,
+      claimedPaths,
     });
 
     const types = context.config.types ?? [];
 
     for (const file of untrackedFiles) {
-      const format = parseFileFormat(file.path);
+      // Rejects files that are neither .md nor .mdx.
+      parseFileFormat(file.path);
       const absolutePath = join(context.cwd, file.path);
       const raw = await readFile(absolutePath, "utf8");
       const currentHash = hashContent(raw);
       const parsed = parseMarkdownDocument(raw);
+      const format = inferContentFormat(parsed.body);
 
       try {
         const resolved = resolveCreatePayload({
@@ -1563,7 +1592,7 @@ export async function runPushCommand(
   }
 
   // Interactive selection for new files
-  // Issue #8: in non-interactive mode without --force, skip new/deleted but still push changed
+  // Issue #8: in non-interactive mode without --yes, skip new/deleted but still push changed
   let selectedNewCandidates: NewFileCandidate[] = [];
   if (pushPlan.newCandidates.length > 0) {
     if (options.force) {
@@ -1582,7 +1611,7 @@ export async function runPushCommand(
 
       if (selectedPaths.length === 0 && pushPlan.newCandidates.length > 0) {
         context.stdout.write(
-          `Hint: ${pushPlan.newCandidates.length} new file(s) skipped. Use --force to include them in non-interactive mode.\n`,
+          `Hint: ${pushPlan.newCandidates.length} new file(s) skipped. Use --yes to include them in non-interactive mode.\n`,
         );
       }
     }
@@ -1607,7 +1636,7 @@ export async function runPushCommand(
 
       if (selectedIds.length === 0 && pushPlan.deletionCandidates.length > 0) {
         context.stdout.write(
-          `Hint: ${pushPlan.deletionCandidates.length} deletion(s) skipped. Use --force to include them in non-interactive mode.\n`,
+          `Hint: ${pushPlan.deletionCandidates.length} deletion(s) skipped. Use --yes to include them in non-interactive mode.\n`,
         );
       }
     }
@@ -1679,23 +1708,31 @@ export async function runPushCommand(
     return 0;
   }
 
+  const parts: string[] = [];
+  if (pushPlan.changedCandidates.length > 0) {
+    parts.push(`${pushPlan.changedCandidates.length} changed`);
+  }
+  if (selectedNewCandidates.length > 0) {
+    parts.push(`${selectedNewCandidates.length} new`);
+  }
+  if (selectedDeletionCandidates.length > 0) {
+    parts.push(`${selectedDeletionCandidates.length} to delete`);
+  }
+  const pushSummary = `${parts.join(", ")} document(s) to ${context.project}/${context.environment}`;
+
   // Without a terminal (CI, scripts, agents) there is nobody to answer the
   // prompt: changed tracked files are pushed as drafts without confirmation,
-  // while new and deleted files were already left out above unless --force.
-  if (!options.force && process.stdin.isTTY === true) {
-    const parts: string[] = [];
-    if (pushPlan.changedCandidates.length > 0) {
-      parts.push(`${pushPlan.changedCandidates.length} changed`);
-    }
-    if (selectedNewCandidates.length > 0) {
-      parts.push(`${selectedNewCandidates.length} new`);
-    }
-    if (selectedDeletionCandidates.length > 0) {
-      parts.push(`${selectedDeletionCandidates.length} to delete`);
-    }
-    const confirmed = await context.confirm(
-      `Push ${parts.join(", ")} document(s) to ${context.project}/${context.environment}?`,
+  // while new and deleted files were already left out above unless --yes.
+  if (options.force) {
+    context.stdout.write(
+      `Pushing ${pushSummary} without confirmation (--yes).\n`,
     );
+  } else if (process.stdin.isTTY !== true) {
+    context.stdout.write(
+      `Pushing ${pushSummary} without confirmation (no terminal). Preview with --dry-run.\n`,
+    );
+  } else {
+    const confirmed = await context.confirm(`Push ${pushSummary}?`);
 
     if (!confirmed) {
       throw new RuntimeError({
@@ -1791,6 +1828,7 @@ export function createPushCommand(): CliCommand {
   return {
     name: "push",
     description: "Upload local markdown files to CMS draft content",
+    renderHelp: renderPushHelp,
     run: runPushCommand,
   };
 }

@@ -280,6 +280,160 @@ test("push updates an existing manifest-tracked document via PUT", async () => {
   });
 });
 
+test("push treats a .md to .mdx rename as the same document and sends the inferred format", async () => {
+  await withTempDir(async (cwd) => {
+    const manifestPath = join(
+      cwd,
+      ".mdcms",
+      "manifests",
+      "marketing-site.staging.json",
+    );
+    await mkdir(join(cwd, ".mdcms", "manifests"), { recursive: true });
+    await writeSchemaStateFile(cwd, "marketing-site", "staging");
+    const original = '---\ntitle: "Hello World"\n---\n\nBody\n';
+    await writeFile(
+      manifestPath,
+      JSON.stringify({
+        "doc-1": {
+          path: "content/blog/hello-world.en.md",
+          format: "md",
+          draftRevision: 1,
+          publishedVersion: 1,
+          hash: "old-hash",
+        },
+      }),
+      "utf8",
+    );
+    await mkdir(join(cwd, "content", "blog"), { recursive: true });
+    // Renamed to .mdx and given a component, without touching the manifest.
+    await writeFile(
+      join(cwd, "content/blog/hello-world.en.mdx"),
+      original.replace("Body", 'Body\n\n<Cta label="Go" />'),
+      "utf8",
+    );
+
+    const requests: Array<{ url: string; method?: string; format?: string }> =
+      [];
+    const exitCode = await runMdcmsCli(["push", "--force"], {
+      cwd,
+      env: {} as NodeJS.ProcessEnv,
+      fetcher: async (input, init) => {
+        if (isSchemaGetRequest(input, init)) {
+          return createSchemaListResponse(BLOG_POST_CONFIG, "staging");
+        }
+        const body = JSON.parse(String(init?.body ?? "{}")) as {
+          format?: string;
+        };
+        requests.push({
+          url: String(input),
+          method: init?.method,
+          format: body.format,
+        });
+
+        return createSuccessResponse({
+          documentId: "doc-1",
+          type: "BlogPost",
+          locale: "en",
+          path: "content/blog/hello-world",
+          format: "mdx",
+          draftRevision: 2,
+          publishedVersion: 1,
+        });
+      },
+      loadConfig: async () => ({
+        config: BLOG_POST_CONFIG,
+        configPath: join(cwd, "mdcms.config.ts"),
+      }),
+      stdout: { write: () => undefined },
+      stderr: { write: () => undefined },
+      confirm: async () => true,
+    });
+
+    assert.equal(exitCode, 0);
+    // One update of the same document: no delete, no create.
+    assert.deepEqual(requests, [
+      {
+        url: "http://localhost:4000/api/v1/content/doc-1?fileFields=raw",
+        method: "PUT",
+        format: "mdx",
+      },
+    ]);
+
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as Record<
+      string,
+      { path: string; format: string; draftRevision: number }
+    >;
+    assert.equal(manifest["doc-1"]?.path, "content/blog/hello-world.en.mdx");
+    assert.equal(manifest["doc-1"]?.format, "mdx");
+    assert.equal(manifest["doc-1"]?.draftRevision, 2);
+  });
+});
+
+test("push sends md for a .mdx file whose body has no MDX syntax", async () => {
+  await withTempDir(async (cwd) => {
+    const manifestPath = join(
+      cwd,
+      ".mdcms",
+      "manifests",
+      "marketing-site.staging.json",
+    );
+    await mkdir(join(cwd, ".mdcms", "manifests"), { recursive: true });
+    await writeSchemaStateFile(cwd, "marketing-site", "staging");
+    await writeFile(
+      manifestPath,
+      JSON.stringify({
+        "doc-1": {
+          path: "content/blog/hello-world.en.mdx",
+          format: "mdx",
+          draftRevision: 1,
+          publishedVersion: 1,
+          hash: "old-hash",
+        },
+      }),
+      "utf8",
+    );
+    await mkdir(join(cwd, "content", "blog"), { recursive: true });
+    await writeFile(
+      join(cwd, "content/blog/hello-world.en.mdx"),
+      '---\ntitle: "Hello World"\n---\n\nPlain text with {braces}.\n',
+      "utf8",
+    );
+
+    let sentFormat: string | undefined;
+    const exitCode = await runMdcmsCli(["push", "--force"], {
+      cwd,
+      env: {} as NodeJS.ProcessEnv,
+      fetcher: async (input, init) => {
+        if (isSchemaGetRequest(input, init)) {
+          return createSchemaListResponse(BLOG_POST_CONFIG, "staging");
+        }
+        sentFormat = (JSON.parse(String(init?.body)) as { format: string })
+          .format;
+
+        return createSuccessResponse({
+          documentId: "doc-1",
+          type: "BlogPost",
+          locale: "en",
+          path: "content/blog/hello-world",
+          format: "md",
+          draftRevision: 2,
+          publishedVersion: 1,
+        });
+      },
+      loadConfig: async () => ({
+        config: BLOG_POST_CONFIG,
+        configPath: join(cwd, "mdcms.config.ts"),
+      }),
+      stdout: { write: () => undefined },
+      stderr: { write: () => undefined },
+      confirm: async () => true,
+    });
+
+    assert.equal(exitCode, 0);
+    assert.equal(sentFormat, "md");
+  });
+});
+
 test("push without a terminal pushes changed documents without asking for confirmation", async () => {
   await withTempDir(async (cwd) => {
     const manifestPath = join(
@@ -318,6 +472,7 @@ test("push without a terminal pushes changed documents without asking for confir
     try {
       let putCount = 0;
       let confirmCount = 0;
+      let stdout = "";
       const exitCode = await runMdcmsCli(["push"], {
         cwd,
         env: {} as NodeJS.ProcessEnv,
@@ -341,7 +496,11 @@ test("push without a terminal pushes changed documents without asking for confir
           config: BLOG_POST_CONFIG,
           configPath: join(cwd, "mdcms.config.ts"),
         }),
-        stdout: { write: () => undefined },
+        stdout: {
+          write: (chunk) => {
+            stdout += chunk;
+          },
+        },
         stderr: { write: () => undefined },
         confirm: async () => {
           confirmCount += 1;
@@ -352,6 +511,12 @@ test("push without a terminal pushes changed documents without asking for confir
       assert.equal(exitCode, 0);
       assert.equal(confirmCount, 0);
       assert.equal(putCount, 1);
+      assert.ok(
+        stdout.includes(
+          "Pushing 1 changed document(s) to marketing-site/staging without confirmation (no terminal). Preview with --dry-run.",
+        ),
+        `Expected the no-terminal notice, got: ${stdout}`,
+      );
     } finally {
       restoreTTY();
     }
@@ -978,7 +1143,7 @@ test("push reports stale document as failed and continues pushing remaining docu
     assert.ok(output.includes("doc-fresh"));
 
     // Actionable summary printed
-    assert.ok(output.includes("cms pull"));
+    assert.ok(output.includes("mdcms pull"));
 
     // Manifest updated for fresh doc, stale doc unchanged
     const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as Record<
@@ -1224,8 +1389,8 @@ test("push reports schema-mismatch document as failed and continues pushing rema
 
     // Actionable summary printed — race-condition message (preflight passed but a concurrent sync changed server hash)
     assert.ok(output.includes("schema changed during push"));
-    assert.ok(output.includes("Re-run: cms push"));
-    assert.ok(!output.includes("'cms schema sync'"));
+    assert.ok(output.includes("Re-run: mdcms push"));
+    assert.ok(!output.includes("'mdcms schema sync'"));
 
     // Manifest updated for ok doc, mismatch doc unchanged
     const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as Record<
@@ -1756,6 +1921,40 @@ test("renderPushHelp documents --sync-schema and preflight behavior", () => {
   assert.ok(help.includes("--sync-schema"));
   assert.ok(help.includes("non-interactive"));
   assert.ok(help.includes("preflight"));
+});
+
+test("parsePushOptions treats --yes and -y as aliases of --force", () => {
+  assert.equal(parsePushOptions(["--yes"]).force, true);
+  assert.equal(parsePushOptions(["-y"]).force, true);
+  assert.equal(parsePushOptions([]).force, false);
+});
+
+test("renderPushHelp leads with --dry-run and says what --yes does not override", () => {
+  const help = renderPushHelp();
+  assert.ok(help.includes("mdcms push --dry-run"));
+  assert.ok(help.includes("-y, --yes"));
+  assert.ok(help.includes("--force is an alias"));
+  assert.ok(help.includes("Rejections are never overridden"));
+});
+
+test("mdcms push --help prints push help without loading config", async () => {
+  let stdout = "";
+
+  const exitCode = await runMdcmsCli(["push", "--help"], {
+    env: {} as NodeJS.ProcessEnv,
+    loadConfig: async () => {
+      throw new Error("config must not load for --help");
+    },
+    stdout: {
+      write: (chunk: string) => {
+        stdout += chunk;
+      },
+    },
+    stderr: { write: () => undefined },
+  });
+
+  assert.equal(exitCode, 0);
+  assert.equal(stdout, renderPushHelp());
 });
 
 // -----------------------------------------------------------------------------

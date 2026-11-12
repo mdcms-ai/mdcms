@@ -1,5 +1,11 @@
 # @mdcms/shared
 
+## 0.6.1
+
+### Patch Changes
+
+- d0f4b37: A document's md/mdx format now follows its body: it is mdx when it contains a component or an import/export line. The SDK renderer compiles with that format, the CLI names files after it and treats a .md/.mdx rename as the same document, and a component's load may return its module.
+
 ## 0.6.0
 
 ### Minor Changes

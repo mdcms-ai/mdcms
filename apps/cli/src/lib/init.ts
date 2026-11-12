@@ -527,9 +527,17 @@ export function createInitCommand(options?: InitCommandOptions): CliCommand {
             project: projectName,
             environment: envName,
             fetcher,
+            onBrowserOpened: (url) => {
+              s.stop("Opened the browser to sign in");
+              stdout.write(
+                `If the browser did not open or shows an error, open this URL:\n${url}\n`,
+              );
+              s.start("Waiting for sign-in in the browser...");
+            },
             onBrowserFailed: (url) => {
               s.stop("Could not open browser");
               stdout.write(`Open this URL in your browser:\n${url}\n`);
+              s.start("Waiting for sign-in in the browser...");
             },
           });
           apiKey = exchanged.key;

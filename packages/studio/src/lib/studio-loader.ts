@@ -16,6 +16,7 @@ import {
   type StudioBootstrapReadyResponse,
   type StudioBootstrapRejectionReason,
   type StudioMountContext,
+  resolveMdxComponentExport,
 } from "@mdcms/shared";
 
 import { assertStudioRuntimePublication } from "./bootstrap-verification.js";
@@ -33,6 +34,7 @@ import {
   normalizeStudioBaseUrl,
   resolveStudioRelativeUrl,
 } from "./url-resolution.js";
+import { MdxPreviewErrorBoundary } from "./mdx-preview-error-boundary.js";
 
 export const STUDIO_PACKAGE_VERSION = "0.0.1";
 export const STUDIO_HOST_BRIDGE_COMPATIBILITY_VERSION = "1.0.0";
@@ -112,7 +114,21 @@ function createLoadedHostBridge(
 
       const root = createRoot(input.container);
       root.render(
-        createElement(Component as never, { ...input.props, key: input.key }),
+        createElement(
+          MdxPreviewErrorBoundary,
+          {
+            componentName: input.componentName,
+            fallback: createElement(
+              "span",
+              { "data-mdcms-mdx-preview-error": input.componentName },
+              `Preview of ${input.componentName} is not available.`,
+            ),
+          },
+          createElement(Component as never, {
+            ...input.props,
+            key: input.key,
+          }),
+        ),
       );
 
       return () => {
@@ -174,8 +190,16 @@ async function createLoadedLocalMdxRuntime(
     components.map(async (component) => {
       const previewResult = await Promise.allSettled([component.load?.()]);
 
-      if (previewResult[0]?.status === "fulfilled" && previewResult[0].value) {
-        previewComponents.set(component.name, previewResult[0].value);
+      // `load` may return the component or its module (`import("./x")`).
+      // Anything that is not a component is skipped, so the editor shows its
+      // placeholder instead of failing to render it.
+      const preview =
+        previewResult[0]?.status === "fulfilled"
+          ? resolveMdxComponentExport(component.name, previewResult[0].value)
+          : undefined;
+
+      if (preview !== undefined) {
+        previewComponents.set(component.name, preview);
       }
 
       if (component.loadPropsEditor) {

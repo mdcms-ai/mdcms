@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   RuntimeError,
+  inferContentFormat,
   parseMdxSyntax,
   validateFrontmatter,
   type SchemaRegistryListResponse,
@@ -53,7 +54,7 @@ export async function validateAgentDocument(
     type: string;
     frontmatter: Record<string, unknown>;
     body: string;
-    format?: string;
+    format?: unknown;
   },
   schemaHash: string,
 ): Promise<void> {
@@ -89,7 +90,7 @@ export async function validateAgentDocument(
       statusCode: 422,
       details: { errors },
     });
-  if (input.format === "mdx") {
+  if (inferContentFormat(input.body) === "mdx") {
     try {
       parseMdxSyntax(input.body);
     } catch {
@@ -186,17 +187,13 @@ export const contentTools: AgentTool[] = [
       frontmatter: object,
       body: z.string(),
       locale: text,
-      format: z.enum(["md", "mdx"]).optional(),
+      format: z.unknown().optional(),
       schemaHash: text,
     }),
     outputSchema: documentEnvelopeSchema,
     execute: async (input, { dispatch }) => {
       const { schemaHash, ...body } = input;
-      await validateAgentDocument(
-        dispatch,
-        { ...body, format: body.format ?? "md" },
-        schemaHash,
-      );
+      await validateAgentDocument(dispatch, body, schemaHash);
       return dispatchJson(dispatch, {
         method: "POST",
         path: "/api/v1/content",

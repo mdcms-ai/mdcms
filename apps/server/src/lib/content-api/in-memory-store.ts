@@ -1,7 +1,11 @@
 import { originField } from "./responses.js";
 import { randomUUID } from "node:crypto";
 
-import { RuntimeError, type SchemaRegistryTypeSnapshot } from "@mdcms/shared";
+import {
+  RuntimeError,
+  type SchemaRegistryTypeSnapshot,
+  inferContentFormat,
+} from "@mdcms/shared";
 
 import {
   DEFAULT_LIMIT,
@@ -24,7 +28,6 @@ import {
   parseBoolean,
   parseContentListGroupBy,
   parseContentSearchQuery,
-  parseContentFormat,
   parseOptionalString,
   parsePositiveInt,
   parseSortField,
@@ -50,7 +53,7 @@ export function toPublishedReadDocument(
     path: snapshot.path,
     type: snapshot.type,
     locale: snapshot.locale,
-    format: snapshot.format,
+    format: inferContentFormat(snapshot.body),
     frontmatter: snapshot.frontmatter,
     body: snapshot.body,
     version: snapshot.version,
@@ -235,6 +238,7 @@ export function createInMemoryContentStore(
   ): ContentVersionDocument {
     return {
       ...toVersionSummary(scope, document, snapshot),
+      format: inferContentFormat(snapshot.body),
       frontmatter: snapshot.frontmatter,
       body: snapshot.body,
     };
@@ -276,7 +280,8 @@ export function createInMemoryContentStore(
         allowEmpty: true,
       });
       const frontmatter = assertJsonObject(payload.frontmatter, "frontmatter");
-      const format = parseContentFormat(payload.format);
+      // The format follows the body; a client-sent format is ignored.
+      const format = inferContentFormat(body);
       const sourceDocument = sourceDocumentId
         ? store.get(sourceDocumentId)
         : undefined;
@@ -744,20 +749,20 @@ export function createInMemoryContentStore(
       }
 
       const now = new Date().toISOString();
+      const nextBody =
+        payload.body !== undefined
+          ? assertRequiredString(payload.body, "body", { allowEmpty: true })
+          : existing.body;
       const updated: ContentDocument = {
         ...existing,
         path: nextPath,
         type: nextType,
         locale: nextLocale,
-        format:
-          payload.format !== undefined
-            ? parseContentFormat(payload.format)
-            : existing.format,
+        // The format follows the resulting body; a client-sent format is
+        // ignored.
+        format: inferContentFormat(nextBody),
         frontmatter: normalizedFrontmatter,
-        body:
-          payload.body !== undefined
-            ? assertRequiredString(payload.body, "body", { allowEmpty: true })
-            : existing.body,
+        body: nextBody,
         hasUnpublishedChanges: true,
         draftRevision: existing.draftRevision + 1,
         updatedBy: options.attribution.actorId,
@@ -804,6 +809,7 @@ export function createInMemoryContentStore(
       const now = new Date().toISOString();
       const deleted: ContentDocument = {
         ...existing,
+        format: inferContentFormat(existing.body),
         isDeleted: true,
         hasUnpublishedChanges: true,
         draftRevision: existing.draftRevision + 1,
@@ -875,7 +881,7 @@ export function createInMemoryContentStore(
           path: existing.path,
           type: existing.type,
           locale: existing.locale,
-          format: existing.format,
+          format: inferContentFormat(existing.body),
           frontmatter: existing.frontmatter,
           body: existing.body,
           publishedAt: now,
@@ -886,6 +892,7 @@ export function createInMemoryContentStore(
       }
       const restored: ContentDocument = {
         ...existing,
+        format: inferContentFormat(existing.body),
         isDeleted: false,
         publishedVersion,
         version: publishedVersion ?? 0,
@@ -1053,6 +1060,7 @@ export function createInMemoryContentStore(
 
         documentSnapshots.set(nextVersion, {
           ...snapshot,
+          format: inferContentFormat(snapshot.body),
           version: nextVersion,
           publishedAt: now,
           publishedBy: input.attribution.actorId,
@@ -1065,7 +1073,7 @@ export function createInMemoryContentStore(
           path: snapshot.path,
           type: snapshot.type,
           locale: snapshot.locale,
-          format: snapshot.format,
+          format: inferContentFormat(snapshot.body),
           frontmatter: snapshot.frontmatter,
           body: snapshot.body,
           isDeleted: false,
@@ -1086,7 +1094,7 @@ export function createInMemoryContentStore(
         path: snapshot.path,
         type: snapshot.type,
         locale: snapshot.locale,
-        format: snapshot.format,
+        format: inferContentFormat(snapshot.body),
         frontmatter: snapshot.frontmatter,
         body: snapshot.body,
         isDeleted: false,
@@ -1135,7 +1143,7 @@ export function createInMemoryContentStore(
         path: existing.path,
         type: existing.type,
         locale: existing.locale,
-        format: existing.format,
+        format: inferContentFormat(existing.body),
         frontmatter: existing.frontmatter,
         body: existing.body,
         publishedAt: now,
@@ -1146,6 +1154,7 @@ export function createInMemoryContentStore(
 
       const updated: ContentDocument = {
         ...existing,
+        format: inferContentFormat(existing.body),
         version: nextVersion,
         publishedVersion: nextVersion,
         hasUnpublishedChanges: false,
@@ -1180,6 +1189,7 @@ export function createInMemoryContentStore(
       const now = new Date().toISOString();
       const updated: ContentDocument = {
         ...existing,
+        format: inferContentFormat(existing.body),
         version: 0,
         publishedVersion: null,
         hasUnpublishedChanges: true,

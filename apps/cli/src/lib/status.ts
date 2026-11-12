@@ -6,7 +6,7 @@ import type {
   ContentDocumentResponse,
   ParsedMdcmsConfig,
 } from "@mdcms/shared";
-import { RuntimeError } from "@mdcms/shared";
+import { RuntimeError, inferContentFormat } from "@mdcms/shared";
 import { buildSchemaSyncPayload } from "@mdcms/shared/server";
 
 import { readSchemaState } from "./schema-state.js";
@@ -18,6 +18,7 @@ import {
   type ScopedManifest,
 } from "./manifest.js";
 import { hashContent } from "./push.js";
+import { resolveTrackedFilePath } from "./discover.js";
 
 type ContentDocumentPayload = Pick<
   ContentDocumentResponse,
@@ -178,27 +179,26 @@ async function fetchAllContent(
   return rows;
 }
 
+/**
+ * The local path `pull` would write for a remote document, or `undefined` when
+ * the document's type is not in the local config. `pull` skips such documents,
+ * so status skips them too instead of failing.
+ */
 function resolveLocalPathForDocument(
   context: CliCommandContext,
   document: ContentDocumentPayload,
-): string {
+): string | undefined {
   const typeConfig = context.config.types?.find(
     (entry) => entry.name === document.type,
   );
 
   if (!typeConfig) {
-    throw new RuntimeError({
-      code: "TYPE_MAPPING_MISSING",
-      message: `Missing type mapping in config for content type "${document.type}".`,
-      statusCode: 400,
-      details: {
-        type: document.type,
-      },
-    });
+    return undefined;
   }
 
   const basePath = document.path.replace(/^\/+/, "");
-  const extension = document.format;
+  // The local extension follows the body, as the server's format does.
+  const extension = inferContentFormat(document.body);
 
   if (typeConfig.localized) {
     const locale = document.locale.trim();
@@ -238,6 +238,7 @@ async function computeDriftAsync(input: {
 }): Promise<DriftEntry[]> {
   const entries: DriftEntry[] = [];
   const seenDocumentIds = new Set<string>();
+  const skippedTypes = new Map<string, number>();
 
   for (const serverDoc of input.serverDocuments) {
     seenDocumentIds.add(serverDoc.documentId);
@@ -245,6 +246,15 @@ async function computeDriftAsync(input: {
       input.context,
       serverDoc,
     );
+
+    if (serverLocalPath === undefined) {
+      skippedTypes.set(
+        serverDoc.type,
+        (skippedTypes.get(serverDoc.type) ?? 0) + 1,
+      );
+      continue;
+    }
+
     const manifestEntry = input.manifest[serverDoc.documentId];
 
     if (!manifestEntry) {
@@ -258,26 +268,35 @@ async function computeDriftAsync(input: {
     }
 
     const manifestPath = manifestEntry.path;
+    // A file renamed between .md and .mdx is still this document.
+    const localPath =
+      (await resolveTrackedFilePath(input.context.cwd, manifestPath)) ??
+      manifestPath;
 
-    const pathChanged = manifestPath !== serverLocalPath;
+    // `pull` would write the document somewhere other than where it is now.
+    // A local .md/.mdx rename that already matches the server path is not a
+    // pending move; it is classified as a local change below.
+    const pathChanged =
+      manifestPath !== serverLocalPath && localPath !== serverLocalPath;
 
     if (pathChanged) {
       entries.push({
         category: "moved_renamed",
         documentId: serverDoc.documentId,
-        localPath: manifestPath,
+        localPath,
         serverPath: serverLocalPath,
         manifestRevision: manifestEntry.draftRevision,
         serverRevision: serverDoc.draftRevision,
       });
       continue;
     }
-
     const localFileHash = await readLocalFileHash(
-      join(input.context.cwd, manifestPath),
+      join(input.context.cwd, localPath),
     );
+    // An unpushed .md/.mdx rename is a local change even with equal content.
     const localModified =
-      localFileHash !== undefined && localFileHash !== manifestEntry.hash;
+      localPath !== manifestPath ||
+      (localFileHash !== undefined && localFileHash !== manifestEntry.hash);
 
     const serverModified =
       serverDoc.draftRevision !== manifestEntry.draftRevision;
@@ -286,7 +305,7 @@ async function computeDriftAsync(input: {
       entries.push({
         category: "both_modified",
         documentId: serverDoc.documentId,
-        localPath: manifestPath,
+        localPath,
         manifestRevision: manifestEntry.draftRevision,
         serverRevision: serverDoc.draftRevision,
       });
@@ -294,7 +313,7 @@ async function computeDriftAsync(input: {
       entries.push({
         category: "modified_on_server",
         documentId: serverDoc.documentId,
-        localPath: manifestPath,
+        localPath,
         manifestRevision: manifestEntry.draftRevision,
         serverRevision: serverDoc.draftRevision,
       });
@@ -302,14 +321,14 @@ async function computeDriftAsync(input: {
       entries.push({
         category: "modified_locally",
         documentId: serverDoc.documentId,
-        localPath: manifestPath,
+        localPath,
         manifestRevision: manifestEntry.draftRevision,
       });
     } else {
       entries.push({
         category: "unchanged",
         documentId: serverDoc.documentId,
-        localPath: manifestPath,
+        localPath,
       });
     }
   }
@@ -325,6 +344,12 @@ async function computeDriftAsync(input: {
       localPath: manifestEntry.path,
       manifestRevision: manifestEntry.draftRevision,
     });
+  }
+
+  for (const [type, count] of skippedTypes) {
+    input.context.stderr.write(
+      `Warning: Skipping ${count} document(s) of type "${type}" (not defined in local config).\n`,
+    );
   }
 
   return entries;
@@ -379,10 +404,27 @@ function formatEntryDetail(entry: DriftEntry): string {
     case "deleted_on_server":
       return `    ${path}`;
     case "moved_renamed":
-      return `    ${entry.localPath} -> ${entry.serverPath}`;
+      return `    ${entry.localPath} -> ${entry.serverPath}${padRevisionInfo(describeMove(entry))}`;
     default:
       return `    ${path}`;
   }
+}
+
+/**
+ * Moves read "current local path -> path after pull". When only the extension
+ * differs, the server inferred a different format from the body.
+ */
+function describeMove(entry: DriftEntry): string {
+  const extension = /\.(md|mdx)$/i;
+  const localBase = entry.localPath?.replace(extension, "");
+  const serverBase = entry.serverPath?.replace(extension, "");
+  const format = entry.serverPath?.match(extension)?.[1]?.toLowerCase();
+
+  if (localBase === serverBase && format) {
+    return `(the server stores this body as ${format}; mdcms pull will rename the local file)`;
+  }
+
+  return "(mdcms pull will move the local file)";
 }
 
 function padRevisionInfo(info: string): string {
@@ -410,7 +452,11 @@ function renderDriftReport(
     }
 
     const label = CATEGORY_LABELS[category];
-    context.stdout.write(`\n  ${label} (${rows.length}):\n`);
+    const legend =
+      category === "moved_renamed"
+        ? " local path -> path after mdcms pull"
+        : "";
+    context.stdout.write(`\n  ${label} (${rows.length}):${legend}\n`);
 
     for (const entry of rows) {
       context.stdout.write(`${formatEntryDetail(entry)}\n`);
@@ -462,13 +508,13 @@ function renderSchemaReport(
       break;
     case "drifted":
       context.stdout.write(
-        "  Local schema differs from last sync. Run `cms schema sync`.\n",
+        "  Local schema differs from last sync. Run `mdcms schema sync`.\n",
       );
       break;
     case "no_state":
       context.stdout.write(
         "  No synced schema found.\n" +
-          "  If you just cloned this repo, run: cms schema sync && cms pull\n",
+          "  If you just cloned this repo, run: mdcms schema sync && mdcms pull\n",
       );
       break;
   }
@@ -519,6 +565,7 @@ export function createStatusCommand(): CliCommand {
   return {
     name: "status",
     description: "Show sync status (local vs server versions)",
+    renderHelp: renderStatusHelp,
     run: runStatusCommand,
   };
 }

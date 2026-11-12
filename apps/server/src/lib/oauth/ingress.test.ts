@@ -4,6 +4,12 @@ import { createConsoleLogger } from "@mdcms/shared";
 import { Elysia } from "elysia";
 import { createServerRequestHandler } from "../server.js";
 
+const htmlPaths = [
+  "/api/v1/oauth/authorize",
+  "/api/v1/auth/cli/login/authorize",
+  "/api/v1/auth/cli/login/authorize/encoded-state",
+  "/api/v1/auth/studio/sign-in",
+];
 const handler = createServerRequestHandler({
   logger: createConsoleLogger({ level: "error", sink: () => undefined }),
   env: {
@@ -12,9 +18,9 @@ const handler = createServerRequestHandler({
     MDCMS_STUDIO_ALLOWED_ORIGINS: "https://app.example",
   },
   configureApp(app) {
-    (app as Elysia)
-      .all(
-        "/api/v1/oauth/authorize",
+    for (const path of htmlPaths)
+      (app as Elysia).all(
+        path,
         ({ request }) =>
           new Response("<p>Restart authorization</p>", {
             status: Number(request.headers.get("x-test-status") ?? 410),
@@ -24,38 +30,39 @@ const handler = createServerRequestHandler({
               "retry-after": "60",
             },
           }),
-      )
-      .post(
-        "/api/v1/mcp",
-        () =>
-          new Response(null, {
-            status: 401,
-            headers: {
-              "www-authenticate":
-                'Bearer resource_metadata="https://cms.example/.well-known/oauth-protected-resource/api/v1/mcp"',
-            },
-          }),
       );
-  },
-});
-test("OAuth HTML errors survive external ingress with security headers", async () => {
-  for (const method of ["GET", "POST"])
-    for (const status of [400, 410, 429, 503]) {
-      const response = await handler(
-        new Request("https://cms.example/api/v1/oauth/authorize", {
-          method,
+    (app as Elysia).post(
+      "/api/v1/mcp",
+      () =>
+        new Response(null, {
+          status: 401,
           headers: {
-            origin: "https://app.example",
-            "x-test-status": String(status),
+            "www-authenticate":
+              'Bearer resource_metadata="https://cms.example/.well-known/oauth-protected-resource/api/v1/mcp"',
           },
         }),
-      );
-      assert.equal(response.status, status);
-      assert.ok(response.headers.get("content-type")?.includes("text/html"));
-      assert.equal(response.headers.get("cache-control"), "no-store");
-      assert.equal(response.headers.get("retry-after"), "60");
-      assert.equal(await response.text(), "<p>Restart authorization</p>");
-    }
+    );
+  },
+});
+test("OAuth and sign-in HTML errors survive external ingress with security headers", async () => {
+  for (const path of htmlPaths)
+    for (const method of ["GET", "POST"])
+      for (const status of [400, 410, 429, 503]) {
+        const response = await handler(
+          new Request(`https://cms.example${path}`, {
+            method,
+            headers: {
+              origin: "https://app.example",
+              "x-test-status": String(status),
+            },
+          }),
+        );
+        assert.equal(response.status, status);
+        assert.ok(response.headers.get("content-type")?.includes("text/html"));
+        assert.equal(response.headers.get("cache-control"), "no-store");
+        assert.equal(response.headers.get("retry-after"), "60");
+        assert.equal(await response.text(), "<p>Restart authorization</p>");
+      }
 });
 test("MCP CORS preflight precedes authentication and exposes challenge headers", async () => {
   const preflight = await handler(

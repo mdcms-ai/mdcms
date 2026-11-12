@@ -1,4 +1,4 @@
-import { readdir } from "node:fs/promises";
+import { access, readdir } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 
 import type { ScopedManifest } from "./manifest.js";
@@ -37,14 +37,62 @@ async function walkDirectory(dir: string): Promise<string[]> {
   return results;
 }
 
+/** The same path with the other Markdown extension (`.md` <-> `.mdx`). */
+export function swapMarkdownExtension(path: string): string | undefined {
+  if (/\.mdx$/i.test(path)) {
+    return path.replace(/\.mdx$/i, ".md");
+  }
+
+  if (/\.md$/i.test(path)) {
+    return path.replace(/\.md$/i, ".mdx");
+  }
+
+  return undefined;
+}
+
+async function fileExists(absolutePath: string): Promise<boolean> {
+  try {
+    await access(absolutePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The current local path of a tracked document: its manifest path, or that
+ * path with the other Markdown extension when the file was renamed between
+ * `.md` and `.mdx`. Such a rename is the same document, not a delete plus a
+ * new file. Returns `undefined` when neither file exists.
+ */
+export async function resolveTrackedFilePath(
+  cwd: string,
+  manifestPath: string,
+): Promise<string | undefined> {
+  if (await fileExists(join(cwd, manifestPath))) {
+    return manifestPath;
+  }
+
+  const swapped = swapMarkdownExtension(manifestPath);
+
+  if (swapped && (await fileExists(join(cwd, swapped)))) {
+    return swapped;
+  }
+
+  return undefined;
+}
+
 export async function discoverUntrackedFiles(input: {
   cwd: string;
   contentDirectories: string[];
   manifest: ScopedManifest;
+  /** Local paths already matched to tracked documents (renamed files). */
+  claimedPaths?: Iterable<string>;
 }): Promise<UntrackedFile[]> {
-  const trackedPaths = new Set(
-    Object.values(input.manifest).map((entry) => entry.path),
-  );
+  const trackedPaths = new Set([
+    ...Object.values(input.manifest).map((entry) => entry.path),
+    ...(input.claimedPaths ?? []),
+  ]);
 
   const untracked: UntrackedFile[] = [];
 

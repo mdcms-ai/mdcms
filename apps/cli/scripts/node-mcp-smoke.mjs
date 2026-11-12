@@ -32,6 +32,20 @@ const http = createServer(async (req, res) => {
   assert.equal(req.headers["x-mdcms-environment"], "production");
   let raw = "";
   for await (const chunk of req) raw += chunk;
+  if (req.method === "GET" && req.url === "/api/v1/me/capabilities") {
+    res.setHeader("content-type", "application/json");
+    res.end(
+      JSON.stringify({
+        data: {
+          capabilities: {
+            schema: { read: true, write: true },
+            content: { readDraft: true, write: true, publish: false },
+          },
+        },
+      }),
+    );
+    return;
+  }
   if (req.method === "GET") {
     res.writeHead(405).end();
     return;
@@ -141,8 +155,17 @@ try {
   await client.connect(transport);
   assert.deepEqual(
     (await client.listTools()).tools.map((t) => t.name),
-    ["remote", "sync_schema"],
+    ["remote", "sync_schema", "get_credentials_info"],
   );
+  const diagnostic = await client.callTool({
+    name: "get_credentials_info",
+    arguments: {},
+  });
+  assert.equal(diagnostic.isError, false);
+  const info = JSON.parse(diagnostic.content[0].text);
+  assert.equal(info.project, "original");
+  assert.equal(info.tools.publish_document.allowed, false);
+  assert.match(info.publishing, /content:publish/);
   assert.equal(
     (
       await client.callTool({

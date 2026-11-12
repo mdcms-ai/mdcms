@@ -544,13 +544,165 @@ test("status reports moved/renamed when server path differs from manifest path",
       `Expected "Moved/Renamed" in output, got: ${stdout}`,
     );
     assert.ok(
-      stdout.includes("content/blog/old-slug.en.md"),
-      `Expected old path in output, got: ${stdout}`,
+      stdout.includes("local path -> path after mdcms pull"),
+      `Expected the move direction legend in output, got: ${stdout}`,
     );
     assert.ok(
-      stdout.includes("content/blog/new-slug.en.md"),
-      `Expected new path in output, got: ${stdout}`,
+      stdout.includes(
+        "content/blog/old-slug.en.md -> content/blog/new-slug.en.md",
+      ),
+      `Expected "local -> after pull" order in output, got: ${stdout}`,
     );
+    assert.ok(
+      stdout.includes("(mdcms pull will move the local file)"),
+      `Expected move explanation in output, got: ${stdout}`,
+    );
+  });
+});
+
+test("status explains a format change as a rename from the local file to the server format", async () => {
+  await withTempDir(async (cwd) => {
+    const fileContent = "---\ntitle: Plain\n---\n\nPlain content\n";
+
+    const serverDoc: RemoteDocument = {
+      documentId: "doc-format",
+      type: "BlogPost",
+      locale: "en",
+      path: "content/blog/plain",
+      format: "md",
+      frontmatter: { title: "Plain" },
+      body: "Plain content\n",
+      draftRevision: 2,
+      publishedVersion: null,
+    };
+
+    await writeManifest(cwd, {
+      "doc-format": {
+        path: "content/blog/plain.en.mdx",
+        format: "mdx",
+        draftRevision: 2,
+        publishedVersion: null,
+        hash: hashContent(fileContent),
+      },
+    });
+
+    await writeLocalFile(cwd, "content/blog/plain.en.mdx", fileContent);
+
+    let stdout = "";
+
+    const exitCode = await runMdcmsCli(["status"], {
+      cwd,
+      env: {} as NodeJS.ProcessEnv,
+      fetcher: async () => createContentListResponse({ rows: [serverDoc] }),
+      loadConfig: defaultLoadConfig(cwd),
+      stdout: {
+        write: (chunk: string) => {
+          stdout += chunk;
+        },
+      },
+      stderr: { write: () => undefined },
+    });
+
+    assert.equal(exitCode, 1);
+    assert.ok(
+      stdout.includes("content/blog/plain.en.mdx -> content/blog/plain.en.md"),
+      `Expected "local -> after pull" order in output, got: ${stdout}`,
+    );
+    assert.ok(
+      stdout.includes(
+        "(the server stores this body as md; mdcms pull will rename the local file)",
+      ),
+      `Expected format explanation in output, got: ${stdout}`,
+    );
+  });
+});
+
+test("status skips remote documents whose type is not in the local config with a warning", async () => {
+  await withTempDir(async (cwd) => {
+    const fileContent = "---\ntitle: Hello\n---\n\nBody content\n";
+
+    const knownDoc: RemoteDocument = {
+      documentId: "doc-known",
+      type: "BlogPost",
+      locale: "en",
+      path: "content/blog/hello",
+      format: "md",
+      frontmatter: { title: "Hello" },
+      body: "Body content\n",
+      draftRevision: 1,
+      publishedVersion: null,
+    };
+    const unknownDoc: RemoteDocument = {
+      documentId: "doc-unknown",
+      type: "MissingType",
+      locale: "en",
+      path: "content/other/thing",
+      format: "md",
+      frontmatter: {},
+      body: "Other content\n",
+      draftRevision: 1,
+      publishedVersion: null,
+    };
+
+    await writeManifest(cwd, {
+      "doc-known": {
+        path: "content/blog/hello.en.md",
+        format: "md",
+        draftRevision: 1,
+        publishedVersion: null,
+        hash: hashContent(fileContent),
+      },
+    });
+    await writeLocalFile(cwd, "content/blog/hello.en.md", fileContent);
+    await writeSchemaState(cwd, {
+      schemaHash: buildSchemaSyncPayload(parsedConfigWithTypes, "staging")
+        .schemaHash,
+      syncedAt: "2026-03-30T14:22:00Z",
+      serverUrl: "http://localhost:4000",
+    });
+
+    let stdout = "";
+    let stderr = "";
+
+    const exitCode = await runMdcmsCli(["status"], {
+      cwd,
+      env: {} as NodeJS.ProcessEnv,
+      fetcher: async () =>
+        createContentListResponse({ rows: [knownDoc, unknownDoc] }),
+      loadConfig: schemaAwareLoadConfig(cwd),
+      stdout: {
+        write: (chunk: string) => {
+          stdout += chunk;
+        },
+      },
+      stderr: {
+        write: (chunk: string) => {
+          stderr += chunk;
+        },
+      },
+    });
+
+    assert.ok(
+      !stderr.includes("TYPE_MAPPING_MISSING"),
+      `Expected no fatal type mapping error, got: ${stderr}`,
+    );
+    assert.ok(
+      stderr.includes('Skipping 1 document(s) of type "MissingType"'),
+      `Expected skip warning on stderr, got: ${stderr}`,
+    );
+    assert.ok(
+      stdout.includes("Unchanged: 1 files"),
+      `Expected the known document to be reported, got: ${stdout}`,
+    );
+    assert.ok(
+      !stdout.includes("content/other/thing"),
+      `Expected the skipped document to be left out, got: ${stdout}`,
+    );
+    assert.ok(
+      !stdout.includes("New on server"),
+      `Expected the skipped document not to count as drift, got: ${stdout}`,
+    );
+    assert.equal(exitCode, 0);
   });
 });
 
@@ -809,5 +961,56 @@ test("status works with no manifest (never pulled)", async () => {
     assert.equal(exitCode, 1);
     const text = output.join("");
     assert.equal(text.includes("New on server"), true);
+  });
+});
+
+test("status reports a .md to .mdx rename as a local change of the same document", async () => {
+  await withTempDir(async (cwd) => {
+    const content = "---\ntitle: Hello\n---\n\nOriginal body\n";
+
+    await writeManifest(cwd, {
+      "doc-1": {
+        path: "content/blog/about.en.md",
+        format: "md",
+        draftRevision: 8,
+        publishedVersion: null,
+        hash: hashContent(content),
+      },
+    });
+    await writeLocalFile(cwd, "content/blog/about.en.mdx", content);
+
+    let stdout = "";
+    const exitCode = await runMdcmsCli(["status"], {
+      cwd,
+      env: {} as NodeJS.ProcessEnv,
+      fetcher: async () =>
+        createContentListResponse({
+          rows: [
+            {
+              documentId: "doc-1",
+              type: "BlogPost",
+              locale: "en",
+              path: "content/blog/about",
+              format: "md",
+              frontmatter: { title: "Hello" },
+              body: "Original body\n",
+              draftRevision: 8,
+              publishedVersion: null,
+            },
+          ],
+        }),
+      loadConfig: defaultLoadConfig(cwd),
+      stdout: {
+        write: (chunk: string) => {
+          stdout += chunk;
+        },
+      },
+      stderr: { write: () => undefined },
+    });
+
+    assert.equal(exitCode, 1);
+    assert.ok(stdout.includes("Modified locally"), stdout);
+    assert.ok(stdout.includes("content/blog/about.en.mdx"), stdout);
+    assert.equal(stdout.includes("Deleted"), false, stdout);
   });
 });
