@@ -127,6 +127,13 @@
       "when": 1794431039679,
       "tag": "0017_flashy_yellow_claw",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1794438737151,
+      "tag": "0018_blue_drax",
+      "breakpoints": true
     }
   ]
 }

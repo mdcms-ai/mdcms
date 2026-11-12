@@ -1,3 +1,5 @@
+import { mountOAuthRoutes } from "./oauth/routes.js";
+import { mountMcpRoutes } from "./mcp/routes.js";
 import { adaptAssistantReadTool } from "./agent-tools/assistant-reads.js";
 import type { AgentReadToolDefinition } from "@mdcms/shared";
 import {
@@ -322,12 +324,16 @@ export function createServerRequestHandlerWithModules(
   const dbConnection = createDatabaseConnection({ env: rawEnv });
   const dal = createContentDAL({ db: dbConnection.db });
   const emailService = env.SMTP_HOST ? createEmailService(env) : undefined;
+  const internalSecret = randomBytes(32).toString("hex");
   const authService = createAuthService({
     db: dbConnection.db,
     env: rawEnv,
     emailService,
+    isTrustedAgentRequest: (request) =>
+      trustedInternalChannel(request, internalSecret) !== undefined,
+    isTrustedMcpRequest: (request) =>
+      trustedInternalChannel(request, internalSecret) === "mcp",
   });
-  const internalSecret = randomBytes(32).toString("hex");
   const authorizeInternalRequest = async (
     request: Request,
     requirement: AuthorizationRequirement,
@@ -651,7 +657,9 @@ export function createServerRequestHandlerWithModules(
       const actorId =
         authorized.principal.type === "session"
           ? authorized.principal.session.userId
-          : authorized.principal.createdByUserId;
+          : authorized.principal.type === "oauth"
+            ? authorized.principal.userId
+            : authorized.principal.createdByUserId;
       return {
         actorId,
         attribution: attributionFromAuthorizedRequest({
@@ -719,6 +727,20 @@ export function createServerRequestHandlerWithModules(
     actions,
     configureApp: (app) => {
       mountAuthRoutes(app, { authService });
+      mountOAuthRoutes(app, { db: dbConnection.db, auth: authService, env });
+      mountMcpRoutes(app, {
+        origin: env.MDCMS_SERVER_URL,
+        version: env.APP_VERSION,
+        registry: agentRegistry,
+        authenticate: (request) => authService.authenticateMcp(request),
+        dispatch: (request, target, declared) =>
+          createInternalDispatcher(internalHandler, internalSecret, {
+            request,
+            ...target,
+            channel: "mcp",
+            declared,
+          }),
+      });
       mountWebhookApiRoutes(app, {
         store: webhookRuntime.store,
         authorize: (request, requirement) =>
@@ -777,6 +799,8 @@ export function createServerRequestHandlerWithModules(
           return session;
         },
         authorizeAdmin: (request) => authService.requireAdminSession(request),
+        authorizeList: (request, project) =>
+          authService.authorizeEnvironmentList(request, project),
         authorizeScoped: async (request, requiredScope) => {
           const routing = resolveRequestTargetRouting(request);
           await authService.authorizeRequest(request, {

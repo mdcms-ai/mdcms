@@ -22,3 +22,5 @@ export {
 
 export { parseMdxSyntax } from "./lib/mdx-syntax.js";
 export type { AgentReadToolDefinition } from "./lib/contracts/agent-tools.js";
+
+export type { OAuthConnection } from "./lib/contracts/oauth.js";

@@ -57,5 +57,12 @@ Out:
 - Trusted proposals have bounded retention and capacity. Minimal undo snapshots
   are removed after consumption or expiry; idle cleanup is disposed on shutdown.
 - Delete/restore preconditions and restore-to-published transitions are atomic
-  in PostgreSQL. Remote transport, OAuth and remaining tool families remain
-  separate implementation stages.
+  in PostgreSQL.
+
+- Remote MCP now mounts the shared registry through per-request stateless SDK
+  transports. PostgreSQL-backed OAuth supports registration, session-bound consent,
+  explicit downscoping, PKCE code exchange, refresh rotation/replay revocation and
+  session-managed connections. Current user/path grants constrain every dispatch.
+- OAuth integration verification uses an isolated ephemeral database; ordinary
+  unit discovery does not connect to storage for these cases. The CLI bridge,
+  remaining tool families and Connected Apps UI remain separate stages.

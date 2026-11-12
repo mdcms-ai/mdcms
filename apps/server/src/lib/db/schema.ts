@@ -727,3 +727,115 @@ export const migrations = pgTable(
     ),
   ],
 );
+
+export const oauthClients = pgTable("oauth_clients", {
+  id: text().primaryKey(),
+  name: text().notNull(),
+  redirectUris: jsonb().$type<string[]>().notNull(),
+  createdAt: timestamp({ withTimezone: true }).notNull(),
+});
+
+export const oauthGrants = pgTable(
+  "oauth_grants",
+  {
+    id: uuid().defaultRandom().primaryKey(),
+    clientId: text()
+      .notNull()
+      .references(() => oauthClients.id, { onDelete: "cascade" }),
+    userId: text()
+      .notNull()
+      .references(() => authUsers.id, { onDelete: "cascade" }),
+    project: text()
+      .notNull()
+      .references(() => projects.slug, { onDelete: "cascade" }),
+    environment: text().notNull(),
+    resource: text().notNull(),
+    scopes: jsonb().$type<string[]>().notNull(),
+    createdAt: timestamp({ withTimezone: true }).notNull(),
+    lastUsedAt: timestamp({ withTimezone: true }),
+    revokedAt: timestamp({ withTimezone: true }),
+  },
+  (table) => [
+    index("idx_oauth_grants_project_user").on(table.project, table.userId),
+  ],
+);
+
+export const oauthConsents = pgTable(
+  "oauth_consents",
+  {
+    hash: text().primaryKey(),
+    clientId: text()
+      .notNull()
+      .references(() => oauthClients.id, { onDelete: "cascade" }),
+    userId: text().references(() => authUsers.id, { onDelete: "cascade" }),
+    sessionId: text(),
+    payload: jsonb().$type<{
+      redirectUri: string;
+      resource: string;
+      scopes: string[];
+      challenge: string;
+      state: string;
+    }>(),
+    createdAt: timestamp({ withTimezone: true }).notNull(),
+    expiresAt: timestamp({ withTimezone: true }).notNull(),
+    consumedAt: timestamp({ withTimezone: true }),
+  },
+  (table) => [index("idx_oauth_consents_expiry").on(table.expiresAt)],
+);
+
+export const oauthCodes = pgTable(
+  "oauth_codes",
+  {
+    hash: text().primaryKey(),
+    grantId: uuid()
+      .notNull()
+      .references(() => oauthGrants.id, { onDelete: "cascade" }),
+    redirectUri: text().notNull(),
+    challenge: text().notNull(),
+    expiresAt: timestamp({ withTimezone: true }).notNull(),
+    consumedAt: timestamp({ withTimezone: true }),
+  },
+  (table) => [index("idx_oauth_codes_expiry").on(table.expiresAt)],
+);
+
+export const oauthFamilies = pgTable(
+  "oauth_families",
+  {
+    id: uuid().defaultRandom().primaryKey(),
+    grantId: uuid()
+      .notNull()
+      .references(() => oauthGrants.id, { onDelete: "cascade" }),
+    expiresAt: timestamp({ withTimezone: true }).notNull(),
+    revokedAt: timestamp({ withTimezone: true }),
+  },
+  (table) => [index("idx_oauth_families_grant").on(table.grantId)],
+);
+
+export const oauthTokens = pgTable(
+  "oauth_tokens",
+  {
+    hash: text().primaryKey(),
+    familyId: uuid()
+      .notNull()
+      .references(() => oauthFamilies.id, { onDelete: "cascade" }),
+    kind: text().$type<"access" | "refresh">().notNull(),
+    scopes: jsonb().$type<string[]>().notNull(),
+    parentHash: text(),
+    expiresAt: timestamp({ withTimezone: true }).notNull(),
+    consumedAt: timestamp({ withTimezone: true }),
+  },
+  (table) => [
+    index("idx_oauth_tokens_expiry").on(table.expiresAt),
+    index("idx_oauth_tokens_family").on(table.familyId),
+  ],
+);
+
+export const oauthCounters = pgTable(
+  "oauth_counters",
+  {
+    key: text().primaryKey(),
+    count: integer().notNull(),
+    expiresAt: timestamp({ withTimezone: true }).notNull(),
+  },
+  (table) => [index("idx_oauth_counters_expiry").on(table.expiresAt)],
+);

@@ -117,3 +117,9 @@ Entries are reverse-chronological (newest first).
 - Validate agent-tool response schemas against mounted domain routes, including database-backed fixtures.
   Why: Handwritten fixtures can accidentally add fields that the actual response omits, hiding incompatible envelope or nested schema definitions.
   How to apply: Parse successful registry and adapted Assistant outputs with their advertised schemas and include a real runtime integration case.
+
+## OAuth transactional authorization
+
+**Rule:** Reuse the active PostgreSQL transaction for current-grant checks during token issuance and refresh.
+**Why:** Opening another pooled connection while holding transaction locks can exhaust the pool and deadlock concurrent exchanges.
+**How to apply:** Pass the transaction into authorization reads and verify exchange and refresh with a one-connection pool. Commit replay revocation before returning an OAuth error.

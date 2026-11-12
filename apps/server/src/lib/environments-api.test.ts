@@ -21,7 +21,9 @@ const env = {
   APP_VERSION: "9.9.9",
   PORT: "4000",
   SERVICE_NAME: "mdcms-server",
-  DATABASE_URL: "postgres://mdcms:mdcms@localhost:5432/mdcms",
+  DATABASE_URL:
+    process.env.MDCMS_TEST_DATABASE_URL ??
+    "postgres://mdcms:mdcms@localhost:5432/mdcms",
 } as NodeJS.ProcessEnv;
 
 const logger = createConsoleLogger({

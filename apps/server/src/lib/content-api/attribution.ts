@@ -38,6 +38,17 @@ export function attributionFromAuthorizedRequest(input: {
     };
   }
 
+  if (principal.type === "oauth")
+    return {
+      actorId: principal.userId,
+      origin: {
+        channel: "mcp",
+        credential: "oauth",
+        oauthClientId: principal.clientId,
+        ...declaredField,
+      },
+    };
+
   return {
     actorId: principal.createdByUserId,
     origin: {

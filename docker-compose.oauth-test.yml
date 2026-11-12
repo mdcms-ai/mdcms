@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: mdcms
+      POSTGRES_PASSWORD: mdcms
+      POSTGRES_DB: mdcms_oauth_test
+    ports:
+      - "127.0.0.1::5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mdcms -d mdcms_oauth_test"]
+      interval: 1s
+      timeout: 5s
+      retries: 60

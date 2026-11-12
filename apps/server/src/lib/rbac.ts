@@ -52,6 +52,7 @@ export type RbacAction =
   | "media:delete"
   | "projects:read"
   | "projects:write"
+  | "environments:read"
   | "environments:clone"
   | "environments:promote"
   | "user:manage"
@@ -94,6 +95,7 @@ const ROLE_ACTIONS: Record<RbacRole, readonly RbacAction[]> = {
     "media:delete",
     "projects:read",
     "projects:write",
+    "environments:read",
     "environments:clone",
     "environments:promote",
     "user:manage",
@@ -114,6 +116,7 @@ const ROLE_ACTIONS: Record<RbacRole, readonly RbacAction[]> = {
     "media:delete",
     "projects:read",
     "projects:write",
+    "environments:read",
     "environments:clone",
     "environments:promote",
     "user:manage",

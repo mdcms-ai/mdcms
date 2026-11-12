@@ -34,7 +34,9 @@ const baseEnv = {
 
 const dbEnv = {
   ...baseEnv,
-  DATABASE_URL: "postgres://mdcms:mdcms@localhost:5432/mdcms",
+  DATABASE_URL:
+    process.env.MDCMS_TEST_DATABASE_URL ??
+    "postgres://mdcms:mdcms@localhost:5432/mdcms",
 } as NodeJS.ProcessEnv;
 
 const logger = createConsoleLogger({

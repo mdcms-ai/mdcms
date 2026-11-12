@@ -661,3 +661,75 @@ test("parseServerEnv rejects duplicate providerId across OIDC and SAML providers
       error.message === "providerId okta must be unique across OIDC and SAML.",
   );
 });
+
+test("canonical server origin defaults to the validated local port", () => {
+  for (const value of [undefined, "", "   "]) {
+    assert.equal(
+      parseServerEnv({
+        NODE_ENV: "test",
+        PORT: "4100",
+        MDCMS_SERVER_URL: value,
+      }).MDCMS_SERVER_URL,
+      "http://localhost:4100",
+    );
+  }
+});
+
+test("production requires an explicit HTTPS canonical origin", () => {
+  for (const value of [undefined, "", "http://localhost:4000"]) {
+    assert.throws(
+      () => parseServerEnv({ NODE_ENV: "production", MDCMS_SERVER_URL: value }),
+      (error: unknown) =>
+        error instanceof RuntimeError && error.code === "INVALID_ENV",
+    );
+  }
+  assert.equal(
+    parseServerEnv({
+      NODE_ENV: "production",
+      PORT: "4000",
+      MDCMS_SERVER_URL: " https://cms.example.com/ ",
+    }).MDCMS_SERVER_URL,
+    "https://cms.example.com",
+  );
+});
+
+test("canonical server origin rejects non-origin components", () => {
+  for (const value of [
+    "https://user:password@cms.example.com",
+    "https://cms.example.com/path",
+    "https://cms.example.com/?",
+    "https://cms.example.com/#",
+    "ftp://cms.example.com",
+    "https://cms.example.com:99999",
+    "https://cms.example.com:",
+    "https://cms.example.com\\",
+    "https://cms.exa\nmple.com",
+    "https://",
+  ]) {
+    assert.throws(
+      () => parseServerEnv({ NODE_ENV: "test", MDCMS_SERVER_URL: value }),
+      (error: unknown) =>
+        error instanceof RuntimeError && error.code === "INVALID_ENV",
+    );
+  }
+});
+
+test("OAuth limits have bounded integer defaults and reject invalid overrides", () => {
+  const settings = [
+    ["MDCMS_OAUTH_REGISTER_RATE_LIMIT", 10, 100],
+    ["MDCMS_OAUTH_AUTHORIZE_RATE_LIMIT", 120, 1000],
+    ["MDCMS_OAUTH_TOKEN_RATE_LIMIT", 300, 3000],
+    ["MDCMS_OAUTH_REVOKE_RATE_LIMIT", 120, 1000],
+  ] as const;
+  for (const [key, fallback, maximum] of settings) {
+    assert.equal(parseServerEnv({})[key], fallback);
+    for (const value of ["0", "-1", "1.5", "garbage", String(maximum + 1)]) {
+      assert.throws(
+        () => parseServerEnv({ [key]: value }),
+        (error: unknown) =>
+          error instanceof RuntimeError && error.code === "INVALID_ENV",
+      );
+    }
+    assert.equal(parseServerEnv({ [key]: String(maximum) })[key], maximum);
+  }
+});

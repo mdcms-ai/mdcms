@@ -98,6 +98,7 @@ export type MountEnvironmentApiRoutesOptions = {
   store: EnvironmentStore;
   authorizeSession: EnvironmentSessionAuthorizer;
   authorizeAdmin: EnvironmentAdminAuthorizer;
+  authorizeList?: (request: Request, project: string) => Promise<void>;
   authorizeScoped: EnvironmentScopedAuthorizer;
   requireCsrf: EnvironmentRequestCsrfProtector;
 };
@@ -574,7 +575,8 @@ export function mountEnvironmentApiRoutes(
   environmentApp.get?.("/api/v1/environments", ({ request }: any) => {
     return executeWithRuntimeErrorsHandled(request, async () => {
       const project = pickProject(request);
-      await options.authorizeAdmin(request);
+      if (options.authorizeList) await options.authorizeList(request, project);
+      else await options.authorizeAdmin(request);
 
       return options.store.list(project);
     });

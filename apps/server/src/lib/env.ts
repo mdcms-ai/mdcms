@@ -142,6 +142,31 @@ const SamlProvidersSchema = z
     }
   });
 const ServerEnvExtensionSchema = z.object({
+  MDCMS_OAUTH_REGISTER_RATE_LIMIT: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .default(10),
+  MDCMS_OAUTH_AUTHORIZE_RATE_LIMIT: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(1000)
+    .default(120),
+  MDCMS_OAUTH_TOKEN_RATE_LIMIT: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(3000)
+    .default(300),
+  MDCMS_OAUTH_REVOKE_RATE_LIMIT: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(1000)
+    .default(120),
+
   PORT: z.coerce.number().int().min(1).max(65535).optional().default(4000),
   SERVICE_NAME: z
     .string()
@@ -220,6 +245,12 @@ export type SamlProviderConfig = {
 
 export type ServerEnv = CoreEnv & {
   PORT: number;
+  MDCMS_SERVER_URL: string;
+  MDCMS_OAUTH_REGISTER_RATE_LIMIT: number;
+  MDCMS_OAUTH_AUTHORIZE_RATE_LIMIT: number;
+  MDCMS_OAUTH_TOKEN_RATE_LIMIT: number;
+  MDCMS_OAUTH_REVOKE_RATE_LIMIT: number;
+
   SERVICE_NAME: string;
   REDIS_URL?: string;
   S3_ENDPOINT?: string;
@@ -247,6 +278,47 @@ export type ServerEnv = CoreEnv & {
    */
   MDCMS_HTTP_COMPRESS: boolean;
 };
+
+function parseCanonicalOrigin(
+  raw: string | undefined,
+  production: boolean,
+  port: number,
+): string {
+  const value = raw?.trim();
+  const invalid = () =>
+    new RuntimeError({
+      code: "INVALID_ENV",
+      message:
+        "MDCMS_SERVER_URL must be an absolute HTTP(S) origin, and explicit HTTPS in production.",
+      details: { key: "MDCMS_SERVER_URL" },
+    });
+  if (!value) {
+    if (production) throw invalid();
+    return `http://localhost:${port}`;
+  }
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw invalid();
+  }
+  if (
+    !/^https?:\/\/(?:\[[0-9a-f:.]+\]|[^:/?#\s\\@]+)(?::[0-9]+)?\/?$/i.test(
+      value,
+    ) ||
+    !url.hostname ||
+    url.username ||
+    url.password ||
+    value.includes("@") ||
+    url.pathname !== "/" ||
+    url.search ||
+    url.hash ||
+    (url.protocol !== "http:" && url.protocol !== "https:") ||
+    (production && url.protocol !== "https:")
+  )
+    throw invalid();
+  return url.origin;
+}
 
 function normalizeAbsoluteUrl(raw: string): string {
   const url = new URL(raw);
@@ -1011,6 +1083,11 @@ export function parseServerEnv(rawEnv: NodeJS.ProcessEnv): ServerEnv {
 
   return extendEnv(core, () => ({
     ...parsedExtension.data,
+    MDCMS_SERVER_URL: parseCanonicalOrigin(
+      rawEnv.MDCMS_SERVER_URL,
+      core.NODE_ENV === "production",
+      parsedExtension.data.PORT,
+    ),
     REDIS_URL: redisUrl,
     S3_ENDPOINT: s3Endpoint,
     S3_ACCESS_KEY: s3AccessKey,

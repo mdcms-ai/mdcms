@@ -234,12 +234,50 @@ Redis-loss recovery drill:
 
 ## OAuth Origin and Local Configuration
 
-SPEC-005 owns MDCMS*SERVER_URL validation and the bounded OAuth rate-limit
+SPEC-005 owns `MDCMS_SERVER_URL` validation and the bounded OAuth rate-limit
 settings. Set the public canonical origin explicitly for deployed servers; in
 production it must be HTTPS or startup fails. A reverse proxy does not change the
 configured public origin. Local development may use http://localhost:4000.
-Docker Compose forwards MDCMS_SERVER_URL and the four MDCMS_OAUTH*\*\_RATE_LIMIT
+Docker Compose forwards MDCMS*SERVER_URL and the four `MDCMS_OAUTH*\*\_RATE_LIMIT`
 settings into the server service; setting them in a host .env file alone is not
 sufficient without that environment mapping. Missing production origin is a boot
 error, not a fallback to localhost. The example environment documents defaults,
 accepted ranges and the difference between local HTTP and production HTTPS.
+
+OAuth registration has a persistent capacity of 10,000 clients with no automatic
+client eviction. At capacity, registration returns a retryable 503. There is no
+client-management endpoint. Monitor capacity before admitting more clients.
+Expired codes and access tokens are cleaned in indexed bounded batches during
+OAuth requests. Refresh replay hashes remain through the family's absolute
+expiry; expired consent handles remain as tombstones for 24 hours. Connection
+records remain available for idempotent revocation.
+
+### OAuth Integration Verification
+
+`bun run integration:oauth` creates a uniquely named, ephemeral PostgreSQL Compose
+project with a random loopback port and in-memory storage, applies migrations,
+and runs the database-backed OAuth and MCP suites. It removes only that project
+on exit. The ordinary integration CI phase includes this command.
+
+To use an already provisioned isolated database, set `MDCMS_TEST_DATABASE_URL` to
+a PostgreSQL URL whose database name contains a `test` or `verify` marker. The
+command applies migrations to that explicit database and leaves it running.
+Never point the command at a development or production database. Tests clean
+only their fixtures. OAuth database cases skip during ordinary unit discovery
+without this variable. Explicit integration mode requires the variable and fails
+on missing configuration, unavailable storage, or assertion failures.
+
+### Studio Embed Smoke Port
+
+`scripts/studio-embed-smoke-check.sh` uses loopback port 4173 by default.
+Set `MDCMS_STUDIO_EMBED_SMOKE_PORT` to a decimal integer from 1 through 65535
+to run the sample-app smoke check on another port. Invalid or empty explicit
+values fail before building, starting the app, or installing cleanup handlers.
+Choose a free port to avoid interfering with an existing local presentation.
+
+For optional OAuth browser verification, set `MDCMS_OAUTH_BROWSER_EXECUTABLE`
+to an installed Chromium executable and run the OAuth route suite with the
+explicit isolated test database and a 30-second test timeout. It verifies
+approval and denial callbacks, cross-origin referrer suppression, and credential
+submission with JavaScript disabled. Ordinary unit discovery does not launch a
+browser.

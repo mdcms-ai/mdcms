@@ -1,3 +1,4 @@
+import { createOAuthStore, type OAuthStore } from "./oauth/database-store.js";
 import { createHash, randomBytes } from "node:crypto";
 import { createRequire } from "node:module";
 import { inflateRawSync } from "node:zlib";
@@ -64,6 +65,7 @@ export const API_KEY_OPERATION_SCOPES = [
   "media:delete",
   "webhooks:read",
   "webhooks:write",
+  "environments:read",
   "environments:clone",
   "environments:promote",
   "migrations:run",
@@ -126,7 +128,15 @@ export type SessionPrincipal = {
   role?: RbacRole;
 };
 
-export type AuthPrincipal = ApiKeyPrincipal | SessionPrincipal;
+export type OAuthPrincipal = {
+  type: "oauth";
+  clientId: string;
+  userId: string;
+  email: string;
+  scopes: readonly ApiKeyOperationScope[];
+  target: Readonly<{ project: string; environment: string }>;
+};
+export type AuthPrincipal = ApiKeyPrincipal | SessionPrincipal | OAuthPrincipal;
 
 export type AuthorizationRequirement = {
   requiredScope: ApiKeyOperationScope;
@@ -136,7 +146,7 @@ export type AuthorizationRequirement = {
 };
 
 export type AuthorizedRequest = {
-  mode: "session" | "api_key";
+  mode: "session" | "api_key" | "oauth";
   principal: AuthPrincipal;
   /** Set only by the host after verifying private dispatch credentials. */
   internalChannel?: "mcp" | "studio_ai";
@@ -151,6 +161,12 @@ export function actorFromAuthorizedRequest(
       email: authorized.principal.session.email,
     };
   }
+
+  if (authorized.principal.type === "oauth")
+    return {
+      id: authorized.principal.userId,
+      email: authorized.principal.email,
+    };
 
   return {
     id: authorized.principal.createdByUserId,
@@ -223,6 +239,18 @@ export type CliLoginExchangeInput = {
 };
 
 export type AuthService = {
+  authorizeEnvironmentList: (
+    request: Request,
+    project: string,
+  ) => Promise<void>;
+  authenticateMcp: (request: Request) => Promise<{
+    authorization: AuthorizedRequest;
+    target: { project: string; environment: string };
+  }>;
+  getOAuthUserGrants: (
+    userId: string,
+    database?: Pick<DrizzleDatabase, "select">,
+  ) => Promise<RbacGrant[]>;
   login: (
     request: Request,
     email: string,
@@ -1912,17 +1940,6 @@ export function validateSsoSignInPayload(
   return parsed.data;
 }
 
-function resolveAuthBaseUrl(env: NodeJS.ProcessEnv): string {
-  const fromEnv = env.MDCMS_SERVER_URL?.trim();
-
-  if (fromEnv) {
-    return fromEnv;
-  }
-
-  const port = env.PORT?.trim() || "4000";
-  return `http://localhost:${port}`;
-}
-
 function collectTrustedOrigins(
   baseUrl: string,
   providers: OidcProviderConfig[],
@@ -2026,6 +2043,7 @@ function toRbacAction(requiredScope: ApiKeyOperationScope): RbacAction | null {
     case "media:read":
     case "media:upload":
     case "media:delete":
+    case "environments:read":
     case "environments:clone":
     case "environments:promote":
     case "projects:read":
@@ -2359,6 +2377,9 @@ function createAuthBackoffResponse(
 }
 
 export type CreateAuthServiceOptions = {
+  oauthStore?: OAuthStore;
+  isTrustedMcpRequest?: (request: Request) => boolean;
+  isTrustedAgentRequest?: (request: Request) => boolean;
   db: DrizzleDatabase;
   env?: NodeJS.ProcessEnv;
   isAdminSession?: (session: StudioSession) => boolean | Promise<boolean>;
@@ -2370,7 +2391,8 @@ export function createAuthService(
 ): AuthService {
   const rawEnv = options.env ?? process.env;
   const parsedEnv = parseServerEnv(rawEnv);
-  const baseUrl = resolveAuthBaseUrl(rawEnv);
+  const baseUrl = parsedEnv.MDCMS_SERVER_URL;
+  const oauthStore = options.oauthStore ?? createOAuthStore(options.db);
   const secret = resolveAuthSecret(rawEnv);
   const useSecureCookies = resolveSecureCookiePolicy(rawEnv);
   const csrfCookieSameSite = useSecureCookies ? "None" : ("Lax" as const);
@@ -3749,7 +3771,151 @@ export function createAuthService(
     };
   }
 
+  async function getOAuthUserGrants(
+    userId: string,
+    database: Pick<DrizzleDatabase, "select"> = options.db,
+  ): Promise<RbacGrant[]> {
+    const [user] = await database
+      .select({ id: authUsers.id })
+      .from(authUsers)
+      .where(eq(authUsers.id, userId));
+    if (!user) throw createUnauthorizedSessionError("Invalid credential.");
+    const rows = await database
+      .select()
+      .from(rbacGrants)
+      .where(and(eq(rbacGrants.userId, userId), isNull(rbacGrants.revokedAt)));
+    return rows.map(toRbacGrant);
+  }
+
+  async function requireOAuthPrincipal(
+    request: Request,
+    token: string,
+  ): Promise<OAuthPrincipal> {
+    if (
+      new URL(request.url).pathname !== "/api/v1/mcp" &&
+      !options.isTrustedMcpRequest?.(request)
+    )
+      throw createUnauthorizedSessionError("Invalid credential.");
+    const row = await oauthStore.authenticate(token, `${baseUrl}/api/v1/mcp`);
+    if (!row) throw createUnauthorizedSessionError("Invalid credential.");
+    const url = new URL(request.url);
+    for (const field of ["project", "environment"] as const) {
+      const supplied = [
+        request.headers.get(`x-mdcms-${field}`),
+        ...url.searchParams.getAll(field),
+      ].filter((value) => value !== null);
+      if (supplied.some((value) => value !== row.grant[field]))
+        throw new RuntimeError({
+          code: "TARGET_ROUTING_MISMATCH",
+          message: "Routing does not match the OAuth target.",
+          statusCode: 400,
+        });
+    }
+    await getOAuthUserGrants(row.grant.userId);
+    return {
+      type: "oauth",
+      clientId: row.grant.clientId,
+      userId: row.grant.userId,
+      email: row.email,
+      scopes: row.scopes as ApiKeyOperationScope[],
+      target: {
+        project: row.grant.project,
+        environment: row.grant.environment,
+      },
+    };
+  }
+
   return {
+    async authorizeEnvironmentList(request, project) {
+      const token = extractBearerToken(request.headers.get("authorization"));
+      if (!token) {
+        await assertAdminSession(request);
+        return;
+      }
+      let userId: string;
+      let scopes: readonly ApiKeyOperationScope[];
+      if (token.startsWith("mdcms_oat_")) {
+        const principal = await requireOAuthPrincipal(request, token);
+        if (principal.target.project !== project)
+          throw new RuntimeError({
+            code: "TARGET_ROUTING_MISMATCH",
+            message: "Routing does not match credential.",
+            statusCode: 400,
+          });
+        userId = principal.userId;
+        scopes = principal.scopes;
+      } else {
+        const { metadata } = await requireActiveApiKey(token);
+        const routing = assertRequestTargetRouting(request, "project");
+        if (
+          !metadata.contextAllowlist.some(
+            (target) =>
+              target.project === project &&
+              (!routing.environment ||
+                target.environment === routing.environment),
+          )
+        )
+          throw new RuntimeError({
+            code: "TARGET_ROUTING_MISMATCH",
+            message: "Routing does not match credential.",
+            statusCode: 400,
+          });
+        userId = metadata.createdByUserId;
+        scopes = metadata.scopes;
+      }
+      if (!scopes.includes("environments:read"))
+        throw new RuntimeError({
+          code: "FORBIDDEN",
+          message: "Environment metadata scope required.",
+          statusCode: 403,
+        });
+      authorizeSessionGrants(await getOAuthUserGrants(userId), {
+        requiredScope: "environments:read",
+        project,
+      });
+    },
+    getOAuthUserGrants,
+    async authenticateMcp(request) {
+      const token = extractBearerToken(request.headers.get("authorization"));
+      if (!token)
+        throw createUnauthorizedSessionError("Bearer credential required.");
+      if (token.startsWith("mdcms_oat_")) {
+        const principal = await requireOAuthPrincipal(request, token);
+        return {
+          authorization: { mode: "oauth", principal },
+          target: { ...principal.target },
+        };
+      }
+      const { metadata } = await requireActiveApiKey(token);
+      const routed = assertRequestTargetRouting(request, "project_environment");
+      const target = {
+        project: assertNonEmptyString(routed.project, "project"),
+        environment: assertNonEmptyString(routed.environment, "environment"),
+      };
+      if (!apiKeyAllowsTarget(metadata.contextAllowlist, target))
+        throw new RuntimeError({
+          code: "TARGET_ROUTING_MISMATCH",
+          message: "Routing does not match the API key target.",
+          statusCode: 400,
+        });
+      const email = await requireApiKeyOwnerEmail(metadata.createdByUserId);
+      return {
+        authorization: {
+          mode: "api_key",
+          principal: {
+            type: "api_key",
+            keyId: metadata.id,
+            createdByUserId: metadata.createdByUserId,
+            createdByUserEmail: email,
+            keyPrefix: metadata.keyPrefix,
+            label: metadata.label,
+            scopes: metadata.scopes,
+            contextAllowlist: metadata.contextAllowlist,
+          },
+        },
+        target,
+      };
+    },
     async login(request, email, password) {
       return loginWithEmailPassword(request, email, password);
     },
@@ -3846,6 +4012,37 @@ export function createAuthService(
         request.headers.get("authorization"),
       );
 
+      if (bearerToken?.startsWith("mdcms_oat_")) {
+        const principal = await requireOAuthPrincipal(request, bearerToken);
+        if (
+          (requirement.project &&
+            requirement.project !== principal.target.project) ||
+          (requirement.environment &&
+            requirement.environment !== principal.target.environment)
+        )
+          throw new RuntimeError({
+            code: "TARGET_ROUTING_MISMATCH",
+            message: "Routing does not match the OAuth target.",
+            statusCode: 400,
+          });
+        if (
+          !apiKeyScopesSatisfyRequirement(
+            principal.scopes,
+            requirement.requiredScope,
+          )
+        )
+          throw new RuntimeError({
+            code: "FORBIDDEN",
+            message: "Required scope is missing.",
+            statusCode: 403,
+          });
+        authorizeSessionGrants(await getOAuthUserGrants(principal.userId), {
+          ...requirement,
+          ...principal.target,
+        });
+        return { mode: "oauth", principal };
+      }
+
       if (bearerToken) {
         const { row, metadata } = await requireActiveApiKey(bearerToken);
         const hasRequiredScope = apiKeyScopesSatisfyRequirement(
@@ -3889,6 +4086,13 @@ export function createAuthService(
               environment: requirement.environment,
             },
           });
+        }
+
+        if (options.isTrustedAgentRequest?.(request)) {
+          authorizeSessionGrants(
+            await getOAuthUserGrants(metadata.createdByUserId),
+            requirement,
+          );
         }
 
         const createdByUserEmail = await requireApiKeyOwnerEmail(

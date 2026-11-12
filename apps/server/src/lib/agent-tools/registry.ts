@@ -9,7 +9,7 @@ function permitted(tool: AgentTool, authorization: AuthorizedRequest): boolean {
     authorization.principal.type === "session" ||
     tool.requiredScopes.every(
       (scope) =>
-        authorization.principal.type === "api_key" &&
+        authorization.principal.type !== "session" &&
         authorization.principal.scopes.includes(scope),
     )
   );
@@ -29,6 +29,7 @@ export function createAgentToolRegistry(
     name: string,
     input: unknown,
     context: AgentToolContext,
+    validated = false,
   ): Promise<unknown> => {
     const tool = tools.get(name);
     if (!tool)
@@ -43,7 +44,9 @@ export function createAgentToolRegistry(
         message: "Required tool scope is missing.",
         statusCode: 403,
       });
-    const parsed = tool.inputSchema.safeParse(input);
+    const parsed = validated
+      ? { success: true as const, data: input }
+      : tool.inputSchema.safeParse(input);
     if (!parsed.success)
       throw new RuntimeError({
         code: "INVALID_INPUT",
@@ -53,28 +56,37 @@ export function createAgentToolRegistry(
       });
     return tool.outputSchema.parse(await tool.execute(parsed.data, context));
   };
+  const call = async (
+    name: string,
+    input: unknown,
+    context: AgentToolContext,
+    validated = false,
+  ) => {
+    try {
+      const envelope = await execute(name, input, context, validated);
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(envelope) }],
+        structuredContent: envelope,
+        isError: false,
+      };
+    } catch (error) {
+      const failure = toAgentToolFailure(error);
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(failure) }],
+        isError: true,
+      };
+    }
+  };
   return {
     register,
     execute,
+    get: (name: string) => tools.get(name),
     list: (authorization: AuthorizedRequest) =>
       [...tools.values()]
         .filter((tool) => permitted(tool, authorization))
         .sort((a, b) => a.name.localeCompare(b.name)),
-    async call(name: string, input: unknown, context: AgentToolContext) {
-      try {
-        const envelope = await execute(name, input, context);
-        return {
-          content: [{ type: "text" as const, text: JSON.stringify(envelope) }],
-          structuredContent: envelope,
-          isError: false,
-        };
-      } catch (error) {
-        const failure = toAgentToolFailure(error);
-        return {
-          content: [{ type: "text" as const, text: JSON.stringify(failure) }],
-          isError: true,
-        };
-      }
-    },
+    call,
+    callValidated: (name: string, input: unknown, context: AgentToolContext) =>
+      call(name, input, context, true),
   };
 }

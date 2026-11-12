@@ -882,8 +882,11 @@ user, credential oauth and verified oauthClientId; declared names remain untrust
 
 Codes, access tokens, refresh tokens and consent handles are generated with at
 least 256 bits of cryptographic randomness and persisted only as SHA-256 hashes.
-Access tokens use `mdcms_oat_` and expire after 3600 seconds. Refresh tokens use
-`mdcms_ort_` and expire after 30 days; rotation never extends the original family's
+Access tokens use `mdcms_oat_` and expire after at most 3600 seconds, capped by
+the remaining absolute family lifetime. Compute issuance time once and return
+the actual positive integer expires*in matching the persisted expiry. Refresh
+with less than one full second remaining returns invalid_grant. Refresh tokens use
+`mdcms_ort*` and expire after 30 days; rotation never extends the original family's
 absolute expiry. Authorization codes expire after 5 minutes and are single-use.
 Atomic conditional consumption prevents concurrent code/refresh redemption.
 Refresh reuse revokes the entire family including access tokens. Grant revocation
@@ -895,17 +898,17 @@ OAuth protocol endpoints use OAuth JSON, not the domain `{data}` envelope. Token
 responses include Cache-Control: no-store and Pragma: no-cache. All endpoint URLs
 in metadata are absolute and use the configured canonical origin.
 
-| Method | Path                                               | Auth mode                                                     | Scope            | Routing                    | Request                                                                       | Success                                                                                                 | Deterministic errors                                                                                                                                                               |
-| ------ | -------------------------------------------------- | ------------------------------------------------------------- | ---------------- | -------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| GET    | `/.well-known/oauth-protected-resource/api/v1/mcp` | public                                                        | none             | none                       | none                                                                          | 200 `{resource, authorization_servers:[issuer], scopes_supported, bearer_methods_supported:["header"]}` | 500 server_error for invalid server configuration                                                                                                                                  |
-| GET    | `/.well-known/oauth-authorization-server`          | public                                                        | none             | none                       | none                                                                          | 200 metadata described below                                                                            | 500 server_error for invalid server configuration                                                                                                                                  |
-| POST   | `/api/v1/oauth/register`                           | public                                                        | none             | none                       | JSON registration below                                                       | 201 registered public client                                                                            | 400 invalid_redirect_uri or invalid_client_metadata; 429 rate_limit_exceeded; 503 temporarily_unavailable                                                                          |
-| GET    | `/api/v1/oauth/authorize`                          | session, with sign-in if absent                               | requested scopes | target selected at consent | Query authorization request below                                             | 200 server-rendered sign-in/consent; approved redirect is issued by consent POST                        | 400 invalid_request, invalid_client, invalid_scope, unsupported_response_type, invalid_target; 429 rate_limit_exceeded; 503 temporarily_unavailable                                |
-| POST   | `/api/v1/oauth/authorize`                          | session plus CSRF                                             | requested scopes | consent target             | Form `{consent, decision:"allow" or "deny", project, environment, csrfToken}` | 303 to registered redirect with code/state or error/state                                               | 401 UNAUTHORIZED; 403 FORBIDDEN; 400 invalid_request, invalid_scope, invalid_target; 410 invalid_request for expired consent; 429 rate_limit_exceeded; 503 temporarily_unavailable |
-| POST   | `/api/v1/oauth/token`                              | public client identified by client_id and proof below         | grant scopes     | immutable stored target    | application/x-www-form-urlencoded token request below                         | 200 token response below                                                                                | 400 invalid_request, invalid_grant, invalid_scope, invalid_target, unsupported_grant_type; 401 invalid_client; 429 rate_limit_exceeded; 503 temporarily_unavailable                |
-| POST   | `/api/v1/oauth/revoke`                             | public client identified by client_id and possession of token | none             | stored grant               | Form `{client_id, token, token_type_hint?:"access_token" or "refresh_token"}` | 200 empty, including unknown/already-revoked token                                                      | 400 invalid_request; 401 invalid_client; 429 rate_limit_exceeded; 503 temporarily_unavailable                                                                                      |
-| GET    | `/api/v1/oauth/connections`                        | session                                                       | none             | explicit project           | no body                                                                       | 200 `{data: OAuthConnection[]}`                                                                         | MISSING_TARGET_ROUTING (400), UNAUTHORIZED (401), FORBIDDEN (403)                                                                                                                  |
-| DELETE | `/api/v1/oauth/connections/:id`                    | session plus CSRF                                             | none             | explicit project           | path id                                                                       | 200 `{data:{id, revoked:true}}`                                                                         | MISSING_TARGET_ROUTING (400), UNAUTHORIZED (401), FORBIDDEN (403), NOT_FOUND (404)                                                                                                 |
+| Method | Path                                               | Auth mode                                                     | Scope            | Routing                    | Request                                                                               | Success                                                                                                 | Deterministic errors                                                                                                                                                               |
+| ------ | -------------------------------------------------- | ------------------------------------------------------------- | ---------------- | -------------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/.well-known/oauth-protected-resource/api/v1/mcp` | public                                                        | none             | none                       | none                                                                                  | 200 `{resource, authorization_servers:[issuer], scopes_supported, bearer_methods_supported:["header"]}` | 500 server_error for invalid server configuration                                                                                                                                  |
+| GET    | `/.well-known/oauth-authorization-server`          | public                                                        | none             | none                       | none                                                                                  | 200 metadata described below                                                                            | 500 server_error for invalid server configuration                                                                                                                                  |
+| POST   | `/api/v1/oauth/register`                           | public                                                        | none             | none                       | JSON registration below                                                               | 201 registered public client                                                                            | 400 invalid_redirect_uri or invalid_client_metadata; 429 rate_limit_exceeded; 503 temporarily_unavailable                                                                          |
+| GET    | `/api/v1/oauth/authorize`                          | session, with sign-in if absent                               | requested scopes | target selected at consent | Query authorization request below                                                     | 200 server-rendered sign-in/consent; approved redirect is issued by consent POST                        | 400 invalid_request, invalid_client, invalid_scope, unsupported_response_type, invalid_target; 429 rate_limit_exceeded; 503 temporarily_unavailable                                |
+| POST   | `/api/v1/oauth/authorize`                          | session plus CSRF                                             | requested scopes | consent target             | Form `{consent, decision:"allow" or "deny", project, environment, scope?, csrfToken}` | 303 to registered redirect with code/state or error/state                                               | 401 UNAUTHORIZED; 403 FORBIDDEN; 400 invalid_request, invalid_scope, invalid_target; 410 invalid_request for expired consent; 429 rate_limit_exceeded; 503 temporarily_unavailable |
+| POST   | `/api/v1/oauth/token`                              | public client identified by client_id and proof below         | grant scopes     | immutable stored target    | application/x-www-form-urlencoded token request below                                 | 200 token response below                                                                                | 400 invalid_request, invalid_grant, invalid_scope, invalid_target, unsupported_grant_type; 401 invalid_client; 429 rate_limit_exceeded; 503 temporarily_unavailable                |
+| POST   | `/api/v1/oauth/revoke`                             | public client identified by client_id and possession of token | none             | stored grant               | Form `{client_id, token, token_type_hint?:"access_token" or "refresh_token"}`         | 200 empty, including unknown/already-revoked token                                                      | 400 invalid_request; 401 invalid_client; 429 rate_limit_exceeded; 503 temporarily_unavailable                                                                                      |
+| GET    | `/api/v1/oauth/connections`                        | session                                                       | none             | explicit project           | no body                                                                               | 200 `{data: OAuthConnection[]}`                                                                         | MISSING_TARGET_ROUTING (400), UNAUTHORIZED (401), FORBIDDEN (403)                                                                                                                  |
+| DELETE | `/api/v1/oauth/connections/:id`                    | session plus CSRF                                             | none             | explicit project           | path id                                                                               | 200 `{data:{id, revoked:true}}`                                                                         | MISSING_TARGET_ROUTING (400), UNAUTHORIZED (401), FORBIDDEN (403), NOT_FOUND (404)                                                                                                 |
 
 Metadata includes issuer, authorization_endpoint, token_endpoint,
 registration_endpoint, revocation_endpoint, response_types_supported=["code"],
@@ -959,7 +962,7 @@ parameters (invalid_request), wrong resource (invalid_target) or unknown client
 (invalid_client). Refresh requires grant_type=refresh_token, client_id,
 refresh_token and resource, with optional scope limited to the existing grant.
 No request may change target or expand scopes. Response is `{access_token,
-token_type:"Bearer", expires_in:3600, refresh_token, scope}`. Error responses are
+token_type:"Bearer", expires_in:positive_integer_up_to_3600, refresh_token, scope}`. Error responses are
 `{error, error_description?}` with no token or account information.
 
 Revoking a recognized token owned by the supplied client revokes its grant and
@@ -1063,3 +1066,77 @@ code. Return OAuth JSON on machine endpoints and HTML on authorization pages,
 with no-store. Password-entry backoff remains independently enforced. The local
 environment example and Compose server environment document and forward these
 settings. Logs must not include token, consent or verifier values.
+
+### OAuth Storage Capacity and Retention
+
+Registration admits at most 10,000 registered clients per instance database.
+Admission is atomic across server processes. At capacity return
+503 temporarily_unavailable with Retry-After: 60. Clients have no automatic expiry
+or eviction. This is an operator capacity limit; no client-management endpoint
+is defined. Registration throttling remains independent of this storage limit.
+
+Cleanup uses indexed expiry predicates and bounded batches, never an unbounded
+request-time sweep. Expired authorization codes and access tokens may be removed.
+Consumed refresh token hashes must remain available for replay detection until
+the family's original absolute expiry, including after rotation or revocation.
+Grant and connection records remain available for idempotent revocation.
+
+Expired consent payloads may be discarded, retaining a minimal hashed-handle
+tombstone until 24 hours after expiry. Known expired handles, including consumed handles, return HTML 410
+invalid_request. After tombstone retention, purged or unknown handles return HTML
+400 invalid_request. Cleanup does not extend any credential or consent lifetime.
+
+### Consent Sign-in Continuation
+
+GET /api/v1/oauth/authorize?consent=<handle> resumes an existing consent request.
+Exactly one consent parameter is accepted, with no other query parameters.
+Duplicate handles or mixed OAuth parameters return invalid_request (400).
+For a signed-in user, atomically bind an unbound, unexpired, unconsumed handle to
+that user and session. Never rebind or extend expiry. A different bound user or
+session receives FORBIDDEN (403) with fresh-start guidance. GET never issues code.
+
+The same-origin sign-in page reuses POST /api/v1/auth/login and its password
+backoff. Credentials stay in the POST body; the fetch rejects redirects. After
+successful sign-in, navigate to the continuation URL for the existing handle.
+HTML uses a restrictive CSP with a nonce for any inline script, same-origin
+connect actions, and escaped unverified names and URLs. Sign-in and error pages
+use `form-action 'self'`. Authenticated consent pages permit only `'self'` and
+the already validated registered callback origin in `form-action`, allowing the
+303 redirect after approval or denial. Construct that source with the parsed
+callback URL's `origin`; never interpolate raw request headers or use wildcards.
+The sign-in form declares `method="POST"` and the explicit same-origin
+`/api/v1/auth/login` action, so disabling or blocking JavaScript never places
+email or password in a URL. The sign-in CSP never permits the callback origin.
+
+### OAuth Request Body Bound
+
+POST bodies on /api/v1/oauth/authorize, /api/v1/oauth/register,
+/api/v1/oauth/token and /api/v1/oauth/revoke are capped at 64 KiB. Enforce the
+byte limit while reading the stream even without Content-Length; cancel excess
+input. Oversized bodies return 413 invalid_request, as HTML on authorization and
+OAuth JSON on machine endpoints. Consume the endpoint-global request counter
+before allocating or parsing the body, including malformed and oversized bodies.
+After resolving a known client or signed-in user, consume its separate bucket
+without counting the global request again. Existing auth/login is unchanged.
+
+### Explicit Consent Downscoping
+
+For each available target, compute the subset of the immutable requested scopes
+that the user's current grants permit issuing. Show the exact proposed granted
+scopes and unavailable requested scopes. Offer Allow only for a nonempty subset.
+Consent POST includes scope as the explicitly selected space-delimited subset
+when decision=allow. Reject malformed spacing, duplicates, scopes outside the
+stored request, and scopes no longer issuable in the selected target with
+invalid_scope. Recheck the submitted selection; do not silently add newly granted
+permissions or silently remove revoked ones. Unknown or unissuable protocol
+scopes return invalid_scope even before target selection. Denial does not require
+a scope selection. Store only the selected subset in the grant, return it in the
+token response, and prohibit refresh scope expansion. This permits clients that
+request all advertised scopes to receive a limited grant suited to an editor.
+
+Authorization HTML uses `Referrer-Policy: same-origin`: same-origin form POSTs
+retain a verifiable Origin while cross-origin callbacks receive no referrer.
+The configured canonical origin is also trusted on `/api/v1/auth` browser routes,
+including login and session calls, when a TLS proxy forwards an internal HTTP
+request URL. Forwarded headers never establish trust; null and unknown origins
+remain rejected, and the configured Studio origin allowlist remains supported.

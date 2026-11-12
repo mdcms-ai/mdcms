@@ -88,6 +88,15 @@ function createAuthServiceStub(overrides: Partial<AuthService>): AuthService {
   const session = createSession();
 
   const stub: AuthService = {
+    async authorizeEnvironmentList() {
+      throw new Error("Environment listing is not used by collaboration");
+    },
+    async authenticateMcp() {
+      throw new Error("MCP authentication is not used by collaboration");
+    },
+    async getOAuthUserGrants() {
+      throw new Error("OAuth grants are not used by collaboration");
+    },
     async login(_request, _email, _password) {
       return {
         outcome: "success",

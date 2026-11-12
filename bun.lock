@@ -49,6 +49,7 @@
         "@mdcms/modules": "workspace:*",
         "@mdcms/shared": "workspace:*",
         "@mdcms/studio": "workspace:*",
+        "@modelcontextprotocol/sdk": "1.32.2",
         "better-auth": "^1.5.1",
         "crossws": "0.4.6",
         "drizzle-orm": "^0.45.1",

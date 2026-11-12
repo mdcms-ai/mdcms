@@ -892,3 +892,42 @@ test("actor columns store text user ids", () => {
   assert.equal(documentsTable?.columns.updated_origin?.type, "jsonb");
   assert.equal(documentVersionsTable?.columns.published_origin?.type, "jsonb");
 });
+
+test("OAuth persistence has indexed expiry and cascading principal ownership", () => {
+  const { snapshot } = readLatestArtifacts();
+  for (const name of [
+    "oauth_clients",
+    "oauth_consents",
+    "oauth_codes",
+    "oauth_grants",
+    "oauth_families",
+    "oauth_tokens",
+    "oauth_counters",
+  ]) {
+    assert.ok(snapshot.tables[`public.${name}`], `missing ${name}`);
+  }
+  for (const name of [
+    "oauth_consents",
+    "oauth_codes",
+    "oauth_tokens",
+    "oauth_counters",
+  ]) {
+    const table = snapshot.tables[`public.${name}`]!;
+    assert.ok(
+      Object.values(table.indexes).some((index) =>
+        indexColumnExpressions(index).includes("expires_at"),
+      ),
+    );
+  }
+  const grant = snapshot.tables["public.oauth_grants"]!;
+  assert.ok(
+    Object.values(grant.foreignKeys).some(
+      (key) => key.tableTo === "users" && key.onDelete === "cascade",
+    ),
+  );
+  assert.ok(
+    Object.values(grant.foreignKeys).some(
+      (key) => key.tableTo === "projects" && key.onDelete === "cascade",
+    ),
+  );
+});
