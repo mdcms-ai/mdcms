@@ -112,6 +112,8 @@ const body = await renderer.render(document);
 
 ### Commands
 
+The CLI runs on Node.js 22.18 or newer and on Bun. Its published entry point uses the Node.js runtime; `mdcms.config.ts` is loaded with the runtime's native TypeScript support.
+
 | Command                      | Description                                                                  |
 | ---------------------------- | ---------------------------------------------------------------------------- |
 | `cms init`                   | Interactive wizard (or non-interactive CI mode) to set up MDCMS in a project |
@@ -202,6 +204,7 @@ The setup wizard still walks through:
 
 1. **Server URL** — Prompt for the MDCMS server URL + health check (`GET /healthz`).
 2. **Project + environment names** — Prompt for project name and environment name (default: `"production"`). These are collected before authentication so the login challenge can scope the API key to `(project, environment)`.
+   The project name is required: an empty or whitespace-only answer is rejected and the prompt asks again.
 3. **Authentication** — Open browser for login via OAuth flow. The login challenge includes the project and environment from step 2. Scopes: `projects:read`, `projects:write`, `schema:read`, `schema:write`, `content:read`, `content:read:draft`, `content:write`, `content:delete`. The resulting API key has `contextAllowlist: [{project, environment}]`.
 4. **Project creation** — `POST /api/v1/projects` with the project name from step 2. Slug is auto-generated from name; a default "production" environment is created automatically. If the server returns `409` (project already exists), the wizard exits with an error.
 5. **Environment creation** — If the environment already exists in the project-create response, the wizard skips creation; otherwise `POST /api/v1/projects/:slug/environments`.
@@ -210,6 +213,7 @@ The setup wizard still walks through:
 8. **Schema inference** — Analyze existing frontmatter across files to suggest schema types/fields and infer per-type localization mode (`localized: false` when no locale evidence exists, `localized: true` when two or more distinct locales are detected).
 9. **Schema + locale confirmation** — Present inferred schema and locale mapping plan, let developer adjust. Locale detection precedence is `frontmatter > filename suffix > folder segment`; frontmatter keys checked are `locale`, `lang`, and `language`.
 10. **Config generation** — Generate `mdcms.config.ts` with the confirmed schema, server URL, and settings. If localized types are present, generate `locales.default`, `locales.supported`, and persisted remaps in `locales.aliases`. The wizard recommends `locales.default` as the most frequently detected locale and prompts for confirmation/override.
+    The generated file imports `defineConfig`, `defineType`, `fieldTypes` (when references are present) and `z` (when Zod field types are present) from `@mdcms/cli`, which re-exports Zod, so the project needs no separate `zod` dependency and the config uses the same Zod instance as the CLI.
 11. **Schema sync** — Sync schema to server via `PUT /api/v1/schema`. Persist the server-returned `schemaHash` to `.mdcms/schema/<project>.<environment>.json`. Skipped if no content types are defined.
 12. **Initial import** — Push all selected content to the CMS server with explicit `locale` and `content_format` per document. For localized types, the wizard creates one seed locale document per derived translation group, then creates remaining locale siblings as variants of that seed so they share a single `translation_group_id`. On `409` path conflict, the wizard falls back to `PUT` (update) using the `conflictDocumentId` from the error response. Manifest entries are written to `.mdcms/manifests/<project>.<environment>.json` on success.
 13. **Gitignore + untracking update** — Add managed content directories to `.gitignore` and explicitly remove already tracked managed content files from the Git index (`git rm -r --cached <dir>`), so they are no longer tracked.
@@ -368,7 +372,7 @@ This will overwrite locally modified files that also changed on server, and dele
 
 - Without `--force`, two separate checkbox prompts are shown (if applicable): one for new files, one for deletions. A final confirmation prompt summarizes the total action ("Push N changed, N new, N to delete?").
 - With `--force`, all new files are auto-selected for upload, all deletions are auto-selected for removal, and all confirmation prompts are skipped. This is the recommended mode for CI/scripted usage.
-- In non-TTY environments without `--force`, checkbox prompts return empty selections (no new files uploaded, no deletions performed). Changed manifest-tracked files are still pushed normally. A hint is printed: "Run with --force to include new/deleted files in non-interactive mode."
+- In non-TTY environments without `--force`, checkbox prompts return empty selections (no new files uploaded, no deletions performed). Changed manifest-tracked files are still pushed normally, without a confirmation prompt, so scripts and agents can push edits as drafts. A hint is printed: "Run with --force to include new/deleted files in non-interactive mode."
 
 #### Update fallback on 404
 

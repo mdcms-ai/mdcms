@@ -26,6 +26,32 @@ export type Prompter = {
   spinner(): { start(msg: string): void; stop(msg: string): void };
 };
 
+/**
+ * Options for an inquirer text prompt. A prompt without a default has no
+ * usable empty answer, so it is required and rejects blank input instead of
+ * letting an empty value fail later.
+ */
+export function createTextPromptConfig(
+  message: string,
+  defaultValue?: string,
+): {
+  message: string;
+  default?: string;
+  required: boolean;
+  validate?: (value: string) => true | string;
+} {
+  if (defaultValue !== undefined) {
+    return { message, default: defaultValue, required: false };
+  }
+
+  return {
+    message,
+    required: true,
+    validate: (value) =>
+      value.trim().length > 0 ? true : "Enter a value to continue.",
+  };
+}
+
 export function createInquirerPrompter(): Prompter {
   return {
     intro(message) {
@@ -36,7 +62,9 @@ export function createInquirerPrompter(): Prompter {
     },
     async text(message, defaultValue) {
       try {
-        return await input({ message, default: defaultValue });
+        return (
+          await input(createTextPromptConfig(message, defaultValue))
+        ).trim();
       } catch (error) {
         if (isExitPromptError(error)) process.exit(0);
         throw error;

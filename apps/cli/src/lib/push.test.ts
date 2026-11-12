@@ -280,6 +280,84 @@ test("push updates an existing manifest-tracked document via PUT", async () => {
   });
 });
 
+test("push without a terminal pushes changed documents without asking for confirmation", async () => {
+  await withTempDir(async (cwd) => {
+    const manifestPath = join(
+      cwd,
+      ".mdcms",
+      "manifests",
+      "marketing-site.staging.json",
+    );
+    await mkdir(join(cwd, ".mdcms", "manifests"), { recursive: true });
+    await writeSchemaStateFile(cwd, "marketing-site", "staging");
+    await writeFile(
+      manifestPath,
+      JSON.stringify(
+        {
+          "doc-1": {
+            path: "content/blog/hello-world.en.md",
+            format: "md",
+            draftRevision: 1,
+            publishedVersion: 1,
+            hash: "old-hash",
+          },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    await mkdir(join(cwd, "content", "blog"), { recursive: true });
+    await writeFile(
+      join(cwd, "content/blog/hello-world.en.md"),
+      '---\ntitle: "Hello World"\n---\n\nEdited by an agent\n',
+      "utf8",
+    );
+
+    const restoreTTY = setTTY(false);
+    try {
+      let putCount = 0;
+      let confirmCount = 0;
+      const exitCode = await runMdcmsCli(["push"], {
+        cwd,
+        env: {} as NodeJS.ProcessEnv,
+        fetcher: async (input, init) => {
+          if (isSchemaGetRequest(input, init)) {
+            return createSchemaListResponse(BLOG_POST_CONFIG, "staging");
+          }
+          assert.equal(init?.method, "PUT");
+          putCount += 1;
+          return createSuccessResponse({
+            documentId: "doc-1",
+            type: "BlogPost",
+            locale: "en",
+            path: "content/blog/hello-world",
+            format: "md",
+            draftRevision: 2,
+            publishedVersion: 1,
+          });
+        },
+        loadConfig: async () => ({
+          config: BLOG_POST_CONFIG,
+          configPath: join(cwd, "mdcms.config.ts"),
+        }),
+        stdout: { write: () => undefined },
+        stderr: { write: () => undefined },
+        confirm: async () => {
+          confirmCount += 1;
+          return false;
+        },
+      });
+
+      assert.equal(exitCode, 0);
+      assert.equal(confirmCount, 0);
+      assert.equal(putCount, 1);
+    } finally {
+      restoreTTY();
+    }
+  });
+});
+
 test("push falls back to POST and rewrites manifest key when PUT target is missing", async () => {
   await withTempDir(async (cwd) => {
     const manifestPath = join(
