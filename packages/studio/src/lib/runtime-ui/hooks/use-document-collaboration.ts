@@ -5,6 +5,7 @@ import * as Y from "yjs";
 
 import { useStudioMountInfo } from "../app/admin/mount-info-context.js";
 import { useStudioSession } from "../app/admin/session-context.js";
+import { hasActiveStudioSessionToken } from "../../studio-session-token.js";
 import {
   COLLABORATION_DOCUMENT_FIELD_NAME,
   COLLABORATION_FRONTMATTER_FIELD_NAME,
@@ -137,6 +138,9 @@ export function useDocumentCollaboration({
   const canConnect =
     enabled &&
     mountInfo.auth.mode === "cookie" &&
+    // The collaboration WebSocket authenticates with the session cookie only;
+    // a header-carried session cannot be sent on the handshake.
+    !hasActiveStudioSessionToken() &&
     sessionState.status === "authenticated" &&
     Boolean(project) &&
     Boolean(environment) &&
