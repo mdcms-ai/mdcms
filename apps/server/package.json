@@ -21,13 +21,14 @@
   },
   "scripts": {
     "test": "bun test ./src",
-    "test:integration:content": "bun test ./src/lib/content-api.integration.test.ts",
+    "test:integration:content": "bun test ./src/lib/content-api.integration.test.ts ./src/lib/content-api.test.ts ./src/lib/content-api ./src/lib/auth.test.ts ./src/lib/demo-seed.test.ts ./src/lib/environments-api.test.ts ./src/lib/environments-clone-promote.integration.test.ts ./src/lib/media/database-store.test.ts ./src/lib/project-provisioning.test.ts ./src/lib/schema-api.test.ts ./src/lib/runtime-with-modules.test.ts",
     "dev": "DATABASE_URL=${DATABASE_URL:-postgresql://mdcms:mdcms@localhost:5432/mdcms} bun --watch --conditions @mdcms/source src/bin/http-server.ts",
     "start": "bun --conditions @mdcms/source src/bin/http-server.ts",
     "demo:seed": "bun --conditions @mdcms/source src/bin/demo-seed-api-key.ts",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
-    "test:integration:oauth": "MDCMS_OAUTH_INTEGRATION=1 bun test ./src/lib/oauth ./src/lib/mcp"
+    "test:integration:oauth": "MDCMS_OAUTH_INTEGRATION=1 bun test ./src/lib/oauth ./src/lib/mcp",
+    "test:integration:mcp": "MDCMS_MCP_INTEGRATION=1 bun test ./src/lib/mcp/mcp.integration.test.ts"
   },
   "dependencies": {
     "@better-auth/sso": "1.5.1",

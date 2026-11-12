@@ -102,8 +102,13 @@ export function createInternalDispatcher(
     if (input.schemaHash !== undefined)
       headers.set("x-mdcms-schema-hash", input.schemaHash);
     const body =
-      input.body === undefined ? undefined : JSON.stringify(input.body);
-    if (body !== undefined) headers.set("content-type", "application/json");
+      input.body === undefined
+        ? undefined
+        : input.body instanceof FormData
+          ? input.body
+          : JSON.stringify(input.body);
+    if (typeof body === "string")
+      headers.set("content-type", "application/json");
     return handler(new Request(url, { method: input.method, headers, body }));
   };
 }

@@ -1,3 +1,4 @@
+import { authorizedTestRequest as fixtureAuthorization } from "./content-api-test-support.js";
 import assert from "node:assert/strict";
 import { test } from "bun:test";
 
@@ -8,6 +9,10 @@ import {
   type MountEnvironmentApiRoutesOptions,
 } from "./environments-api.js";
 
+const authorizedTestRequest = {
+  ...fixtureAuthorization,
+  authorizeEnvironmentResource: async () => {},
+};
 const baseEnv = {
   NODE_ENV: "test",
   LOG_LEVEL: "debug",
@@ -40,7 +45,8 @@ function createTestRoutes(options: Partial<MountEnvironmentApiRoutesOptions>) {
         store: options.store ?? createStubStore(),
         authorizeSession: options.authorizeSession ?? (async () => undefined),
         authorizeAdmin: options.authorizeAdmin ?? (async () => undefined),
-        authorizeScoped: options.authorizeScoped ?? (async () => undefined),
+        authorizeScoped:
+          options.authorizeScoped ?? (async () => authorizedTestRequest),
         requireCsrf: options.requireCsrf ?? (async () => undefined),
       });
     },
@@ -88,7 +94,7 @@ test("environment routes list project-scoped environments for admin sessions", a
         },
         authorizeSession: async () => undefined,
         authorizeAdmin: async () => undefined,
-        authorizeScoped: async () => undefined,
+        authorizeScoped: async () => authorizedTestRequest,
         requireCsrf: async () => undefined,
       });
     },
@@ -145,7 +151,7 @@ test("environment routes reject create requests without admin privileges", async
             message: "Admin privileges are required to manage environments.",
           });
         },
-        authorizeScoped: async () => undefined,
+        authorizeScoped: async () => authorizedTestRequest,
         requireCsrf: async () => undefined,
       });
     },
@@ -245,6 +251,7 @@ test("promote route requires environments:promote scope and CSRF", async () => {
     }),
     authorizeScoped: async (_request, scope) => {
       scopedAttempts.push(scope);
+      return authorizedTestRequest;
     },
     requireCsrf: async () => {
       csrfCalls += 1;
@@ -323,4 +330,55 @@ test("clone and promote routes require target routing project", async () => {
     assert.equal(response.status, 400, `${path} should require routing`);
     assert.equal(body.code, "MISSING_TARGET_ROUTING");
   }
+});
+
+test("clone and promote pass trusted attribution from authorization to the store", async () => {
+  const seen: unknown[] = [];
+  const handler = createTestRoutes({
+    authorizeScoped: async () => authorizedTestRequest,
+    store: createStubStore({
+      clone: async (_project, id, _input, context) => {
+        seen.push(context);
+        return { targetEnvironmentId: id, documentsCloned: 0 };
+      },
+      promote: async (_project, _id, _input, context) => {
+        seen.push(context);
+        return { promoted: [] };
+      },
+    }),
+  });
+  for (const action of ["clone", "promote"]) {
+    const response = await handler(
+      new Request(
+        `http://localhost/api/v1/environments/00000000-0000-4000-8000-000000000002/${action}`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-mdcms-project": "p",
+            "x-mdcms-internal-channel": "mcp",
+          },
+          body: JSON.stringify({
+            sourceEnvironmentId: "00000000-0000-4000-8000-000000000003",
+            ...(action === "promote"
+              ? { documentIds: ["00000000-0000-4000-8000-000000000004"] }
+              : {}),
+          }),
+        },
+      ),
+    );
+    assert.equal(response.status, 200);
+  }
+  assert.equal(seen.length, 2);
+  for (const context of seen)
+    assert.deepEqual(context, {
+      authorize: authorizedTestRequest.authorizeEnvironmentResource,
+      attribution: {
+        actorId:
+          authorizedTestRequest.principal.type === "session"
+            ? authorizedTestRequest.principal.session.userId
+            : "",
+        origin: { channel: "studio", credential: "session" },
+      },
+    });
 });

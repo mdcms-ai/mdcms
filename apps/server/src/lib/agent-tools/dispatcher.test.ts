@@ -187,3 +187,27 @@ test("external ingress removes every internal header and preserves body and CSRF
   assert.equal(request.headers.get("x-mdcms-csrf-token"), "csrf");
   assert.equal(await request.text(), "body");
 });
+
+test("dispatch preserves multipart files without a JSON content type", async () => {
+  const form = new FormData();
+  form.set("file", new File(["image"], "image.png", { type: "image/png" }));
+  const dispatch = createInternalDispatcher(
+    async (request) => {
+      assert.ok(
+        request.headers.get("content-type")?.startsWith("multipart/form-data;"),
+      );
+      const uploaded = (await request.formData()).get("file") as File;
+      assert.equal(uploaded.name, "image.png");
+      assert.equal(await uploaded.text(), "image");
+      return Response.json({});
+    },
+    "secret",
+    {
+      request: new Request("http://localhost"),
+      project: "p",
+      environment: "e",
+      channel: "mcp",
+    },
+  );
+  await dispatch({ method: "POST", path: "/api/v1/media/upload", body: form });
+});

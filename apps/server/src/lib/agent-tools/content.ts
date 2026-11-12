@@ -281,3 +281,55 @@ export const contentTools: AgentTool[] = [
       }),
   }),
 ];
+
+for (const [name, action, scope] of [
+  ["duplicate_document", "duplicate", "content:write"],
+  ["delete_document", "", "content:delete"],
+  ["restore_document", "restore", "content:write"],
+  ["unpublish_document", "unpublish", "content:publish"],
+] as const) {
+  contentTools.push(
+    defineAgentTool({
+      name,
+      title: name.replaceAll("_", " "),
+      description:
+        "Execute the content operation through its authorized route.",
+      requiredScopes: action === "restore" ? [] : [scope],
+      ...(action === "restore"
+        ? { anyOfScopes: ["content:write", "content:publish"] as const }
+        : {}),
+      executionScopes: action === "restore" ? restoreScopes : undefined,
+      annotations: write,
+      inputSchema: z.strictObject({
+        documentId: text,
+        ...(action === "duplicate" ? { schemaHash: text } : {}),
+        ...(action === "restore"
+          ? { targetStatus: z.enum(["draft", "published"]).optional() }
+          : {}),
+      }),
+      outputSchema: documentEnvelopeSchema,
+      execute: (input, { dispatch }) =>
+        dispatchJson(dispatch, {
+          method: action ? "POST" : "DELETE",
+          path: path(input.documentId) + (action ? `/${action}` : ""),
+          schemaHash:
+            typeof input.schemaHash === "string" ? input.schemaHash : undefined,
+          body:
+            action === "restore"
+              ? { targetStatus: input.targetStatus }
+              : undefined,
+          query: { fileFields: "raw" },
+        }),
+    }),
+  );
+}
+
+export function restoreScopes(
+  input: unknown,
+): readonly ("content:write" | "content:publish")[] {
+  return [
+    (input as { targetStatus?: string }).targetStatus === "published"
+      ? "content:publish"
+      : "content:write",
+  ];
+}

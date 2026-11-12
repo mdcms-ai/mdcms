@@ -5,6 +5,7 @@ import {
   assertEnvironmentPromoteInput,
   type EnvironmentCloneInput,
   type EnvironmentCloneResult,
+  type ContentWriteAttribution,
   type EnvironmentCreateInput,
   type EnvironmentDefinitionsMeta,
   type EnvironmentListResponse,
@@ -15,7 +16,8 @@ import {
 } from "@mdcms/shared";
 import { and, eq, sql } from "drizzle-orm";
 
-import type { StudioSession } from "./auth.js";
+import { attributionFromAuthorizedRequest } from "./content-api/attribution.js";
+import type { AuthorizedRequest, StudioSession } from "./auth.js";
 import type { DrizzleDatabase } from "./db.js";
 import {
   documents,
@@ -25,6 +27,7 @@ import {
   schemaSyncs,
 } from "./db/schema.js";
 import {
+  type EnvironmentResourceAuthorizer,
   cloneEnvironment as cloneEnvironmentImpl,
   promoteDocuments as promoteDocumentsImpl,
 } from "./environments-clone-promote.js";
@@ -64,11 +67,19 @@ export type EnvironmentStore = {
     project: string,
     targetEnvironmentId: string,
     input: EnvironmentCloneInput,
+    context: {
+      attribution: ContentWriteAttribution;
+      authorize: EnvironmentResourceAuthorizer;
+    },
   ) => Promise<EnvironmentCloneResult>;
   promote: (
     project: string,
     targetEnvironmentId: string,
     input: EnvironmentPromoteInput,
+    context: {
+      attribution: ContentWriteAttribution;
+      authorize: EnvironmentResourceAuthorizer;
+    },
   ) => Promise<EnvironmentPromoteResult>;
 };
 
@@ -92,7 +103,11 @@ export type EnvironmentSessionAuthorizer = (
 export type EnvironmentScopedAuthorizer = (
   request: Request,
   scope: "environments:clone" | "environments:promote",
-) => Promise<void>;
+) => Promise<
+  AuthorizedRequest & {
+    authorizeEnvironmentResource: EnvironmentResourceAuthorizer;
+  }
+>;
 
 export type MountEnvironmentApiRoutesOptions = {
   store: EnvironmentStore;
@@ -536,7 +551,7 @@ export function createDatabaseEnvironmentStore(
       };
     },
 
-    async clone(project, targetEnvironmentId, input) {
+    async clone(project, targetEnvironmentId, input, context) {
       const normalizedProject = assertRequiredString(project, "project");
       const normalizedTargetId = assertRequiredString(
         targetEnvironmentId,
@@ -547,10 +562,12 @@ export function createDatabaseEnvironmentStore(
         ...input,
         project: normalizedProject,
         targetEnvironmentId: normalizedTargetId,
+        attribution: context.attribution,
+        authorize: context.authorize,
       });
     },
 
-    async promote(project, targetEnvironmentId, input) {
+    async promote(project, targetEnvironmentId, input, context) {
       const normalizedProject = assertRequiredString(project, "project");
       const normalizedTargetId = assertRequiredString(
         targetEnvironmentId,
@@ -561,6 +578,8 @@ export function createDatabaseEnvironmentStore(
         ...input,
         project: normalizedProject,
         targetEnvironmentId: normalizedTargetId,
+        attribution: context.attribution,
+        authorize: context.authorize,
       });
     },
   };
@@ -619,7 +638,10 @@ export function mountEnvironmentApiRoutes(
       return executeWithRuntimeErrorsHandled(request, async () => {
         const project = pickProject(request);
         await options.requireCsrf(request);
-        await options.authorizeScoped(request, "environments:clone");
+        const authorization = await options.authorizeScoped(
+          request,
+          "environments:clone",
+        );
         const targetEnvironmentId = assertRequiredString(params.id, "id");
         const payload = (body ?? {}) as unknown;
         assertEnvironmentCloneInput(payload);
@@ -629,6 +651,13 @@ export function mountEnvironmentApiRoutes(
             project,
             targetEnvironmentId,
             payload,
+            {
+              authorize: authorization.authorizeEnvironmentResource,
+              attribution: attributionFromAuthorizedRequest({
+                request,
+                authorization,
+              }),
+            },
           ),
         };
       });
@@ -646,7 +675,10 @@ export function mountEnvironmentApiRoutes(
       return executeWithRuntimeErrorsHandled(request, async () => {
         const project = pickProject(request);
         await options.requireCsrf(request);
-        await options.authorizeScoped(request, "environments:promote");
+        const authorization = await options.authorizeScoped(
+          request,
+          "environments:promote",
+        );
         const targetEnvironmentId = assertRequiredString(params.id, "id");
         const payload = (body ?? {}) as unknown;
         assertEnvironmentPromoteInput(payload);
@@ -656,6 +688,13 @@ export function mountEnvironmentApiRoutes(
             project,
             targetEnvironmentId,
             payload,
+            {
+              authorize: authorization.authorizeEnvironmentResource,
+              attribution: attributionFromAuthorizedRequest({
+                request,
+                authorization,
+              }),
+            },
           ),
         };
       });

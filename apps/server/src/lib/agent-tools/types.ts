@@ -4,6 +4,7 @@ import type { AgentDispatch } from "./dispatcher.js";
 
 export type AgentToolContext = {
   dispatch: AgentDispatch;
+  getMediaUploadLimit?: () => Promise<number | null>;
   target: Readonly<{ project: string; environment: string }>;
   authorization: AuthorizedRequest;
 };
@@ -14,6 +15,9 @@ export type AgentTool = {
   inputSchema: z.ZodType;
   outputSchema: z.ZodType;
   requiredScopes: readonly ApiKeyOperationScope[];
+  requiresGlobalAdmin?: boolean;
+  anyOfScopes?: readonly ApiKeyOperationScope[];
+  executionScopes?: (input: unknown) => readonly ApiKeyOperationScope[];
   annotations: {
     readOnlyHint: boolean;
     destructiveHint: boolean;

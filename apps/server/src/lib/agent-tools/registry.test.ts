@@ -284,9 +284,193 @@ test("registry uses mounted routes, preserves exact revision and hash, and rejec
     "competitor",
   );
   assert.deepEqual(events, ["content.created"]);
+  await registry.execute("publish_document", { documentId }, context);
+  const versions = (await registry.execute(
+    "list_versions",
+    { documentId },
+    context,
+  )) as any;
+  assert.equal(versions.data.length, 1);
+  assert.equal(
+    (
+      (await registry.execute(
+        "get_version",
+        { documentId, version: 1 },
+        context,
+      )) as any
+    ).data.body,
+    "competitor",
+  );
+  active = true;
+  await assert.rejects(
+    registry.execute("restore_version", { documentId, version: 1 }, context),
+    (error: any) => error.code === "DOCUMENT_COLLABORATION_ACTIVE",
+  );
+  active = false;
+  await registry.execute(
+    "restore_version",
+    { documentId, version: 1 },
+    context,
+  );
+  const duplicate = (await registry.execute(
+    "duplicate_document",
+    { documentId, schemaHash: "hash" },
+    context,
+  )) as any;
+  assert.notEqual(duplicate.data.documentId, documentId);
+  await registry.execute("unpublish_document", { documentId }, context);
+  assert.equal(
+    (
+      (await registry.execute(
+        "delete_document",
+        { documentId },
+        context,
+      )) as any
+    ).data.isDeleted,
+    true,
+  );
+  assert.equal(
+    (
+      (await registry.execute(
+        "restore_document",
+        { documentId },
+        context,
+      )) as any
+    ).data.isDeleted,
+    false,
+  );
+  const translated = (await registry.execute(
+    "create_translation",
+    {
+      sourceDocumentId: documentId,
+      type: "Note",
+      path: "notes/fr",
+      locale: "fr",
+      frontmatter: { title: "French" },
+      body: "bonjour",
+      schemaHash: "hash",
+    },
+    context,
+  )) as any;
+  const variants = (await registry.execute(
+    "list_translations",
+    { documentId },
+    context,
+  )) as any;
+  assert.ok(
+    variants.data.some(
+      (row: any) => row.documentId === translated.data.documentId,
+    ),
+  );
+  await assert.rejects(
+    registry.execute(
+      "create_translation",
+      {
+        sourceDocumentId: documentId,
+        type: "Note",
+        path: "notes/fr2",
+        locale: "fr",
+        frontmatter: { title: "French" },
+        body: "bonjour",
+        schemaHash: "hash",
+      },
+      context,
+    ),
+  );
   const names = registry.list(context.authorization).map((tool) => tool.name);
   assert.deepEqual(names, [...names].sort());
   await assert.rejects(
     registry.execute("get_document", { documentId, project: "other" }, context),
+  );
+});
+
+test("restore discovery accepts either action scope but execution requires the selected action", async () => {
+  const registry = createAgentToolRegistry();
+  for (const scope of ["content:write", "content:publish"] as const) {
+    const authorization = {
+      mode: "api_key" as const,
+      principal: {
+        type: "api_key" as const,
+        keyId: "key",
+        createdByUserId: "owner",
+        createdByUserEmail: "owner@example.test",
+        keyPrefix: "prefix",
+        label: "test",
+        scopes: [scope],
+        contextAllowlist: [{ project: "p", environment: "e" }],
+      },
+    };
+    assert.ok(
+      registry
+        .list(authorization)
+        .some((tool) => tool.name === "restore_document"),
+    );
+    assert.ok(
+      registry
+        .list(authorization)
+        .some((tool) => tool.name === "restore_version"),
+    );
+    let calls = 0;
+    for (const name of ["restore_document", "restore_version"]) {
+      await assert.rejects(
+        registry.execute(
+          name,
+          {
+            documentId: "id",
+            ...(name === "restore_version" ? { version: 1 } : {}),
+            targetStatus: scope === "content:write" ? "published" : "draft",
+          },
+          {
+            authorization,
+            target: { project: "p", environment: "e" },
+            dispatch: async () => {
+              calls++;
+              return Response.json({});
+            },
+          },
+        ),
+        (error: any) => error.code === "FORBIDDEN",
+      );
+    }
+    assert.equal(calls, 0);
+  }
+});
+
+test("environment metadata discovery needs scope and current global administrator status", () => {
+  const registry = createAgentToolRegistry();
+  const authorization = {
+    mode: "api_key" as const,
+    principal: {
+      type: "api_key" as const,
+      keyId: "key",
+      createdByUserId: "owner",
+      createdByUserEmail: "owner@example.test",
+      keyPrefix: "prefix",
+      label: "test",
+      scopes: ["environments:read" as const],
+      contextAllowlist: [{ project: "p", environment: "e" }],
+    },
+  };
+  assert.equal(
+    registry
+      .list(authorization)
+      .some((tool) => tool.name === "list_environments"),
+    false,
+  );
+  assert.equal(
+    registry
+      .list({ ...authorization, globalAdmin: true })
+      .some((tool) => tool.name === "list_environments"),
+    true,
+  );
+  assert.equal(
+    registry
+      .list({
+        ...authorization,
+        globalAdmin: true,
+        principal: { ...authorization.principal, scopes: [] },
+      })
+      .some((tool) => tool.name === "list_environments"),
+    false,
   );
 });

@@ -14,6 +14,9 @@ import {
   stripInternalHeaders,
   trustedInternalChannel,
 } from "./agent-tools/dispatcher.js";
+import { actorFromAuthorizedRequest, authorizeSessionGrants } from "./auth.js";
+import { findEnvironmentByProjectAndId } from "./project-provisioning.js";
+import type { EnvironmentResourceAuthorizer } from "./environments-clone-promote.js";
 import type { AuthorizationRequirement } from "./auth.js";
 import { attributionFromAuthorizedRequest } from "./content-api/attribution.js";
 import {
@@ -562,7 +565,10 @@ export function createServerRequestHandlerWithModules(
       : { id: userId, displayName: userId };
   };
 
-  const agentRegistry = createAgentToolRegistry();
+  const agentRegistry = createAgentToolRegistry(undefined, {
+    getMediaUploadLimit: async (target) =>
+      (await mediaStore.getSettings(target)).media.image.maxUploadSizeBytes,
+  });
   const executeAssistantTool = async (
     request: Request,
     name: string,
@@ -803,11 +809,106 @@ export function createServerRequestHandlerWithModules(
           authService.authorizeEnvironmentList(request, project),
         authorizeScoped: async (request, requiredScope) => {
           const routing = resolveRequestTargetRouting(request);
-          await authService.authorizeRequest(request, {
+          const project = routing.project!;
+          const targetId = decodeURIComponent(
+            new URL(request.url).pathname.split("/").at(-2)!,
+          );
+          const destination = await findEnvironmentByProjectAndId(
+            dbConnection.db,
+            { project, environmentId: targetId },
+          );
+          if (!destination)
+            throw new RuntimeError({
+              code: "NOT_FOUND",
+              message: "Environment not found.",
+              statusCode: 404,
+            });
+          if (routing.environment && routing.environment !== destination.name)
+            throw new RuntimeError({
+              code: "TARGET_ROUTING_MISMATCH",
+              message: "Destination does not match routed environment.",
+              statusCode: 400,
+            });
+          const authorization = await authorizeInternalRequest(request, {
             requiredScope,
-            project: routing.project,
-            environment: routing.environment,
+            project,
+            environment: destination.name,
           });
+          const authorizeEnvironmentResource: EnvironmentResourceAuthorizer =
+            async (tx, requirements) => {
+              const grants = await authService.getOAuthUserGrants(
+                actorFromAuthorizedRequest(authorization).id,
+                tx,
+              );
+              if (
+                !grants.some(
+                  (grant) =>
+                    grant.scope.kind === "global" &&
+                    (grant.role === "owner" || grant.role === "admin"),
+                )
+              )
+                throw new RuntimeError({
+                  code: "FORBIDDEN",
+                  message: "Global admin privileges required.",
+                  statusCode: 403,
+                });
+              for (const requirement of requirements) {
+                if (
+                  (requirement.scope === "environments:clone" ||
+                    requirement.scope === "environments:promote") &&
+                  requirement.environment !== destination.name
+                )
+                  throw new RuntimeError({
+                    code: "TARGET_ROUTING_MISMATCH",
+                    message: "Destination changed during authorization.",
+                    statusCode: 400,
+                  });
+                const principal = authorization.principal;
+                if (
+                  principal.type === "api_key" &&
+                  !principal.contextAllowlist.some(
+                    (tuple) =>
+                      tuple.project === project &&
+                      tuple.environment === requirement.environment,
+                  )
+                )
+                  throw new RuntimeError({
+                    code: "TARGET_ROUTING_MISMATCH",
+                    message: "Environment is outside the credential allowlist.",
+                    statusCode: 400,
+                  });
+                if (
+                  principal.type !== "session" &&
+                  requirement.credentialScope &&
+                  !principal.scopes.includes(requirement.scope)
+                )
+                  throw new RuntimeError({
+                    code: "FORBIDDEN",
+                    message: "Required environment operation scope is missing.",
+                    statusCode: 403,
+                  });
+                try {
+                  authorizeSessionGrants(grants, {
+                    requiredScope: requirement.scope,
+                    project,
+                    environment: requirement.environment,
+                    documentPath: requirement.path,
+                  });
+                } catch (error) {
+                  if (
+                    error instanceof RuntimeError &&
+                    error.code === "FORBIDDEN"
+                  )
+                    throw new RuntimeError({
+                      code: "FORBIDDEN",
+                      message: "Environment operation is not authorized.",
+                      statusCode: 403,
+                    });
+                  throw error;
+                }
+              }
+            };
+          return { ...authorization, authorizeEnvironmentResource };
         },
         requireCsrf: (request) => authService.requireCsrfProtection(request),
       });

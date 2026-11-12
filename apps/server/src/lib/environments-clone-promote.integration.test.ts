@@ -1,6 +1,6 @@
 import { integrationTestDatabaseUrl } from "./integration-test-database.js";
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { test } from "bun:test";
 
 import {
@@ -12,6 +12,11 @@ import { and, eq } from "drizzle-orm";
 import postgres from "postgres";
 
 import {
+  oauthClients,
+  oauthGrants,
+  oauthCodes,
+  apiKeys,
+  authUsers,
   documents,
   documentVersions,
   environments,
@@ -24,6 +29,7 @@ import {
   cloneEnvironment,
   promoteDocuments,
 } from "./environments-clone-promote.js";
+import { createOAuthStore, hashCredential } from "./oauth/database-store.js";
 import { createServerRequestHandlerWithModules } from "./runtime-with-modules.js";
 
 const env = {
@@ -40,6 +46,14 @@ const logger = createConsoleLogger({
   sink: () => undefined,
 });
 
+const attribution = {
+  actorId: "00000000-0000-4000-8000-000000000099",
+  origin: {
+    channel: "mcp" as const,
+    credential: "api_key" as const,
+    apiKeyId: "fixture-key",
+  },
+};
 const ACTOR = "00000000-0000-0000-0000-000000000001";
 const cloneTestConfig = parseMdcmsConfig({
   project: "marketing-site",
@@ -298,6 +312,8 @@ integrationTest(
       projectId = fixture.projectId;
 
       const result = await cloneEnvironment(dbConnection.db, {
+        attribution,
+        authorize: async () => {},
         project: slug,
         targetEnvironmentId: fixture.productionEnvId,
         sourceEnvironmentId: fixture.stagingEnvId,
@@ -319,6 +335,20 @@ integrationTest(
           ),
         );
       assert.equal(targetRows.length, 2);
+      for (const row of targetRows) {
+        assert.equal(row.createdBy, attribution.actorId);
+        assert.equal(row.updatedBy, attribution.actorId);
+        assert.deepEqual(row.createdOrigin, attribution.origin);
+        assert.deepEqual(row.updatedOrigin, attribution.origin);
+        const history = await dbConnection.db
+          .select()
+          .from(documentVersions)
+          .where(eq(documentVersions.documentId, row.documentId));
+        for (const version of history) {
+          assert.equal(version.publishedBy, attribution.actorId);
+          assert.deepEqual(version.publishedOrigin, attribution.origin);
+        }
+      }
 
       const targetByType = new Map(
         targetRows.map((row) => [row.schemaType, row]),
@@ -389,6 +419,8 @@ integrationTest(
       projectId = fixture.projectId;
 
       const result = await cloneEnvironment(dbConnection.db, {
+        attribution,
+        authorize: async () => {},
         project: slug,
         targetEnvironmentId: fixture.productionEnvId,
         sourceEnvironmentId: fixture.stagingEnvId,
@@ -452,6 +484,8 @@ integrationTest(
         .where(eq(documentVersions.documentId, fixture.blogDocumentId));
 
       const result = await cloneEnvironment(dbConnection.db, {
+        attribution,
+        authorize: async () => {},
         project: slug,
         targetEnvironmentId: fixture.productionEnvId,
         sourceEnvironmentId: fixture.stagingEnvId,
@@ -508,6 +542,8 @@ integrationTest(
       let thrown: unknown;
       try {
         await cloneEnvironment(dbConnection.db, {
+          attribution,
+          authorize: async () => {},
           project: slug,
           targetEnvironmentId: fixture.productionEnvId,
           sourceEnvironmentId: fixture.stagingEnvId,
@@ -556,6 +592,8 @@ integrationTest("promote dryRun returns plan without writing", async () => {
     projectId = fixture.projectId;
 
     const result = await promoteDocuments(dbConnection.db, {
+      attribution,
+      authorize: async () => {},
       project: slug,
       targetEnvironmentId: fixture.productionEnvId,
       sourceEnvironmentId: fixture.stagingEnvId,
@@ -610,6 +648,8 @@ integrationTest(
 
       // First promote creates target rows.
       const first = await promoteDocuments(dbConnection.db, {
+        attribution,
+        authorize: async () => {},
         project: slug,
         targetEnvironmentId: fixture.productionEnvId,
         sourceEnvironmentId: fixture.stagingEnvId,
@@ -649,7 +689,27 @@ integrationTest(
         .set({ body: "Updated body" })
         .where(eq(documents.documentId, fixture.blogDocumentId));
 
+      assert.equal(targetBlog.createdBy, attribution.actorId);
+      assert.deepEqual(targetBlog.createdOrigin, attribution.origin);
+      await dbConnection.db
+        .update(documents)
+        .set({ createdBy: ACTOR, createdOrigin: null })
+        .where(eq(documents.documentId, targetBlog.documentId));
+      const overwriteAttribution = {
+        actorId: "00000000-0000-4000-8000-000000000098",
+        origin: {
+          channel: "mcp" as const,
+          credential: "oauth" as const,
+          oauthClientId: "fixture-client",
+        },
+      };
+      const oldHistory = await dbConnection.db
+        .select()
+        .from(documentVersions)
+        .where(eq(documentVersions.documentId, targetBlog.documentId));
       const second = await promoteDocuments(dbConnection.db, {
+        attribution: overwriteAttribution,
+        authorize: async () => {},
         project: slug,
         targetEnvironmentId: fixture.productionEnvId,
         sourceEnvironmentId: fixture.stagingEnvId,
@@ -669,12 +729,28 @@ integrationTest(
       assert.ok(reread);
       assert.equal(reread.body, "Updated body");
       assert.equal(reread.publishedVersion, 2);
+      assert.equal(reread.createdBy, ACTOR);
+      assert.equal(reread.createdOrigin, null);
+      assert.equal(reread.updatedBy, overwriteAttribution.actorId);
+      assert.deepEqual(reread.updatedOrigin, overwriteAttribution.origin);
 
       const versions = await dbConnection.db
         .select()
         .from(documentVersions)
         .where(eq(documentVersions.documentId, targetBlog.documentId));
       assert.equal(versions.length, 2);
+      assert.deepEqual(
+        versions.find((row) => row.version === 1),
+        oldHistory[0],
+      );
+      assert.equal(
+        versions.find((row) => row.version === 2)!.publishedBy,
+        overwriteAttribution.actorId,
+      );
+      assert.deepEqual(
+        versions.find((row) => row.version === 2)!.publishedOrigin,
+        overwriteAttribution.origin,
+      );
     } finally {
       if (projectId) {
         await teardownProject(dbConnection.db, projectId);
@@ -708,6 +784,8 @@ integrationTest(
         .where(eq(documentVersions.documentId, fixture.blogDocumentId));
 
       const skippedRun = await promoteDocuments(dbConnection.db, {
+        attribution,
+        authorize: async () => {},
         project: slug,
         targetEnvironmentId: fixture.productionEnvId,
         sourceEnvironmentId: fixture.stagingEnvId,
@@ -735,6 +813,8 @@ integrationTest(
       // Need an Author target for the reference to remap when we do include
       // unpublished — promote the author first.
       await promoteDocuments(dbConnection.db, {
+        attribution,
+        authorize: async () => {},
         project: slug,
         targetEnvironmentId: fixture.productionEnvId,
         sourceEnvironmentId: fixture.stagingEnvId,
@@ -744,6 +824,8 @@ integrationTest(
       });
 
       const includedRun = await promoteDocuments(dbConnection.db, {
+        attribution,
+        authorize: async () => {},
         project: slug,
         targetEnvironmentId: fixture.productionEnvId,
         sourceEnvironmentId: fixture.stagingEnvId,
@@ -782,6 +864,8 @@ integrationTest(
       let thrown: unknown;
       try {
         await promoteDocuments(dbConnection.db, {
+          attribution,
+          authorize: async () => {},
           project: slug,
           targetEnvironmentId: fixture.productionEnvId,
           sourceEnvironmentId: fixture.stagingEnvId,
@@ -831,6 +915,8 @@ integrationTest(
       let thrown: unknown;
       try {
         await cloneEnvironment(dbConnection.db, {
+          attribution,
+          authorize: async () => {},
           project: slug,
           targetEnvironmentId: fixture.stagingEnvId,
           sourceEnvironmentId: fixture.stagingEnvId,
@@ -883,6 +969,8 @@ integrationTest(
         .where(eq(documents.documentId, fixture.blogDocumentId));
 
       const result = await cloneEnvironment(dbConnection.db, {
+        attribution,
+        authorize: async () => {},
         project: slug,
         targetEnvironmentId: fixture.productionEnvId,
         sourceEnvironmentId: fixture.stagingEnvId,
@@ -943,6 +1031,8 @@ integrationTest(
       projectId = fixture.projectId;
 
       const result = await cloneEnvironment(dbConnection.db, {
+        attribution,
+        authorize: async () => {},
         project: slug,
         targetEnvironmentId: fixture.productionEnvId,
         sourceEnvironmentId: fixture.stagingEnvId,
@@ -993,6 +1083,8 @@ integrationTest(
       projectId = fixture.projectId;
 
       const dryRun = await promoteDocuments(dbConnection.db, {
+        attribution,
+        authorize: async () => {},
         project: slug,
         targetEnvironmentId: fixture.productionEnvId,
         sourceEnvironmentId: fixture.stagingEnvId,
@@ -1010,6 +1102,8 @@ integrationTest(
       }
 
       const real = await promoteDocuments(dbConnection.db, {
+        attribution,
+        authorize: async () => {},
         project: slug,
         targetEnvironmentId: fixture.productionEnvId,
         sourceEnvironmentId: fixture.stagingEnvId,
@@ -1044,3 +1138,580 @@ integrationTest(
 
 // Suppress unused warning on rbacGrants (only imported for future tests).
 void rbacGrants;
+
+integrationTest(
+  "clone denies source authorization inside the transaction before copying content",
+  async () => {
+    const { dbConnection } = createServerRequestHandlerWithModules({
+      env,
+      logger,
+      config: cloneTestConfig,
+    });
+    let projectId: string | undefined;
+    try {
+      const fixture = await provisionTwoEnvironments(
+        dbConnection.db,
+        uniqueProjectSlug("clone-denied"),
+      );
+      projectId = fixture.projectId;
+      const project = await dbConnection.db.query.projects.findFirst({
+        where: eq(projects.id, projectId),
+      });
+      await assert.rejects(
+        cloneEnvironment(dbConnection.db, {
+          project: project!.slug,
+          sourceEnvironmentId: fixture.stagingEnvId,
+          targetEnvironmentId: fixture.productionEnvId,
+          attribution,
+          authorize: async () => {
+            throw new Error("source denied");
+          },
+        }),
+        /source denied/,
+      );
+      const rows = await dbConnection.db
+        .select()
+        .from(documents)
+        .where(eq(documents.environmentId, fixture.productionEnvId));
+      assert.equal(rows.length, 0);
+    } finally {
+      if (projectId) await teardownProject(dbConnection.db, projectId);
+      await dbConnection.close();
+    }
+  },
+);
+
+integrationTest(
+  "mounted bearer environment operations bind destination, both tuples, source scopes and current global role",
+  async () => {
+    const runtime = createServerRequestHandlerWithModules({
+      env,
+      logger,
+      config: cloneTestConfig,
+    });
+    const db = runtime.dbConnection.db;
+    const userId = randomUUID();
+    const clientId = randomUUID();
+    const slug = uniqueProjectSlug("environment-auth");
+    let projectId: string | undefined;
+    try {
+      const fixture = await provisionTwoEnvironments(db, slug);
+      projectId = fixture.projectId;
+      await db.insert(authUsers).values({
+        id: userId,
+        name: "Environment fixture",
+        email: `${userId}@example.invalid`,
+        emailVerified: true,
+      });
+      const [grant] = await db
+        .insert(rbacGrants)
+        .values({
+          userId,
+          role: "admin",
+          scopeKind: "global",
+          createdByUserId: userId,
+        })
+        .returning();
+      const makeKey = async (scopes: string[], source = true) => {
+        const key = `mdcms_key_${randomUUID()}`;
+        await db.insert(apiKeys).values({
+          label: "Environment fixture",
+          keyPrefix: key.slice(0, 16),
+          keyHash: createHash("sha256").update(key).digest("hex"),
+          scopes,
+          contextAllowlist: [
+            { project: slug, environment: "production" },
+            ...(source ? [{ project: slug, environment: "staging" }] : []),
+          ],
+          createdByUserId: userId,
+        });
+        return key;
+      };
+      const request = (
+        key: string,
+        path: string,
+        body?: unknown,
+        routed = "production",
+        method = body ? "POST" : "GET",
+      ) =>
+        runtime.handler(
+          new Request(`http://localhost/api/v1/environments${path}`, {
+            method,
+            headers: {
+              authorization: `Bearer ${key}`,
+              "x-mdcms-project": slug,
+              "x-mdcms-environment": routed,
+              ...(body ? { "content-type": "application/json" } : {}),
+            },
+            ...(body ? { body: JSON.stringify(body) } : {}),
+          }),
+        );
+      const scopes = [
+        "environments:read",
+        "environments:clone",
+        "environments:promote",
+        "content:read",
+        "content:read:draft",
+        "schema:read",
+        "schema:write",
+      ];
+      const fullKey = await makeKey(scopes);
+      const clone = {
+        sourceEnvironmentId: fixture.stagingEnvId,
+        include: { content: true, settings: false },
+        includeDrafts: true,
+        preservePaths: true,
+      };
+      assert.equal(
+        (
+          await request(
+            fullKey,
+            `/${fixture.productionEnvId}/clone`,
+            clone,
+            "staging",
+          )
+        ).status,
+        400,
+      );
+      assert.equal(
+        (
+          await request(
+            await makeKey(scopes, false),
+            `/${fixture.productionEnvId}/clone`,
+            clone,
+          )
+        ).status,
+        400,
+      );
+      assert.equal(
+        (
+          await request(
+            await makeKey(scopes.filter((s) => s !== "content:read:draft")),
+            `/${fixture.productionEnvId}/clone`,
+            clone,
+          )
+        ).status,
+        403,
+      );
+      assert.equal(
+        (
+          await request(
+            await makeKey(scopes.filter((s) => s !== "schema:write")),
+            `/${fixture.productionEnvId}/clone`,
+            { ...clone, include: { content: false, settings: true } },
+          )
+        ).status,
+        403,
+      );
+      assert.equal(
+        (
+          await request(
+            await makeKey(scopes.filter((s) => s !== "content:read:draft")),
+            `/${fixture.productionEnvId}/promote`,
+            {
+              sourceEnvironmentId: fixture.stagingEnvId,
+              documentIds: [fixture.blogDocumentId],
+              includeUnpublished: false,
+              dryRun: true,
+            },
+          )
+        ).status,
+        403,
+      );
+      assert.equal(
+        (
+          await db
+            .select()
+            .from(documents)
+            .where(eq(documents.environmentId, fixture.productionEnvId))
+        ).length,
+        0,
+      );
+      const listed = await request(fullKey, "");
+      assert.equal(listed.status, 200);
+      const metadata = await listed.json();
+      assert.equal(metadata.data.length, 2);
+      assert.ok(metadata.data.every((row: any) => row.project === slug));
+      assert.deepEqual(metadata.meta, { definitionsStatus: "missing" });
+      assert.equal(
+        (await request(await makeKey(["content:read"]), "")).status,
+        403,
+      );
+      assert.equal((await request(fullKey, "", { name: "other" })).status, 401);
+      assert.equal(
+        (
+          await request(
+            fullKey,
+            `/${fixture.stagingEnvId}`,
+            undefined,
+            "production",
+            "DELETE",
+          )
+        ).status,
+        401,
+      );
+      await db
+        .update(rbacGrants)
+        .set({ role: "admin", scopeKind: "project", project: slug })
+        .where(eq(rbacGrants.id, grant!.id));
+      assert.equal((await request(fullKey, "")).status, 403);
+      assert.equal(
+        (await request(fullKey, `/${fixture.productionEnvId}/clone`, clone))
+          .status,
+        403,
+      );
+      await db
+        .update(rbacGrants)
+        .set({ role: "admin", scopeKind: "global", project: null })
+        .where(eq(rbacGrants.id, grant!.id));
+      const copied = await request(
+        fullKey,
+        `/${fixture.productionEnvId}/clone`,
+        clone,
+      );
+      assert.equal(copied.status, 200);
+      const target = await db
+        .select()
+        .from(documents)
+        .where(eq(documents.environmentId, fixture.productionEnvId));
+      assert.equal(target.length, 2);
+      for (const row of target) {
+        assert.equal(row.createdBy, userId);
+        assert.equal((row.createdOrigin as any).channel, "api");
+      }
+      const promotedThroughMcp = await runtime.handler(
+        new Request("http://localhost/api/v1/mcp", {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${fullKey}`,
+            "x-mdcms-project": slug,
+            "x-mdcms-environment": "production",
+            "content-type": "application/json",
+            accept: "application/json, text/event-stream",
+          },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "tools/call",
+            params: {
+              name: "promote_documents",
+              arguments: {
+                targetEnvironmentId: fixture.productionEnvId,
+                sourceEnvironmentId: fixture.stagingEnvId,
+                documentIds: [fixture.blogDocumentId],
+                includeUnpublished: false,
+                dryRun: false,
+              },
+            },
+          }),
+        }),
+      );
+      assert.equal(promotedThroughMcp.status, 200);
+      assert.equal((await promotedThroughMcp.json()).result.isError, false);
+      const promotedRow = await db.query.documents.findFirst({
+        where: and(
+          eq(documents.environmentId, fixture.productionEnvId),
+          eq(documents.schemaType, "BlogPost"),
+        ),
+      });
+      assert.equal(promotedRow!.updatedBy, userId);
+      assert.equal((promotedRow!.updatedOrigin as any).channel, "mcp");
+      assert.equal((promotedRow!.createdOrigin as any).channel, "api");
+      await db.insert(oauthClients).values({
+        id: clientId,
+        createdAt: new Date(),
+        name: "Environment fixture",
+        redirectUris: ["http://127.0.0.1:23456/callback"],
+      });
+      const grantId = randomUUID();
+      const resource = "http://localhost:4000/api/v1/mcp";
+      await db.insert(oauthGrants).values({
+        id: grantId,
+        createdAt: new Date(),
+        clientId,
+        userId,
+        project: slug,
+        environment: "production",
+        resource,
+        scopes,
+      });
+      const code = randomUUID();
+      const verifier = "a".repeat(43);
+      await db.insert(oauthCodes).values({
+        hash: hashCredential(code),
+        grantId,
+        redirectUri: "http://127.0.0.1:23456/callback",
+        challenge: createHash("sha256").update(verifier).digest("base64url"),
+        expiresAt: new Date(Date.now() + 60_000),
+      });
+      const tokens = await createOAuthStore(db).exchangeCode(
+        {
+          clientId,
+          code,
+          verifier,
+          redirectUri: "http://127.0.0.1:23456/callback",
+          resource,
+        },
+        async () => true,
+      );
+      const oauthCall = (
+        name: string,
+        args: Record<string, unknown>,
+        environment?: string,
+      ) =>
+        runtime.handler(
+          new Request(resource, {
+            method: "POST",
+            headers: {
+              authorization: `Bearer ${tokens.access_token}`,
+              "content-type": "application/json",
+              accept: "application/json, text/event-stream",
+              ...(environment ? { "x-mdcms-environment": environment } : {}),
+            },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: 1,
+              method: "tools/call",
+              params: { name, arguments: args },
+            }),
+          }),
+        );
+      const oauthList = await oauthCall("list_environments", {});
+      assert.equal(oauthList.status, 200);
+      const oauthListed = await oauthList.json();
+      assert.equal(oauthListed.result.isError, false);
+      assert.equal(oauthListed.result.structuredContent.data.length, 2);
+      assert.equal(
+        (
+          await oauthCall(
+            "get_document",
+            { documentId: fixture.blogDocumentId },
+            "staging",
+          )
+        ).status,
+        400,
+      );
+      const wrongTarget = await oauthCall("clone_environment", {
+        ...clone,
+        targetEnvironmentId: fixture.stagingEnvId,
+      });
+      assert.equal((await wrongTarget.json()).result.isError, true);
+      const oauthPromote = await oauthCall("promote_documents", {
+        targetEnvironmentId: fixture.productionEnvId,
+        sourceEnvironmentId: fixture.stagingEnvId,
+        documentIds: [fixture.blogDocumentId],
+        includeUnpublished: false,
+        dryRun: false,
+      });
+      assert.equal((await oauthPromote.json()).result.isError, false);
+      const oauthRow = await db.query.documents.findFirst({
+        where: eq(documents.documentId, promotedRow!.documentId),
+      });
+      assert.equal(oauthRow!.updatedBy, userId);
+      assert.deepEqual(oauthRow!.updatedOrigin, {
+        channel: "mcp",
+        credential: "oauth",
+        oauthClientId: clientId,
+      });
+      await db
+        .update(rbacGrants)
+        .set({ role: "admin", scopeKind: "project", project: slug })
+        .where(eq(rbacGrants.id, grant!.id));
+      assert.equal(
+        (await (await oauthCall("list_environments", {})).json()).result
+          .isError,
+        true,
+      );
+    } finally {
+      if (projectId) await teardownProject(db, projectId);
+      await db.delete(apiKeys).where(eq(apiKeys.createdByUserId, userId));
+      await db.delete(rbacGrants).where(eq(rbacGrants.userId, userId));
+      await db.delete(oauthGrants).where(eq(oauthGrants.userId, userId));
+      await db.delete(oauthClients).where(eq(oauthClients.id, clientId));
+      await db.delete(authUsers).where(eq(authUsers.id, userId));
+      await runtime.dbConnection.close();
+    }
+  },
+);
+
+integrationTest(
+  "transaction path denials roll back clone and suppress promotion dry-run plans",
+  async () => {
+    const runtime = createServerRequestHandlerWithModules({
+      env,
+      logger,
+      config: cloneTestConfig,
+    });
+    const db = runtime.dbConnection.db;
+    const slug = uniqueProjectSlug("path-denial");
+    let projectId: string | undefined;
+    try {
+      const fixture = await provisionTwoEnvironments(db, slug);
+      projectId = fixture.projectId;
+      const before = await db
+        .select()
+        .from(documents)
+        .where(eq(documents.projectId, projectId));
+      const history = await db
+        .select()
+        .from(documentVersions)
+        .where(eq(documentVersions.projectId, projectId));
+      for (const side of ["source", "destination"]) {
+        let checked = false;
+        await assert.rejects(
+          cloneEnvironment(db, {
+            project: slug,
+            sourceEnvironmentId: fixture.stagingEnvId,
+            targetEnvironmentId: fixture.productionEnvId,
+            attribution,
+            authorize: async (_tx, permissions) => {
+              if (
+                permissions.some(
+                  (permission) =>
+                    permission.path &&
+                    permission.environment ===
+                      (side === "source" ? "staging" : "production"),
+                )
+              ) {
+                checked = true;
+                throw new Error("path denied");
+              }
+            },
+          }),
+          /path denied/,
+        );
+        assert.equal(checked, true);
+        assert.deepEqual(
+          await db
+            .select()
+            .from(documents)
+            .where(eq(documents.projectId, projectId)),
+          before,
+        );
+        assert.deepEqual(
+          await db
+            .select()
+            .from(documentVersions)
+            .where(eq(documentVersions.projectId, projectId)),
+          history,
+        );
+      }
+      await assert.rejects(
+        promoteDocuments(db, {
+          project: slug,
+          sourceEnvironmentId: fixture.stagingEnvId,
+          targetEnvironmentId: fixture.productionEnvId,
+          documentIds: [fixture.blogDocumentId],
+          dryRun: true,
+          attribution,
+          authorize: async (_tx, permissions) => {
+            if (
+              permissions.some(
+                (permission) =>
+                  permission.path && permission.environment === "production",
+              )
+            )
+              throw new Error("path denied");
+          },
+        }),
+        /path denied/,
+      );
+      assert.deepEqual(
+        await db
+          .select()
+          .from(documents)
+          .where(eq(documents.projectId, projectId)),
+        before,
+      );
+      assert.deepEqual(
+        await db
+          .select()
+          .from(documentVersions)
+          .where(eq(documentVersions.projectId, projectId)),
+        history,
+      );
+      let mutated = false;
+      await assert.rejects(
+        cloneEnvironment(db, {
+          project: slug,
+          sourceEnvironmentId: fixture.stagingEnvId,
+          targetEnvironmentId: fixture.productionEnvId,
+          attribution,
+          authorize: async (tx, permissions) => {
+            if (!mutated) {
+              mutated = true;
+              await tx
+                .update(documents)
+                .set({ path: "denied/new" })
+                .where(eq(documents.documentId, fixture.blogDocumentId));
+            }
+            if (
+              permissions.some((permission) => permission.path === "denied/new")
+            )
+              throw new Error("changed path denied");
+          },
+        }),
+        /changed path denied/,
+      );
+      assert.deepEqual(
+        await db
+          .select()
+          .from(documents)
+          .where(eq(documents.projectId, projectId)),
+        before,
+      );
+    } finally {
+      if (projectId) await teardownProject(db, projectId);
+      await runtime.dbConnection.close();
+    }
+  },
+);
+
+integrationTest(
+  "promotion checks source reference paths outside the selected document set",
+  async () => {
+    const runtime = createServerRequestHandlerWithModules({
+      env,
+      logger,
+      config: cloneTestConfig,
+    });
+    const db = runtime.dbConnection.db;
+    const slug = uniqueProjectSlug("reference-permission");
+    let projectId: string | undefined;
+    try {
+      const fixture = await provisionTwoEnvironments(db, slug);
+      projectId = fixture.projectId;
+      await cloneEnvironment(db, {
+        project: slug,
+        sourceEnvironmentId: fixture.stagingEnvId,
+        targetEnvironmentId: fixture.productionEnvId,
+        attribution,
+        authorize: async () => {},
+      });
+      await assert.rejects(
+        promoteDocuments(db, {
+          project: slug,
+          sourceEnvironmentId: fixture.stagingEnvId,
+          targetEnvironmentId: fixture.productionEnvId,
+          attribution,
+          documentIds: [fixture.blogDocumentId],
+          dryRun: true,
+          authorize: async (_tx, requirements) => {
+            if (
+              requirements.some(
+                (item) =>
+                  item.environment === "staging" &&
+                  item.path === "authors/jane",
+              )
+            )
+              throw new Error("reference denied");
+          },
+        }),
+        /reference denied/,
+      );
+    } finally {
+      if (projectId) await teardownProject(db, projectId);
+      await runtime.dbConnection.close();
+    }
+  },
+);
