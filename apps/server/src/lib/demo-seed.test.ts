@@ -1,3 +1,4 @@
+import { integrationTestDatabaseUrl } from "./integration-test-database.js";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -35,12 +36,11 @@ const env = {
   APP_VERSION: "9.9.9",
   PORT: "4000",
   SERVICE_NAME: "mdcms-server",
-  DATABASE_URL:
-    process.env.MDCMS_TEST_DATABASE_URL ??
-    "postgres://mdcms:mdcms@localhost:5432/mdcms",
+  DATABASE_URL: integrationTestDatabaseUrl(),
 } as NodeJS.ProcessEnv;
 
 async function canConnectToDatabase(): Promise<boolean> {
+  if (!integrationTestDatabaseUrl()) return false;
   const client = postgres(env.DATABASE_URL ?? "", {
     onnotice: () => undefined,
     connect_timeout: 1,
@@ -51,7 +51,7 @@ async function canConnectToDatabase(): Promise<boolean> {
     await client`select 1`;
     return true;
   } catch {
-    return false;
+    throw new Error("Explicit integration database is unavailable");
   } finally {
     await client.end({ timeout: 1 });
   }
