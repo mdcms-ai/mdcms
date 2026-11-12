@@ -436,3 +436,136 @@ test("pull names the local file after the format the body needs", async () => {
     );
   });
 });
+
+test("pull moves a locally renamed .md/.mdx file without leaving it behind", async () => {
+  await withTempDir(async (cwd) => {
+    const manifestPath = join(
+      cwd,
+      ".mdcms",
+      "manifests",
+      "marketing-site.staging.json",
+    );
+    await mkdir(join(cwd, ".mdcms", "manifests"), { recursive: true });
+    await writeFile(
+      manifestPath,
+      JSON.stringify({
+        "doc-1": {
+          path: "content/blog/old.en.md",
+          format: "md",
+          draftRevision: 1,
+          publishedVersion: 1,
+          hash: "oldhash",
+        },
+      }),
+      "utf8",
+    );
+    await mkdir(join(cwd, "content/blog"), { recursive: true });
+    // Renamed locally; the manifest still points at old.en.md.
+    await writeFile(join(cwd, "content/blog/old.en.mdx"), "old\n", "utf8");
+
+    const exitCode = await runMdcmsCli(["pull", "--force"], {
+      cwd,
+      env: {} as NodeJS.ProcessEnv,
+      fetcher: async () =>
+        createContentListResponse({
+          rows: [
+            {
+              documentId: "doc-1",
+              type: "BlogPost",
+              locale: "en",
+              path: "content/blog/new",
+              format: "mdx",
+              frontmatter: { title: "New" },
+              body: "<Cta />\n",
+              draftRevision: 2,
+              publishedVersion: 1,
+            },
+          ],
+        }),
+      confirm: async () => true,
+      loadConfig: async () => ({
+        config: {
+          serverUrl: "http://localhost:4000",
+          project: "marketing-site",
+          environment: "staging",
+          types: [{ name: "BlogPost", localized: true }],
+        },
+        configPath: join(cwd, "mdcms.config.ts"),
+      }),
+      stdout: { write: () => undefined },
+      stderr: { write: () => undefined },
+    });
+
+    assert.equal(exitCode, 0);
+    assert.equal(existsSync(join(cwd, "content/blog/old.en.mdx")), false);
+    assert.equal(existsSync(join(cwd, "content/blog/old.en.md")), false);
+    assert.equal(existsSync(join(cwd, "content/blog/new.en.mdx")), true);
+  });
+});
+
+test("pull keeps the file it writes when a local rename already matches the new path", async () => {
+  await withTempDir(async (cwd) => {
+    const manifestPath = join(
+      cwd,
+      ".mdcms",
+      "manifests",
+      "marketing-site.staging.json",
+    );
+    await mkdir(join(cwd, ".mdcms", "manifests"), { recursive: true });
+    await writeFile(
+      manifestPath,
+      JSON.stringify({
+        "doc-1": {
+          path: "content/blog/hello.en.md",
+          format: "md",
+          draftRevision: 1,
+          publishedVersion: 1,
+          hash: "oldhash",
+        },
+      }),
+      "utf8",
+    );
+    await mkdir(join(cwd, "content/blog"), { recursive: true });
+    await writeFile(join(cwd, "content/blog/hello.en.mdx"), "old\n", "utf8");
+
+    const exitCode = await runMdcmsCli(["pull", "--force"], {
+      cwd,
+      env: {} as NodeJS.ProcessEnv,
+      fetcher: async () =>
+        createContentListResponse({
+          rows: [
+            {
+              documentId: "doc-1",
+              type: "BlogPost",
+              locale: "en",
+              path: "content/blog/hello",
+              format: "mdx",
+              frontmatter: { title: "Hello" },
+              body: "<Cta />\n",
+              draftRevision: 2,
+              publishedVersion: 1,
+            },
+          ],
+        }),
+      confirm: async () => true,
+      loadConfig: async () => ({
+        config: {
+          serverUrl: "http://localhost:4000",
+          project: "marketing-site",
+          environment: "staging",
+          types: [{ name: "BlogPost", localized: true }],
+        },
+        configPath: join(cwd, "mdcms.config.ts"),
+      }),
+      stdout: { write: () => undefined },
+      stderr: { write: () => undefined },
+    });
+
+    assert.equal(exitCode, 0);
+    const written = await readFile(
+      join(cwd, "content/blog/hello.en.mdx"),
+      "utf8",
+    );
+    assert.equal(written.includes("<Cta />"), true);
+  });
+});

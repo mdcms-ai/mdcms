@@ -44,3 +44,26 @@ test("components inside code do not count", () => {
   // An unclosed fence runs to the end of the body.
   assert.equal(inferContentFormat("```\n<Cta />\n"), "md");
 });
+
+test("a closing fence may be indented differently from its opener", () => {
+  assert.equal(inferContentFormat(" ~~~\nexample\n~~~\n\n<Cta />"), "mdx");
+  assert.equal(inferContentFormat("```\nexample\n   ```\n\n<Cta />"), "mdx");
+  assert.equal(inferContentFormat("  ```\n<Cta />\n```\n"), "md");
+});
+
+test("components next to inline Markdown markers and punctuation count", () => {
+  assert.equal(inferContentFormat("**<Cta />**"), "mdx");
+  assert.equal(inferContentFormat("_<Badge label='x' />_"), "mdx");
+  assert.equal(inferContentFormat("Hello,<Cta />"), "mdx");
+  assert.equal(inferContentFormat("List<String> and Map<K, V>"), "md");
+});
+
+test("components inside indented code blocks do not count", () => {
+  assert.equal(inferContentFormat("# Example\n\n    <Cta />\n"), "md");
+  assert.equal(inferContentFormat("Text\n\n\t<Cta />\n\nMore text."), "md");
+  // Indented lines continuing a paragraph or a list item are not code.
+  assert.equal(inferContentFormat("Text\n    <Cta />\n"), "mdx");
+  assert.equal(inferContentFormat("- item\n\n    <Cta />\n"), "mdx");
+  // A non-indented component after an indented code block still counts.
+  assert.equal(inferContentFormat("Intro\n\n    code\n\n<Cta />"), "mdx");
+});
