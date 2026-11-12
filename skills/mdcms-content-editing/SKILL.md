@@ -163,3 +163,23 @@ If unsure about the project's locale-file convention (subdirectory vs filename s
 - Bulk-edit examples target Bash + GNU/BSD `sed`. macOS `sed` requires the `''` after `-i` shown above; Linux drops it.
 - Reference field shape (id vs slug) is determined by the schema's `fieldTypes.reference()` declaration. When in doubt, look at a sibling document.
 - Frontmatter is YAML; if the project later moves to TOML or JSON frontmatter, this skill's syntax notes need an update.
+
+## Editing through MCP
+
+For an MCP-enabled agent, connect to the server's `/api/v1/mcp` with OAuth, or install `@mdcms/cli` locally and launch `npx mdcms mcp` from the host project (Node 24.11.1 or later). The local bridge resolves the configured target and login credentials at startup. Restart it to change targets.
+
+Read `get_schema`, then `get_document`. Pass the inspected `schemaHash` explicitly to `create_document`, `update_document`, `duplicate_document` and `create_translation`. Do not silently replace a stale hash or retry a conflicted write. Example `update_document` arguments:
+
+```json
+{
+  "documentId": "example-document-id",
+  "body": "# Revised draft",
+  "schemaHash": "hash-returned-by-get_schema"
+}
+```
+
+Use `list_documents` to find documents, `list_versions`/`get_version` for history and `list_translations` for variants. `publish_document` and `unpublish_document` require separate publish authorization; writing drafts does not imply permission to publish. MCP mutations execute directly, unlike Studio Assistant proposals. Preserve the user's action-specific approval gates.
+
+Only the local bridge adds `sync_schema`. After schema sync, inspect the new hash before writing. Run `npx mdcms pull` after remote edits to refresh local files. On transport failure inspect server state before retrying, because a mutation may already have succeeded.
+
+OAuth consent grants a scope subset and an immutable project/environment. Reconnect to change targets; revoke through Studio Connected apps. Client names and per-call identity are unverified. Do not claim real agent-host compatibility based on SDK tests alone. See the [MCP guide](https://docs.mdcms.ai/guide/mcp) for the complete remote catalog and recovery steps.

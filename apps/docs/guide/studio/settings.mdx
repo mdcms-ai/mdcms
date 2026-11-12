@@ -181,3 +181,11 @@ Planned configuration per webhook:
   through results, open assets, and copy asset URLs. Uploads, deletion, folders,
   tags, CDN transforms, and usage tracking remain outside this library view.
 </Accordion>
+
+## Connected apps
+
+Open **Connected apps** from the sidebar, or **Settings → Connected apps**. This page is available to members without granting access to other admin settings. Members see their own OAuth connections; project Admins and global Admins/Owners can see project connections. API-key mode requires session sign-in and cannot manage OAuth connections.
+
+Each connection shows its reported client name (unverified), granting user, project/environment, scopes, creation time and last use. Select **Revoke access**, verify the client and target, then confirm. The list refreshes only after server confirmation. If revocation fails, the row remains visible so you can retry. To change an OAuth target, connect again and approve the new target.
+
+See [Connect agents with MCP](/guide/mcp) for setup and permission details.

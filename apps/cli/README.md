@@ -88,7 +88,7 @@ Shell-exported variables override all file values. Use `--no-env-file` or `MDCMS
 | `mdcms pull`        | Pull content from the server to local Markdown files     |
 | `mdcms push`        | Push local content changes back to the server            |
 | `mdcms schema sync` | Sync your local schema definition to the server registry |
-| `mdcms mcp`         | Run an MCP server over stdio for AI agents (preview)     |
+| `mdcms mcp`         | Run an MCP stdio bridge for AI agents                    |
 
 ### Pull
 
@@ -110,6 +110,8 @@ mdcms push --dry-run    # Preview changes without uploading
 ### MCP bridge
 
 `mdcms mcp` exposes the configured project and environment to AI agents over the Model Context Protocol. It reuses the credentials from `mdcms login`.
+
+Install the CLI locally in the host project first (`npm install --save-dev @mdcms/cli`), then configure the agent from that directory:
 
 ```bash
 claude mcp add mdcms -- npx mdcms mcp
@@ -135,3 +137,5 @@ Remote writes affect the server. Run `mdcms pull` to refresh local content. Tran
 ## Documentation
 
 Full CLI reference at [docs.mdcms.ai](https://docs.mdcms.ai/).
+
+Remote OAuth clients connect to `https://cms.example.com/api/v1/mcp`, approve a scope subset and one immutable project/environment target. Revoke grants in Studio Connected apps. See the [MCP guide](https://docs.mdcms.ai/guide/mcp) for all remote tools, permissions, explicit schema hashes and recovery guidance. Client names are unverified; initialize identity alone does not persist across stateless calls.
