@@ -19,109 +19,145 @@ Not for editing content (use Studio), not for schema changes (use `mdcms-schema-
 ## Prerequisites
 
 - A running MDCMS server and content synced against a schema (via **`mdcms-brownfield-init`** or **`mdcms-greenfield-init`**).
-- A React-based host app.
-- An API key that the host app can read at runtime. For server-side rendering, this is an env var (`MDCMS_API_KEY`). Never ship the API key to the browser.
+- A React-based host app with `mdcms.config.ts` at its root.
+- An API key with `content:read` (add `content:read:draft` for drafts) that the host app reads at runtime from `MDCMS_API_KEY`. Never ship the API key to the browser.
 
 ## Steps
 
 ### 1. Install the SDK
 
+Use the project's package manager. `server-only` makes the build fail if a client component imports the module that holds the API key:
+
 ```bash
-npm install @mdcms/sdk
-# or: bun add @mdcms/sdk
+pnpm add @mdcms/sdk server-only
+# or: npm install / bun add / yarn add @mdcms/sdk server-only
 ```
 
-### 2. Create a client
+### 2. Create the client
 
-In a server-only module (for Next: a file without `"use client"`, ideally under `lib/`):
+Build the client from `mdcms.config.ts`, which already holds `serverUrl`, `project` and `environment`. Read only the API key from the environment.
+
+`lib/cms.ts`:
 
 ```ts
+import "server-only";
+
 import { createClient } from "@mdcms/sdk";
+import { createMdcmsRenderer } from "@mdcms/sdk/react";
 
+import config from "../mdcms.config";
+
+const apiKey = process.env.MDCMS_API_KEY;
+
+if (!apiKey) {
+  throw new Error("MDCMS_API_KEY is not set.");
+}
+
+// Server URL, project and environment come from mdcms.config.ts; only the
+// API key is a secret.
 export const cms = createClient({
-  serverUrl: process.env.MDCMS_SERVER_URL!,
-  project: process.env.MDCMS_PROJECT!,
-  environment: process.env.MDCMS_ENVIRONMENT!,
-  apiKey: process.env.MDCMS_API_KEY!,
+  serverUrl: config.serverUrl,
+  project: config.project,
+  environment: config.environment,
+  apiKey,
 });
+
+// Renders document bodies with the components registered in mdcms.config.ts.
+export const renderer = createMdcmsRenderer(config);
 ```
 
-Keep the import path server-only. If the app leaks it into a client bundle, the API key ships to users.
+`mdcms.config.ts` imports `@mdcms/cli`, so keep `@mdcms/cli` installed wherever the app builds and runs.
 
-### 3. Fetch content
+If a deployment reads content from another environment than the config's default, pass `environment` per call (`cms.list("post", { environment: "staging" })`) or build a second client.
 
-The SDK exposes two read methods: `cms.get(type, input)` and `cms.list(type, input)`. Both accept `locale`, optional per-call `project`/`environment` overrides, and an optional `resolve` array for reference expansion.
+### 3. Know the document shape
 
-**Fetch a single document by id or slug**
-
-`get` requires either `id` (preferred — stable across renames) or `slug`. There is no `path` parameter on the SDK.
+`get` and `list` return `ContentDocumentResponse` documents. Import the type from `@mdcms/sdk`:
 
 ```ts
-// By id (preferred when you already have it)
-const about = await cms.get("page", { id: "doc_01HY…", locale: "en" });
-
-// By slug (convenient for marketing/blog routes)
-const post = await cms.get("post", { slug: "hello-world", locale: "en" });
+import type { ContentDocumentResponse } from "@mdcms/sdk";
 ```
 
-`get` returns the document directly (unwrapped from the `{ data }` envelope).
+The fields an app uses most:
 
-**List documents of a type**
+| Field         | Meaning                                                                                 |
+| ------------- | --------------------------------------------------------------------------------------- |
+| `documentId`  | Stable id of this document (one locale variant). Use it for keys and `get({ id })`.     |
+| `frontmatter` | All schema fields (`title`, `slug`, references, …) as `Record<string, unknown>`.        |
+| `body`        | Markdown/MDX body. Render it with `renderer.render(document)`.                          |
+| `type`        | Content type name.                                                                      |
+| `path`        | Path of the document inside the project, for example `content/posts/hello-world`.       |
+| `locale`      | Locale of this variant. Non-localized types use the reserved value `__mdcms_default__`. |
+| `format`      | `"md"` or `"mdx"`; follows the body.                                                    |
+
+There are no top-level `id`, `slug` or `title` fields: read them from `frontmatter`, and check their type because frontmatter values are `unknown`:
+
+`lib/frontmatter.ts`:
 
 ```ts
+import type { ContentDocumentResponse } from "@mdcms/sdk";
+
+// Frontmatter values are typed as unknown; check them before rendering.
+export function readString(
+  document: ContentDocumentResponse,
+  field: string,
+): string | undefined {
+  const value = document.frontmatter[field];
+  return typeof value === "string" ? value : undefined;
+}
+```
+
+### 4. Fetch content
+
+`cms.get(type, input)` returns one document. `input` has either `id` or `slug`:
+
+- `{ id }` fetches that document directly. The `type` argument is not checked against it. An unknown id (or, without `draft: true`, a document that was never published) throws `MdcmsApiError` with `statusCode` 404.
+- `{ slug }` lists documents of `type` whose **`frontmatter.slug`** equals the value (after trimming), and returns the single match. It is not the document path, and the type needs a `slug` field. No match throws `MdcmsClientError` with code `NOT_FOUND`; more than one match throws code `AMBIGUOUS_RESULT`.
+
+`cms.list(type, input)` returns `{ data, pagination }`: iterate `response.data` and use `response.pagination` (`total`, `limit`, `offset`, `hasMore`). The server returns 20 documents by default and at most 100 per call; page with `offset`.
+
+**Locale.** `locale` is an exact filter on the stored locale of each document:
+
+- Non-localized types store every document under `__mdcms_default__`. Omit `locale` for them. Passing `locale: "en"` matches nothing, so `get` by slug throws `NOT_FOUND` and `list` returns an empty page.
+- Localized types store one document per locale. Pass the locale you want (`locale: "fr"`). Without it, `list` returns every locale variant, and `get` by slug throws `AMBIGUOUS_RESULT` when several locales share the slug.
+- `get` by `id` ignores `locale`: an id already names one locale variant.
+
+```ts
+// Non-localized type: no locale
+const post = await cms.get("post", { slug: "hello-world" });
+
+// Localized type: pick the locale
+const campaign = await cms.get("campaign", {
+  slug: "spring-sale",
+  locale: "fr",
+});
+
+// By id
+const about = await cms.get("page", {
+  id: "11111111-1111-4111-8111-111111111111",
+});
+
+// Newest posts first
 const response = await cms.list("post", {
-  locale: "en",
   limit: 20,
   sort: "createdAt",
   order: "desc",
 });
-
-// response has shape { data: Document[], pagination: {...} }
-for (const post of response.data) {
-  // ...
-}
 ```
 
-`list` returns the full paginated envelope — iterate `response.data`, and use `response.pagination` for offset/total/hasMore.
+**Render the body** with the renderer from `lib/cms.ts`. It compiles MDX when the body contains components and loads them through `config.components[].load` (see **`mdcms-mdx-components`**). It is server-only: do not import `@mdcms/sdk/react` from client components. MDX `import` and `export` lines are not supported; register components in `mdcms.config.ts` instead.
 
-Document return values include the frontmatter fields as declared in `mdcms.config.ts` plus the body. Use them directly in React, or use `@mdcms/sdk/react` to render the body on the server from the same config component registrations:
-
-```tsx
-import { createMdcmsRenderer } from "@mdcms/sdk/react";
-import config from "../mdcms.config";
-
-const renderer = createMdcmsRenderer(config);
-
-export default async function AboutPage() {
-  const about = await cms.get("page", { slug: "about", locale: "en" });
-  const body = await renderer.render(about);
-
-  return (
-    <article>
-      <h1>{about.title}</h1>
-      {body}
-    </article>
-  );
-}
-```
-
-The renderer is server-only. Do not import `@mdcms/sdk/react` from client components or browser bundles. MDX `import` and `export` syntax is not supported; register components in `mdcms.config.ts` and provide `load` functions there.
-
-### 4. Draft vs published
+### 5. Draft vs published
 
 By default the SDK returns **published** content. Preview/draft flows need an explicit opt-in:
 
 ```ts
-const draft = await cms.get("page", {
-  slug: "about",
-  locale: "en",
-  draft: true,
-});
+const draft = await cms.get("page", { slug: "about", draft: true });
 ```
 
 Patterns:
 
-- **Production pages** — omit `draft` or pass `false`. Only published content ships.
+- **Production pages**: omit `draft` or pass `false`. Only published content ships; a document that was never published is not found.
 - **Private preview routes** — gate `draft: true` behind `verifyMdcmsPreviewRequest()` or `cms.getPreviewDocumentFromRequest()`, a host session, or another server-side authorization check.
 - **Public draft routes** — allowed when the project intentionally exposes drafts, for example on an internal network or low-sensitivity staging site. Make that decision explicit and do not present `?preview=true` as security.
 - **In-development** — early in a project, drafts are often all you have. Pass `draft: true` everywhere until content is ready to publish.
@@ -139,6 +175,8 @@ const document = await cms.getPreviewDocumentFromRequest(request, {
 For lower-level control:
 
 ```ts
+import { verifyMdcmsPreviewRequest } from "@mdcms/sdk";
+
 const preview = await verifyMdcmsPreviewRequest(request, {
   secret: process.env.MDCMS_PREVIEW_TOKEN_SECRET!,
 });
@@ -146,7 +184,6 @@ const preview = await verifyMdcmsPreviewRequest(request, {
 if (preview.ok) {
   const document = await cms.get(preview.claims.type, {
     id: preview.claims.documentId,
-    locale: preview.claims.locale,
     draft: true,
   });
 }
@@ -156,7 +193,7 @@ Keep `MDCMS_API_KEY` / `MDCMS_PREVIEW_API_KEY` and `MDCMS_PREVIEW_TOKEN_SECRET` 
 
 When the route is used inside Studio live preview, send `window.parent.postMessage({ type: "mdcms:live-preview-ready" }, "*")` from client-side code after the draft page renders. Studio treats missing ready signals as preview failures and shows the fallback link instead of a blank iframe.
 
-### 5. (Brownfield) replace the existing fetching
+### 6. (Brownfield) replace the existing fetching
 
 Typical before/after in a Next App Router page:
 
@@ -176,44 +213,98 @@ const about = parseMarkdown(raw);
 **After**
 
 ```tsx
-import { cms } from "@/lib/cms";
+import { cms, renderer } from "@/lib/cms";
 
-const about = await cms.get("page", { slug: "about", locale: "en" });
+const about = await cms.get("page", { slug: "about" });
+const body = await renderer.render(about);
 ```
+
+`slug: "about"` matches `frontmatter.slug`, so the page type needs a `slug` field. If it has none, look the document up by `id`, or list the type and match `path`.
 
 Delete the old markdown files from disk if they were imported into MDCMS (check `.gitignore` — `mdcms-brownfield-init` likely already added them), or keep them as a local cache if the app's build process benefits from that.
 
-### 6. (Greenfield) add fresh fetching
+### 7. (Greenfield) add fresh fetching
 
-Generate the route tree from MDCMS. Example for a blog index + detail in Next:
+A blog index and post page in Next.js App Router, using `lib/cms.ts` and `lib/frontmatter.ts` from steps 2 and 3. The `post` type here is not localized and has `title` and `slug` fields.
+
+`app/blog/page.tsx`:
 
 ```tsx
-// app/blog/page.tsx
-import { cms } from "@/lib/cms";
+import Link from "next/link";
+
+import { cms } from "../../lib/cms";
+import { readString } from "../../lib/frontmatter";
+
 export default async function BlogIndex() {
-  const response = await cms.list("post", { locale: "en", limit: 50 });
+  const { data: posts } = await cms.list("post", {
+    limit: 50,
+    sort: "createdAt",
+    order: "desc",
+  });
+
   return (
     <ul>
-      {response.data.map((p) => (
-        <li key={p.id}>
-          <a href={`/blog/${p.slug}`}>{p.title}</a>
-        </li>
-      ))}
+      {posts.map((post) => {
+        const slug = readString(post, "slug");
+
+        return slug ? (
+          <li key={post.documentId}>
+            <Link href={`/blog/${slug}`}>
+              {readString(post, "title") ?? slug}
+            </Link>
+          </li>
+        ) : null;
+      })}
     </ul>
   );
 }
+```
 
-// app/blog/[slug]/page.tsx
-export default async function PostPage({ params }) {
-  const post = await cms.get("post", {
-    slug: params.slug,
-    locale: "en",
-  });
-  return <article>{/* ... */}</article>;
+`app/blog/[slug]/page.tsx`:
+
+```tsx
+import { notFound } from "next/navigation";
+import { MdcmsClientError, type ContentDocumentResponse } from "@mdcms/sdk";
+
+import { cms, renderer } from "../../../lib/cms";
+import { readString } from "../../../lib/frontmatter";
+
+async function getPost(slug: string): Promise<ContentDocumentResponse | null> {
+  try {
+    // Matches the post whose frontmatter `slug` equals this value.
+    return await cms.get("post", { slug });
+  } catch (error) {
+    if (error instanceof MdcmsClientError && error.code === "NOT_FOUND") {
+      return null;
+    }
+    throw error;
+  }
+}
+
+export default async function PostPage({
+  params,
+}: {
+  params: Promise<{ slug: string }>;
+}) {
+  const { slug } = await params;
+  const post = await getPost(slug);
+
+  if (!post) {
+    notFound();
+  }
+
+  const body = await renderer.render(post);
+
+  return (
+    <article>
+      <h1>{readString(post, "title")}</h1>
+      {body}
+    </article>
+  );
 }
 ```
 
-### 7. Revalidation / caching
+### 8. Revalidation / caching
 
 - **Next App Router** — `fetch` calls from the SDK inherit Next's default cache behavior. For frequently updating content, set `revalidate` on the route or tag-invalidate via `revalidateTag` on webhook. Follow Next's caching guide; the SDK does not override it.
 - **Build-time static** — call the SDK inside `generateStaticParams`/`getStaticProps` (Pages Router). Content is frozen at build time; rebuild to pick up changes.
@@ -221,12 +312,13 @@ export default async function PostPage({ params }) {
 
 ## Common gotchas
 
-- **API key leaks into the browser** — always import the SDK in server-only modules. In Next, a `"use client"` file or a client component must not import `@/lib/cms`.
-- **`get` needs `id` or `slug`, not `path`** — the SDK does not take a document path. If you only have the local filesystem path, either look up the slug from frontmatter or issue a `list` with a filter. Prefer `id` for stability across rename/slug changes.
+- **API key leaks into the browser**: keep the client in a module that starts with `import "server-only";`. In Next, a `"use client"` file or a client component must not import `lib/cms.ts`.
+- **Fields that do not exist**: documents have no `id`, `slug` or `title` at the top level. Use `documentId`, and read schema fields from `frontmatter`.
+- **`get` needs `id` or `slug`, not `path`**: `slug` matches `frontmatter.slug`, not the document path. If you only have a path, call `list` with `path` (a prefix filter) and pick the exact match. Prefer `id` for stability across renames and slug changes.
 - **`list` returns a paginated envelope** — iterate `response.data`, not `response` itself. The envelope also carries `response.pagination` for offset/total pagination.
 - **Draft leaking to production** — if every page passes `draft: true`, unpublished content goes live. Route private preview behind a verified token/session, or document that the draft route is intentionally public.
 - **Type vs type name** — `mdcms.config.ts` uses a string type name (`"post"`). The SDK call uses the same name; it is case-sensitive.
-- **Locale-aware fetches** — the SDK takes `locale` as an explicit argument on every `get`/`list` call. Pass it even for non-localized types so the caller stays explicit.
+- **Empty results with `locale`**: `locale` filters on the stored locale. Documents of non-localized types are stored under `__mdcms_default__`, so `locale: "en"` finds nothing for them. Omit `locale` for non-localized types; pass it for localized ones.
 
 ## Related skills
 

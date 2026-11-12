@@ -37,6 +37,13 @@
       "import": "./dist/lib/action-catalog-adapter.js",
       "default": "./dist/lib/action-catalog-adapter.js"
     },
+    "./client-config": {
+      "@mdcms/source": "./src/lib/client-config.ts",
+      "bun": "./src/lib/client-config.ts",
+      "types": "./dist/lib/client-config.d.ts",
+      "import": "./dist/lib/client-config.js",
+      "default": "./dist/lib/client-config.js"
+    },
     "./build-runtime": {
       "@mdcms/source": "./src/lib/build-runtime.ts",
       "bun": "./src/lib/build-runtime.ts",

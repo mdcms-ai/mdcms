@@ -1,22 +1,22 @@
 "use client";
 
+import { useMemo } from "react";
 import { Studio } from "@mdcms/studio";
+import type { SerializableStudioConfig } from "@mdcms/studio/client-config";
 
-import {
-  createClientStudioConfig,
-  type PreparedStudioComponentMetadata,
-} from "./studio-config";
-import type { MdcmsConfig } from "@mdcms/studio";
+import { createAdminStudioClientConfig } from "./studio-config";
 
-export function AdminStudioClient(props: {
-  preparedComponents: PreparedStudioComponentMetadata[];
-  schemaHash?: string;
-  documentRouteMetadata?: MdcmsConfig["_documentRouteMetadata"];
-}) {
-  const config = createClientStudioConfig(
-    props.preparedComponents,
-    props.schemaHash,
-    props.documentRouteMetadata ?? undefined,
+export function AdminStudioClient(props: { config: SerializableStudioConfig }) {
+  // The server sends a new props object on every navigation inside /admin.
+  // Keying on the serialized value keeps the Studio config stable until the
+  // prepared config really changes.
+  const configKey = JSON.stringify(props.config);
+  const config = useMemo(
+    () =>
+      createAdminStudioClientConfig(
+        JSON.parse(configKey) as SerializableStudioConfig,
+      ),
+    [configKey],
   );
 
   return <Studio config={config} basePath="/admin" />;

@@ -99,7 +99,7 @@ flowchart TD
 ## Assumptions and limitations
 
 - Assumes the current MDCMS CLI contract. The `mdcms init --non-interactive` surface is required and ships with MDCMS `0.1.x+`.
-- Skills reference `apps/studio-example` in the MDCMS source repo for copy-from patterns (Studio embed, MDX component registration). When the reference implementation changes, the skills defer to the reference.
+- Skills carry complete code for the Studio embed, MDX component registration and SDK fetching. The code matches the types of the `@mdcms/*` packages released from the same repository state; with older packages, update them or follow the installed types.
 - No assumption is made about the user's host framework beyond "React-based". Examples use Next.js App Router because it is the most common target; adapt for Remix, Astro, Vite, etc.
 - The pack does not bundle an MCP server, hooks, or subagents. Claude Code users wanting `/slash` command shortcuts or MCP-backed integrations should install the pack alongside any project-specific `.claude/` config.
 

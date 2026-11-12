@@ -10,10 +10,11 @@ npm install @mdcms/studio
 
 ## Embedding in a Next.js App
 
-Create a catch-all route for Studio:
+Create a catch-all route for Studio with a server component and a client component:
 
 ```tsx
 // app/admin/[[...path]]/page.tsx
+import { toSerializableStudioConfig } from "@mdcms/studio/client-config";
 import { prepareStudioConfig } from "@mdcms/studio/runtime";
 
 import config from "../../../mdcms.config";
@@ -22,19 +23,11 @@ import { AdminStudioClient } from "./admin-studio-client";
 export const dynamic = "force-dynamic";
 
 export default async function AdminPage() {
-  // Runs on the server, where the full schema is available. The schema hash
-  // it computes is what lets Studio write to the project.
+  // Runs on the server, where the full config is available: computes the
+  // schema hash that lets Studio write, and reads component props.
   const prepared = await prepareStudioConfig(config, { cwd: process.cwd() });
 
-  return (
-    <AdminStudioClient
-      project={prepared.project}
-      environment={prepared.environment}
-      serverUrl={prepared.serverUrl}
-      schemaHash={prepared._schemaHash}
-      documentRouteMetadata={prepared._documentRouteMetadata}
-    />
-  );
+  return <AdminStudioClient config={toSerializableStudioConfig(prepared)} />;
 }
 ```
 
@@ -42,30 +35,44 @@ export default async function AdminPage() {
 // app/admin/[[...path]]/admin-studio-client.tsx
 "use client";
 
-import { Studio, type MdcmsConfig } from "@mdcms/studio";
+import { useMemo } from "react";
+import { Studio } from "@mdcms/studio";
+import {
+  createStudioClientConfig,
+  type SerializableStudioConfig,
+} from "@mdcms/studio/client-config";
 
-export function AdminStudioClient(props: {
-  project: string;
-  environment: string;
-  serverUrl: string;
-  schemaHash?: string;
-  documentRouteMetadata?: MdcmsConfig["_documentRouteMetadata"];
-}) {
-  const config = {
-    project: props.project,
-    environment: props.environment,
-    serverUrl: props.serverUrl,
-    ...(props.schemaHash ? { _schemaHash: props.schemaHash } : {}),
-    ...(props.documentRouteMetadata
-      ? { _documentRouteMetadata: props.documentRouteMetadata }
-      : {}),
-  } as MdcmsConfig;
+const loaders = {
+  Callout: () => import("../../../components/callout"),
+};
+
+export function AdminStudioClient(props: { config: SerializableStudioConfig }) {
+  const configKey = JSON.stringify(props.config);
+  const config = useMemo(
+    () =>
+      createStudioClientConfig(
+        JSON.parse(configKey) as SerializableStudioConfig,
+        { loaders },
+      ),
+    [configKey],
+  );
 
   return <Studio config={config} basePath="/admin" />;
 }
 ```
 
-`prepareStudioConfig` runs on the server, where the full `mdcms.config.ts` is available, and computes the schema hash Studio needs before it allows edits. Pass only these plain values to the client component: the full config holds Zod schemas and functions that cannot cross the server/client boundary. Do not use `createStudioEmbedConfig` for an editing Studio: it carries no schema hash, so every document opens read-only.
+`prepareStudioConfig` runs on the server, where the full `mdcms.config.ts` is available. It computes the schema hash Studio needs before it allows edits and extracts the props of registered MDX components. The full config holds Zod schemas and functions that cannot cross the server/client boundary, so `toSerializableStudioConfig(prepared)` keeps only plain values: project, environment, server URL, content directories, locales, type names, the registered components (with their extracted props) and the schema hash. Built-in components are left out; Studio always adds them.
+
+`createStudioClientConfig(serializable, options)` builds the config for `<Studio />` in the browser:
+
+| Option                | Description                                                                                                                                                                                                 |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `loaders`             | Map from component name to its `load` function, or to `{ load, loadPropsEditor }`. Components without a loader are listed in Studio and show a placeholder instead of a preview. Unknown names are ignored. |
+| `previewUrlResolvers` | Map from content type name to a live preview URL resolver, the same function as the type's `resolvePreviewUrl`.                                                                                             |
+
+It returns a new object on every call. Build it once per distinct value (as above, or at module scope): a new `config` object can make Studio reload its runtime.
+
+Do not use `createStudioEmbedConfig` for an editing Studio: it carries no schema hash, so every document opens read-only.
 
 `basePath` tells Studio where it's mounted so deep links resolve correctly.
 
@@ -124,7 +131,7 @@ defineConfig({
 });
 ```
 
-`load` may return the component or its module: Studio and `@mdcms/sdk/react` use the module's default export, then the export named like the component.
+`load` may return the component or its module: Studio and `@mdcms/sdk/react` use the module's default export, then the export named like the component. Pass the same loaders to `createStudioClientConfig` (see above), since functions in `mdcms.config.ts` do not reach the browser through the prepared config. Studio previews render inside the Studio route, so give components self-contained styles (inline styles or a CSS module the component imports) rather than relying on the site's layout CSS.
 
 Registered components can be inserted from the toolbar or via `/` slash commands in the editor. A document becomes MDX as soon as its body contains a component; there is no format to switch. Studio auto-generates a props editing panel from extracted component props, or you can provide a custom props editor.
 
@@ -134,6 +141,7 @@ Registered components can be inserted from the toolbar or via `/` slash commands
 | -------------------------------------- | ----------------------------------------------------------------- |
 | `@mdcms/studio`                        | `Studio` component, `PropsEditorComponent` type                   |
 | `@mdcms/studio/runtime`                | `prepareStudioConfig`, `createStudioEmbedConfig`, runtime helpers |
+| `@mdcms/studio/client-config`          | `toSerializableStudioConfig`, `createStudioClientConfig`          |
 | `@mdcms/studio/markdown-pipeline`      | `parseMarkdownToDocument`, `serializeDocumentToMarkdown`          |
 | `@mdcms/studio/document-shell`         | `loadStudioDocumentShell` for host-app shell rendering            |
 | `@mdcms/studio/action-catalog-adapter` | Typed action catalog client                                       |
