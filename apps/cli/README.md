@@ -102,20 +102,20 @@ mdcms pull --published  # Fetch published snapshots instead of drafts
 ### Push
 
 ```bash
-mdcms push              # Interactive mode — prompts before uploading
-mdcms push --force      # Skip confirmation prompt
-mdcms push --dry-run    # Preview changes without uploading
+mdcms push --dry-run    # Preview the push plan without uploading
+mdcms push              # Interactive mode: prompts before uploading
+mdcms push --yes        # Include new and deleted files, skip the confirmation prompt (--force is an alias)
 ```
 
 ### MCP server (preview)
 
-`mdcms mcp` exposes the configured project and environment to AI agents over the Model Context Protocol. It reuses the credentials from `mdcms login`.
+`mdcms mcp` exposes the configured project and environment to AI agents over the Model Context Protocol. It reuses the credentials from `mdcms login`; that key can do everything except publish, which needs a key with `content:publish`.
 
 ```bash
 claude mcp add mdcms -- npx mdcms mcp
 ```
 
-Tools: `get_schema`, `list_documents`, `get_document`, `create_document`, `update_document`, `publish_document`, `sync_schema`. Writes are draft writes, are validated against the synced schema, and fail instead of overwriting a concurrent change. See the [commands reference](https://docs.mdcms.ai/guide/cli/commands) for details.
+Tools: `get_credentials_info` (reports the key's scopes and which tools it can run), `get_schema`, `list_documents`, `get_document`, `create_document`, `update_document`, `publish_document`, `sync_schema`. Writes are draft writes, are validated against the synced schema, and fail instead of overwriting a concurrent change. See the [commands reference](https://docs.mdcms.ai/guide/cli/commands) for details.
 
 ### Global Flags
 

@@ -2,7 +2,7 @@
 status: live
 canonical: true
 created: 2026-03-11
-last_updated: 2026-11-10
+last_updated: 2026-11-12
 ---
 
 # SPEC-008 CLI and SDK
@@ -121,6 +121,7 @@ The CLI runs on Node.js 22.18 or newer and on Bun. Its published entry point use
 | `cms logout`                 | Clear stored credentials                                                     |
 | `cms pull`                   | Download all content from CMS to local `.md`/`.mdx` files                    |
 | `cms push`                   | Upload local `.md`/`.mdx` files to CMS                                       |
+| `cms push --dry-run`         | Print the push plan without writing anything                                 |
 | `cms push --validate`        | Validate content against schema before pushing                               |
 | `cms push --sync-schema`     | Allow push to sync schema in non-interactive mode on drift (ignored in TTY)  |
 | `cms schema sync`            | Sync `mdcms.config.ts` schema to the server registry                         |
@@ -145,6 +146,8 @@ All commands that interact with server content resolve a target `(project, envir
 | `--no-env-file`        | Disable automatic `.env*` file loading for this run      | No                   |
 | `-V`, `--version`      | Print installed CLI version (`mdcms/<version>`) and exit | No                   |
 | `-h`, `--help`         | Show help and exit                                       | No                   |
+
+`--help` after a command name (for example `mdcms push --help`) prints that command's help when it defines one, and the global help otherwise. Help output does not require a config file, authentication, or server connectivity.
 
 `--version` exits immediately with code 0 and does not require a config file, authentication, or server connectivity. Output format is `mdcms/<semver>` (e.g. `mdcms/0.1.4`), suitable for scripting and troubleshooting.
 
@@ -369,11 +372,13 @@ This will overwrite locally modified files that also changed on server, and dele
 - In interactive mode, deletion candidates are presented as a checkbox selection ("Select files to delete from server:"). Only selected files are soft-deleted on the server via `DELETE /api/v1/content/:documentId`.
 - On successful deletion (or if the server returns 404, meaning it was already deleted), the manifest entry is removed.
 
-#### Interactive selection and `--force`
+#### Preview, interactive selection, and `--yes`
 
-- Without `--force`, two separate checkbox prompts are shown (if applicable): one for new files, one for deletions. A final confirmation prompt summarizes the total action ("Push N changed, N new, N to delete?").
-- With `--force`, all new files are auto-selected for upload, all deletions are auto-selected for removal, and all confirmation prompts are skipped. This is the recommended mode for CI/scripted usage.
-- In non-TTY environments without `--force`, checkbox prompts return empty selections (no new files uploaded, no deletions performed). Changed manifest-tracked files are still pushed normally, without a confirmation prompt, so scripts and agents can push edits as drafts. A hint is printed: "Run with --force to include new/deleted files in non-interactive mode."
+- `cms push --dry-run` prints the push plan (changed, new, and deleted files) and exits `0` without any content or schema writes. It is the way to preview a push and is listed first in `cms push --help`.
+- Without `--yes`, two separate checkbox prompts are shown (if applicable): one for new files, one for deletions. A final confirmation prompt summarizes the total action ("Push <summary>?", where `<summary>` reads "N changed, N new, N to delete document(s) to <project>/<environment>" and omits zero counts).
+- With `-y` or `--yes`, all new files are auto-selected for upload, all deletions are auto-selected for removal, and the confirmation prompt is skipped. Push prints "Pushing <summary> without confirmation (--yes)." before writing. This is the recommended mode for CI/scripted usage that should include new and deleted files.
+- `--force` is accepted as an alias of `--yes` for compatibility and behaves identically. Neither flag overrides any server or preflight check: stale draft revisions, path conflicts, schema hash mismatches, active collaboration locks, and schema drift fail exactly as they do without the flag.
+- In non-TTY environments without `--yes`, checkbox prompts return empty selections (no new files uploaded, no deletions performed). Changed manifest-tracked files are still pushed normally, without a confirmation prompt, so scripts and agents can push edits as drafts. Push prints "Pushing <summary> without confirmation (no terminal). Preview with --dry-run." before writing. When new or deleted files were left out, a hint is printed: "Hint: N new file(s) skipped. Use --yes to include them in non-interactive mode." (or the same hint for deletions).
 
 #### Update fallback on 404
 
@@ -424,6 +429,15 @@ Fetches all draft documents from the server and compares against the local manif
 | **Deleted on server**  | Manifest entry exists but document is absent from server.          |
 | **Moved/Renamed**      | Server path differs from manifest path for the same `documentId`.  |
 | **Unchanged**          | Hash, draft revision, and published version all match.             |
+
+The server path is the local path `cms pull` would write: the server `path` plus the locale segment for localized types and the extension inferred from the body. A tracked file the user renamed between `.md` and `.mdx` is located with the same rule as `cms push`; when that renamed file already sits at the server path, the document is not a move and is classified by hash and revision as above.
+
+Moved/Renamed rows read from the current local path to the path after `cms pull`, under the heading "Moved/Renamed (N): local path -> path after mdcms pull":
+
+- `<local path> -> <server path>       (mdcms pull will move the local file)`
+- When only the extension differs (the server inferred a different format from the body): `<local path> -> <server path>       (the server stores this body as <md|mdx>; mdcms pull will rename the local file)`
+
+Remote documents whose `type` is not defined in the local config are skipped, as `cms pull` skips them: they are not classified, do not count as drift, and their manifest entries are not reported as deleted on server. For each skipped type, a warning is printed to stderr: `Warning: Skipping N document(s) of type "<type>" (not defined in local config).`
 
 #### Schema Drift
 
@@ -499,23 +513,53 @@ example:
 }
 ```
 
+#### API key and scopes
+
+The MCP server uses the API key that resolves for the target when it starts.
+A key stored by `cms login`, or by the browser sign-in in `cms init`, has the
+scopes `projects:read`, `projects:write`, `schema:read`, `schema:write`,
+`content:read`, `content:read:draft`, `content:write`, and `content:delete`.
+That covers every tool except `publish_document`. Publishing needs a key with
+`content:publish`, created in Studio settings and supplied with
+`MDCMS_API_KEY` or `--api-key`.
+
+Scopes do not imply one another. Each tool needs every scope listed for it in
+the table below; a call without them fails with the server's `FORBIDDEN`
+error. `cms mcp --help` and each tool's description list the same scopes.
+
 #### Tools
 
 All tools operate on the resolved target only. A tool cannot address another
 project or environment.
 
-| Tool               | Required scope                        | Behavior                                                                                                 |
-| ------------------ | ------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `get_schema`       | `schema:read`                         | Returns the content types and fields synced for the target, with the server `schemaHash` and `syncedAt`. |
-| `list_documents`   | `content:read:draft`                  | Lists draft heads with frontmatter and status metadata, without bodies.                                  |
-| `get_document`     | `content:read:draft`                  | Returns one draft head including its body.                                                               |
-| `create_document`  | `content:write`                       | Creates a draft document after validating frontmatter against the synced schema.                         |
-| `update_document`  | `content:read:draft`, `content:write` | Applies a frontmatter patch and/or body replacement to a draft after validating the merged frontmatter.  |
-| `publish_document` | `content:publish`                     | Publishes the current draft as a new immutable version.                                                  |
-| `sync_schema`      | `schema:write`                        | Reloads `mdcms.config.ts` from disk and performs the same schema sync as `cms schema sync`.              |
+| Tool                   | Required scopes                                      | Behavior                                                                                                 |
+| ---------------------- | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `get_credentials_info` | none (any valid key for the target)                  | Reports the server URL, target, the active key's scopes, and which tools that key can run.               |
+| `get_schema`           | `schema:read`                                        | Returns the content types and fields synced for the target, with the server `schemaHash` and `syncedAt`. |
+| `list_documents`       | `content:read:draft`                                 | Lists draft heads with frontmatter and status metadata, without bodies.                                  |
+| `get_document`         | `content:read:draft`                                 | Returns one draft head including its body.                                                               |
+| `create_document`      | `schema:read`, `content:write`                       | Creates a draft document after validating frontmatter against the synced schema.                         |
+| `update_document`      | `schema:read`, `content:read:draft`, `content:write` | Applies a frontmatter patch and/or body replacement to a draft after validating the merged frontmatter.  |
+| `publish_document`     | `content:publish`                                    | Publishes the current draft as a new immutable version.                                                  |
+| `sync_schema`          | `schema:write`                                       | Reloads `mdcms.config.ts` from disk and performs the same schema sync as `cms schema sync`.              |
+
+`get_credentials_info` calls `GET /api/v1/me/capabilities` for the target and
+returns a JSON document with:
+
+- `serverUrl`, `project`, `environment`: the resolved target.
+- `grantedScopes`: the content and schema scopes the key holds, out of
+  `schema:read`, `schema:write`, `content:read`, `content:read:draft`,
+  `content:write`, `content:publish`, and `content:delete`, derived from the
+  capability flags.
+- `capabilities`: the capability object as returned by the server.
+- `tools`: for each tool, `requiredScopes` and `allowed` (whether every
+  required scope is granted).
+- `publishing`: present only when `content:publish` is not granted; explains
+  how to get a key that can publish.
 
 Tool inputs:
 
+- `get_credentials_info`: no input.
 - `get_schema`: no input.
 - `list_documents`: optional `type`, `locale`, `q` (text search), `published`
   (boolean), `hasUnpublishedChanges` (boolean), `limit` (default `20`, max
@@ -569,6 +613,13 @@ Tool inputs:
   `DOCUMENT_COLLABORATION_ACTIVE`). A network failure reports
   `SERVER_UNREACHABLE`. A failed response without an error envelope reports
   `REQUEST_FAILED` with the HTTP status in `details`.
+- A `401` response means the server rejected the key the MCP server started
+  with. The error keeps the server's `code` (`UNAUTHORIZED` when the envelope
+  has none), and its `message` tells the user to run `cms login` (or set
+  `MDCMS_API_KEY`) and restart the MCP server, because the key is read only at
+  startup. `details` carries `status: 401` and the server's original message
+  as `serverMessage` when present. `sync_schema` gives the same message when
+  the schema sync response carries the `UNAUTHORIZED` code.
 
 ### Authentication
 

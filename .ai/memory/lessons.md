@@ -119,3 +119,9 @@ Entries are reverse-chronological (newest first).
 **Rule:** A page the server renders and whose form posts back to itself must be excluded in `isStudioBrowserRoute`, like the CLI login pages.
 **Why:** The origin check allows same-origin requests by comparing `Origin` with `new URL(request.url).origin`. Behind a proxy (Railway), `request.url` is the internal `http://` address while the browser sends the public `https://` origin, so the form post is rejected with `FORBIDDEN_ORIGIN`. Local tests pass because there both origins match.
 **How to apply:** When adding a server-hosted HTML flow under a Studio browser route prefix, add its path to the exclusions and cover it with a test whose request URL differs from the `Origin` header.
+
+## 2026-11-12: CLI command help goes through `CliCommand.renderHelp`
+
+**Rule:** Give a CLI command its help through the `renderHelp` field on `CliCommand`; do not rely on checking `context.args` for `--help`.
+**Why:** `parseCliInvocation` consumes `-h`/`--help` as a global flag before the command runs, so a command's own `--help` branch never sees the flag and `mdcms <command> --help` printed only the global help.
+**How to apply:** When adding or changing a command's help text, set `renderHelp` on the command object and cover it with a `runMdcmsCli(["<command>", "--help"])` test.
