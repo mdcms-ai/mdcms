@@ -47,7 +47,10 @@ test("real SDK client initializes and lists through independent stateless reques
   );
   try {
     await client.connect(transport);
-    assert.deepEqual((await client.listTools()).tools, []);
+    assert.deepEqual(
+      (await client.listTools()).tools.map((tool) => tool.name),
+      ["get_media", "list_media"],
+    );
     const denied = await client.callTool({ name: "get_schema", arguments: {} });
     assert.equal(denied.isError, true);
     assert.match(JSON.stringify(denied.content), /FORBIDDEN/);

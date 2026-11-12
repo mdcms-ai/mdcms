@@ -1,22 +1,46 @@
 import { RuntimeError } from "@mdcms/shared";
 import type { AuthorizedRequest } from "../auth.js";
 import type { AgentTool, AgentToolContext } from "./types.js";
+import { environmentTools } from "./environments.js";
+import { mediaTools } from "./media.js";
+import { webhookTools } from "./webhooks.js";
+import { versionTools } from "./versions.js";
+import { translationTools } from "./translations.js";
 import { contentTools } from "./content.js";
 import { toAgentToolFailure } from "./errors.js";
 
 function permitted(tool: AgentTool, authorization: AuthorizedRequest): boolean {
+  if (tool.requiresGlobalAdmin && !authorization.globalAdmin) return false;
   return (
     authorization.principal.type === "session" ||
-    tool.requiredScopes.every(
+    (tool.requiredScopes.every(
       (scope) =>
         authorization.principal.type !== "session" &&
         authorization.principal.scopes.includes(scope),
-    )
+    ) &&
+      (!tool.anyOfScopes ||
+        tool.anyOfScopes.some(
+          (scope) =>
+            authorization.principal.type !== "session" &&
+            authorization.principal.scopes.includes(scope),
+        )))
   );
 }
 
 export function createAgentToolRegistry(
-  initial: readonly AgentTool[] = contentTools,
+  initial: readonly AgentTool[] = [
+    ...contentTools,
+    ...versionTools,
+    ...translationTools,
+    ...webhookTools,
+    ...mediaTools,
+    ...environmentTools,
+  ],
+  options: {
+    getMediaUploadLimit?: (
+      target: AgentToolContext["target"],
+    ) => Promise<number | null>;
+  } = {},
 ) {
   const tools = new Map<string, AgentTool>();
   const register = (tool: AgentTool) => {
@@ -54,7 +78,26 @@ export function createAgentToolRegistry(
         statusCode: 400,
         details: { issues: parsed.error.issues },
       });
-    return tool.outputSchema.parse(await tool.execute(parsed.data, context));
+    if (
+      tool.executionScopes &&
+      !permitted(
+        { ...tool, requiredScopes: tool.executionScopes(parsed.data) },
+        context.authorization,
+      )
+    )
+      throw new RuntimeError({
+        code: "FORBIDDEN",
+        message: "Required action scope is missing.",
+        statusCode: 403,
+      });
+    return tool.outputSchema.parse(
+      await tool.execute(parsed.data, {
+        ...context,
+        getMediaUploadLimit: options.getMediaUploadLimit
+          ? () => options.getMediaUploadLimit!(context.target)
+          : context.getMediaUploadLimit,
+      }),
+    );
   };
   const call = async (
     name: string,

@@ -151,6 +151,7 @@ export type AuthorizedRequest = {
   principal: AuthPrincipal;
   /** Set only by the host after verifying private dispatch credentials. */
   internalChannel?: "mcp" | "studio_ai";
+  globalAdmin?: boolean;
 };
 
 export function actorFromAuthorizedRequest(
@@ -3901,7 +3902,15 @@ export function createAuthService(
       if (token.startsWith("mdcms_oat_")) {
         const principal = await requireOAuthPrincipal(request, token);
         return {
-          authorization: { mode: "oauth", principal },
+          authorization: {
+            mode: "oauth",
+            principal,
+            globalAdmin: (await getOAuthUserGrants(principal.userId)).some(
+              (grant) =>
+                grant.scope.kind === "global" &&
+                (grant.role === "admin" || grant.role === "owner"),
+            ),
+          },
           target: { ...principal.target },
         };
       }
@@ -3921,6 +3930,13 @@ export function createAuthService(
       return {
         authorization: {
           mode: "api_key",
+          globalAdmin: (
+            await getOAuthUserGrants(metadata.createdByUserId)
+          ).some(
+            (grant) =>
+              grant.scope.kind === "global" &&
+              (grant.role === "admin" || grant.role === "owner"),
+          ),
           principal: {
             type: "api_key",
             keyId: metadata.id,

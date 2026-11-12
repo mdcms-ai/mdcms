@@ -27,7 +27,8 @@
     "demo:seed": "bun --conditions @mdcms/source src/bin/demo-seed-api-key.ts",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
-    "test:integration:oauth": "MDCMS_OAUTH_INTEGRATION=1 bun test ./src/lib/oauth ./src/lib/mcp"
+    "test:integration:oauth": "MDCMS_OAUTH_INTEGRATION=1 bun test ./src/lib/oauth ./src/lib/mcp",
+    "test:integration:mcp": "MDCMS_MCP_INTEGRATION=1 bun test ./src/lib/mcp/mcp.integration.test.ts"
   },
   "dependencies": {
     "@better-auth/sso": "1.5.1",

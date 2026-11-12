@@ -443,6 +443,7 @@ function isForbiddenError(error: unknown): boolean {
 test("session authorization denies environment clone and promote to viewer and editor roles", () => {
   for (const role of ["viewer", "editor"] as const) {
     for (const requiredScope of [
+      "environments:read",
       "environments:clone",
       "environments:promote",
     ] as const) {
@@ -463,6 +464,7 @@ test("session authorization denies environment clone and promote to viewer and e
 test("session authorization allows environment clone and promote for admin and owner roles", () => {
   for (const role of ["admin", "owner"] as const) {
     for (const requiredScope of [
+      "environments:read",
       "environments:clone",
       "environments:promote",
     ] as const) {
@@ -520,7 +522,7 @@ test("API key issuance allows environment scopes for admin and owner sessions", 
       () =>
         assertGrantsCanIssueApiKeyScopes(
           sessionGrantsByRole[role],
-          ["environments:clone", "environments:promote"],
+          ["environments:read", "environments:clone", "environments:promote"],
           [sessionTarget],
         ),
       role,
@@ -531,6 +533,7 @@ test("API key issuance allows environment scopes for admin and owner sessions", 
 test("API key issuance rejects environment scopes for viewer and editor sessions", () => {
   for (const role of ["viewer", "editor"] as const) {
     for (const scope of [
+      "environments:read",
       "environments:clone",
       "environments:promote",
     ] as const) {
@@ -5227,3 +5230,20 @@ testWithDatabase(
     }
   },
 );
+
+test("project administrators cannot issue environment metadata scopes", () => {
+  assert.throws(
+    () =>
+      assertGrantsCanIssueApiKeyScopes(
+        [
+          {
+            role: "admin",
+            scope: { kind: "project", project: sessionTarget.project },
+          },
+        ],
+        ["environments:read"],
+        [sessionTarget],
+      ),
+    isForbiddenError,
+  );
+});

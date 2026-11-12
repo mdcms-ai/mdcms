@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import {
   RuntimeError,
   type DocumentPromotionResult,
+  type ContentWriteAttribution,
   type EnvironmentCloneInput,
   type EnvironmentCloneResult,
   type EnvironmentPromoteInput,
@@ -11,6 +12,7 @@ import {
 } from "@mdcms/shared";
 import { and, eq, inArray, sql } from "drizzle-orm";
 
+import type { ApiKeyOperationScope } from "./auth.js";
 import type { DrizzleDatabase } from "./db.js";
 import {
   documents,
@@ -22,6 +24,7 @@ import {
 import {
   remapFrontmatterReferences,
   type ReferenceLookupKey,
+  type RemapInput,
   type ReferenceSourceLookup,
   type ReferenceTargetResolver,
 } from "./environments-reference-remap.js";
@@ -39,9 +42,20 @@ import { findProjectBySlug } from "./project-provisioning.js";
 // Both share the reference-remap helper and run inside a single transaction
 // so any failure rolls back atomically (SPEC-009 #Reference remapping).
 
-const DEFAULT_ACTOR = "00000000-0000-0000-0000-000000000001";
+export type EnvironmentPermission = {
+  environment: string;
+  scope: ApiKeyOperationScope;
+  path?: string;
+  credentialScope: boolean;
+};
+export type EnvironmentResourceAuthorizer = (
+  db: DrizzleDatabase,
+  requirements: readonly EnvironmentPermission[],
+) => Promise<void>;
 
 type ScopeRow = {
+  sourceName: string;
+  targetName: string;
   projectId: string;
   sourceEnvId: string;
   targetEnvId: string;
@@ -141,6 +155,8 @@ async function loadProjectScope(
 
   return {
     projectId: projectRow.id,
+    sourceName: sourceEnv.name,
+    targetName: targetEnv.name,
     sourceEnvId: sourceEnv.id,
     targetEnvId: targetEnv.id,
   };
@@ -327,6 +343,8 @@ async function loadTargetMap(
 export type CloneEnvironmentInput = EnvironmentCloneInput & {
   project: string;
   targetEnvironmentId: string;
+  attribution: ContentWriteAttribution;
+  authorize: EnvironmentResourceAuthorizer;
 };
 
 // Spec defaults applied here so the orchestrator can run with a partial
@@ -365,209 +383,297 @@ export async function cloneEnvironment(
 ): Promise<EnvironmentCloneResult> {
   const defaults = resolveCloneDefaults(input);
 
-  return db.transaction(async (tx) => {
-    const txDb = tx as unknown as DrizzleDatabase;
-    const scope = await loadProjectScope(txDb, {
-      project: input.project,
-      sourceEnvId: input.sourceEnvironmentId,
-      targetEnvId: input.targetEnvironmentId,
-    });
-
-    if (defaults.includeSettings) {
-      await copyEnvironmentSettings(txDb, scope);
-    }
-
-    if (!defaults.includeContent) {
-      return {
-        targetEnvironmentId: scope.targetEnvId,
-        documentsCloned: 0,
-      };
-    }
-
-    const sourceContext = await loadSourceContext(txDb, scope, {
-      includeDrafts: defaults.includeDrafts,
-    });
-
-    if (sourceContext.rows.length === 0) {
-      return {
-        targetEnvironmentId: scope.targetEnvId,
-        documentsCloned: 0,
-      };
-    }
-
-    // Pre-allocate target document IDs so cross-document references inside
-    // the cloned set resolve via the (translationGroupId, locale) key map.
-    const targetIdByKey = new Map<string, string>();
-    for (const row of sourceContext.rows) {
-      const key = targetMapKey({
-        translationGroupId: row.translationGroupId,
-        locale: row.locale,
+  return db.transaction(
+    async (tx) => {
+      const txDb = tx as unknown as DrizzleDatabase;
+      const scope = await loadProjectScope(txDb, {
+        project: input.project,
+        sourceEnvId: input.sourceEnvironmentId,
+        targetEnvId: input.targetEnvironmentId,
       });
-      if (targetIdByKey.has(key)) {
-        // Source data integrity: should never happen given the active unique
-        // index `uniq_documents_active_translation_locale`. Surface clearly.
-        throw new RuntimeError({
-          code: "INTERNAL_ERROR",
-          message:
-            "Source environment has duplicate (translation_group_id, locale) tuples for active documents.",
-          statusCode: 500,
-          details: {
-            translationGroupId: row.translationGroupId,
-            locale: row.locale,
-          },
+
+      const permissions: EnvironmentPermission[] = [
+        {
+          environment: scope.targetName,
+          scope: "environments:clone",
+          credentialScope: true,
+        },
+      ];
+      if (defaults.includeContent) {
+        permissions.push({
+          environment: scope.sourceName,
+          scope: "content:read",
+          credentialScope: true,
         });
+        if (defaults.includeDrafts)
+          permissions.push({
+            environment: scope.sourceName,
+            scope: "content:read:draft",
+            credentialScope: true,
+          });
       }
-      targetIdByKey.set(key, randomUUID());
-    }
+      if (defaults.includeContent || defaults.includeSettings)
+        permissions.push({
+          environment: scope.sourceName,
+          scope: "schema:read",
+          credentialScope: true,
+        });
+      if (defaults.includeSettings)
+        permissions.push({
+          environment: scope.targetName,
+          scope: "schema:write",
+          credentialScope: true,
+        });
+      await input.authorize(txDb, permissions);
+      if (defaults.includeSettings) {
+        await copyEnvironmentSettings(txDb, scope);
+      }
 
-    // Existing target documents (if any) participate in remap so that
-    // cross-environment refs to docs already present in target still resolve.
-    const existingTargetMap = await loadTargetMap(txDb, scope);
-    const targetResolver: ReferenceTargetResolver = (key) => {
-      const composed = targetMapKey(key);
-      return targetIdByKey.get(composed) ?? existingTargetMap.get(composed);
-    };
+      if (!defaults.includeContent) {
+        return {
+          targetEnvironmentId: scope.targetEnvId,
+          documentsCloned: 0,
+        };
+      }
 
-    const cloneActor = DEFAULT_ACTOR;
-    let documentsCloned = 0;
+      const sourceContext = await loadSourceContext(txDb, scope, {
+        includeDrafts: defaults.includeDrafts,
+      });
 
-    for (const row of sourceContext.rows) {
-      const targetDocumentId = targetIdByKey.get(
-        targetMapKey({
+      if (sourceContext.rows.length === 0) {
+        return {
+          targetEnvironmentId: scope.targetEnvId,
+          documentsCloned: 0,
+        };
+      }
+
+      // Pre-allocate target document IDs so cross-document references inside
+      // the cloned set resolve via the (translationGroupId, locale) key map.
+      const targetIdByKey = new Map<string, string>();
+      for (const row of sourceContext.rows) {
+        const key = targetMapKey({
           translationGroupId: row.translationGroupId,
           locale: row.locale,
-        }),
-      )!;
-      const publishedPayload = sourceContext.publishedByDocumentId.get(
-        row.documentId,
-      );
-      const hasPublishedSnapshot = publishedPayload !== undefined;
-
-      // When `includeDrafts: false` the operator wants the published source
-      // state in the target. When `includeDrafts: true` the operator wants
-      // the live (possibly draft) state — which is what the documents row
-      // holds. The published payload is still used for the version-1 row
-      // snapshot below, so a published source row produces target content
-      // whose draft and published states accurately mirror the source.
-      const headPayload =
-        !defaults.includeDrafts && publishedPayload
-          ? publishedPayload
-          : {
-              body: row.body,
-              frontmatter: row.frontmatter as Record<string, unknown>,
-              path: row.path,
-              contentFormat: row.contentFormat,
-              schemaType: row.schemaType,
-              locale: row.locale,
-            };
-
-      const headRemap = remapFrontmatterReferences({
-        schema: sourceContext.schemaByType.get(headPayload.schemaType),
-        frontmatter: headPayload.frontmatter,
-        sourceLookup: sourceContext.sourceLookup,
-        targetResolver,
-        sourceDocumentId: row.documentId,
-      });
-
-      const targetPath = deriveTargetPath({
-        sourcePath: headPayload.path,
-        preservePaths: defaults.preservePaths,
-        targetDocumentId,
-      });
-
-      try {
-        await txDb.insert(documents).values({
-          documentId: targetDocumentId,
-          translationGroupId: row.translationGroupId,
-          projectId: scope.projectId,
-          environmentId: scope.targetEnvId,
-          path: targetPath,
-          schemaType: headPayload.schemaType,
-          locale: headPayload.locale,
-          contentFormat: headPayload.contentFormat,
-          body: headPayload.body,
-          frontmatter: headRemap.frontmatter,
-          isDeleted: false,
-          hasUnpublishedChanges: !hasPublishedSnapshot,
-          publishedVersion: null,
-          draftRevision: 1,
-          createdBy: cloneActor,
-          updatedBy: cloneActor,
         });
-      } catch (error) {
-        if (isUniqueViolation(error)) {
-          throw buildConflictError(
-            "Target environment already contains content that conflicts with the clone payload.",
-            {
-              targetEnvironmentId: scope.targetEnvId,
-              path: targetPath,
-              locale: row.locale,
+        if (targetIdByKey.has(key)) {
+          // Source data integrity: should never happen given the active unique
+          // index `uniq_documents_active_translation_locale`. Surface clearly.
+          throw new RuntimeError({
+            code: "INTERNAL_ERROR",
+            message:
+              "Source environment has duplicate (translation_group_id, locale) tuples for active documents.",
+            statusCode: 500,
+            details: {
               translationGroupId: row.translationGroupId,
-              preservePaths: defaults.preservePaths,
+              locale: row.locale,
             },
-          );
+          });
         }
-        throw error;
+        targetIdByKey.set(key, randomUUID());
       }
 
-      if (hasPublishedSnapshot && publishedPayload) {
-        // Version-1 in the target carries the *published* source state, even
-        // when `includeDrafts: true` and the head row reflects the draft —
-        // so consumers querying the target as "published" see exactly what
-        // was published on the source side. Full version history is
-        // intentionally not copied (SPEC-009 #Cloning).
-        const publishedRemap = remapFrontmatterReferences({
-          schema: sourceContext.schemaByType.get(publishedPayload.schemaType),
-          frontmatter: publishedPayload.frontmatter,
-          sourceLookup: sourceContext.sourceLookup,
-          targetResolver,
-          sourceDocumentId: row.documentId,
-        });
-        const publishedPath = deriveTargetPath({
-          sourcePath: publishedPayload.path,
+      // Existing target documents (if any) participate in remap so that
+      // cross-environment refs to docs already present in target still resolve.
+      const existingTargetMap = await loadTargetMap(txDb, scope);
+      const targetResolver: ReferenceTargetResolver = (key) => {
+        const composed = targetMapKey(key);
+        return targetIdByKey.get(composed) ?? existingTargetMap.get(composed);
+      };
+
+      let documentsCloned = 0;
+
+      for (const row of sourceContext.rows) {
+        const targetDocumentId = targetIdByKey.get(
+          targetMapKey({
+            translationGroupId: row.translationGroupId,
+            locale: row.locale,
+          }),
+        )!;
+        const publishedPayload = sourceContext.publishedByDocumentId.get(
+          row.documentId,
+        );
+        const hasPublishedSnapshot = publishedPayload !== undefined;
+
+        // When `includeDrafts: false` the operator wants the published source
+        // state in the target. When `includeDrafts: true` the operator wants
+        // the live (possibly draft) state — which is what the documents row
+        // holds. The published payload is still used for the version-1 row
+        // snapshot below, so a published source row produces target content
+        // whose draft and published states accurately mirror the source.
+        const headPayload =
+          !defaults.includeDrafts && publishedPayload
+            ? publishedPayload
+            : {
+                body: row.body,
+                frontmatter: row.frontmatter as Record<string, unknown>,
+                path: row.path,
+                contentFormat: row.contentFormat,
+                schemaType: row.schemaType,
+                locale: row.locale,
+              };
+
+        const targetPath = deriveTargetPath({
+          sourcePath: headPayload.path,
           preservePaths: defaults.preservePaths,
           targetDocumentId,
         });
-        await txDb.insert(documentVersions).values({
-          documentId: targetDocumentId,
-          translationGroupId: row.translationGroupId,
-          projectId: scope.projectId,
-          environmentId: scope.targetEnvId,
-          schemaType: publishedPayload.schemaType,
-          locale: publishedPayload.locale,
-          contentFormat: publishedPayload.contentFormat,
-          path: publishedPath,
-          body: publishedPayload.body,
-          frontmatter: publishedRemap.frontmatter,
-          version: 1,
-          publishedBy: cloneActor,
-          changeSummary: "Cloned from source environment.",
-        });
-        await txDb
-          .update(documents)
-          .set({
-            publishedVersion: 1,
-            hasUnpublishedChanges: !defaults.includeDrafts
-              ? false
-              : // If includeDrafts is true and the head and published payloads
-                // differ, the target row holds draft content distinct from its
-                // published v1 — so `hasUnpublishedChanges` is true.
-                headPayload.body !== publishedPayload.body ||
-                JSON.stringify(headPayload.frontmatter) !==
-                  JSON.stringify(publishedPayload.frontmatter) ||
-                headPayload.path !== publishedPayload.path,
-          })
-          .where(eq(documents.documentId, targetDocumentId));
+
+        await input.authorize(txDb, [
+          {
+            environment: scope.sourceName,
+            scope: defaults.includeDrafts
+              ? "content:read:draft"
+              : "content:read",
+            path: headPayload.path,
+            credentialScope: true,
+          },
+          {
+            environment: scope.targetName,
+            scope: "content:write",
+            path: targetPath,
+            credentialScope: false,
+          },
+          ...(publishedPayload
+            ? [
+                {
+                  environment: scope.sourceName,
+                  scope: "content:read" as const,
+                  path: publishedPayload.path,
+                  credentialScope: true,
+                },
+                {
+                  environment: scope.targetName,
+                  scope: "content:publish" as const,
+                  path: deriveTargetPath({
+                    sourcePath: publishedPayload.path,
+                    preservePaths: defaults.preservePaths,
+                    targetDocumentId,
+                  }),
+                  credentialScope: false,
+                },
+              ]
+            : []),
+        ]);
+        const headRemap = await authorizedRemap(
+          txDb,
+          scope,
+          input.authorize,
+          defaults.includeDrafts,
+          {
+            schema: sourceContext.schemaByType.get(headPayload.schemaType),
+            frontmatter: headPayload.frontmatter,
+            sourceLookup: sourceContext.sourceLookup,
+            targetResolver,
+            sourceDocumentId: row.documentId,
+          },
+        );
+
+        try {
+          await txDb.insert(documents).values({
+            documentId: targetDocumentId,
+            translationGroupId: row.translationGroupId,
+            projectId: scope.projectId,
+            environmentId: scope.targetEnvId,
+            path: targetPath,
+            schemaType: headPayload.schemaType,
+            locale: headPayload.locale,
+            contentFormat: headPayload.contentFormat,
+            body: headPayload.body,
+            frontmatter: headRemap.frontmatter,
+            isDeleted: false,
+            hasUnpublishedChanges: !hasPublishedSnapshot,
+            publishedVersion: null,
+            draftRevision: 1,
+            createdBy: input.attribution.actorId,
+            createdOrigin: input.attribution.origin,
+            updatedBy: input.attribution.actorId,
+            updatedOrigin: input.attribution.origin,
+          });
+        } catch (error) {
+          if (isUniqueViolation(error)) {
+            throw buildConflictError(
+              "Target environment already contains content that conflicts with the clone payload.",
+              {
+                targetEnvironmentId: scope.targetEnvId,
+                path: targetPath,
+                locale: row.locale,
+                translationGroupId: row.translationGroupId,
+                preservePaths: defaults.preservePaths,
+              },
+            );
+          }
+          throw error;
+        }
+
+        if (hasPublishedSnapshot && publishedPayload) {
+          // Version-1 in the target carries the *published* source state, even
+          // when `includeDrafts: true` and the head row reflects the draft —
+          // so consumers querying the target as "published" see exactly what
+          // was published on the source side. Full version history is
+          // intentionally not copied (SPEC-009 #Cloning).
+          const publishedRemap = await authorizedRemap(
+            txDb,
+            scope,
+            input.authorize,
+            false,
+            {
+              schema: sourceContext.schemaByType.get(
+                publishedPayload.schemaType,
+              ),
+              frontmatter: publishedPayload.frontmatter,
+              sourceLookup: sourceContext.sourceLookup,
+              targetResolver,
+              sourceDocumentId: row.documentId,
+            },
+          );
+          const publishedPath = deriveTargetPath({
+            sourcePath: publishedPayload.path,
+            preservePaths: defaults.preservePaths,
+            targetDocumentId,
+          });
+          await txDb.insert(documentVersions).values({
+            documentId: targetDocumentId,
+            translationGroupId: row.translationGroupId,
+            projectId: scope.projectId,
+            environmentId: scope.targetEnvId,
+            schemaType: publishedPayload.schemaType,
+            locale: publishedPayload.locale,
+            contentFormat: publishedPayload.contentFormat,
+            path: publishedPath,
+            body: publishedPayload.body,
+            frontmatter: publishedRemap.frontmatter,
+            version: 1,
+            publishedBy: input.attribution.actorId,
+            publishedOrigin: input.attribution.origin,
+            changeSummary: "Cloned from source environment.",
+          });
+          await txDb
+            .update(documents)
+            .set({
+              publishedVersion: 1,
+              hasUnpublishedChanges: !defaults.includeDrafts
+                ? false
+                : // If includeDrafts is true and the head and published payloads
+                  // differ, the target row holds draft content distinct from its
+                  // published v1 — so `hasUnpublishedChanges` is true.
+                  headPayload.body !== publishedPayload.body ||
+                  JSON.stringify(headPayload.frontmatter) !==
+                    JSON.stringify(publishedPayload.frontmatter) ||
+                  headPayload.path !== publishedPayload.path,
+            })
+            .where(eq(documents.documentId, targetDocumentId));
+        }
+
+        documentsCloned += 1;
       }
 
-      documentsCloned += 1;
-    }
-
-    return {
-      targetEnvironmentId: scope.targetEnvId,
-      documentsCloned,
-    };
-  });
+      return {
+        targetEnvironmentId: scope.targetEnvId,
+        documentsCloned,
+      };
+    },
+    { isolationLevel: "repeatable read" },
+  );
 }
 
 async function copyEnvironmentSettings(
@@ -644,6 +750,8 @@ async function copyEnvironmentSettings(
 export type PromoteEnvironmentInput = EnvironmentPromoteInput & {
   project: string;
   targetEnvironmentId: string;
+  attribution: ContentWriteAttribution;
+  authorize: EnvironmentResourceAuthorizer;
 };
 
 export async function promoteDocuments(
@@ -656,173 +764,241 @@ export async function promoteDocuments(
   const dryRun = input.dryRun ?? false;
   const callerPreallocations = input.preallocatedTargetIds ?? {};
 
-  return db.transaction(async (tx) => {
-    const txDb = tx as unknown as DrizzleDatabase;
-    const scope = await loadProjectScope(txDb, {
-      project: input.project,
-      sourceEnvId: input.sourceEnvironmentId,
-      targetEnvId: input.targetEnvironmentId,
-    });
+  return db.transaction(
+    async (tx) => {
+      const txDb = tx as unknown as DrizzleDatabase;
+      const scope = await loadProjectScope(txDb, {
+        project: input.project,
+        sourceEnvId: input.sourceEnvironmentId,
+        targetEnvId: input.targetEnvironmentId,
+      });
 
-    const sourceContext = await loadSourceContext(txDb, scope, {
-      documentIds: input.documentIds,
-      // Promote loads all matching rows regardless of publish state; the
-      // include-unpublished gate is applied below per-row to drive the
-      // `skipped_unpublished` status in the result.
-      includeDrafts: true,
-    });
-
-    const requestedSet = new Set(input.documentIds);
-    const foundIds = new Set(sourceContext.rows.map((row) => row.documentId));
-    const missing = [...requestedSet].filter((id) => !foundIds.has(id));
-    if (missing.length > 0) {
-      throw buildScopeError(
-        "One or more document IDs were not found in the source environment.",
+      await input.authorize(txDb, [
         {
-          missingDocumentIds: missing,
-          sourceEnvironmentId: scope.sourceEnvId,
+          environment: scope.targetName,
+          scope: "environments:promote",
+          credentialScope: true,
         },
-      );
-    }
-
-    const targetMap = await loadTargetMap(txDb, scope);
-
-    // Pre-populate the target map with "would-be-created" ids for rows that
-    // don't yet have a target match. This lets the remap walker resolve
-    // references between docs in the same promoted batch — both during
-    // dry-run (no writes) and during the real run (in-progress creations).
-    // The pre-allocated id matches the id used by `createTargetDraft` when
-    // the row is actually written.
-    //
-    // When the caller supplied `preallocatedTargetIds` (typically the
-    // dry-run result replayed back into a real run), we reuse those ids
-    // for deterministic replay. Anything not in the caller map falls back
-    // to a fresh UUID.
-    const preallocatedTargetIds = new Map<string, string>();
-    for (const row of sourceContext.rows) {
-      if (!includeUnpublished && row.publishedVersion === null) {
-        continue;
-      }
-      const key = targetMapKey({
-        translationGroupId: row.translationGroupId,
-        locale: row.locale,
+        {
+          environment: scope.sourceName,
+          scope: "content:read:draft",
+          credentialScope: true,
+        },
+        {
+          environment: scope.sourceName,
+          scope: "schema:read",
+          credentialScope: true,
+        },
+      ]);
+      const sourceContext = await loadSourceContext(txDb, scope, {
+        documentIds: input.documentIds,
+        // Promote loads all matching rows regardless of publish state; the
+        // include-unpublished gate is applied below per-row to drive the
+        // `skipped_unpublished` status in the result.
+        includeDrafts: true,
       });
-      if (!targetMap.has(key)) {
-        const allocated = callerPreallocations[row.documentId] ?? randomUUID();
-        targetMap.set(key, allocated);
-        preallocatedTargetIds.set(key, allocated);
+
+      const requestedSet = new Set(input.documentIds);
+      const foundIds = new Set(sourceContext.rows.map((row) => row.documentId));
+      const missing = [...requestedSet].filter((id) => !foundIds.has(id));
+      if (missing.length > 0) {
+        throw buildScopeError(
+          "One or more document IDs were not found in the source environment.",
+          {
+            missingDocumentIds: missing,
+            sourceEnvironmentId: scope.sourceEnvId,
+          },
+        );
       }
-    }
 
-    const targetResolver: ReferenceTargetResolver = (key) =>
-      targetMap.get(targetMapKey(key));
+      const targetMap = await loadTargetMap(txDb, scope);
 
-    const promoted: DocumentPromotionResult[] = [];
-    const promoteActor = DEFAULT_ACTOR;
-
-    for (const row of sourceContext.rows) {
-      if (!includeUnpublished && row.publishedVersion === null) {
-        promoted.push({
-          sourceDocumentId: row.documentId,
-          targetDocumentId:
-            targetMap.get(
-              targetMapKey({
-                translationGroupId: row.translationGroupId,
-                locale: row.locale,
-              }),
-            ) ?? null,
-          status: "skipped_unpublished",
-          path: row.path,
+      // Pre-populate the target map with "would-be-created" ids for rows that
+      // don't yet have a target match. This lets the remap walker resolve
+      // references between docs in the same promoted batch — both during
+      // dry-run (no writes) and during the real run (in-progress creations).
+      // The pre-allocated id matches the id used by `createTargetDraft` when
+      // the row is actually written.
+      //
+      // When the caller supplied `preallocatedTargetIds` (typically the
+      // dry-run result replayed back into a real run), we reuse those ids
+      // for deterministic replay. Anything not in the caller map falls back
+      // to a fresh UUID.
+      const preallocatedTargetIds = new Map<string, string>();
+      for (const row of sourceContext.rows) {
+        await input.authorize(txDb, [
+          {
+            environment: scope.sourceName,
+            scope: "content:read:draft",
+            path: row.path,
+            credentialScope: true,
+          },
+        ]);
+        if (!includeUnpublished && row.publishedVersion === null) {
+          continue;
+        }
+        const key = targetMapKey({
+          translationGroupId: row.translationGroupId,
           locale: row.locale,
-          type: row.schemaType,
-          publishedVersion: null,
-          remappedReferences: 0,
         });
-        continue;
+        if (!targetMap.has(key)) {
+          const allocated =
+            callerPreallocations[row.documentId] ?? randomUUID();
+          targetMap.set(key, allocated);
+          preallocatedTargetIds.set(key, allocated);
+        }
       }
 
-      const schema = sourceContext.schemaByType.get(row.schemaType);
-      const remap = remapFrontmatterReferences({
-        schema,
-        frontmatter: row.frontmatter as Record<string, unknown>,
-        sourceLookup: sourceContext.sourceLookup,
-        targetResolver,
-        sourceDocumentId: row.documentId,
-      });
+      const targetResolver: ReferenceTargetResolver = (key) =>
+        targetMap.get(targetMapKey(key));
 
-      const key = targetMapKey({
-        translationGroupId: row.translationGroupId,
-        locale: row.locale,
-      });
-      const preallocatedId = preallocatedTargetIds.get(key);
-      // `existingTargetId` is the *real* target id only if the row already
-      // existed before this batch; preallocated ids represent rows we plan
-      // to create within this same batch.
-      const existingTargetId = preallocatedId ? undefined : targetMap.get(key);
+      const promoted: DocumentPromotionResult[] = [];
 
-      if (dryRun) {
+      for (const row of sourceContext.rows) {
+        await input.authorize(txDb, [
+          {
+            environment: scope.sourceName,
+            scope: "content:read:draft",
+            path: row.path,
+            credentialScope: true,
+          },
+        ]);
+        if (!includeUnpublished && row.publishedVersion === null) {
+          promoted.push({
+            sourceDocumentId: row.documentId,
+            targetDocumentId:
+              targetMap.get(
+                targetMapKey({
+                  translationGroupId: row.translationGroupId,
+                  locale: row.locale,
+                }),
+              ) ?? null,
+            status: "skipped_unpublished",
+            path: row.path,
+            locale: row.locale,
+            type: row.schemaType,
+            publishedVersion: null,
+            remappedReferences: 0,
+          });
+          continue;
+        }
+
+        const key = targetMapKey({
+          translationGroupId: row.translationGroupId,
+          locale: row.locale,
+        });
+        const preallocatedId = preallocatedTargetIds.get(key);
+        // `existingTargetId` is the *real* target id only if the row already
+        // existed before this batch; preallocated ids represent rows we plan
+        // to create within this same batch.
+        const existingTargetId = preallocatedId
+          ? undefined
+          : targetMap.get(key);
+
+        const targetRow = existingTargetId
+          ? await txDb.query.documents.findFirst({
+              where: eq(documents.documentId, existingTargetId),
+            })
+          : undefined;
+        await input.authorize(
+          txDb,
+          [
+            ...new Set([row.path, ...(targetRow ? [targetRow.path] : [])]),
+          ].flatMap((path) => [
+            {
+              environment: scope.targetName,
+              scope: "content:write" as const,
+              path,
+              credentialScope: false,
+            },
+            {
+              environment: scope.targetName,
+              scope: "content:publish" as const,
+              path,
+              credentialScope: false,
+            },
+          ]),
+        );
+        const schema = sourceContext.schemaByType.get(row.schemaType);
+        const remap = await authorizedRemap(
+          txDb,
+          scope,
+          input.authorize,
+          true,
+          {
+            schema,
+            frontmatter: row.frontmatter as Record<string, unknown>,
+            sourceLookup: sourceContext.sourceLookup,
+            targetResolver,
+            sourceDocumentId: row.documentId,
+          },
+        );
+
+        if (dryRun) {
+          promoted.push({
+            sourceDocumentId: row.documentId,
+            targetDocumentId: existingTargetId ?? preallocatedId ?? null,
+            status: existingTargetId ? "overwrote" : "created",
+            path: row.path,
+            locale: row.locale,
+            type: row.schemaType,
+            // We can't know the published version without doing the write; the
+            // contract reports `null` for created and the *current* published
+            // version for overwrote so consumers can show "v3 -> v4".
+            publishedVersion: null,
+            remappedReferences: remap.remappedReferences,
+          });
+          continue;
+        }
+
+        const targetDocumentId =
+          existingTargetId ??
+          (await createTargetDraft(txDb, {
+            scope,
+            source: row,
+            remappedFrontmatter: remap.frontmatter,
+            attribution: input.attribution,
+            preallocatedId,
+          }));
+
+        if (existingTargetId) {
+          await overwriteTargetDraft(txDb, {
+            scope,
+            targetDocumentId: existingTargetId,
+            source: row,
+            remappedFrontmatter: remap.frontmatter,
+            attribution: input.attribution,
+          });
+        }
+
+        const publishedVersion = await publishTargetDocument(txDb, {
+          scope,
+          targetDocumentId,
+          source: row,
+          remappedFrontmatter: remap.frontmatter,
+          attribution: input.attribution,
+        });
+
+        // Record the new target id so subsequent promoted rows that reference
+        // this one can resolve via the in-progress map.
+        targetMap.set(key, targetDocumentId);
+
         promoted.push({
           sourceDocumentId: row.documentId,
-          targetDocumentId: existingTargetId ?? preallocatedId ?? null,
+          targetDocumentId,
           status: existingTargetId ? "overwrote" : "created",
           path: row.path,
           locale: row.locale,
           type: row.schemaType,
-          // We can't know the published version without doing the write; the
-          // contract reports `null` for created and the *current* published
-          // version for overwrote so consumers can show "v3 -> v4".
-          publishedVersion: null,
+          publishedVersion,
           remappedReferences: remap.remappedReferences,
         });
-        continue;
       }
 
-      const targetDocumentId =
-        existingTargetId ??
-        (await createTargetDraft(txDb, {
-          scope,
-          source: row,
-          remappedFrontmatter: remap.frontmatter,
-          actor: promoteActor,
-          preallocatedId,
-        }));
-
-      if (existingTargetId) {
-        await overwriteTargetDraft(txDb, {
-          scope,
-          targetDocumentId: existingTargetId,
-          source: row,
-          remappedFrontmatter: remap.frontmatter,
-          actor: promoteActor,
-        });
-      }
-
-      const publishedVersion = await publishTargetDocument(txDb, {
-        scope,
-        targetDocumentId,
-        source: row,
-        remappedFrontmatter: remap.frontmatter,
-        actor: promoteActor,
-      });
-
-      // Record the new target id so subsequent promoted rows that reference
-      // this one can resolve via the in-progress map.
-      targetMap.set(key, targetDocumentId);
-
-      promoted.push({
-        sourceDocumentId: row.documentId,
-        targetDocumentId,
-        status: existingTargetId ? "overwrote" : "created",
-        path: row.path,
-        locale: row.locale,
-        type: row.schemaType,
-        publishedVersion,
-        remappedReferences: remap.remappedReferences,
-      });
-    }
-
-    return { promoted };
-  });
+      return { promoted };
+    },
+    { isolationLevel: "repeatable read" },
+  );
 }
 
 async function createTargetDraft(
@@ -831,7 +1007,7 @@ async function createTargetDraft(
     scope: ScopeRow;
     source: SourceDocumentRow;
     remappedFrontmatter: Record<string, unknown>;
-    actor: string;
+    attribution: ContentWriteAttribution;
     // When provided, used instead of generating a new UUID. The caller
     // pre-allocates these so cross-document references resolve via the
     // remap target map (and so dryRun reports the same id that the real
@@ -856,8 +1032,10 @@ async function createTargetDraft(
       hasUnpublishedChanges: true,
       publishedVersion: null,
       draftRevision: 1,
-      createdBy: input.actor,
-      updatedBy: input.actor,
+      createdBy: input.attribution.actorId,
+      createdOrigin: input.attribution.origin,
+      updatedBy: input.attribution.actorId,
+      updatedOrigin: input.attribution.origin,
     });
   } catch (error) {
     if (isUniqueViolation(error)) {
@@ -883,7 +1061,7 @@ async function overwriteTargetDraft(
     targetDocumentId: string;
     source: SourceDocumentRow;
     remappedFrontmatter: Record<string, unknown>;
-    actor: string;
+    attribution: ContentWriteAttribution;
   },
 ): Promise<void> {
   // Updates can hit the same `(projectId, environmentId, locale, path)`
@@ -904,7 +1082,8 @@ async function overwriteTargetDraft(
         isDeleted: false,
         hasUnpublishedChanges: true,
         draftRevision: sql`${documents.draftRevision} + 1`,
-        updatedBy: input.actor,
+        updatedBy: input.attribution.actorId,
+        updatedOrigin: input.attribution.origin,
         updatedAt: new Date(),
       })
       .where(
@@ -938,7 +1117,7 @@ async function publishTargetDocument(
     targetDocumentId: string;
     source: SourceDocumentRow;
     remappedFrontmatter: Record<string, unknown>;
-    actor: string;
+    attribution: ContentWriteAttribution;
   },
 ): Promise<number> {
   const [latest] = await db
@@ -961,7 +1140,8 @@ async function publishTargetDocument(
     body: input.source.body,
     frontmatter: input.remappedFrontmatter,
     version: nextVersion,
-    publishedBy: input.actor,
+    publishedBy: input.attribution.actorId,
+    publishedOrigin: input.attribution.origin,
     changeSummary: "Promoted from source environment.",
   });
 
@@ -990,4 +1170,67 @@ function isUniqueViolation(error: unknown): boolean {
     "code" in error &&
     (error as { code: unknown }).code === "23505"
   );
+}
+
+/** Authorize every referenced source before exposing either remap output or errors. */
+async function authorizedRemap(
+  db: DrizzleDatabase,
+  scope: ScopeRow,
+  authorize: EnvironmentResourceAuthorizer,
+  draft: boolean,
+  input: RemapInput,
+) {
+  const references = new Set<string>();
+  let result: ReturnType<typeof remapFrontmatterReferences> | undefined;
+  let failure: unknown;
+  try {
+    result = remapFrontmatterReferences({
+      ...input,
+      sourceLookup: (id) => {
+        references.add(id);
+        return input.sourceLookup(id);
+      },
+    });
+  } catch (error) {
+    failure = error;
+  }
+  for (const id of references) {
+    const row = await db.query.documents.findFirst({
+      where: and(
+        eq(documents.projectId, scope.projectId),
+        eq(documents.environmentId, scope.sourceEnvId),
+        eq(documents.documentId, id),
+      ),
+    });
+    if (!row) continue;
+    let path = row.path;
+    if (!draft) {
+      const published =
+        row.publishedVersion === null
+          ? undefined
+          : await db.query.documentVersions.findFirst({
+              where: and(
+                eq(documentVersions.documentId, id),
+                eq(documentVersions.version, row.publishedVersion),
+              ),
+            });
+      if (!published)
+        throw new RuntimeError({
+          code: "FORBIDDEN",
+          message: "Referenced source is not readable.",
+          statusCode: 403,
+        });
+      path = published.path;
+    }
+    await authorize(db, [
+      {
+        environment: scope.sourceName,
+        scope: draft ? "content:read:draft" : "content:read",
+        path,
+        credentialScope: true,
+      },
+    ]);
+  }
+  if (failure) throw failure;
+  return result!;
 }
